@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scitrera-aether-client"
+version = "0.1.58"
+description = "Python client SDK for Scitrera Aether distributed control plane"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [
+    { name = "scitrera.ai", email = "open-source-team@scitrera.com" }
+]
+keywords = [
+    "aether",
+    "scitrera",
+    "grpc",
+    "distributed",
+    "agents",
+    "control-plane",
+    "async",
+    "asyncio"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+    "Typing :: Typed",
+    "Framework :: AsyncIO",
+]
+dependencies = [
+    "grpcio>=1.76.0",
+    "protobuf>=5.29.0,<8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "grpcio-tools>=1.76.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "mypy>=1.8.0",
+    "types-protobuf>=4.24.0",
+    "grpc-stubs>=1.53.0",
+    "build>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://aetherlayer.ai"
+Documentation = "https://github.com/scitrera/aether#readme"
+Repository = "https://github.com/scitrera/aether"
+Issues = "https://github.com/scitrera/aether/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scitrera_aether_client", "scitrera_aether_client*"]
+
+[tool.setuptools.package-data]
+scitrera_aether_client = ["py.typed", "proto/*.pyi"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+strict_optional = true

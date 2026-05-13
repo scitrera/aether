@@ -1,0 +1,341 @@
+# Default values for aether-gateway Helm chart.
+# Override these values in a custom values file or via --set flags.
+
+# -- Number of gateway replicas
+replicaCount: 3
+
+image:
+  # -- Container image repository
+  repository: scitrera/aether-gateway
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- Image tag; defaults to chart appVersion
+  tag: ""
+
+# -- Image pull secrets for private registries
+imagePullSecrets: []
+
+# -- Override the chart name
+nameOverride: ""
+# -- Override the full release name
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Create a ServiceAccount for gateway pods
+  create: true
+  # -- Annotations to add to the ServiceAccount
+  annotations: {}
+  # -- Override the ServiceAccount name; defaults to the release fullname
+  name: ""
+
+# -- Annotations to add to all pods (merged with auto-generated checksum annotations)
+podAnnotations: {}
+
+# -- Labels to add to all pods
+podLabels: {}
+
+# -- Pod-level security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+# -- Container-level security context
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# -- Resource requests and limits for the gateway container
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+# -- Node selector for pod scheduling
+nodeSelector: {}
+
+# -- Tolerations for pod scheduling
+tolerations: []
+
+# -- Affinity rules; defaults to soft pod anti-affinity across nodes
+affinity: {}
+
+# -- Use default pod anti-affinity (spread replicas across nodes). Ignored when affinity is set.
+defaultPodAntiAffinity: true
+
+# -- Termination grace period in seconds
+terminationGracePeriodSeconds: 30
+
+# -- Extra environment variables injected into the gateway container
+extraEnv: []
+# - name: MY_VAR
+#   value: "my-value"
+
+# -- Extra volumes to add to the pod
+extraVolumes: []
+
+# -- Extra volume mounts to add to the gateway container
+extraVolumeMounts: []
+
+# -----------------------------------------------------------------
+# Gateway service ports
+# -----------------------------------------------------------------
+ports:
+  grpc: 50051
+  admin: 31880
+  ops: 9090
+
+# -----------------------------------------------------------------
+# Health probes — all probe against the ops port (9090)
+# -----------------------------------------------------------------
+livenessProbe:
+  httpGet:
+    path: /health/live
+    port: ops
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health/ready
+    port: ops
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+startupProbe:
+  httpGet:
+    path: /health/startup
+    port: ops
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 12
+
+# -----------------------------------------------------------------
+# Service
+# -----------------------------------------------------------------
+service:
+  # -- Service type
+  type: ClusterIP
+  # -- Session affinity; ClientIP is recommended for gRPC reconnections
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      # -- Affinity timeout in seconds (3 hours)
+      timeoutSeconds: 10800
+  annotations: {}
+
+# -----------------------------------------------------------------
+# Ingress
+# -----------------------------------------------------------------
+ingress:
+  # -- Enable ingress resource
+  enabled: false
+  # -- Ingress class name
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/affinity-mode: "persistent"
+    nginx.ingress.kubernetes.io/session-cookie-name: "aether-gateway-route"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "10800"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "10800"
+    nginx.ingress.kubernetes.io/session-cookie-change-on-failure: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+  # -- Hostname rules for the gRPC ingress
+  hosts:
+    - host: aether.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- TLS configuration
+  tls: []
+  # - secretName: aether-gateway-tls
+  #   hosts:
+  #     - aether.example.com
+
+# -----------------------------------------------------------------
+# HorizontalPodAutoscaler
+# -----------------------------------------------------------------
+autoscaling:
+  # -- Enable HPA
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# -----------------------------------------------------------------
+# PodDisruptionBudget
+# -----------------------------------------------------------------
+podDisruptionBudget:
+  # -- Enable PDB
+  enabled: true
+  # -- Minimum number of available pods during voluntary disruptions
+  minAvailable: 1
+
+# -----------------------------------------------------------------
+# Prometheus ServiceMonitor
+# -----------------------------------------------------------------
+serviceMonitor:
+  # -- Enable ServiceMonitor (requires Prometheus Operator)
+  enabled: false
+  # -- Namespace for the ServiceMonitor; defaults to release namespace
+  namespace: ""
+  # -- Labels to match Prometheus operator's serviceMonitorSelector
+  labels: {}
+  # -- Scrape interval
+  interval: 30s
+  # -- Scrape timeout
+  scrapeTimeout: 10s
+  # -- Additional relabelings
+  relabelings: []
+  # -- Additional metricRelabelings
+  metricRelabelings: []
+
+# -----------------------------------------------------------------
+# NetworkPolicy
+# -----------------------------------------------------------------
+networkPolicy:
+  # -- Enable NetworkPolicy
+  enabled: false
+  # -- Allow ingress from all namespaces; when false only same-namespace pods may connect
+  allowAllNamespaces: false
+  # -- Extra ingress rules appended to the generated policy
+  additionalIngressRules: []
+
+# -----------------------------------------------------------------
+# TLS / mTLS (cert-manager Certificate or pre-created Secret)
+# -----------------------------------------------------------------
+tls:
+  # -- Name of an existing TLS secret to mount at /etc/aether/tls
+  existingSecret: ""
+
+# -----------------------------------------------------------------
+# Gateway application configuration
+# -----------------------------------------------------------------
+config:
+  # Gateway core
+  gateway:
+    port: 50051
+    ops_port: 9090
+    # gateway_id is derived from the pod name at runtime via downward API
+    gateway_id: ""
+
+  # Admin API/UI
+  admin:
+    enabled: true
+    port: 31880
+    cors_origin: "*"
+    # api_key is pulled from the secret defined in secrets.adminApiKey
+    api_key: ""
+
+  # Authentication modes
+  auth:
+    modes:
+      - task_token
+      - api_key
+    mtls:
+      required: false
+      mode: relaxed
+    api_key: {}
+    oauth:
+      verify_signature: true
+      providers: []
+
+  # PostgreSQL
+  postgres:
+    host: "postgres"
+    port: 5432
+    database: "aether"
+    user: "aether"
+    # password is injected via secrets.postgresPassword
+    max_connections: 25
+    max_idle_connections: 5
+    ssl_mode: "disable"
+
+  # Redis
+  redis:
+    cluster:
+      - "redis-0.redis:6379"
+      - "redis-1.redis:6379"
+      - "redis-2.redis:6379"
+    # password is injected via secrets.redisPassword (optional)
+    db: 0
+
+  # RabbitMQ
+  rabbitmq:
+    stream_url: "rabbitmq-stream://guest:guest@rabbitmq:5552"
+    amqp_url: "amqp://guest:guest@rabbitmq:5672/"
+
+  # Audit logging
+  audit:
+    enabled: true
+    event_types:
+      - connection
+      - auth
+      - message
+      - kv
+      - admin
+      - acl
+    verbosity: low
+    batch_size: 100
+    flush_period: "5s"
+    retention_days: 90
+    channel_buffer: 1000
+
+  # Cleanup
+  cleanup:
+    task_purge_interval: "24h"
+    completed_task_retention: "168h"
+    failed_task_retention: "336h"
+    cancelled_task_retention: "168h"
+    reconciliation_interval: "1m"
+
+  # Checkpoint
+  checkpoint:
+    default_ttl: "3600s"
+
+  # Shutdown
+  shutdown:
+    graceful_timeout: "30s"
+
+  # Log level: debug, info, warn, error
+  log_level: "info"
+
+# -----------------------------------------------------------------
+# Secrets — values here are base64-encoded by Helm or referenced
+# from existing Kubernetes secrets.
+# For production, prefer externalSecrets (e.g., Sealed Secrets, Vault).
+# -----------------------------------------------------------------
+secrets:
+  # -- Create a Secret resource containing the credentials below.
+  #    Set to false and populate existingSecret if you manage secrets externally.
+  create: true
+  # -- Name of an existing Secret to use instead of creating one
+  existingSecret: ""
+
+  # -- PostgreSQL password (plaintext; Helm will store it in a Secret)
+  # REQUIRED for production: set this to a secure value before deploying.
+  postgresPassword: ""
+
+  # -- Redis password (leave empty if Redis has no auth)
+  redisPassword: ""
+
+  # -- Admin API key (leave empty to disable API key auth on admin)
+  adminApiKey: ""

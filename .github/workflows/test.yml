@@ -1,0 +1,133 @@
+name: Test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.8'
+          cache-dependency-path: server/go.sum
+
+      - name: Run go vet
+        working-directory: server
+        run: go vet ./...
+
+      - name: Run tests
+        working-directory: server
+        run: go test -short -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: server/coverage.out
+          if-no-files-found: warn
+          retention-days: 14
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.8'
+          cache-dependency-path: server/go.sum
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          install-mode: goinstall
+          working-directory: server
+          args: --timeout=5m
+        continue-on-error: false
+
+  integration-test:
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    services:
+      redis:
+        image: valkey/valkey:8-alpine
+        ports:
+          - 56379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      rabbitmq:
+        image: rabbitmq:4-management
+        ports:
+          - 55552:5552
+          - 55672:5672
+        env:
+          RABBITMQ_ENABLED_PLUGINS: '[rabbitmq_stream]'
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 15s
+          --health-timeout 10s
+          --health-retries 10
+
+      postgres:
+        image: postgres:16-alpine
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: aether
+          POSTGRES_PASSWORD: aether_test
+          POSTGRES_DB: aether
+        options: >-
+          --health-cmd "pg_isready -U aether"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      REDIS_ADDR: localhost:56379
+      RABBITMQ_STREAM_URL: rabbitmq-stream://guest:guest@localhost:55552
+      RABBITMQ_AMQP_URL: amqp://guest:guest@localhost:55672/
+      POSTGRES_DSN: postgres://aether:aether_test@localhost:5432/aether?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.8'
+          cache-dependency-path: server/go.sum
+
+      - name: Run integration tests
+        working-directory: server
+        run: go test -race -count=1 ./...
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.8'
+          cache-dependency-path: server/go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        working-directory: server
+        run: govulncheck ./...

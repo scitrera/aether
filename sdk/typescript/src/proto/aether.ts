@@ -1,0 +1,141 @@
+import type * as grpc from '@grpc/grpc-js';
+import type { EnumTypeDefinition, MessageTypeDefinition } from '@grpc/proto-loader';
+
+import type { AetherGatewayClient as _aether_v1_AetherGatewayClient, AetherGatewayDefinition as _aether_v1_AetherGatewayDefinition } from './aether/v1/AetherGateway';
+
+type SubtypeConstructor<Constructor extends new (...args: any) => any, Subtype> = {
+  new(...args: ConstructorParameters<Constructor>): Subtype;
+};
+
+export interface ProtoGrpcType {
+  aether: {
+    v1: {
+      ACLAuditEntryInfo: MessageTypeDefinition
+      ACLAuditFilter: MessageTypeDefinition
+      ACLAuthorityGrantFilter: MessageTypeDefinition
+      ACLAuthorityGrantInfo: MessageTypeDefinition
+      ACLAuthorityGrantRequest: MessageTypeDefinition
+      ACLAuthorityGrantResourceScopeEntry: MessageTypeDefinition
+      ACLCleanupResult: MessageTypeDefinition
+      ACLFallbackPolicyInfo: MessageTypeDefinition
+      ACLGrantRequest: MessageTypeDefinition
+      ACLOperation: MessageTypeDefinition
+      ACLRenewAuthorityGrantRequest: MessageTypeDefinition
+      ACLResponse: MessageTypeDefinition
+      ACLRuleFilter: MessageTypeDefinition
+      ACLRuleInfo: MessageTypeDefinition
+      ACLSetFallbackRequest: MessageTypeDefinition
+      AccessLevel: EnumTypeDefinition
+      AdminQuery: MessageTypeDefinition
+      AdminResponse: MessageTypeDefinition
+      AetherGateway: SubtypeConstructor<typeof grpc.Client, _aether_v1_AetherGatewayClient> & { service: _aether_v1_AetherGatewayDefinition }
+      AgentFilter: MessageTypeDefinition
+      AgentIdentity: MessageTypeDefinition
+      AgentLaunchParams: MessageTypeDefinition
+      AgentLaunchResult: MessageTypeDefinition
+      AgentOperation: MessageTypeDefinition
+      AgentRegistrationInfo: MessageTypeDefinition
+      AgentResponse: MessageTypeDefinition
+      AuditEntry: MessageTypeDefinition
+      AuditQuery: MessageTypeDefinition
+      AuditQueryResponse: MessageTypeDefinition
+      AuthorityGrantBatchExchangeRequest: MessageTypeDefinition
+      AuthorityGrantDeriveForTargetRequest: MessageTypeDefinition
+      AuthorityGrantDeriveRequest: MessageTypeDefinition
+      AuthorityGrantExchangeRequest: MessageTypeDefinition
+      AuthorityGrantInfo: MessageTypeDefinition
+      AuthorityGrantListRequest: MessageTypeDefinition
+      AuthorityGrantOperation: MessageTypeDefinition
+      AuthorityGrantResponse: MessageTypeDefinition
+      AuthorityGrantRevocation: MessageTypeDefinition
+      AuthorityIdentity: MessageTypeDefinition
+      AuthoritySpan: MessageTypeDefinition
+      AuthorizationContext: MessageTypeDefinition
+      BridgeIdentity: MessageTypeDefinition
+      CheckpointOperation: MessageTypeDefinition
+      CheckpointResponse: MessageTypeDefinition
+      ConfigSnapshot: MessageTypeDefinition
+      ConnectionAck: MessageTypeDefinition
+      ConnectionFilter: MessageTypeDefinition
+      ConnectionInfo: MessageTypeDefinition
+      ConnectionStatusRequest: MessageTypeDefinition
+      ConnectionStatusResponse: MessageTypeDefinition
+      CreateTaskRequest: MessageTypeDefinition
+      CreateTaskResponse: MessageTypeDefinition
+      DownstreamMessage: MessageTypeDefinition
+      ErrorResponse: MessageTypeDefinition
+      FlowEdge: MessageTypeDefinition
+      FlowNode: MessageTypeDefinition
+      GatewayInfo: MessageTypeDefinition
+      GatewayStats: MessageTypeDefinition
+      HealthCheck: MessageTypeDefinition
+      HealthCheckStatus: EnumTypeDefinition
+      HealthInfo: MessageTypeDefinition
+      HealthStatus: EnumTypeDefinition
+      IncomingMessage: MessageTypeDefinition
+      InitConnection: MessageTypeDefinition
+      KVOperation: MessageTypeDefinition
+      KVResponse: MessageTypeDefinition
+      MessageEnvelope: MessageTypeDefinition
+      MessageFlowInfo: MessageTypeDefinition
+      MessageType: EnumTypeDefinition
+      Metric: MessageTypeDefinition
+      MetricEntry: MessageTypeDefinition
+      MetricsBridgeIdentity: MessageTypeDefinition
+      OrchestratorIdentity: MessageTypeDefinition
+      OrchestratorInfo: MessageTypeDefinition
+      PrincipalRef: MessageTypeDefinition
+      PrincipalType: EnumTypeDefinition
+      ProgressKind: EnumTypeDefinition
+      ProgressReport: MessageTypeDefinition
+      ProgressStep: MessageTypeDefinition
+      ProgressUpdate: MessageTypeDefinition
+      ProxyError: MessageTypeDefinition
+      ProxyHttpBodyChunk: MessageTypeDefinition
+      ProxyHttpRequest: MessageTypeDefinition
+      ProxyHttpResponse: MessageTypeDefinition
+      ResolveAuthorityRequest: MessageTypeDefinition
+      ResolveAuthorityResponse: MessageTypeDefinition
+      ResolvedAuthority: MessageTypeDefinition
+      ResolvedAuthorityInfo: MessageTypeDefinition
+      SendMessage: MessageTypeDefinition
+      ServiceIdentity: MessageTypeDefinition
+      SessionOperation: MessageTypeDefinition
+      SessionOperationResponse: MessageTypeDefinition
+      Signal: MessageTypeDefinition
+      SubmitAuditEventRequest: MessageTypeDefinition
+      SubmitAuditEventResponse: MessageTypeDefinition
+      SwitchWorkspace: MessageTypeDefinition
+      TaskAssignment: MessageTypeDefinition
+      TaskAssignmentMode: EnumTypeDefinition
+      TaskClass: EnumTypeDefinition
+      TaskFilter: MessageTypeDefinition
+      TaskIdentity: MessageTypeDefinition
+      TaskInfo: MessageTypeDefinition
+      TaskOperation: MessageTypeDefinition
+      TaskOperationResponse: MessageTypeDefinition
+      TaskQuery: MessageTypeDefinition
+      TaskQueryResponse: MessageTypeDefinition
+      TaskStatus: EnumTypeDefinition
+      TokenCreateRequest: MessageTypeDefinition
+      TokenFilter: MessageTypeDefinition
+      TokenInfo: MessageTypeDefinition
+      TokenOperation: MessageTypeDefinition
+      TokenResponse: MessageTypeDefinition
+      TunnelAck: MessageTypeDefinition
+      TunnelClose: MessageTypeDefinition
+      TunnelData: MessageTypeDefinition
+      TunnelOpen: MessageTypeDefinition
+      UpstreamMessage: MessageTypeDefinition
+      UserIdentity: MessageTypeDefinition
+      WorkflowEngineIdentity: MessageTypeDefinition
+      WorkflowOperation: MessageTypeDefinition
+      WorkflowResponse: MessageTypeDefinition
+      WorkspaceFilter: MessageTypeDefinition
+      WorkspaceInfo: MessageTypeDefinition
+      WorkspaceOperation: MessageTypeDefinition
+      WorkspaceResponse: MessageTypeDefinition
+    }
+  }
+}
+

@@ -1,0 +1,97 @@
+// Original file: aether.proto
+
+import type { InitConnection as _aether_v1_InitConnection, InitConnection__Output as _aether_v1_InitConnection__Output } from '../../aether/v1/InitConnection';
+import type { SendMessage as _aether_v1_SendMessage, SendMessage__Output as _aether_v1_SendMessage__Output } from '../../aether/v1/SendMessage';
+import type { SwitchWorkspace as _aether_v1_SwitchWorkspace, SwitchWorkspace__Output as _aether_v1_SwitchWorkspace__Output } from '../../aether/v1/SwitchWorkspace';
+import type { KVOperation as _aether_v1_KVOperation, KVOperation__Output as _aether_v1_KVOperation__Output } from '../../aether/v1/KVOperation';
+import type { CreateTaskRequest as _aether_v1_CreateTaskRequest, CreateTaskRequest__Output as _aether_v1_CreateTaskRequest__Output } from '../../aether/v1/CreateTaskRequest';
+import type { CheckpointOperation as _aether_v1_CheckpointOperation, CheckpointOperation__Output as _aether_v1_CheckpointOperation__Output } from '../../aether/v1/CheckpointOperation';
+import type { AdminQuery as _aether_v1_AdminQuery, AdminQuery__Output as _aether_v1_AdminQuery__Output } from '../../aether/v1/AdminQuery';
+import type { SessionOperation as _aether_v1_SessionOperation, SessionOperation__Output as _aether_v1_SessionOperation__Output } from '../../aether/v1/SessionOperation';
+import type { TaskQuery as _aether_v1_TaskQuery, TaskQuery__Output as _aether_v1_TaskQuery__Output } from '../../aether/v1/TaskQuery';
+import type { TaskOperation as _aether_v1_TaskOperation, TaskOperation__Output as _aether_v1_TaskOperation__Output } from '../../aether/v1/TaskOperation';
+import type { WorkspaceOperation as _aether_v1_WorkspaceOperation, WorkspaceOperation__Output as _aether_v1_WorkspaceOperation__Output } from '../../aether/v1/WorkspaceOperation';
+import type { AgentOperation as _aether_v1_AgentOperation, AgentOperation__Output as _aether_v1_AgentOperation__Output } from '../../aether/v1/AgentOperation';
+import type { ACLOperation as _aether_v1_ACLOperation, ACLOperation__Output as _aether_v1_ACLOperation__Output } from '../../aether/v1/ACLOperation';
+import type { ProgressReport as _aether_v1_ProgressReport, ProgressReport__Output as _aether_v1_ProgressReport__Output } from '../../aether/v1/ProgressReport';
+import type { WorkflowOperation as _aether_v1_WorkflowOperation, WorkflowOperation__Output as _aether_v1_WorkflowOperation__Output } from '../../aether/v1/WorkflowOperation';
+import type { WorkflowResponse as _aether_v1_WorkflowResponse, WorkflowResponse__Output as _aether_v1_WorkflowResponse__Output } from '../../aether/v1/WorkflowResponse';
+import type { TokenOperation as _aether_v1_TokenOperation, TokenOperation__Output as _aether_v1_TokenOperation__Output } from '../../aether/v1/TokenOperation';
+import type { AuditQuery as _aether_v1_AuditQuery, AuditQuery__Output as _aether_v1_AuditQuery__Output } from '../../aether/v1/AuditQuery';
+import type { AuthorityGrantOperation as _aether_v1_AuthorityGrantOperation, AuthorityGrantOperation__Output as _aether_v1_AuthorityGrantOperation__Output } from '../../aether/v1/AuthorityGrantOperation';
+import type { ProxyHttpRequest as _aether_v1_ProxyHttpRequest, ProxyHttpRequest__Output as _aether_v1_ProxyHttpRequest__Output } from '../../aether/v1/ProxyHttpRequest';
+import type { ProxyHttpBodyChunk as _aether_v1_ProxyHttpBodyChunk, ProxyHttpBodyChunk__Output as _aether_v1_ProxyHttpBodyChunk__Output } from '../../aether/v1/ProxyHttpBodyChunk';
+import type { TunnelOpen as _aether_v1_TunnelOpen, TunnelOpen__Output as _aether_v1_TunnelOpen__Output } from '../../aether/v1/TunnelOpen';
+import type { TunnelData as _aether_v1_TunnelData, TunnelData__Output as _aether_v1_TunnelData__Output } from '../../aether/v1/TunnelData';
+import type { TunnelClose as _aether_v1_TunnelClose, TunnelClose__Output as _aether_v1_TunnelClose__Output } from '../../aether/v1/TunnelClose';
+import type { ProxyHttpResponse as _aether_v1_ProxyHttpResponse, ProxyHttpResponse__Output as _aether_v1_ProxyHttpResponse__Output } from '../../aether/v1/ProxyHttpResponse';
+import type { TunnelAck as _aether_v1_TunnelAck, TunnelAck__Output as _aether_v1_TunnelAck__Output } from '../../aether/v1/TunnelAck';
+import type { ResolveAuthorityRequest as _aether_v1_ResolveAuthorityRequest, ResolveAuthorityRequest__Output as _aether_v1_ResolveAuthorityRequest__Output } from '../../aether/v1/ResolveAuthorityRequest';
+import type { ConnectionStatusRequest as _aether_v1_ConnectionStatusRequest, ConnectionStatusRequest__Output as _aether_v1_ConnectionStatusRequest__Output } from '../../aether/v1/ConnectionStatusRequest';
+import type { SubmitAuditEventRequest as _aether_v1_SubmitAuditEventRequest, SubmitAuditEventRequest__Output as _aether_v1_SubmitAuditEventRequest__Output } from '../../aether/v1/SubmitAuditEventRequest';
+
+export interface UpstreamMessage {
+  'init'?: (_aether_v1_InitConnection | null);
+  'send'?: (_aether_v1_SendMessage | null);
+  'switchWorkspace'?: (_aether_v1_SwitchWorkspace | null);
+  'kvOp'?: (_aether_v1_KVOperation | null);
+  'createTask'?: (_aether_v1_CreateTaskRequest | null);
+  'checkpointOp'?: (_aether_v1_CheckpointOperation | null);
+  'adminQuery'?: (_aether_v1_AdminQuery | null);
+  'sessionOp'?: (_aether_v1_SessionOperation | null);
+  'taskQuery'?: (_aether_v1_TaskQuery | null);
+  'taskOp'?: (_aether_v1_TaskOperation | null);
+  'workspaceOp'?: (_aether_v1_WorkspaceOperation | null);
+  'agentOp'?: (_aether_v1_AgentOperation | null);
+  'aclOp'?: (_aether_v1_ACLOperation | null);
+  'progress'?: (_aether_v1_ProgressReport | null);
+  'workflowOp'?: (_aether_v1_WorkflowOperation | null);
+  'workflowResponse'?: (_aether_v1_WorkflowResponse | null);
+  'tokenOp'?: (_aether_v1_TokenOperation | null);
+  'auditQuery'?: (_aether_v1_AuditQuery | null);
+  'authorityGrantOp'?: (_aether_v1_AuthorityGrantOperation | null);
+  'proxyHttpRequest'?: (_aether_v1_ProxyHttpRequest | null);
+  'proxyHttpBodyChunk'?: (_aether_v1_ProxyHttpBodyChunk | null);
+  'tunnelOpen'?: (_aether_v1_TunnelOpen | null);
+  'tunnelData'?: (_aether_v1_TunnelData | null);
+  'tunnelClose'?: (_aether_v1_TunnelClose | null);
+  'proxyHttpResponse'?: (_aether_v1_ProxyHttpResponse | null);
+  'tunnelAck'?: (_aether_v1_TunnelAck | null);
+  'resolveAuthorityRequest'?: (_aether_v1_ResolveAuthorityRequest | null);
+  'connectionStatusRequest'?: (_aether_v1_ConnectionStatusRequest | null);
+  'submitAuditEvent'?: (_aether_v1_SubmitAuditEventRequest | null);
+  'payload'?: "init"|"send"|"switchWorkspace"|"kvOp"|"createTask"|"checkpointOp"|"adminQuery"|"sessionOp"|"taskQuery"|"taskOp"|"workspaceOp"|"agentOp"|"aclOp"|"progress"|"workflowOp"|"workflowResponse"|"tokenOp"|"auditQuery"|"authorityGrantOp"|"proxyHttpRequest"|"proxyHttpBodyChunk"|"tunnelOpen"|"tunnelData"|"tunnelClose"|"proxyHttpResponse"|"tunnelAck"|"resolveAuthorityRequest"|"connectionStatusRequest"|"submitAuditEvent";
+}
+
+export interface UpstreamMessage__Output {
+  'init'?: (_aether_v1_InitConnection__Output | null);
+  'send'?: (_aether_v1_SendMessage__Output | null);
+  'switchWorkspace'?: (_aether_v1_SwitchWorkspace__Output | null);
+  'kvOp'?: (_aether_v1_KVOperation__Output | null);
+  'createTask'?: (_aether_v1_CreateTaskRequest__Output | null);
+  'checkpointOp'?: (_aether_v1_CheckpointOperation__Output | null);
+  'adminQuery'?: (_aether_v1_AdminQuery__Output | null);
+  'sessionOp'?: (_aether_v1_SessionOperation__Output | null);
+  'taskQuery'?: (_aether_v1_TaskQuery__Output | null);
+  'taskOp'?: (_aether_v1_TaskOperation__Output | null);
+  'workspaceOp'?: (_aether_v1_WorkspaceOperation__Output | null);
+  'agentOp'?: (_aether_v1_AgentOperation__Output | null);
+  'aclOp'?: (_aether_v1_ACLOperation__Output | null);
+  'progress'?: (_aether_v1_ProgressReport__Output | null);
+  'workflowOp'?: (_aether_v1_WorkflowOperation__Output | null);
+  'workflowResponse'?: (_aether_v1_WorkflowResponse__Output | null);
+  'tokenOp'?: (_aether_v1_TokenOperation__Output | null);
+  'auditQuery'?: (_aether_v1_AuditQuery__Output | null);
+  'authorityGrantOp'?: (_aether_v1_AuthorityGrantOperation__Output | null);
+  'proxyHttpRequest'?: (_aether_v1_ProxyHttpRequest__Output | null);
+  'proxyHttpBodyChunk'?: (_aether_v1_ProxyHttpBodyChunk__Output | null);
+  'tunnelOpen'?: (_aether_v1_TunnelOpen__Output | null);
+  'tunnelData'?: (_aether_v1_TunnelData__Output | null);
+  'tunnelClose'?: (_aether_v1_TunnelClose__Output | null);
+  'proxyHttpResponse'?: (_aether_v1_ProxyHttpResponse__Output | null);
+  'tunnelAck'?: (_aether_v1_TunnelAck__Output | null);
+  'resolveAuthorityRequest'?: (_aether_v1_ResolveAuthorityRequest__Output | null);
+  'connectionStatusRequest'?: (_aether_v1_ConnectionStatusRequest__Output | null);
+  'submitAuditEvent'?: (_aether_v1_SubmitAuditEventRequest__Output | null);
+  'payload'?: "init"|"send"|"switchWorkspace"|"kvOp"|"createTask"|"checkpointOp"|"adminQuery"|"sessionOp"|"taskQuery"|"taskOp"|"workspaceOp"|"agentOp"|"aclOp"|"progress"|"workflowOp"|"workflowResponse"|"tokenOp"|"auditQuery"|"authorityGrantOp"|"proxyHttpRequest"|"proxyHttpBodyChunk"|"tunnelOpen"|"tunnelData"|"tunnelClose"|"proxyHttpResponse"|"tunnelAck"|"resolveAuthorityRequest"|"connectionStatusRequest"|"submitAuditEvent";
+}

@@ -1,0 +1,111 @@
+# Aether Gateway Service
+# Phase 1: Kubernetes Horizontal Scaling
+# Service with session affinity for consistent client routing
+
+# -----------------------------------------------------------------------------
+# Service: Aether Gateway
+# Exposes gateway pods with ClientIP session affinity
+# Ensures reconnecting clients reach the same gateway instance when possible
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: aether-gateway
+  namespace: aether
+  labels:
+    app: aether-gateway
+    component: gateway
+  annotations:
+    # Service description
+    service.kubernetes.io/topology-aware-hints: "auto"
+spec:
+  # Service type - ClusterIP for internal access, LoadBalancer for external
+  # Use ClusterIP when fronted by Ingress, LoadBalancer for direct external access
+  type: ClusterIP
+
+  # Session affinity configuration
+  # ClientIP ensures clients from the same source IP reach the same backend pod
+  # This improves connection stability and reduces reconnection overhead
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      # Affinity timeout - how long to maintain session affinity
+      # Set to 10800 seconds (3 hours) to handle typical agent connection lifetimes
+      # After timeout, client may be routed to a different gateway instance
+      timeoutSeconds: 10800
+
+  # Selector - matches pods from the aether-gateway deployment
+  selector:
+    app: aether-gateway
+    component: gateway
+
+  # Ports exposed by the service
+  ports:
+  # gRPC port - primary bidirectional streaming API
+  - name: grpc
+    port: 50051
+    targetPort: grpc
+    protocol: TCP
+    # appProtocol: grpc  # Uncomment if using Kubernetes 1.20+
+
+  # HTTP port - health checks and HTTP/1.1 endpoints
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+
+  # Prometheus metrics port
+  - name: prometheus
+    port: 9090
+    targetPort: prometheus
+    protocol: TCP
+
+  # Traffic policy
+  # Prefer local endpoints to reduce cross-node traffic
+  # Falls back to other nodes if local endpoint unavailable
+  internalTrafficPolicy: Local
+  externalTrafficPolicy: Local
+
+---
+# -----------------------------------------------------------------------------
+# Headless Service: Aether Gateway Discovery
+# Optional headless service for direct pod-to-pod discovery
+# Useful for debugging and advanced routing scenarios
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: aether-gateway-headless
+  namespace: aether
+  labels:
+    app: aether-gateway
+    component: gateway
+    service-type: headless
+spec:
+  # Headless service - no ClusterIP, returns pod IPs directly
+  clusterIP: None
+
+  # Selector - matches pods from the aether-gateway deployment
+  selector:
+    app: aether-gateway
+    component: gateway
+
+  # Ports - same as main service
+  ports:
+  - name: grpc
+    port: 50051
+    targetPort: grpc
+    protocol: TCP
+
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+
+  - name: prometheus
+    port: 9090
+    targetPort: prometheus
+    protocol: TCP
+
+  # Publish pod IPs for each ready endpoint
+  publishNotReadyAddresses: false

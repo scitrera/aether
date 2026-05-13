@@ -1,0 +1,10 @@
+.git
+.venv
+.slop
+.claude
+.omc
+refs/
+sdk/
+!sdk/go/
+*.md
+!server/README.md

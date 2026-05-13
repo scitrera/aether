@@ -1,0 +1,234 @@
+# Aether Cert-Manager Configuration
+# Phase 2: mTLS Security & Identity
+# Kubernetes manifests for certificate management
+
+# -----------------------------------------------------------------------------
+# ClusterIssuer: CA Issuer for Aether certificates
+# This issuer uses a self-signed CA certificate to sign all Aether certificates
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: aether-ca-issuer
+  labels:
+    app: aether
+    component: cert-manager
+spec:
+  ca:
+    secretName: aether-ca-key-pair
+
+---
+# -----------------------------------------------------------------------------
+# Certificate: Aether CA Certificate
+# This is the root CA that signs all other certificates
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: aether-ca-cert
+  namespace: cert-manager
+  labels:
+    app: aether
+    component: cert-manager
+spec:
+  secretName: aether-ca-key-pair
+  issuerRef:
+    name: aether-ca-issuer
+    kind: ClusterIssuer
+  commonName: "Aether Development CA"
+  organization:
+    - "Aether"
+  isCA: true
+  duration: 87600h  # 10 years
+  renewBefore: 720h  # 30 days
+
+---
+# -----------------------------------------------------------------------------
+# Certificate: Gateway Server Certificate
+# This certificate is used by the Aether gateway for mTLS
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: aether-gateway-cert
+  namespace: aether
+  labels:
+    app: aether-gateway
+    component: tls
+spec:
+  secretName: aether-gateway-tls
+  issuerRef:
+    name: aether-ca-issuer
+    kind: ClusterIssuer
+  commonName: aether-gateway
+  dnsNames:
+    - aether-gateway
+    - aether-gateway.aether
+    - aether-gateway.aether.svc
+    - aether-gateway.aether.svc.cluster.local
+  ipAddresses:
+    - 127.0.0.1
+  duration: 2160h  # 90 days
+  renewBefore: 720h  # 30 days
+  usages:
+    - server auth
+    - client auth
+  privateKey:
+    algorithm: RSA
+    size: 2048
+
+---
+# -----------------------------------------------------------------------------
+# Certificate: Agent Client Certificate (Production Python Worker)
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: agent-python-worker-prod-1
+  namespace: aether
+  labels:
+    app: aether-agent
+    component: tls
+spec:
+  secretName: agent-python-worker-prod-1-tls
+  issuerRef:
+    name: aether-ca-issuer
+    kind: ClusterIssuer
+  commonName: ag.production.python-worker.instance-1
+  duration: 2160h  # 90 days
+  renewBefore: 720h  # 30 days
+  usages:
+    - client auth
+  privateKey:
+    algorithm: RSA
+    size: 2048
+
+---
+# -----------------------------------------------------------------------------
+# Certificate: Agent Client Certificate (Staging Python Worker)
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: agent-python-worker-staging-1
+  namespace: aether
+  labels:
+    app: aether-agent
+    component: tls
+spec:
+  secretName: agent-python-worker-staging-1-tls
+  issuerRef:
+    name: aether-ca-issuer
+    kind: ClusterIssuer
+  commonName: ag.staging.python-worker.instance-1
+  duration: 2160h  # 90 days
+  renewBefore: 720h  # 30 days
+  usages:
+    - client auth
+  privateKey:
+    algorithm: RSA
+    size: 2048
+
+---
+# -----------------------------------------------------------------------------
+# Certificate: Unique Task Certificate (Batch Job)
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: task-batch-job-001
+  namespace: aether
+  labels:
+    app: aether-task
+    component: tls
+spec:
+  secretName: task-batch-job-001-tls
+  issuerRef:
+    name: aether-ca-issuer
+    kind: ClusterIssuer
+  commonName: tu.default.batch-job.job-001
+  duration: 720h  # 30 days
+  renewBefore: 168h  # 7 days
+  usages:
+    - client auth
+  privateKey:
+    algorithm: RSA
+    size: 2048
+
+---
+# -----------------------------------------------------------------------------
+# Certificate: User Client Certificate (Alice)
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: user-alice-window-1
+  namespace: aether
+  labels:
+    app: aether-user
+    component: tls
+spec:
+  secretName: user-alice-window-1-tls
+  issuerRef:
+    name: aether-ca-issuer
+    kind: ClusterIssuer
+  commonName: us.alice.window-1
+  duration: 2160h  # 90 days
+  renewBefore: 720h  # 30 days
+  usages:
+    - client auth
+  privateKey:
+    algorithm: RSA
+    size: 2048
+
+---
+# -----------------------------------------------------------------------------
+# Certificate: Workflow Engine Certificate
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: workflow-engine-cert
+  namespace: aether
+  labels:
+    app: aether-workflow-engine
+    component: tls
+spec:
+  secretName: workflow-engine-tls
+  issuerRef:
+    name: aether-ca-issuer
+    kind: ClusterIssuer
+  commonName: wf
+  duration: 2160h  # 90 days
+  renewBefore: 720h  # 30 days
+  usages:
+    - client auth
+  privateKey:
+    algorithm: RSA
+    size: 2048
+
+---
+# -----------------------------------------------------------------------------
+# Certificate: Orchestrator Certificate
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: orchestrator-agent-cert
+  namespace: aether
+  labels:
+    app: aether-orchestrator
+    component: tls
+spec:
+  secretName: orchestrator-agent-tls
+  issuerRef:
+    name: aether-ca-issuer
+    kind: ClusterIssuer
+  commonName: or.agent-orchestrator
+  duration: 2160h  # 90 days
+  renewBefore: 720h  # 30 days
+  usages:
+    - client auth
+  privateKey:
+    algorithm: RSA
+    size: 2048

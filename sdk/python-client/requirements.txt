@@ -1,0 +1,14 @@
+# Core runtime dependencies
+grpcio>=1.76.0
+protobuf>=6.33.2
+
+# Development dependencies (also specified in pyproject.toml under the "dev" extra)
+# For production installs, use: pip install scitrera-aether-client
+# For development installs, use: pip install -e .[dev]
+grpcio-tools>=1.76.0
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+mypy>=1.8.0
+types-protobuf>=4.24.0
+grpc-stubs>=1.53.0
+build>=1.0.0

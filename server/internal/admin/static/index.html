@@ -1,0 +1,2296 @@
+<!DOCTYPE html>
+<html lang="en" x-data="app" x-init="init()" :class="darkMode ? 'dark' : ''">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aether Gateway Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+        }
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.js"></script>
+    <link href="https://unpkg.com/vis-network@9.1.2/dist/dist/vis-network.min.css" rel="stylesheet" type="text/css" />
+    <style>
+        :root {
+            --color-bg-primary: #f3f4f6;
+            --color-bg-secondary: #ffffff;
+            --color-bg-sidebar: #1f2937;
+            --color-text-primary: #111827;
+            --color-text-secondary: #6b7280;
+            --color-border: #e5e7eb;
+        }
+
+        .dark {
+            --color-bg-primary: #111827;
+            --color-bg-secondary: #1f2937;
+            --color-bg-sidebar: #0f1419;
+            --color-text-primary: #f9fafb;
+            --color-text-secondary: #9ca3af;
+            --color-border: #374151;
+        }
+
+        [x-cloak] { display: none !important; }
+        .sidebar-link { @apply flex items-center px-4 py-2 text-gray-300 hover:bg-gray-700 hover:text-white rounded-lg transition-colors; }
+        .sidebar-link.active { @apply bg-gray-700 text-white; }
+        .stat-card { @apply bg-white dark:bg-gray-800 rounded-lg shadow p-4; }
+        .badge { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium; }
+        .badge-green { @apply bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300; }
+        .badge-yellow { @apply bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300; }
+        .badge-red { @apply bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300; }
+        .badge-blue { @apply bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300; }
+        .badge-gray { @apply bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300; }
+        .table-row { @apply hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors; }
+        .btn { @apply inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors; }
+        .btn-primary { @apply text-white bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500; }
+        .btn-danger { @apply text-white bg-red-600 hover:bg-red-700 focus:ring-red-500; }
+        .btn-secondary { @apply text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600 focus:ring-indigo-500; }
+        #messageFlowGraph { @apply bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg; }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900">
+    <div class="min-h-screen flex">
+        <!-- Sidebar -->
+        <aside class="w-64 bg-gray-800 dark:bg-gray-950 text-white flex-shrink-0">
+            <div class="p-4">
+                <h1 class="text-xl font-bold flex items-center gap-2">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                    Aether Admin
+                </h1>
+                <p class="text-gray-400 text-sm mt-1" x-text="'v' + info.version"></p>
+            </div>
+            <nav class="mt-4 px-2 space-y-1">
+                <a href="#" @click.prevent="currentView = 'dashboard'"
+                   :class="{'active': currentView === 'dashboard'}" class="sidebar-link">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
+                    </svg>
+                    Dashboard
+                </a>
+                <a href="#" @click.prevent="currentView = 'connections'"
+                   :class="{'active': currentView === 'connections'}" class="sidebar-link">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+                    </svg>
+                    Connections
+                    <span class="ml-auto bg-indigo-600 text-xs px-2 py-0.5 rounded-full" x-text="connections.length"></span>
+                </a>
+                <a href="#" @click.prevent="currentView = 'tasks'"
+                   :class="{'active': currentView === 'tasks'}" class="sidebar-link">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+                    </svg>
+                    Tasks
+                    <span class="ml-auto bg-yellow-600 text-xs px-2 py-0.5 rounded-full" x-text="stats.pending_tasks || 0"></span>
+                </a>
+                <a href="#" @click.prevent="currentView = 'agents'"
+                   :class="{'active': currentView === 'agents'}" class="sidebar-link">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+                    </svg>
+                    Agents
+                </a>
+                <a href="#" @click.prevent="currentView = 'workspaces'"
+                   :class="{'active': currentView === 'workspaces'}" class="sidebar-link">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                    </svg>
+                    Workspaces
+                </a>
+                <a href="#" @click.prevent="currentView = 'kv'"
+                   :class="{'active': currentView === 'kv'}" class="sidebar-link">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/>
+                    </svg>
+                    KV Store
+                </a>
+                <a href="#" @click.prevent="currentView = 'messaging'"
+                   :class="{'active': currentView === 'messaging'}" class="sidebar-link">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+                    </svg>
+                    Messaging
+                </a>
+                <a href="#" @click.prevent="currentView = 'acl'"
+                   :class="{'active': currentView === 'acl'}" class="sidebar-link">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                    </svg>
+                    ACL
+                </a>
+                <a href="#" @click.prevent="currentView = 'messageflow'"
+                   :class="{'active': currentView === 'messageflow'}" class="sidebar-link">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/>
+                    </svg>
+                    Message Flow
+                </a>
+            </nav>
+
+            <!-- Health Status -->
+            <div class="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-700">
+                <div class="flex items-center justify-between text-sm">
+                    <span class="text-gray-400">Status</span>
+                    <span :class="{
+                        'text-green-400': health.status === 'healthy',
+                        'text-yellow-400': health.status === 'degraded',
+                        'text-red-400': health.status === 'unhealthy'
+                    }" x-text="health.status || 'unknown'"></span>
+                </div>
+                <div class="flex items-center justify-between text-sm mt-1">
+                    <span class="text-gray-400">Uptime</span>
+                    <span class="text-gray-300" x-text="info.uptime || '-'"></span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 overflow-auto">
+            <!-- Header -->
+            <header class="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
+                <div class="px-6 py-4 flex items-center justify-between">
+                    <h2 class="text-xl font-semibold text-gray-800 dark:text-gray-100" x-text="viewTitles[currentView]"></h2>
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                            <div class="w-2 h-2 rounded-full" :class="wsConnected ? 'bg-green-500' : 'bg-red-500'"></div>
+                            <span x-text="wsConnected ? 'Live' : 'Disconnected'"></span>
+                        </div>
+                        <label class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 cursor-pointer">
+                            <input type="checkbox" x-model="autoRefresh" @change="toggleAutoRefresh()"
+                                   class="rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500">
+                            <span>Auto-refresh (10s)</span>
+                        </label>
+                        <button @click="toggleDarkMode()" class="btn btn-secondary" title="Toggle dark mode">
+                            <svg x-show="!darkMode" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+                            </svg>
+                            <svg x-show="darkMode" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+                            </svg>
+                        </button>
+                        <button @click="refresh()" class="btn btn-secondary" :class="{'animate-spin': refreshing}">
+                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                            </svg>
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Dashboard View -->
+            <div x-show="currentView === 'dashboard'" x-cloak class="p-6">
+                <!-- Stats Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                    <div class="stat-card">
+                        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Total Connections</div>
+                        <div class="mt-1 text-3xl font-semibold text-gray-900 dark:text-gray-100" x-text="info.num_connections || 0"></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Pending Tasks</div>
+                        <div class="mt-1 text-3xl font-semibold text-yellow-600 dark:text-yellow-400" x-text="stats.pending_tasks || 0"></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Running Tasks</div>
+                        <div class="mt-1 text-3xl font-semibold text-blue-600 dark:text-blue-400" x-text="stats.running_tasks || 0"></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Failed Tasks</div>
+                        <div class="mt-1 text-3xl font-semibold text-red-600 dark:text-red-400" x-text="stats.failed_tasks || 0"></div>
+                    </div>
+                </div>
+
+                <!-- Connection Breakdown -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">Connection Types</h3>
+                        <div class="space-y-3">
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-600 dark:text-gray-400">Agents</span>
+                                <span class="font-semibold dark:text-gray-200" x-text="stats.agent_connections || 0"></span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-600 dark:text-gray-400">Tasks</span>
+                                <span class="font-semibold dark:text-gray-200" x-text="stats.task_connections || 0"></span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-600 dark:text-gray-400">Users</span>
+                                <span class="font-semibold dark:text-gray-200" x-text="stats.user_connections || 0"></span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-600 dark:text-gray-400">Orchestrators</span>
+                                <span class="font-semibold dark:text-gray-200" x-text="stats.orchestrator_connections || 0"></span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-600 dark:text-gray-400">Workflow Engine</span>
+                                <span :class="stats.workflow_engine_connected ? 'text-green-600 dark:text-green-400' : 'text-gray-400'"
+                                      x-text="stats.workflow_engine_connected ? 'Connected' : 'Not Connected'"></span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-600 dark:text-gray-400">Metrics Bridge</span>
+                                <span :class="stats.metrics_bridge_connected ? 'text-green-600 dark:text-green-400' : 'text-gray-400'"
+                                      x-text="stats.metrics_bridge_connected ? 'Connected' : 'Not Connected'"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">Health Checks</h3>
+                        <div class="space-y-3">
+                            <template x-for="(check, name) in health.checks" :key="name">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-gray-600 dark:text-gray-400 capitalize" x-text="name"></span>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-sm text-gray-400" x-text="check.latency || ''"></span>
+                                        <span :class="{
+                                            'badge-green': check.status === 'ok',
+                                            'badge-red': check.status === 'error'
+                                        }" class="badge" x-text="check.status"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Info -->
+                <div class="mt-6 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                    <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">System Information</h3>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div>
+                            <div class="text-sm text-gray-500 dark:text-gray-400">Gateway ID</div>
+                            <div class="font-mono text-sm dark:text-gray-300" x-text="info.gateway_id || '-'"></div>
+                        </div>
+                        <div>
+                            <div class="text-sm text-gray-500 dark:text-gray-400">Go Version</div>
+                            <div class="font-mono text-sm dark:text-gray-300" x-text="info.go_version || '-'"></div>
+                        </div>
+                        <div>
+                            <div class="text-sm text-gray-500 dark:text-gray-400">Goroutines</div>
+                            <div class="font-mono text-sm dark:text-gray-300" x-text="info.num_goroutines || '-'"></div>
+                        </div>
+                        <div>
+                            <div class="text-sm text-gray-500 dark:text-gray-400">Memory (MB)</div>
+                            <div class="font-mono text-sm dark:text-gray-300" x-text="(info.memory_alloc_mb || 0).toFixed(2)"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Connections View -->
+            <div x-show="currentView === 'connections'" x-cloak class="p-6">
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+                    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                        <thead class="bg-gray-50 dark:bg-gray-700">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Type</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Identity</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Workspace</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Duration</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                            <template x-for="conn in connections" :key="conn.session_id">
+                                <tr class="table-row">
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <span :class="{
+                                            'badge-blue': conn.type === 'agent',
+                                            'badge-green': conn.type === 'task',
+                                            'badge-yellow': conn.type === 'user',
+                                            'badge-gray': !['agent', 'task', 'user'].includes(conn.type)
+                                        }" class="badge" x-text="conn.type"></span>
+                                    </td>
+                                    <td class="px-6 py-4">
+                                        <div class="text-sm font-medium text-gray-900 dark:text-gray-100" x-text="conn.identity"></div>
+                                        <div class="text-xs text-gray-500 dark:text-gray-400 font-mono" x-text="conn.session_id.slice(0, 8) + '...'"></div>
+                                    </td>
+                                    <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400" x-text="conn.workspace || '-'"></td>
+                                    <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400" x-text="conn.duration || '-'"></td>
+                                    <td class="px-6 py-4">
+                                        <button @click="disconnectSession(conn.session_id)" class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 text-sm">
+                                            Disconnect
+                                        </button>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr x-show="connections.length === 0">
+                                <td colspan="5" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+                                    No active connections
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tasks View -->
+            <div x-show="currentView === 'tasks'" x-cloak class="p-6">
+                <!-- Filters -->
+                <div class="mb-4 flex gap-2">
+                    <button @click="taskFilter = ''" :class="taskFilter === '' ? 'btn-primary' : 'btn-secondary'" class="btn">All</button>
+                    <button @click="taskFilter = 'QUEUED'" :class="taskFilter === 'QUEUED' ? 'btn-primary' : 'btn-secondary'" class="btn">Pending</button>
+                    <button @click="taskFilter = 'RUNNING'" :class="taskFilter === 'RUNNING' ? 'btn-primary' : 'btn-secondary'" class="btn">Running</button>
+                    <button @click="taskFilter = 'COMPLETED'" :class="taskFilter === 'COMPLETED' ? 'btn-primary' : 'btn-secondary'" class="btn">Completed</button>
+                    <button @click="taskFilter = 'FAILED'" :class="taskFilter === 'FAILED' ? 'btn-primary' : 'btn-secondary'" class="btn">Failed</button>
+                </div>
+
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+                    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                        <thead class="bg-gray-50 dark:bg-gray-700">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Task ID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Type</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Target</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Attempts</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                            <template x-for="task in filteredTasks" :key="task.task_id">
+                                <tr class="table-row">
+                                    <td class="px-6 py-4">
+                                        <div class="text-sm font-mono text-gray-900 dark:text-gray-100" x-text="task.task_id.slice(0, 8) + '...'"></div>
+                                        <div class="text-xs text-gray-500 dark:text-gray-400" x-text="formatDate(task.created_at)"></div>
+                                    </td>
+                                    <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400" x-text="task.task_type || 'message'"></td>
+                                    <td class="px-6 py-4">
+                                        <span :class="{
+                                            'badge-yellow': task.status === 'QUEUED',
+                                            'badge-blue': task.status === 'RUNNING' || task.status === 'DISPATCHED',
+                                            'badge-green': task.status === 'COMPLETED',
+                                            'badge-red': task.status === 'FAILED'
+                                        }" class="badge" x-text="task.status"></span>
+                                    </td>
+                                    <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400 font-mono" x-text="task.target_topic || '-'"></td>
+                                    <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400" x-text="task.attempt + '/' + task.max_attempts"></td>
+                                    <td class="px-6 py-4 space-x-2">
+                                        <button x-show="task.status === 'FAILED'" @click="retryTask(task.task_id)"
+                                                class="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 text-sm">Retry</button>
+                                        <button x-show="task.status === 'QUEUED' || task.status === 'RUNNING'"
+                                                @click="cancelTask(task.task_id)"
+                                                class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 text-sm">Cancel</button>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr x-show="filteredTasks.length === 0">
+                                <td colspan="6" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+                                    No tasks found
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Agents View -->
+            <div x-show="currentView === 'agents'" x-cloak class="p-6">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- Agent Registrations -->
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+                        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Agent Registrations</h3>
+                            <button @click="showAgentForm = true; editingAgent = null; agentForm = {implementation: '', profile: '', description: '', launch_params: '{}'}"
+                                    class="btn btn-primary text-sm">
+                                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                                </svg>
+                                Add Agent
+                            </button>
+                        </div>
+                        <div class="divide-y divide-gray-200 dark:divide-gray-700">
+                            <template x-for="agent in agents" :key="agent.implementation">
+                                <div class="px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700">
+                                    <div class="flex justify-between items-start">
+                                        <div class="flex-1">
+                                            <div class="font-medium text-gray-900 dark:text-gray-100" x-text="agent.implementation"></div>
+                                            <div class="text-sm text-gray-500 dark:text-gray-400">
+                                                Profile: <span class="badge badge-blue" x-text="agent.orchestrator_profile || 'default'"></span>
+                                            </div>
+                                            <div x-show="agent.description" class="text-sm text-gray-500 dark:text-gray-400 mt-1" x-text="agent.description"></div>
+                                        </div>
+                                        <div class="flex gap-2 ml-4">
+                                            <button @click="showLaunchDialog(agent)" class="text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 text-sm font-medium">Launch</button>
+                                            <button @click="editAgent(agent)" class="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 text-sm">Edit</button>
+                                            <button @click="deleteAgent(agent.implementation)" class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 text-sm">Delete</button>
+                                        </div>
+                                    </div>
+                                    <div class="mt-2 text-xs text-gray-400 font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded overflow-auto max-h-20"
+                                         x-text="JSON.stringify(agent.launch_params, null, 2)"></div>
+                                </div>
+                            </template>
+                            <div x-show="agents.length === 0" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+                                No agents registered
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Orchestrator Profiles -->
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+                        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+                            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Orchestrator Profiles</h3>
+                            <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Available profiles and connected orchestrators</p>
+                        </div>
+                        <div class="divide-y divide-gray-200 dark:divide-gray-700">
+                            <template x-for="profile in uniqueProfiles" :key="profile">
+                                <div class="px-6 py-4">
+                                    <div class="flex items-center gap-2">
+                                        <span class="badge badge-blue font-medium" x-text="profile"></span>
+                                        <span class="text-sm text-gray-500 dark:text-gray-400" x-text="'(' + getOrchestratorsForProfile(profile).length + ' orchestrator' + (getOrchestratorsForProfile(profile).length === 1 ? '' : 's') + ')'"></span>
+                                    </div>
+                                    <div class="mt-2 pl-4 space-y-1">
+                                        <template x-for="orch in getOrchestratorsForProfile(profile)" :key="orch.orchestrator_id">
+                                            <div class="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-2">
+                                                <div class="w-2 h-2 bg-green-400 rounded-full"></div>
+                                                <span x-text="orch.orchestrator_id"></span>
+                                            </div>
+                                        </template>
+                                        <div x-show="getOrchestratorsForProfile(profile).length === 0" class="text-sm text-gray-400 italic">
+                                            No orchestrators online for this profile
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                            <div x-show="uniqueProfiles.length === 0" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+                                No orchestrators connected
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Agent Form Modal -->
+                <div x-show="showAgentForm" x-cloak
+                     class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+                     @click.self="showAgentForm = false">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg w-full max-w-lg mx-4">
+                        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                            <h3 class="font-medium dark:text-gray-100" x-text="editingAgent ? 'Edit Agent' : 'Register New Agent'"></h3>
+                            <button @click="showAgentForm = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <form @submit.prevent="saveAgent()" class="px-6 py-4 space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Implementation *</label>
+                                <input x-model="agentForm.implementation" required :disabled="editingAgent"
+                                       :class="editingAgent ? 'bg-gray-100 dark:bg-gray-700' : ''"
+                                       class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                                       placeholder="e.g., python-worker">
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Unique identifier for this agent type</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Orchestrator Profile *</label>
+                                <input x-model="agentForm.profile" required
+                                       class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                                       placeholder="e.g., docker-local">
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Profile name for orchestrator to launch this agent</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
+                                <input x-model="agentForm.description"
+                                       class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                                       placeholder="Optional description">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Launch Parameters (JSON)</label>
+                                <textarea x-model="agentForm.launch_params" rows="4"
+                                          class="w-full font-mono text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                                          placeholder='{"image": "my-agent:latest", "memory": "512Mi"}'></textarea>
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Additional parameters passed to orchestrator</p>
+                            </div>
+                            <div x-show="agentFormError" class="text-sm text-red-600 dark:text-red-400" x-text="agentFormError"></div>
+                        </form>
+                        <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+                            <button @click="showAgentForm = false" class="btn btn-secondary">Cancel</button>
+                            <button @click="saveAgent()" class="btn btn-primary" x-text="editingAgent ? 'Update' : 'Register'"></button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Launch Agent Modal -->
+                <div x-show="showLaunchForm" x-cloak
+                     class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+                     @click.self="showLaunchForm = false">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg w-full max-w-md mx-4">
+                        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                            <h3 class="font-medium dark:text-gray-100">Launch Agent</h3>
+                            <button @click="showLaunchForm = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="px-6 py-4 space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Implementation</label>
+                                <div class="text-sm font-mono bg-gray-50 dark:bg-gray-900 dark:text-gray-300 px-3 py-2 rounded border border-gray-200 dark:border-gray-600" x-text="launchForm.implementation"></div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Specifier *</label>
+                                <input x-model="launchForm.specifier"
+                                       class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                                       placeholder="default">
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Unique identifier for this agent instance</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Workspace *</label>
+                                <input x-model="launchForm.workspace"
+                                       class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                                       placeholder="default">
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Workspace for the agent to operate in</p>
+                            </div>
+                            <div x-show="launchFormError" class="text-sm text-red-600 dark:text-red-400" x-text="launchFormError"></div>
+                            <div x-show="launchFormSuccess" class="text-sm text-green-600 dark:text-green-400" x-text="launchFormSuccess"></div>
+                        </div>
+                        <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+                            <button @click="showLaunchForm = false" class="btn btn-secondary">Cancel</button>
+                            <button @click="launchAgent()" class="btn btn-primary" :disabled="launchingAgent">
+                                <template x-if="launchingAgent">
+                                    <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                    </svg>
+                                </template>
+                                Launch
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Workspaces View -->
+            <div x-show="currentView === 'workspaces'" x-cloak class="p-6">
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+                    <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Workspaces</h3>
+                        <button @click="showWorkspaceForm = true; editingWorkspace = null; workspaceForm = {name: '', tenant: '', description: '', config: '{}'}"
+                                class="btn btn-primary text-sm">
+                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                            </svg>
+                            Add Workspace
+                        </button>
+                    </div>
+                    <div class="divide-y divide-gray-200 dark:divide-gray-700">
+                        <template x-for="workspace in workspaces" :key="workspace.workspace_id">
+                            <div class="px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700">
+                                <div class="flex justify-between items-start">
+                                    <div class="flex-1">
+                                        <div class="font-medium text-gray-900 dark:text-gray-100" x-text="workspace.display_name || workspace.workspace_id"></div>
+                                        <div x-show="workspace.tenant_id" class="text-sm text-gray-500 dark:text-gray-400">
+                                            Tenant: <span class="badge badge-gray" x-text="workspace.tenant_id"></span>
+                                        </div>
+                                        <div x-show="workspace.description" class="text-sm text-gray-500 dark:text-gray-400 mt-1" x-text="workspace.description"></div>
+                                    </div>
+                                    <div class="flex gap-2 ml-4">
+                                        <button @click="editWorkspace(workspace)" class="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 text-sm">Edit</button>
+                                        <button @click="deleteWorkspace(workspace.workspace_id)" class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 text-sm">Delete</button>
+                                    </div>
+                                </div>
+                                <div x-show="workspace.metadata && Object.keys(workspace.metadata).length > 0" class="mt-2 text-xs text-gray-400 font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded overflow-auto max-h-20"
+                                     x-text="JSON.stringify(workspace.metadata, null, 2)"></div>
+                            </div>
+                        </template>
+                        <div x-show="workspaces.length === 0" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+                            No workspaces configured
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Workspace Form Modal -->
+                <div x-show="showWorkspaceForm" x-cloak
+                     class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+                     @click.self="showWorkspaceForm = false">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg w-full max-w-lg mx-4">
+                        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                            <h3 class="font-medium dark:text-gray-100" x-text="editingWorkspace ? 'Edit Workspace' : 'Create New Workspace'"></h3>
+                            <button @click="showWorkspaceForm = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <form @submit.prevent="saveWorkspace()" class="px-6 py-4 space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Workspace Name *</label>
+                                <input x-model="workspaceForm.name" required :disabled="editingWorkspace"
+                                       :class="editingWorkspace ? 'bg-gray-100 dark:bg-gray-700' : ''"
+                                       class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                                       placeholder="e.g., production">
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Unique identifier for this workspace</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tenant</label>
+                                <input x-model="workspaceForm.tenant"
+                                       class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                                       placeholder="e.g., acme-corp">
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Optional tenant/organization identifier</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
+                                <input x-model="workspaceForm.description"
+                                       class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                                       placeholder="Optional description">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Configuration (JSON)</label>
+                                <textarea x-model="workspaceForm.config" rows="4"
+                                          class="w-full font-mono text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                                          placeholder='{"feature_flags": {}, "limits": {}}'></textarea>
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Additional workspace configuration as JSON</p>
+                            </div>
+                            <div x-show="workspaceFormError" class="text-sm text-red-600 dark:text-red-400" x-text="workspaceFormError"></div>
+                        </form>
+                        <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+                            <button @click="showWorkspaceForm = false" class="btn btn-secondary">Cancel</button>
+                            <button @click="saveWorkspace()" class="btn btn-primary" x-text="editingWorkspace ? 'Update' : 'Create'"></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- KV Store View -->
+            <div x-show="currentView === 'kv'" x-cloak class="p-6">
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+                    <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Key-Value Store</h3>
+                        <div class="flex items-center gap-2">
+                            <select x-model="kvScope" @change="loadKVKeys()" class="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                                <option value="global">Global</option>
+                                <option value="workspace">Workspace</option>
+                                <option value="user">User</option>
+                            </select>
+                            <input x-model="kvPrefix" @input.debounce.300ms="loadKVKeys()"
+                                   placeholder="Filter prefix..."
+                                   class="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm px-3 py-1.5">
+                        </div>
+                    </div>
+                    <div class="divide-y divide-gray-200 dark:divide-gray-700">
+                        <template x-for="key in kvKeys" :key="key">
+                            <div class="px-6 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                                 @click="loadKVValue(key)">
+                                <span class="font-mono text-sm dark:text-gray-300" x-text="key"></span>
+                                <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                </svg>
+                            </div>
+                        </template>
+                        <div x-show="kvKeys.length === 0" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+                            No keys found
+                        </div>
+                    </div>
+                </div>
+
+                <!-- KV Value Modal -->
+                <div x-show="selectedKV" x-cloak
+                     class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+                     @click.self="selectedKV = null; cancelEditKV()">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg w-full max-w-lg mx-4">
+                        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                            <h3 class="font-medium dark:text-gray-100" x-text="selectedKV?.key"></h3>
+                            <button @click="selectedKV = null; cancelEditKV()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="px-6 py-4">
+                            <!-- View Mode -->
+                            <div x-show="!editingKV">
+                                <pre class="bg-gray-50 dark:bg-gray-900 dark:text-gray-300 p-4 rounded text-sm font-mono overflow-auto max-h-64" x-text="selectedKV?.value"></pre>
+                            </div>
+                            <!-- Edit Mode -->
+                            <div x-show="editingKV">
+                                <textarea x-model="kvEditValue"
+                                          class="w-full h-64 bg-gray-50 dark:bg-gray-900 dark:text-gray-300 p-4 rounded text-sm font-mono border border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500"
+                                          placeholder="Enter value..."></textarea>
+                            </div>
+                            <!-- Success/Error Messages -->
+                            <div x-show="kvEditSuccess" class="mt-2 text-sm text-green-600 dark:text-green-400" x-text="kvEditSuccess"></div>
+                            <div x-show="kvEditError" class="mt-2 text-sm text-red-600 dark:text-red-400" x-text="kvEditError"></div>
+                        </div>
+                        <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+                            <!-- View Mode Buttons -->
+                            <template x-if="!editingKV">
+                                <div class="flex gap-2">
+                                    <button @click="startEditKV()" class="btn btn-primary">Edit</button>
+                                    <button @click="deleteKVKey(selectedKV?.key)" class="btn btn-danger">Delete</button>
+                                    <button @click="selectedKV = null" class="btn btn-secondary">Close</button>
+                                </div>
+                            </template>
+                            <!-- Edit Mode Buttons -->
+                            <template x-if="editingKV">
+                                <div class="flex gap-2">
+                                    <button @click="saveKVValue()" class="btn btn-primary">Save</button>
+                                    <button @click="cancelEditKV()" class="btn btn-secondary">Cancel</button>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Messaging View -->
+            <div x-show="currentView === 'messaging'" x-cloak class="p-6">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                    <!-- Send Message Panel -->
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+                        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+                            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Send Message</h3>
+                        </div>
+                        <div class="p-6 space-y-4">
+                            <!-- Target Selection -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target Topic *</label>
+                                <div class="flex gap-2">
+                                    <select x-model="msgTargetPreset" @change="applyTargetPreset()"
+                                            class="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                                        <option value="">Custom topic...</option>
+                                        <optgroup label="Connected Agents">
+                                            <template x-for="conn in connections.filter(c => c.type === 'agent')" :key="conn.session_id">
+                                                <option :value="conn.identity" x-text="conn.identity"></option>
+                                            </template>
+                                        </optgroup>
+                                        <optgroup label="Connected Tasks">
+                                            <template x-for="conn in connections.filter(c => c.type === 'task')" :key="conn.session_id">
+                                                <option :value="conn.identity" x-text="conn.identity"></option>
+                                            </template>
+                                        </optgroup>
+                                        <optgroup label="Connected Users">
+                                            <template x-for="conn in connections.filter(c => c.type === 'user')" :key="conn.session_id">
+                                                <option :value="conn.identity" x-text="conn.identity"></option>
+                                            </template>
+                                        </optgroup>
+                                    </select>
+                                    <input x-model="msgTarget" placeholder="ag.workspace.impl.spec"
+                                           class="flex-1 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm font-mono">
+                                </div>
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Select from active connections or enter custom topic</p>
+                            </div>
+
+                            <!-- Message Type -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Message Type</label>
+                                <select x-model="msgType" class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                                    <option value="CHAT">CHAT</option>
+                                    <option value="CONTROL">CONTROL</option>
+                                    <option value="TOOL_CALL">TOOL_CALL</option>
+                                    <option value="EVENT">EVENT</option>
+                                    <option value="METRIC">METRIC</option>
+                                </select>
+                            </div>
+
+                            <!-- Payload -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Payload</label>
+                                <textarea x-model="msgPayload" rows="6"
+                                          class="w-full font-mono text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                                          placeholder='{"action": "ping"}'></textarea>
+                                <div class="mt-1 flex justify-between items-center">
+                                    <span class="text-xs text-gray-500 dark:text-gray-400">JSON or plain text</span>
+                                    <button @click="formatPayloadJSON()" class="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300">
+                                        Format JSON
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Send Button -->
+                            <div class="flex justify-between items-center">
+                                <span x-show="msgSendStatus" class="text-sm"
+                                      :class="msgSendStatus === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'"
+                                      x-text="msgSendMessage"></span>
+                                <button @click="sendMessage()" class="btn btn-primary" :disabled="!msgTarget || msgSending">
+                                    <template x-if="msgSending">
+                                        <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                        </svg>
+                                    </template>
+                                    Send Message
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Topic Monitor Panel -->
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+                        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Topic Monitor</h3>
+                            <span class="text-sm text-gray-500 dark:text-gray-400" x-text="monitoredTopics.length + ' topic(s) monitored'"></span>
+                        </div>
+                        <div class="p-6 space-y-4">
+                            <!-- Add Monitor -->
+                            <div class="flex gap-2">
+                                <select x-model="monitorPreset" @change="applyMonitorPreset()"
+                                        class="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                                    <option value="">Select connection...</option>
+                                    <template x-for="conn in connections" :key="conn.session_id">
+                                        <option :value="conn.identity" x-text="conn.type + ': ' + conn.identity"></option>
+                                    </template>
+                                </select>
+                                <input x-model="monitorTopic" placeholder="Topic to monitor"
+                                       class="flex-1 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm font-mono">
+                                <button @click="subscribeMonitor()" class="btn btn-primary" :disabled="!monitorTopic">
+                                    Monitor
+                                </button>
+                            </div>
+
+                            <!-- Active Monitors -->
+                            <div class="space-y-2">
+                                <template x-for="topic in monitoredTopics" :key="topic">
+                                    <div class="flex items-center justify-between bg-gray-50 dark:bg-gray-900 px-3 py-2 rounded">
+                                        <span class="font-mono text-sm dark:text-gray-300" x-text="topic"></span>
+                                        <button @click="unsubscribeMonitor(topic)" class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 text-sm">
+                                            Stop
+                                        </button>
+                                    </div>
+                                </template>
+                                <div x-show="monitoredTopics.length === 0" class="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                                    No topics being monitored
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Message Stream Panel -->
+                <div class="mt-6 bg-white dark:bg-gray-800 rounded-lg shadow">
+                    <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Live Message Stream</h3>
+                        <div class="flex items-center gap-4">
+                            <label class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                                <input type="checkbox" x-model="msgAutoScroll"
+                                       class="rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500">
+                                Auto-scroll
+                            </label>
+                            <select x-model="msgFilterTopic" class="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                                <option value="">All topics</option>
+                                <template x-for="topic in monitoredTopics" :key="topic">
+                                    <option :value="topic" x-text="topic"></option>
+                                </template>
+                            </select>
+                            <button @click="clearMessages()" class="btn btn-secondary text-sm">Clear</button>
+                        </div>
+                    </div>
+                    <div class="divide-y divide-gray-200 dark:divide-gray-700 max-h-96 overflow-y-auto" x-ref="messageStream">
+                        <template x-for="msg in filteredMonitoredMessages" :key="msg.id">
+                            <div class="px-6 py-3 hover:bg-gray-50 dark:hover:bg-gray-700">
+                                <div class="flex justify-between items-start mb-1">
+                                    <div class="flex items-center gap-2">
+                                        <span class="badge badge-blue font-mono text-xs" x-text="msg.topic"></span>
+                                        <span x-show="msg.message_type" class="badge badge-gray text-xs" x-text="msg.message_type"></span>
+                                    </div>
+                                    <span class="text-xs text-gray-400" x-text="formatTime(msg.timestamp)"></span>
+                                </div>
+                                <div class="mt-2">
+                                    <button @click="msg.expanded = !msg.expanded"
+                                            class="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 mb-1">
+                                        <span x-text="msg.expanded ? 'Collapse' : 'Expand'"></span>
+                                    </button>
+                                    <pre x-show="!msg.expanded"
+                                         class="bg-gray-50 dark:bg-gray-900 dark:text-gray-300 p-2 rounded text-xs font-mono overflow-hidden whitespace-nowrap text-ellipsis max-w-full"
+                                         x-text="truncatePayload(msg.payload)"></pre>
+                                    <pre x-show="msg.expanded"
+                                         class="bg-gray-50 dark:bg-gray-900 dark:text-gray-300 p-2 rounded text-xs font-mono overflow-auto max-h-64 whitespace-pre-wrap"
+                                         x-text="formatPayload(msg)"></pre>
+                                </div>
+                            </div>
+                        </template>
+                        <div x-show="monitoredMessages.length === 0" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+                            <template x-if="monitoredTopics.length === 0">
+                                <span>Add a topic monitor to see live messages</span>
+                            </template>
+                            <template x-if="monitoredTopics.length > 0">
+                                <span>Waiting for messages...</span>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ACL View -->
+            <div x-show="currentView === 'acl'" x-cloak class="p-6" x-init="currentView === 'acl' && (loadACLRules(), loadACLAuditLogs())">
+                <!-- Tab Navigation -->
+                <div class="mb-6 border-b border-gray-200 dark:border-gray-700">
+                    <nav class="-mb-px flex space-x-8">
+                        <button @click="aclActiveTab = 'rules'; loadACLRules()"
+                                :class="aclActiveTab === 'rules' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300'"
+                                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
+                            ACL Rules
+                        </button>
+                        <button @click="aclActiveTab = 'audit'; loadACLAuditLogs()"
+                                :class="aclActiveTab === 'audit' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300'"
+                                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
+                            Audit Log
+                        </button>
+                    </nav>
+                </div>
+
+                <!-- ACL Rules Tab -->
+                <div x-show="aclActiveTab === 'rules'" class="space-y-6">
+                    <!-- Filters and Actions -->
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+                        <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Principal Type</label>
+                                <select x-model="aclFilter.principal_type" @change="loadACLRules()"
+                                        class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                                    <option value="">All</option>
+                                    <option value="agent">Agent</option>
+                                    <option value="task">Task</option>
+                                    <option value="user">User</option>
+                                    <option value="orchestrator">Orchestrator</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Principal ID</label>
+                                <input x-model="aclFilter.principal_id" @change="loadACLRules()" type="text" placeholder="Filter by ID"
+                                       class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Resource Type</label>
+                                <select x-model="aclFilter.resource_type" @change="loadACLRules()"
+                                        class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                                    <option value="">All</option>
+                                    <option value="workspace">Workspace</option>
+                                    <option value="kv">KV</option>
+                                    <option value="topic">Topic</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Resource ID</label>
+                                <input x-model="aclFilter.resource_id" @change="loadACLRules()" type="text" placeholder="Filter by ID"
+                                       class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                            </div>
+                            <div class="flex items-end">
+                                <button @click="showNewACLRuleForm()" class="btn btn-primary w-full">
+                                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                                    </svg>
+                                    Grant Access
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ACL Rules Table -->
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+                        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+                            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">
+                                ACL Rules (<span x-text="aclRules.length"></span>)
+                            </h3>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                                <thead class="bg-gray-50 dark:bg-gray-900">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Principal</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Resource</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Access Level</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Granted By</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Granted At</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Expires</th>
+                                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                                    <template x-for="rule in aclRules" :key="rule.rule_id">
+                                        <tr class="table-row">
+                                            <td class="px-6 py-4 whitespace-nowrap">
+                                                <div class="text-sm font-medium text-gray-900 dark:text-gray-100" x-text="rule.principal_type + ':' + rule.principal_id"></div>
+                                            </td>
+                                            <td class="px-6 py-4 whitespace-nowrap">
+                                                <div class="text-sm text-gray-900 dark:text-gray-100" x-text="rule.resource_type + ':' + rule.resource_id"></div>
+                                            </td>
+                                            <td class="px-6 py-4 whitespace-nowrap">
+                                                <span class="badge badge-blue" x-text="rule.access_level + (rule.access_level_name ? ' (' + rule.access_level_name + ')' : '')"></span>
+                                            </td>
+                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400" x-text="rule.granted_by"></td>
+                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400" x-text="formatDate(rule.granted_at)"></td>
+                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400" x-text="rule.expires_at ? formatDate(rule.expires_at) : 'Never'"></td>
+                                            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                                <button @click="revokeACLAccess(rule)" class="text-red-600 dark:text-red-400 hover:text-red-900 dark:hover:text-red-300">Revoke</button>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                            <div x-show="aclRules.length === 0" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+                                No ACL rules found
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Audit Log Tab -->
+                <div x-show="aclActiveTab === 'audit'" class="space-y-6">
+                    <!-- Audit Filters -->
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+                        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Decision</label>
+                                <select x-model="aclAuditFilter.decision" @change="loadACLAuditLogs()"
+                                        class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                                    <option value="">All</option>
+                                    <option value="ALLOW">ALLOW</option>
+                                    <option value="DENY">DENY</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Principal Type</label>
+                                <select x-model="aclAuditFilter.principal_type" @change="loadACLAuditLogs()"
+                                        class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                                    <option value="">All</option>
+                                    <option value="agent">Agent</option>
+                                    <option value="task">Task</option>
+                                    <option value="user">User</option>
+                                    <option value="orchestrator">Orchestrator</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Principal ID</label>
+                                <input x-model="aclAuditFilter.principal_id" @change="loadACLAuditLogs()" type="text" placeholder="Filter by ID"
+                                       class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Workspace</label>
+                                <input x-model="aclAuditFilter.workspace" @change="loadACLAuditLogs()" type="text" placeholder="Filter by workspace"
+                                       class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Audit Log Table -->
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+                        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+                            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">
+                                Audit Log (<span x-text="aclAuditLogs.length"></span> recent entries)
+                            </h3>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                                <thead class="bg-gray-50 dark:bg-gray-900">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Timestamp</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Decision</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Principal</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Resource</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Operation</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Access Level</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Workspace</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                                    <template x-for="entry in aclAuditLogs" :key="entry.audit_id">
+                                        <tr class="table-row">
+                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400" x-text="formatDate(entry.timestamp)"></td>
+                                            <td class="px-6 py-4 whitespace-nowrap">
+                                                <span :class="entry.decision === 'ALLOW' ? 'badge-green' : 'badge-red'" class="badge" x-text="entry.decision"></span>
+                                            </td>
+                                            <td class="px-6 py-4 whitespace-nowrap">
+                                                <div class="text-sm text-gray-900 dark:text-gray-100" x-text="entry.principal_type + ':' + entry.principal_id"></div>
+                                            </td>
+                                            <td class="px-6 py-4 whitespace-nowrap">
+                                                <div class="text-sm text-gray-900 dark:text-gray-100" x-text="entry.resource_type + ':' + entry.resource_id"></div>
+                                            </td>
+                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400" x-text="entry.operation"></td>
+                                            <td class="px-6 py-4 whitespace-nowrap">
+                                                <span class="badge badge-gray" x-text="entry.access_level"></span>
+                                            </td>
+                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400" x-text="entry.workspace || '-'"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                            <div x-show="aclAuditLogs.length === 0" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+                                No audit log entries found
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Grant Access Modal -->
+                <div x-show="showAclForm" x-cloak class="fixed inset-0 bg-gray-600 bg-opacity-50 dark:bg-opacity-75 overflow-y-auto h-full w-full z-50 flex items-center justify-center" @click.self="showAclForm = false">
+                    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full mx-4" @click.stop>
+                        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Grant ACL Access</h3>
+                            <button @click="showAclForm = false" class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="p-6 space-y-4">
+                            <div x-show="aclFormError" class="bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 text-red-800 dark:text-red-200 rounded px-4 py-3 text-sm" x-text="aclFormError"></div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Principal Type *</label>
+                                    <select x-model="aclForm.principal_type" class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md">
+                                        <option value="agent">Agent</option>
+                                        <option value="task">Task</option>
+                                        <option value="user">User</option>
+                                        <option value="orchestrator">Orchestrator</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Principal ID *</label>
+                                    <input x-model="aclForm.principal_id" type="text" placeholder="e.g., my-agent"
+                                           class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md">
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Resource Type *</label>
+                                    <select x-model="aclForm.resource_type" class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md">
+                                        <option value="workspace">Workspace</option>
+                                        <option value="kv">KV</option>
+                                        <option value="topic">Topic</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Resource ID *</label>
+                                    <input x-model="aclForm.resource_id" type="text" placeholder="e.g., default"
+                                           class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md">
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Access Level *</label>
+                                    <input x-model="aclForm.access_level" type="number" min="0" max="100" placeholder="10"
+                                           class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md">
+                                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">0=None, 10=Read, 20=Write, 30=Admin</p>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Granted By *</label>
+                                    <input x-model="aclForm.granted_by" type="text" placeholder="admin"
+                                           class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Reason (optional)</label>
+                                <textarea x-model="aclForm.reason" rows="2" placeholder="Optional reason for granting this access"
+                                          class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md"></textarea>
+                            </div>
+                        </div>
+                        <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+                            <button @click="showAclForm = false" class="btn btn-secondary">Cancel</button>
+                            <button @click="grantACLAccess()" class="btn btn-primary">Grant Access</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Message Flow View -->
+            <div x-show="currentView === 'messageflow'" x-cloak class="p-6" x-init="currentView === 'messageflow' && initMessageFlow()">
+                <!-- Controls -->
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 mb-6">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Workspace</label>
+                            <select x-model="messageFlowWorkspace" @change="loadMessageFlow()"
+                                    class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-md text-sm">
+                                <option value="">Select workspace...</option>
+                                <template x-for="ws in workspaces" :key="ws.name">
+                                    <option :value="ws.name" x-text="ws.name"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div class="flex items-end gap-2">
+                            <button @click="loadMessageFlow()" class="btn btn-primary">
+                                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                </svg>
+                                Refresh Graph
+                            </button>
+                            <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                                <input type="checkbox" x-model="messageFlowAutoRefresh" @change="toggleMessageFlowAutoRefresh()"
+                                       class="rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500">
+                                <span>Auto-refresh</span>
+                            </label>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Legend</label>
+                            <div class="flex gap-3 text-xs">
+                                <div class="flex items-center gap-1">
+                                    <div class="w-3 h-3 rounded-full bg-blue-500"></div>
+                                    <span class="text-gray-700 dark:text-gray-300">Agent</span>
+                                </div>
+                                <div class="flex items-center gap-1">
+                                    <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                                    <span class="text-gray-700 dark:text-gray-300">Task</span>
+                                </div>
+                                <div class="flex items-center gap-1">
+                                    <div class="w-3 h-3 rounded-full bg-purple-500"></div>
+                                    <span class="text-gray-700 dark:text-gray-300">User</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Graph Container -->
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+                    <div id="messageFlowGraph" style="height: 600px;"></div>
+                </div>
+
+                <!-- Node Details Panel -->
+                <div x-show="selectedNode" class="mt-6 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                    <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">Node Details</h3>
+                    <template x-if="selectedNode">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-500 dark:text-gray-400">ID</label>
+                                <p class="mt-1 text-sm text-gray-900 dark:text-gray-100" x-text="selectedNode.id"></p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-500 dark:text-gray-400">Type</label>
+                                <p class="mt-1 text-sm text-gray-900 dark:text-gray-100" x-text="selectedNode.type"></p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-500 dark:text-gray-400">Label</label>
+                                <p class="mt-1 text-sm text-gray-900 dark:text-gray-100" x-text="selectedNode.label"></p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-500 dark:text-gray-400">Status</label>
+                                <span class="badge"
+                                      :class="selectedNode.status === 'active' ? 'badge-green' : 'badge-gray'"
+                                      x-text="selectedNode.status || 'unknown'"></span>
+                            </div>
+                            <div class="col-span-2" x-show="selectedNode.connections">
+                                <label class="block text-sm font-medium text-gray-500 dark:text-gray-400">Connections</label>
+                                <p class="mt-1 text-sm text-gray-900 dark:text-gray-100" x-text="selectedNode.connections"></p>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('app', () => ({
+                currentView: 'dashboard',
+                viewTitles: {
+                    dashboard: 'Dashboard',
+                    connections: 'Active Connections',
+                    tasks: 'Task Queue',
+                    agents: 'Agents & Orchestration',
+                    workspaces: 'Workspaces',
+                    kv: 'KV Store Browser',
+                    messaging: 'Message Console',
+                    acl: 'Access Control & Audit',
+                    messageflow: 'Message Flow Visualization'
+                },
+
+                // Data
+                info: {},
+                health: { checks: {} },
+                stats: {},
+                connections: [],
+                tasks: [],
+                agents: [],
+                orchestrators: [],
+                workspaces: [],
+                kvKeys: [],
+
+                // State
+                darkMode: false,
+                wsConnected: false,
+                ws: null,
+                taskFilter: '',
+                kvScope: 'global',
+                kvPrefix: '',
+                selectedKV: null,
+                editingKV: false,
+                kvEditValue: '',
+                kvEditSuccess: '',
+                kvEditError: '',
+                autoRefresh: false,
+                autoRefreshInterval: null,
+                refreshing: false,
+
+                // Agent form state
+                showAgentForm: false,
+                editingAgent: null,
+                agentForm: { implementation: '', profile: '', description: '', launch_params: '{}' },
+                agentFormError: '',
+
+                // Launch form state
+                showLaunchForm: false,
+                launchForm: { implementation: '', specifier: 'default', workspace: 'default' },
+                launchFormError: '',
+                launchFormSuccess: '',
+                launchingAgent: false,
+
+                // Workspace form state
+                showWorkspaceForm: false,
+                editingWorkspace: null,
+                workspaceForm: { name: '', tenant: '', description: '', config: '{}' },
+                workspaceFormError: '',
+
+                // Messaging state
+                msgTarget: '',
+                msgTargetPreset: '',
+                msgType: 'CHAT',
+                msgPayload: '',
+                msgSending: false,
+                msgSendStatus: '',
+                msgSendMessage: '',
+
+                // Monitor state
+                monitorTopic: '',
+                monitorPreset: '',
+                monitoredTopics: [],
+                monitoredMessages: [],
+                msgAutoScroll: true,
+                msgFilterTopic: '',
+                maxMessages: 200,
+
+                // ACL state
+                aclRules: [],
+                aclAuditLogs: [],
+                aclFilter: { principal_type: '', principal_id: '', resource_type: '', resource_id: '' },
+                aclAuditFilter: { decision: '', principal_type: '', principal_id: '', workspace: '' },
+                showAclForm: false,
+                aclForm: { principal_type: 'agent', principal_id: '', resource_type: 'workspace', resource_id: '', access_level: 10, granted_by: 'admin', reason: '' },
+                aclFormError: '',
+                aclActiveTab: 'rules',
+
+                // Message Flow state
+                messageFlowWorkspace: '',
+                messageFlowAutoRefresh: false,
+                messageFlowAutoRefreshInterval: null,
+                messageFlowNetwork: null,
+                selectedNode: null,
+
+                get filteredMonitoredMessages() {
+                    if (!this.msgFilterTopic) return this.monitoredMessages;
+                    return this.monitoredMessages.filter(m => m.topic === this.msgFilterTopic);
+                },
+
+                get filteredTasks() {
+                    if (!this.taskFilter) return this.tasks;
+                    return this.tasks.filter(t => t.status === this.taskFilter);
+                },
+
+                get uniqueProfiles() {
+                    // Collect all profiles from all orchestrators and agents
+                    const profileSet = new Set();
+                    // Add profiles from connected orchestrators
+                    this.orchestrators.forEach(orch => {
+                        (orch.profiles || []).forEach(p => profileSet.add(p));
+                    });
+                    // Add profiles from registered agents (to show agents with profiles even if no orchestrator is connected)
+                    this.agents.forEach(agent => {
+                        const profile = agent.orchestrator_profile || agent.launch_params?.profile;
+                        if (profile) profileSet.add(profile);
+                    });
+                    return Array.from(profileSet).sort();
+                },
+
+                getOrchestratorsForProfile(profile) {
+                    return this.orchestrators.filter(orch =>
+                        (orch.profiles || []).includes(profile)
+                    );
+                },
+
+                async init() {
+                    // Load dark mode preference from localStorage
+                    const savedTheme = localStorage.getItem('theme');
+                    this.darkMode = savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+                    await this.refresh();
+                    this.connectWebSocket();
+                },
+
+                toggleDarkMode() {
+                    this.darkMode = !this.darkMode;
+                    localStorage.setItem('theme', this.darkMode ? 'dark' : 'light');
+                },
+
+                toggleAutoRefresh() {
+                    if (this.autoRefresh) {
+                        this.autoRefreshInterval = setInterval(() => this.refresh(), 10000);
+                    } else {
+                        if (this.autoRefreshInterval) {
+                            clearInterval(this.autoRefreshInterval);
+                            this.autoRefreshInterval = null;
+                        }
+                    }
+                },
+
+                async refresh() {
+                    this.refreshing = true;
+                    try {
+                        await Promise.all([
+                            this.loadInfo(),
+                            this.loadHealth(),
+                            this.loadConnections(),
+                            this.loadTasks(),
+                            this.loadAgents(),
+                            this.loadOrchestrators(),
+                            this.loadWorkspaces()
+                        ]);
+                    } finally {
+                        this.refreshing = false;
+                    }
+                },
+
+                async loadInfo() {
+                    try {
+                        const res = await fetch('/api/info');
+                        this.info = await res.json();
+                    } catch (e) {
+                        console.error('Failed to load info:', e);
+                    }
+                },
+
+                async loadHealth() {
+                    try {
+                        const res = await fetch('/api/health');
+                        const data = await res.json();
+                        this.health = data;
+                        this.stats = data.stats || {};
+                    } catch (e) {
+                        console.error('Failed to load health:', e);
+                    }
+                },
+
+                async loadConnections() {
+                    try {
+                        const res = await fetch('/api/connections');
+                        const data = await res.json();
+                        this.connections = data.connections || [];
+                    } catch (e) {
+                        console.error('Failed to load connections:', e);
+                    }
+                },
+
+                async loadTasks() {
+                    try {
+                        const res = await fetch('/api/tasks');
+                        const data = await res.json();
+                        this.tasks = data.tasks || [];
+                    } catch (e) {
+                        console.error('Failed to load tasks:', e);
+                    }
+                },
+
+                async loadAgents() {
+                    try {
+                        const res = await fetch('/api/agents');
+                        const data = await res.json();
+                        this.agents = data.agents || [];
+                    } catch (e) {
+                        console.error('Failed to load agents:', e);
+                    }
+                },
+
+                async loadOrchestrators() {
+                    try {
+                        const res = await fetch('/api/orchestrators');
+                        const data = await res.json();
+                        this.orchestrators = data.orchestrators || [];
+                    } catch (e) {
+                        console.error('Failed to load orchestrators:', e);
+                    }
+                },
+
+                async loadWorkspaces() {
+                    try {
+                        const res = await fetch('/api/workspaces');
+                        const data = await res.json();
+                        this.workspaces = data.workspaces || [];
+                    } catch (e) {
+                        console.error('Failed to load workspaces:', e);
+                    }
+                },
+
+                async loadKVKeys() {
+                    try {
+                        const params = new URLSearchParams({ scope: this.kvScope });
+                        if (this.kvPrefix) params.set('prefix', this.kvPrefix);
+                        const res = await fetch('/api/kv?' + params);
+                        const data = await res.json();
+                        this.kvKeys = data.keys || [];
+                    } catch (e) {
+                        console.error('Failed to load KV keys:', e);
+                    }
+                },
+
+                async loadKVValue(key) {
+                    try {
+                        const res = await fetch(`/api/kv/${this.kvScope}/${key}`);
+                        this.selectedKV = await res.json();
+                    } catch (e) {
+                        console.error('Failed to load KV value:', e);
+                    }
+                },
+
+                async deleteKVKey(key) {
+                    if (!confirm(`Delete key "${key}"?`)) return;
+                    try {
+                        await fetch(`/api/kv/${this.kvScope}/${key}`, { method: 'DELETE' });
+                        this.selectedKV = null;
+                        await this.loadKVKeys();
+                    } catch (e) {
+                        console.error('Failed to delete KV key:', e);
+                    }
+                },
+
+                startEditKV() {
+                    this.editingKV = true;
+                    this.kvEditValue = this.selectedKV?.value || '';
+                    this.kvEditSuccess = '';
+                    this.kvEditError = '';
+                },
+
+                cancelEditKV() {
+                    this.editingKV = false;
+                    this.kvEditValue = '';
+                    this.kvEditSuccess = '';
+                    this.kvEditError = '';
+                },
+
+                async saveKVValue() {
+                    this.kvEditSuccess = '';
+                    this.kvEditError = '';
+
+                    try {
+                        const res = await fetch(`/api/kv/${this.kvScope}/${this.selectedKV.key}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ value: this.kvEditValue })
+                        });
+
+                        if (!res.ok) {
+                            const data = await res.json();
+                            this.kvEditError = data.error || 'Failed to save value';
+                            return;
+                        }
+
+                        this.kvEditSuccess = 'Value saved successfully';
+                        this.selectedKV.value = this.kvEditValue;
+                        this.editingKV = false;
+
+                        // Clear success message after 3 seconds
+                        setTimeout(() => {
+                            this.kvEditSuccess = '';
+                        }, 3000);
+                    } catch (e) {
+                        console.error('Failed to save KV value:', e);
+                        this.kvEditError = 'Failed to save value';
+                    }
+                },
+
+                async disconnectSession(sessionId) {
+                    if (!confirm('Disconnect this session?')) return;
+                    try {
+                        await fetch(`/api/connections/${sessionId}`, { method: 'DELETE' });
+                        await this.loadConnections();
+                    } catch (e) {
+                        console.error('Failed to disconnect session:', e);
+                    }
+                },
+
+                async retryTask(taskId) {
+                    try {
+                        await fetch(`/api/tasks/${taskId}/retry`, { method: 'POST' });
+                        await this.loadTasks();
+                    } catch (e) {
+                        console.error('Failed to retry task:', e);
+                    }
+                },
+
+                async cancelTask(taskId) {
+                    if (!confirm('Cancel this task?')) return;
+                    try {
+                        await fetch(`/api/tasks/${taskId}/cancel`, { method: 'POST' });
+                        await this.loadTasks();
+                    } catch (e) {
+                        console.error('Failed to cancel task:', e);
+                    }
+                },
+
+                // Agent CRUD operations
+                editAgent(agent) {
+                    this.editingAgent = agent.implementation;
+                    this.agentForm = {
+                        implementation: agent.implementation,
+                        profile: agent.orchestrator_profile || agent.launch_params?.profile || '',
+                        description: agent.description || '',
+                        launch_params: JSON.stringify(agent.launch_params || {}, null, 2)
+                    };
+                    this.agentFormError = '';
+                    this.showAgentForm = true;
+                },
+
+                async saveAgent() {
+                    this.agentFormError = '';
+
+                    // Parse and validate launch params JSON
+                    let launchParams;
+                    try {
+                        launchParams = this.agentForm.launch_params.trim() ? JSON.parse(this.agentForm.launch_params) : {};
+                    } catch (e) {
+                        this.agentFormError = 'Invalid JSON in launch parameters';
+                        return;
+                    }
+
+                    // Ensure profile is in launch_params
+                    launchParams.profile = this.agentForm.profile;
+
+                    const body = {
+                        implementation: this.agentForm.implementation,
+                        description: this.agentForm.description,
+                        launch_params: launchParams
+                    };
+
+                    try {
+                        const method = this.editingAgent ? 'PUT' : 'POST';
+                        const url = this.editingAgent
+                            ? `/api/agents/${encodeURIComponent(this.agentForm.implementation)}`
+                            : '/api/agents';
+
+                        const res = await fetch(url, {
+                            method,
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+
+                        if (!res.ok) {
+                            const data = await res.json();
+                            this.agentFormError = data.error || 'Failed to save agent';
+                            return;
+                        }
+
+                        this.showAgentForm = false;
+                        await this.loadAgents();
+                    } catch (e) {
+                        console.error('Failed to save agent:', e);
+                        this.agentFormError = 'Failed to save agent: ' + e.message;
+                    }
+                },
+
+                async deleteAgent(implementation) {
+                    if (!confirm(`Delete agent "${implementation}"?`)) return;
+                    try {
+                        const res = await fetch(`/api/agents/${encodeURIComponent(implementation)}`, { method: 'DELETE' });
+                        if (!res.ok) {
+                            const data = await res.json();
+                            alert(data.error || 'Failed to delete agent');
+                            return;
+                        }
+                        await this.loadAgents();
+                    } catch (e) {
+                        console.error('Failed to delete agent:', e);
+                        alert('Failed to delete agent: ' + e.message);
+                    }
+                },
+
+                // Launch agent operations
+                showLaunchDialog(agent) {
+                    this.launchForm = {
+                        implementation: agent.implementation,
+                        specifier: 'default',
+                        workspace: 'default'
+                    };
+                    this.launchFormError = '';
+                    this.launchFormSuccess = '';
+                    this.launchingAgent = false;
+                    this.showLaunchForm = true;
+                },
+
+                async launchAgent() {
+                    this.launchFormError = '';
+                    this.launchFormSuccess = '';
+
+                    if (!this.launchForm.specifier.trim()) {
+                        this.launchFormError = 'Specifier is required';
+                        return;
+                    }
+                    if (!this.launchForm.workspace.trim()) {
+                        this.launchFormError = 'Workspace is required';
+                        return;
+                    }
+
+                    this.launchingAgent = true;
+                    try {
+                        const res = await fetch(`/api/agents/${encodeURIComponent(this.launchForm.implementation)}/launch`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                specifier: this.launchForm.specifier.trim(),
+                                workspace: this.launchForm.workspace.trim()
+                            })
+                        });
+
+                        const data = await res.json();
+
+                        if (!res.ok) {
+                            this.launchFormError = data.error || 'Failed to launch agent';
+                            return;
+                        }
+
+                        this.launchFormSuccess = data.message || `Agent launch task created: ${data.task_id}`;
+                        // Refresh tasks to show the new orchestration task
+                        await this.loadTasks();
+
+                        // Close dialog after a short delay to show success message
+                        setTimeout(() => {
+                            this.showLaunchForm = false;
+                        }, 2000);
+                    } catch (e) {
+                        console.error('Failed to launch agent:', e);
+                        this.launchFormError = 'Failed to launch agent: ' + e.message;
+                    } finally {
+                        this.launchingAgent = false;
+                    }
+                },
+
+                // Workspace CRUD operations
+                editWorkspace(workspace) {
+                    this.editingWorkspace = workspace.workspace_id;
+                    this.workspaceForm = {
+                        name: workspace.workspace_id,
+                        tenant: workspace.tenant_id || '',
+                        description: workspace.description || '',
+                        config: JSON.stringify(workspace.metadata || {}, null, 2)
+                    };
+                    this.workspaceFormError = '';
+                    this.showWorkspaceForm = true;
+                },
+
+                async saveWorkspace() {
+                    this.workspaceFormError = '';
+
+                    // Parse and validate config JSON
+                    let metadata;
+                    try {
+                        metadata = this.workspaceForm.config.trim() ? JSON.parse(this.workspaceForm.config) : {};
+                    } catch (e) {
+                        this.workspaceFormError = 'Invalid JSON in configuration';
+                        return;
+                    }
+
+                    const body = {
+                        workspace_id: this.workspaceForm.name,
+                        display_name: this.workspaceForm.name,
+                        tenant_id: this.workspaceForm.tenant,
+                        description: this.workspaceForm.description,
+                        metadata: metadata
+                    };
+
+                    try {
+                        const method = this.editingWorkspace ? 'PUT' : 'POST';
+                        const url = this.editingWorkspace
+                            ? `/api/workspaces/${encodeURIComponent(this.workspaceForm.name)}`
+                            : '/api/workspaces';
+
+                        const res = await fetch(url, {
+                            method,
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+
+                        if (!res.ok) {
+                            const data = await res.json();
+                            this.workspaceFormError = data.error || 'Failed to save workspace';
+                            return;
+                        }
+
+                        this.showWorkspaceForm = false;
+                        await this.loadWorkspaces();
+                    } catch (e) {
+                        this.workspaceFormError = 'Failed to save workspace: ' + e.message;
+                    }
+                },
+
+                async deleteWorkspace(name) {
+                    if (!confirm(`Delete workspace "${name}"?`)) return;
+                    try {
+                        const res = await fetch(`/api/workspaces/${encodeURIComponent(name)}`, { method: 'DELETE' });
+                        if (!res.ok) {
+                            const data = await res.json();
+                            alert(data.error || 'Failed to delete workspace');
+                            return;
+                        }
+                        await this.loadWorkspaces();
+                    } catch (e) {
+                        console.error('Failed to delete workspace:', e);
+                        alert('Failed to delete workspace: ' + e.message);
+                    }
+                },
+
+                // ACL operations
+                async loadACLRules() {
+                    try {
+                        const params = new URLSearchParams();
+                        if (this.aclFilter.principal_type) params.set('principal_type', this.aclFilter.principal_type);
+                        if (this.aclFilter.principal_id) params.set('principal_id', this.aclFilter.principal_id);
+                        if (this.aclFilter.resource_type) params.set('resource_type', this.aclFilter.resource_type);
+                        if (this.aclFilter.resource_id) params.set('resource_id', this.aclFilter.resource_id);
+
+                        const res = await fetch('/api/acl/rules?' + params);
+                        const data = await res.json();
+                        this.aclRules = data.rules || [];
+                    } catch (e) {
+                        console.error('Failed to load ACL rules:', e);
+                    }
+                },
+
+                async loadACLAuditLogs() {
+                    try {
+                        const params = new URLSearchParams({ limit: '100' });
+                        if (this.aclAuditFilter.decision) params.set('decision', this.aclAuditFilter.decision);
+                        if (this.aclAuditFilter.principal_type) params.set('principal_type', this.aclAuditFilter.principal_type);
+                        if (this.aclAuditFilter.principal_id) params.set('principal_id', this.aclAuditFilter.principal_id);
+                        if (this.aclAuditFilter.workspace) params.set('workspace', this.aclAuditFilter.workspace);
+
+                        const res = await fetch('/api/acl/audit?' + params);
+                        const data = await res.json();
+                        this.aclAuditLogs = data.entries || [];
+                    } catch (e) {
+                        console.error('Failed to load ACL audit logs:', e);
+                    }
+                },
+
+                async grantACLAccess() {
+                    this.aclFormError = '';
+
+                    if (!this.aclForm.principal_id.trim()) {
+                        this.aclFormError = 'Principal ID is required';
+                        return;
+                    }
+                    if (!this.aclForm.resource_id.trim()) {
+                        this.aclFormError = 'Resource ID is required';
+                        return;
+                    }
+
+                    try {
+                        const body = {
+                            principal_type: this.aclForm.principal_type,
+                            principal_id: this.aclForm.principal_id.trim(),
+                            resource_type: this.aclForm.resource_type,
+                            resource_id: this.aclForm.resource_id.trim(),
+                            access_level: parseInt(this.aclForm.access_level),
+                            granted_by: this.aclForm.granted_by.trim(),
+                            reason: this.aclForm.reason.trim() || undefined
+                        };
+
+                        const res = await fetch('/api/acl/rules', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+
+                        if (!res.ok) {
+                            const data = await res.json();
+                            this.aclFormError = data.error || 'Failed to grant access';
+                            return;
+                        }
+
+                        this.showAclForm = false;
+                        await this.loadACLRules();
+                    } catch (e) {
+                        console.error('Failed to grant ACL access:', e);
+                        this.aclFormError = 'Failed to grant access: ' + e.message;
+                    }
+                },
+
+                async revokeACLAccess(rule) {
+                    if (!confirm(`Revoke access for ${rule.principal_type}:${rule.principal_id} on ${rule.resource_type}:${rule.resource_id}?`)) return;
+                    try {
+                        const params = new URLSearchParams({
+                            principal_type: rule.principal_type,
+                            principal_id: rule.principal_id,
+                            resource_type: rule.resource_type,
+                            resource_id: rule.resource_id
+                        });
+
+                        const res = await fetch('/api/acl/rules/{rule_id}?' + params, { method: 'DELETE' });
+                        if (!res.ok) {
+                            const data = await res.json();
+                            alert(data.error || 'Failed to revoke access');
+                            return;
+                        }
+                        await this.loadACLRules();
+                    } catch (e) {
+                        console.error('Failed to revoke ACL access:', e);
+                        alert('Failed to revoke access: ' + e.message);
+                    }
+                },
+
+                showNewACLRuleForm() {
+                    this.aclForm = {
+                        principal_type: 'agent',
+                        principal_id: '',
+                        resource_type: 'workspace',
+                        resource_id: '',
+                        access_level: 10,
+                        granted_by: 'admin',
+                        reason: ''
+                    };
+                    this.aclFormError = '';
+                    this.showAclForm = true;
+                },
+
+                // Message Flow functions
+                initMessageFlow() {
+                    if (!this.messageFlowNetwork) {
+                        this.loadMessageFlow();
+                    }
+                },
+
+                async loadMessageFlow() {
+                    if (!this.messageFlowWorkspace) return;
+
+                    try {
+                        const res = await fetch(`/api/connections`);
+                        const connections = await res.json();
+
+                        // Build graph data from connections
+                        const nodes = [];
+                        const edges = [];
+                        const nodeMap = new Map();
+
+                        // Filter connections by workspace
+                        const filteredConnections = connections.filter(conn =>
+                            conn.identity && conn.identity.workspace === this.messageFlowWorkspace
+                        );
+
+                        filteredConnections.forEach(conn => {
+                            const identity = conn.identity;
+                            let nodeId, label, type, color;
+
+                            if (identity.agent) {
+                                nodeId = `ag.${identity.workspace}.${identity.agent.implementation}.${identity.agent.specifier}`;
+                                label = `${identity.agent.implementation}:${identity.agent.specifier}`;
+                                type = 'agent';
+                                color = '#3b82f6'; // blue
+                            } else if (identity.task_unique) {
+                                nodeId = `tu.${identity.workspace}.${identity.task_unique.implementation}.${identity.task_unique.specifier}`;
+                                label = `${identity.task_unique.implementation}:${identity.task_unique.specifier}`;
+                                type = 'task';
+                                color = '#10b981'; // green
+                            } else if (identity.task_nonunique) {
+                                nodeId = `ta.${identity.workspace}.${identity.task_nonunique.implementation}.${conn.session_id}`;
+                                label = `${identity.task_nonunique.implementation}:${conn.session_id.substring(0, 8)}`;
+                                type = 'task';
+                                color = '#10b981'; // green
+                            } else if (identity.user) {
+                                nodeId = `us.${identity.user.user_id}.${identity.user.window_id}`;
+                                label = `User:${identity.user.user_id}`;
+                                type = 'user';
+                                color = '#8b5cf6'; // purple
+                            } else {
+                                return;
+                            }
+
+                            if (!nodeMap.has(nodeId)) {
+                                nodeMap.set(nodeId, {
+                                    id: nodeId,
+                                    label: label,
+                                    type: type,
+                                    status: 'active',
+                                    connections: 1,
+                                    color: color,
+                                    shape: 'dot',
+                                    size: 20
+                                });
+                            }
+                        });
+
+                        // Convert map to array
+                        nodeMap.forEach(node => nodes.push(node));
+
+                        // For demo purposes, create some example edges based on common message patterns
+                        // In a real implementation, you'd fetch actual message flow data
+                        for (let i = 0; i < nodes.length - 1; i++) {
+                            if (Math.random() > 0.5) { // Simulate some connections
+                                edges.push({
+                                    from: nodes[i].id,
+                                    to: nodes[i + 1].id,
+                                    arrows: 'to',
+                                    color: { color: this.darkMode ? '#6b7280' : '#9ca3af' },
+                                    smooth: { type: 'curvedCW', roundness: 0.2 }
+                                });
+                            }
+                        }
+
+                        this.renderMessageFlowGraph(nodes, edges);
+                    } catch (e) {
+                        console.error('Failed to load message flow:', e);
+                    }
+                },
+
+                renderMessageFlowGraph(nodes, edges) {
+                    const container = document.getElementById('messageFlowGraph');
+                    if (!container) return;
+
+                    const data = { nodes: nodes, edges: edges };
+
+                    const options = {
+                        nodes: {
+                            font: {
+                                color: this.darkMode ? '#f9fafb' : '#111827',
+                                size: 14
+                            },
+                            borderWidth: 2,
+                            borderWidthSelected: 3
+                        },
+                        edges: {
+                            width: 2,
+                            selectionWidth: 3
+                        },
+                        physics: {
+                            stabilization: {
+                                enabled: true,
+                                iterations: 100
+                            },
+                            barnesHut: {
+                                gravitationalConstant: -8000,
+                                springConstant: 0.04,
+                                springLength: 150
+                            }
+                        },
+                        interaction: {
+                            hover: true,
+                            tooltipDelay: 200
+                        }
+                    };
+
+                    if (this.messageFlowNetwork) {
+                        this.messageFlowNetwork.destroy();
+                    }
+
+                    this.messageFlowNetwork = new vis.Network(container, data, options);
+
+                    // Handle node clicks
+                    this.messageFlowNetwork.on('click', (params) => {
+                        if (params.nodes.length > 0) {
+                            const nodeId = params.nodes[0];
+                            const node = nodes.find(n => n.id === nodeId);
+                            if (node) {
+                                this.selectedNode = node;
+                            }
+                        } else {
+                            this.selectedNode = null;
+                        }
+                    });
+                },
+
+                toggleMessageFlowAutoRefresh() {
+                    if (this.messageFlowAutoRefresh) {
+                        this.messageFlowAutoRefreshInterval = setInterval(() => {
+                            if (this.currentView === 'messageflow' && this.messageFlowWorkspace) {
+                                this.loadMessageFlow();
+                            }
+                        }, 10000);
+                    } else {
+                        if (this.messageFlowAutoRefreshInterval) {
+                            clearInterval(this.messageFlowAutoRefreshInterval);
+                            this.messageFlowAutoRefreshInterval = null;
+                        }
+                    }
+                },
+
+                connectWebSocket() {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${window.location.host}/api/ws/events`;
+
+                    this.ws = new WebSocket(wsUrl);
+
+                    this.ws.onopen = () => {
+                        this.wsConnected = true;
+                        console.log('WebSocket connected');
+                    };
+
+                    this.ws.onclose = () => {
+                        this.wsConnected = false;
+                        console.log('WebSocket disconnected, reconnecting...');
+                        setTimeout(() => this.connectWebSocket(), 3000);
+                    };
+
+                    this.ws.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        this.handleEvent(data);
+                    };
+                },
+
+                handleEvent(data) {
+                    console.log('WS Message:', data);
+
+                    switch (data.type) {
+                        case 'event':
+                            // Existing event handling
+                            const event = data.event;
+                            if (event) {
+                                switch (event.type) {
+                                    case 'connection':
+                                        this.loadConnections();
+                                        this.loadHealth();
+                                        break;
+                                    case 'task':
+                                        this.loadTasks();
+                                        this.loadHealth();
+                                        break;
+                                }
+                            }
+                            break;
+
+                        case 'monitor_subscribed':
+                            if (!this.monitoredTopics.includes(data.topic)) {
+                                this.monitoredTopics.push(data.topic);
+                            }
+                            break;
+
+                        case 'monitor_unsubscribed':
+                            this.monitoredTopics = this.monitoredTopics.filter(t => t !== data.topic);
+                            break;
+
+                        case 'monitor_message':
+                            this.addMonitoredMessage(data.message);
+                            break;
+
+                        case 'error':
+                            console.error('WebSocket error:', data.error);
+                            break;
+                    }
+                },
+
+                // Messaging methods
+                applyTargetPreset() {
+                    if (this.msgTargetPreset) {
+                        this.msgTarget = this.msgTargetPreset;
+                    }
+                },
+
+                applyMonitorPreset() {
+                    if (this.monitorPreset) {
+                        this.monitorTopic = this.monitorPreset;
+                    }
+                },
+
+                formatPayloadJSON() {
+                    try {
+                        const parsed = JSON.parse(this.msgPayload);
+                        this.msgPayload = JSON.stringify(parsed, null, 2);
+                    } catch (e) {
+                        // Not valid JSON, leave as-is
+                    }
+                },
+
+                async sendMessage() {
+                    this.msgSending = true;
+                    this.msgSendStatus = '';
+                    this.msgSendMessage = '';
+
+                    try {
+                        const res = await fetch('/api/messages/send', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                target_topic: this.msgTarget,
+                                payload: this.msgPayload,
+                                message_type: this.msgType
+                            })
+                        });
+
+                        const data = await res.json();
+
+                        if (res.ok) {
+                            this.msgSendStatus = 'success';
+                            this.msgSendMessage = 'Message sent successfully';
+                            setTimeout(() => { this.msgSendStatus = ''; }, 3000);
+                        } else {
+                            this.msgSendStatus = 'error';
+                            this.msgSendMessage = data.error || 'Failed to send message';
+                        }
+                    } catch (e) {
+                        this.msgSendStatus = 'error';
+                        this.msgSendMessage = 'Failed to send message: ' + e.message;
+                    } finally {
+                        this.msgSending = false;
+                    }
+                },
+
+                subscribeMonitor() {
+                    if (!this.monitorTopic || this.monitoredTopics.includes(this.monitorTopic)) return;
+
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        this.ws.send(JSON.stringify({
+                            action: 'subscribe_monitor',
+                            topic: this.monitorTopic
+                        }));
+                    }
+                    this.monitorTopic = '';
+                    this.monitorPreset = '';
+                },
+
+                unsubscribeMonitor(topic) {
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        this.ws.send(JSON.stringify({
+                            action: 'unsubscribe_monitor',
+                            topic: topic
+                        }));
+                    }
+                },
+
+                clearMessages() {
+                    this.monitoredMessages = [];
+                },
+
+                addMonitoredMessage(msg) {
+                    msg.expanded = false;
+                    this.monitoredMessages.unshift(msg);
+
+                    // Limit message history
+                    if (this.monitoredMessages.length > this.maxMessages) {
+                        this.monitoredMessages = this.monitoredMessages.slice(0, this.maxMessages);
+                    }
+                },
+
+                truncatePayload(payload) {
+                    if (!payload) return '';
+                    const maxLen = 100;
+                    return payload.length > maxLen ? payload.substring(0, maxLen) + '...' : payload;
+                },
+
+                formatPayload(msg) {
+                    if (msg.payload_json) {
+                        return JSON.stringify(msg.payload_json, null, 2);
+                    }
+                    return msg.payload;
+                },
+
+                formatTime(timestamp) {
+                    if (!timestamp) return '';
+                    const date = new Date(timestamp);
+                    return date.toLocaleTimeString();
+                },
+
+                formatDate(dateStr) {
+                    if (!dateStr) return '-';
+                    const date = new Date(dateStr);
+                    return date.toLocaleString();
+                }
+            }));
+        });
+    </script>
+</body>
+</html>

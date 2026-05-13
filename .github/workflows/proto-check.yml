@@ -1,0 +1,57 @@
+name: Proto Check
+
+on:
+  pull_request:
+    paths:
+      - 'api/proto/**'
+      - 'scripts/compile_protos.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  proto-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.8'
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '27.x'
+
+      - name: Install Go proto plugins
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python proto tools
+        run: pip install grpcio-tools
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install TypeScript proto tools
+        run: npm install -g @grpc/proto-loader
+
+      - name: Compile protos
+        run: bash scripts/compile_protos.sh
+
+      - name: Check for uncommitted changes
+        run: |
+          if [ -n "$(git diff --name-only)" ]; then
+            echo "Proto-generated code is out of date. Run scripts/compile_protos.sh and commit."
+            git diff --name-only
+            exit 1
+          fi

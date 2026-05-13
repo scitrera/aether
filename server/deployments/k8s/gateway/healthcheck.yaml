@@ -1,0 +1,226 @@
+# Aether Gateway Health Check Configuration
+# Phase 2: Load Balancer Configuration
+# Health check probe definitions for liveness, readiness, and startup checks
+
+# -----------------------------------------------------------------------------
+# ConfigMap: Gateway Health Check Configuration
+# Defines health check endpoints and probe parameters
+# Referenced by Deployment for liveness, readiness, and startup probes
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aether-gateway-healthcheck-config
+  namespace: aether
+  labels:
+    app: aether-gateway
+    component: gateway
+    config-type: healthcheck
+data:
+  # Health check endpoint paths
+  liveness-path: "/health/live"
+  readiness-path: "/health/ready"
+  startup-path: "/health/startup"
+
+  # Health check ports
+  http-port: "8080"
+  grpc-port: "50051"
+
+  # Probe timing configuration
+  liveness-initial-delay: "30"
+  liveness-period: "10"
+  liveness-timeout: "5"
+  liveness-failure-threshold: "3"
+
+  readiness-initial-delay: "10"
+  readiness-period: "5"
+  readiness-timeout: "3"
+  readiness-failure-threshold: "3"
+
+  startup-initial-delay: "5"
+  startup-period: "5"
+  startup-timeout: "3"
+  startup-failure-threshold: "12"  # 60 seconds total
+
+---
+# -----------------------------------------------------------------------------
+# HTTP Health Check Probe Definitions
+# Used by the Deployment to configure container health checks
+# -----------------------------------------------------------------------------
+
+# Liveness Probe Configuration
+# Checks if the gateway is alive and responsive
+# If this fails, Kubernetes will restart the container
+#
+# HTTP GET /health/live on port 8080
+# - Checks basic process liveness
+# - Verifies HTTP server is responding
+# - Does NOT check external dependencies (Redis, RabbitMQ)
+#
+# Timing:
+# - initialDelaySeconds: 30  (wait 30s after container start)
+# - periodSeconds: 10        (check every 10 seconds)
+# - timeoutSeconds: 5        (fail if no response in 5 seconds)
+# - failureThreshold: 3      (restart after 3 consecutive failures)
+
+livenessProbe:
+  httpGet:
+    path: /health/live
+    port: 8080
+    scheme: HTTP
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+---
+# Readiness Probe Configuration
+# Checks if the gateway is ready to accept traffic
+# If this fails, Kubernetes removes the pod from service endpoints
+#
+# HTTP GET /health/ready on port 8080
+# - Checks if gateway can handle requests
+# - Verifies connections to Redis and RabbitMQ
+# - Ensures gateway is registered and operational
+#
+# Timing:
+# - initialDelaySeconds: 10  (wait 10s after container start)
+# - periodSeconds: 5         (check every 5 seconds)
+# - timeoutSeconds: 3        (fail if no response in 3 seconds)
+# - failureThreshold: 3      (remove from service after 3 consecutive failures)
+
+readinessProbe:
+  httpGet:
+    path: /health/ready
+    port: 8080
+    scheme: HTTP
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+  successThreshold: 1
+
+---
+# Startup Probe Configuration
+# Checks if the gateway has completed initialization
+# Provides extra time for slow startup (RabbitMQ stream connection, etc.)
+# Once this succeeds, liveness and readiness probes take over
+#
+# HTTP GET /health/startup on port 8080
+# - Checks if initial connections established
+# - Verifies gateway is ready to enter main loop
+# - Allows up to 60 seconds for startup (12 failures × 5 seconds)
+#
+# Timing:
+# - initialDelaySeconds: 5   (wait 5s after container start)
+# - periodSeconds: 5         (check every 5 seconds)
+# - timeoutSeconds: 3        (fail if no response in 3 seconds)
+# - failureThreshold: 12     (allow 60 seconds total for startup)
+
+startupProbe:
+  httpGet:
+    path: /health/startup
+    port: 8080
+    scheme: HTTP
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 12
+  successThreshold: 1
+
+---
+# -----------------------------------------------------------------------------
+# gRPC Health Check Configuration (Optional)
+# Alternative health checks using gRPC health checking protocol
+# -----------------------------------------------------------------------------
+
+# gRPC Liveness Probe
+# Uses gRPC health checking protocol (grpc.health.v1.Health)
+# Checks the main gRPC service on port 50051
+#
+# Note: Requires gateway to implement grpc.health.v1.Health service
+# Currently using HTTP health checks as primary method
+
+grpcLivenessProbe:
+  grpc:
+    port: 50051
+    service: aether.gateway.v1.Gateway
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+---
+# gRPC Readiness Probe
+# Uses gRPC health checking protocol for readiness checks
+
+grpcReadinessProbe:
+  grpc:
+    port: 50051
+    service: aether.gateway.v1.Gateway
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+---
+# -----------------------------------------------------------------------------
+# Health Check Endpoint Specifications
+# Implementation requirements for gateway HTTP server
+# -----------------------------------------------------------------------------
+
+# GET /health/live
+# Returns: 200 OK if process is alive
+# Response body: { "status": "ok", "timestamp": "<ISO8601>" }
+# Should NOT check external dependencies
+# Fast response required (< 1 second)
+
+# GET /health/ready
+# Returns: 200 OK if ready to accept traffic
+# Returns: 503 Service Unavailable if not ready
+# Response body: {
+#   "status": "ready|not_ready",
+#   "timestamp": "<ISO8601>",
+#   "checks": {
+#     "redis": "ok|error",
+#     "rabbitmq": "ok|error",
+#     "gateway_id": "<gateway-id>"
+#   }
+# }
+# Checks Redis and RabbitMQ connectivity
+# Response time should be < 3 seconds
+
+# GET /health/startup
+# Returns: 200 OK if startup completed
+# Returns: 503 Service Unavailable if still starting up
+# Response body: {
+#   "status": "started|starting",
+#   "timestamp": "<ISO8601>",
+#   "initialization": {
+#     "redis_connected": true|false,
+#     "rabbitmq_connected": true|false,
+#     "streams_ready": true|false
+#   }
+# }
+# Used only during initial startup phase
+# Can take longer to respond (up to 3 seconds)
+
+---
+# -----------------------------------------------------------------------------
+# Load Balancer Health Check Configuration
+# For use with external load balancers (AWS ALB, GCP LB, nginx, etc.)
+# -----------------------------------------------------------------------------
+
+# Health Check Target: HTTP:8080/health/ready
+# Protocol: HTTP/1.1
+# Method: GET
+# Expected Response: 200 OK
+# Health Check Interval: 5 seconds
+# Healthy Threshold: 2 consecutive successes
+# Unhealthy Threshold: 3 consecutive failures
+# Timeout: 3 seconds
+#
+# Use readiness endpoint for load balancer health checks
+# This ensures traffic only goes to fully operational gateway instances
+# Load balancer will automatically route around unhealthy instances

@@ -1,0 +1,317 @@
+# DEVELOPMENT ONLY — do not deploy to production. Sets MTLS_REQUIRED=false and admin cors_origin=*.
+#
+# Aether Gateway Multi-Instance Testing
+# Docker Compose configuration for testing horizontal scaling with session affinity
+#
+# This setup includes:
+# - 3 gateway instances with unique IDs
+# - nginx load balancer with session affinity
+# - Redis (valkey) for session registry and KV store
+# - RabbitMQ with Streams plugin for messaging
+# - PostgreSQL for task persistence
+#
+# Required environment variables:
+#   RABBITMQ_PASS  — RabbitMQ password (no default; must be set explicitly)
+#
+# Optional environment variables:
+#   RABBITMQ_USER  — RabbitMQ username (default: aether)
+#
+# Usage:
+#   RABBITMQ_PASS=yourpassword docker-compose -f server/deployments/docker-compose/multi-instance.yaml up
+#   docker-compose -f server/deployments/docker-compose/multi-instance.yaml down
+
+version: '3.8'
+
+services:
+  # =============================================================================
+  # Infrastructure Services
+  # =============================================================================
+
+  # PostgreSQL - Task persistence and metadata storage
+  postgres:
+    image: postgres:15-alpine
+    container_name: aether-postgres
+    environment:
+      POSTGRES_DB: aether
+      POSTGRES_USER: aether
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aether"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aether
+
+  # Redis (Valkey) - Session registry, KV store, checkpoint store
+  redis:
+    image: valkey/valkey:latest
+    container_name: aether-redis
+    command:
+      - valkey-server
+      - --bind
+      - "0.0.0.0"
+      - --protected-mode
+      - "no"
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aether
+
+  # RabbitMQ with Streams - Message routing backbone
+  rabbitmq:
+    image: ghcr.io/scitrera/rabbitmq-stream:4-management
+    container_name: aether-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-aether}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:?RABBITMQ_PASS required}
+    ports:
+      - "5552:5552"   # Stream protocol
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./nginx/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - aether
+
+  # =============================================================================
+  # Gateway Instances (3 replicas for high availability)
+  # =============================================================================
+
+  gateway-1:
+    image: scitrera/aether-gateway:latest
+    container_name: aether-gateway-1
+    build:
+      context: ../..
+      dockerfile: server/Dockerfile
+    environment:
+      # Gateway identity
+      AETHER_GATEWAY_ID: gateway-1
+      GATEWAY_PORT: "50051"
+      GATEWAY_HTTP_PORT: "8080"
+
+      # PostgreSQL
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DATABASE: aether
+      POSTGRES_USER: aether
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_SSL_MODE: disable
+      POSTGRES_MAX_CONNECTIONS: "25"
+      POSTGRES_MAX_IDLE_CONNECTIONS: "5"
+
+      # Redis
+      REDIS_CLUSTER_ADDR_0: redis:6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: "0"
+
+      # RabbitMQ
+      RABBITMQ_STREAM_URL: rabbitmq-stream://${RABBITMQ_USER:-aether}:${RABBITMQ_PASS:?RABBITMQ_PASS required}@rabbitmq:5552
+      RABBITMQ_AMQP_URL: amqp://${RABBITMQ_USER:-aether}:${RABBITMQ_PASS:?RABBITMQ_PASS required}@rabbitmq:5672/
+
+      # mTLS (disabled for local testing)
+      MTLS_REQUIRED: "false"
+      MTLS_MODE: relaxed
+
+      # Observability
+      OBSERVABILITY_LOG_LEVEL: info
+      OBSERVABILITY_PROMETHEUS_PORT: "9090"
+
+      # Cleanup settings
+      CLEANUP_TASK_PURGE_INTERVAL: 24h
+      CLEANUP_COMPLETED_TASK_RETENTION: 168h
+      CLEANUP_FAILED_TASK_RETENTION: 336h
+      CLEANUP_CANCELLED_TASK_RETENTION: 168h
+      CLEANUP_RECONCILIATION_INTERVAL: 1m
+
+      # Checkpoint settings
+      CHECKPOINT_DEFAULT_TTL: 3600s
+    ports:
+      - "50051:50051"
+      - "8081:8080"
+      - "9091:9090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - aether
+
+  gateway-2:
+    image: scitrera/aether-gateway:latest
+    container_name: aether-gateway-2
+    build:
+      context: ../..
+      dockerfile: server/Dockerfile
+    environment:
+      AETHER_GATEWAY_ID: gateway-2
+      GATEWAY_PORT: "50051"
+      GATEWAY_HTTP_PORT: "8080"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DATABASE: aether
+      POSTGRES_USER: aether
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_SSL_MODE: disable
+      POSTGRES_MAX_CONNECTIONS: "25"
+      POSTGRES_MAX_IDLE_CONNECTIONS: "5"
+      REDIS_CLUSTER_ADDR_0: redis:6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: "0"
+      RABBITMQ_STREAM_URL: rabbitmq-stream://${RABBITMQ_USER:-aether}:${RABBITMQ_PASS:?RABBITMQ_PASS required}@rabbitmq:5552
+      RABBITMQ_AMQP_URL: amqp://${RABBITMQ_USER:-aether}:${RABBITMQ_PASS:?RABBITMQ_PASS required}@rabbitmq:5672/
+      MTLS_REQUIRED: "false"
+      MTLS_MODE: relaxed
+      OBSERVABILITY_LOG_LEVEL: info
+      OBSERVABILITY_PROMETHEUS_PORT: "9090"
+      CLEANUP_TASK_PURGE_INTERVAL: 24h
+      CLEANUP_COMPLETED_TASK_RETENTION: 168h
+      CLEANUP_FAILED_TASK_RETENTION: 336h
+      CLEANUP_CANCELLED_TASK_RETENTION: 168h
+      CLEANUP_RECONCILIATION_INTERVAL: 1m
+      CHECKPOINT_DEFAULT_TTL: 3600s
+    ports:
+      - "50052:50051"
+      - "8082:8080"
+      - "9092:9090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - aether
+
+  gateway-3:
+    image: scitrera/aether-gateway:latest
+    container_name: aether-gateway-3
+    build:
+      context: ../..
+      dockerfile: server/Dockerfile
+    environment:
+      AETHER_GATEWAY_ID: gateway-3
+      GATEWAY_PORT: "50051"
+      GATEWAY_HTTP_PORT: "8080"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DATABASE: aether
+      POSTGRES_USER: aether
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_SSL_MODE: disable
+      POSTGRES_MAX_CONNECTIONS: "25"
+      POSTGRES_MAX_IDLE_CONNECTIONS: "5"
+      REDIS_CLUSTER_ADDR_0: redis:6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: "0"
+      RABBITMQ_STREAM_URL: rabbitmq-stream://${RABBITMQ_USER:-aether}:${RABBITMQ_PASS:?RABBITMQ_PASS required}@rabbitmq:5552
+      RABBITMQ_AMQP_URL: amqp://${RABBITMQ_USER:-aether}:${RABBITMQ_PASS:?RABBITMQ_PASS required}@rabbitmq:5672/
+      MTLS_REQUIRED: "false"
+      MTLS_MODE: relaxed
+      OBSERVABILITY_LOG_LEVEL: info
+      OBSERVABILITY_PROMETHEUS_PORT: "9090"
+      CLEANUP_TASK_PURGE_INTERVAL: 24h
+      CLEANUP_COMPLETED_TASK_RETENTION: 168h
+      CLEANUP_FAILED_TASK_RETENTION: 336h
+      CLEANUP_CANCELLED_TASK_RETENTION: 168h
+      CLEANUP_RECONCILIATION_INTERVAL: 1m
+      CHECKPOINT_DEFAULT_TTL: 3600s
+    ports:
+      - "50053:50051"
+      - "8083:8080"
+      - "9093:9090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - aether
+
+  # =============================================================================
+  # Load Balancer (nginx with session affinity)
+  # =============================================================================
+
+  nginx:
+    image: nginx:alpine
+    container_name: aether-nginx
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "50050:50050"  # gRPC load balanced endpoint
+      - "8080:8080"    # HTTP health check endpoint
+    depends_on:
+      gateway-1:
+        condition: service_healthy
+      gateway-2:
+        condition: service_healthy
+      gateway-3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aether
+
+# =============================================================================
+# Volumes
+# =============================================================================
+
+volumes:
+  postgres-data:
+    driver: local
+  rabbitmq-data:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+
+networks:
+  aether:
+    driver: bridge

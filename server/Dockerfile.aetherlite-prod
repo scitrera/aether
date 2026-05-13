@@ -1,0 +1,9 @@
+# AetherLite — easy-start embedded mode
+# Shares all layers with the base aether-gateway image
+ARG BASE_IMAGE=ghcr.io/scitrera/aether:latest
+FROM ${BASE_IMAGE}
+
+# set aetherlite dev directory to /data to make it easier for users to mount a local directory to container
+ENV AETHERLITE_DATA_DIR="/data"
+
+ENTRYPOINT ["aetherlite"]

@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aether-gateway.configMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aether-gateway.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    # Aether Gateway configuration — managed by Helm
+    # Gateway ID is injected at runtime via the AETHER_GATEWAY_GATEWAY_ID env var
+    # (derived from the pod name via the Kubernetes Downward API).
+
+    gateway:
+      port: {{ .Values.config.gateway.port }}
+      ops_port: {{ .Values.config.gateway.ops_port }}
+      {{- if .Values.config.gateway.gateway_id }}
+      gateway_id: {{ .Values.config.gateway.gateway_id | quote }}
+      {{- end }}
+
+    admin:
+      enabled: {{ .Values.config.admin.enabled }}
+      port: {{ .Values.config.admin.port }}
+      cors_origin: {{ .Values.config.admin.cors_origin | quote }}
+
+    auth:
+      modes:
+        {{- range .Values.config.auth.modes }}
+        - {{ . }}
+        {{- end }}
+      mtls:
+        required: {{ .Values.config.auth.mtls.required }}
+        mode: {{ .Values.config.auth.mtls.mode | quote }}
+      api_key: {}
+      oauth:
+        verify_signature: {{ .Values.config.auth.oauth.verify_signature }}
+        providers: {{ .Values.config.auth.oauth.providers | toJson }}
+
+    postgres:
+      host: {{ .Values.config.postgres.host | quote }}
+      port: {{ .Values.config.postgres.port }}
+      database: {{ .Values.config.postgres.database | quote }}
+      user: {{ .Values.config.postgres.user | quote }}
+      max_connections: {{ .Values.config.postgres.max_connections }}
+      max_idle_connections: {{ .Values.config.postgres.max_idle_connections }}
+      ssl_mode: {{ .Values.config.postgres.ssl_mode | quote }}
+
+    redis:
+      cluster:
+        {{- range .Values.config.redis.cluster }}
+        - {{ . | quote }}
+        {{- end }}
+      db: {{ .Values.config.redis.db }}
+
+    rabbitmq:
+      stream_url: {{ .Values.config.rabbitmq.stream_url | quote }}
+      amqp_url: {{ .Values.config.rabbitmq.amqp_url | quote }}
+
+    audit:
+      enabled: {{ .Values.config.audit.enabled }}
+      event_types:
+        {{- range .Values.config.audit.event_types }}
+        - {{ . }}
+        {{- end }}
+      verbosity: {{ .Values.config.audit.verbosity | quote }}
+      batch_size: {{ .Values.config.audit.batch_size }}
+      flush_period: {{ .Values.config.audit.flush_period | quote }}
+      retention_days: {{ .Values.config.audit.retention_days }}
+      channel_buffer: {{ .Values.config.audit.channel_buffer }}
+
+    cleanup:
+      task_purge_interval: {{ .Values.config.cleanup.task_purge_interval | quote }}
+      completed_task_retention: {{ .Values.config.cleanup.completed_task_retention | quote }}
+      failed_task_retention: {{ .Values.config.cleanup.failed_task_retention | quote }}
+      cancelled_task_retention: {{ .Values.config.cleanup.cancelled_task_retention | quote }}
+      reconciliation_interval: {{ .Values.config.cleanup.reconciliation_interval | quote }}
+
+    checkpoint:
+      default_ttl: {{ .Values.config.checkpoint.default_ttl | quote }}
+
+    shutdown:
+      graceful_timeout: {{ .Values.config.shutdown.graceful_timeout | quote }}
+
+    log_level: {{ .Values.config.log_level | quote }}

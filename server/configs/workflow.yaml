@@ -1,0 +1,47 @@
+# Aether Workflow Server Configuration
+# This file configures the standalone workflow server that connects
+# to the Aether gateway as a WorkflowEngine client.
+
+aether:
+  address: "localhost:50051"
+  implementation: "aether-workflow"
+  workspace: "_system"
+  tls:
+    cert_file: ""
+    key_file: ""
+    ca_file: ""
+  credentials:
+    api_key: ""    # or use AETHER_API_KEY env var
+
+postgres:
+  host: localhost
+  port: 5432
+  database: aether
+  user: aether
+  password: ""     # or use POSTGRES_PASSWORD env var
+  ssl_mode: disable
+  max_connections: 10
+  max_idle_connections: 5
+
+redis:
+  cluster:
+    - "localhost:6379"
+  password: ""     # or use REDIS_PASSWORD env var
+
+workflow:
+  rule_cache_ttl: "2m"
+  rule_cache_size: 2048
+  scheduler_poll_interval: "1s"
+  dag_monitor_interval: "5s"
+  step_default_timeout: "5m"
+  dag_default_timeout: "1h"
+  max_concurrent_executions: 100
+
+admin:
+  enabled: true
+  port: 31881
+  api_key: ""       # or use WORKFLOW_ADMIN_API_KEY env var
+
+logging:
+  level: info       # debug, info, warn, error
+  format: ""        # json, console (auto-detected if empty)

@@ -1,0 +1,136 @@
+# Aether Gateway ConfigMap
+# Kubernetes Horizontal Scaling Configuration
+# This ConfigMap contains environment-based configuration for gateway instances
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aether-gateway-config
+  namespace: aether
+  labels:
+    app: aether-gateway
+    component: config
+data:
+  # Gateway settings
+  GATEWAY_PORT: "50051"
+  GATEWAY_HTTP_PORT: "8080"
+  # gateway_id will be set dynamically per pod using downward API (POD_NAME)
+  # Format: gateway-{pod-name}
+
+  # mTLS configuration
+  MTLS_REQUIRED: "false"
+  MTLS_MODE: "relaxed"
+
+  # PostgreSQL settings (shared instance + table prefix isolation)
+  POSTGRES_HOST: "aether-postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DATABASE: "aether"
+  POSTGRES_USER: "aether"
+  POSTGRES_MAX_CONNECTIONS: "25"
+  POSTGRES_MAX_IDLE_CONNECTIONS: "5"
+  POSTGRES_SSL_MODE: "disable"
+
+  # Redis cluster settings (for RedSync and session registry)
+  REDIS_CLUSTER_ADDR_0: "aether-redis-0.aether-redis:6379"
+  REDIS_CLUSTER_ADDR_1: "aether-redis-1.aether-redis:6379"
+  REDIS_CLUSTER_ADDR_2: "aether-redis-2.aether-redis:6379"
+  REDIS_PASSWORD: ""
+  REDIS_DB: "0"
+
+  # RabbitMQ settings
+  RABBITMQ_STREAM_URL: "rabbitmq-stream://guest:guest@aether-rabbitmq:5552"
+  RABBITMQ_AMQP_URL: "amqp://guest:guest@aether-rabbitmq:5672/"
+
+  # Cache settings
+  CACHE_TTL: "5m"
+  CACHE_MAX_SIZE: "10000"
+
+  # Cleanup settings
+  CLEANUP_TASK_PURGE_INTERVAL: "24h"
+  CLEANUP_COMPLETED_TASK_RETENTION: "168h"  # 7 days
+  CLEANUP_FAILED_TASK_RETENTION: "336h"     # 14 days
+  CLEANUP_CANCELLED_TASK_RETENTION: "168h"  # 7 days
+  CLEANUP_RECONCILIATION_INTERVAL: "1m"
+
+  # Checkpoint settings
+  CHECKPOINT_DEFAULT_TTL: "3600s"  # 1 hour
+
+  # Observability settings
+  OBSERVABILITY_PROMETHEUS_PORT: "9090"
+  OBSERVABILITY_TRACING_ENABLED: "true"
+  OBSERVABILITY_JAEGER_ENDPOINT: "http://aether-jaeger:14268/api/traces"
+  OBSERVABILITY_LOG_LEVEL: "info"
+
+---
+# Alternative: Config file approach (if gateway reads from file)
+# Uncomment and use this if the gateway reads from a YAML config file
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aether-gateway-config-file
+  namespace: aether
+  labels:
+    app: aether-gateway
+    component: config
+data:
+  config.yaml: |
+    # Gateway settings
+    gateway:
+      port: 50051
+      http_port: 8080
+      # gateway_id will be set via environment variable using POD_NAME
+      gateway_id: "${AETHER_GATEWAY_ID}"
+
+    # mTLS configuration
+    mtls:
+      required: false
+      mode: relaxed
+
+    # PostgreSQL settings (shared instance + table prefix isolation)
+    postgres:
+      host: "aether-postgres"
+      port: 5432
+      database: "aether"
+      user: "aether"
+      password: "${POSTGRES_PASSWORD}"
+      max_connections: 25
+      max_idle_connections: 5
+      ssl_mode: "disable"
+
+    # Redis cluster settings (for RedSync and session registry)
+    redis:
+      cluster:
+        - "aether-redis-0.aether-redis:6379"
+        - "aether-redis-1.aether-redis:6379"
+        - "aether-redis-2.aether-redis:6379"
+      password: "${REDIS_PASSWORD}"
+      db: 0
+
+    # RabbitMQ settings
+    rabbitmq:
+      stream_url: "rabbitmq-stream://guest:guest@aether-rabbitmq:5552"
+      amqp_url: "amqp://guest:guest@aether-rabbitmq:5672/"
+
+    # Cache settings
+    cache:
+      ttl: "5m"
+      max_size: 10000
+
+    # Cleanup settings
+    cleanup:
+      task_purge_interval: "24h"       # How often to purge (0 = disabled)
+      completed_task_retention: "168h" # 7 days
+      failed_task_retention: "336h"    # 14 days
+      cancelled_task_retention: "168h" # 7 days
+      reconciliation_interval: "1m"    # How often to reconcile (0 = disabled)
+
+    # Checkpoint settings
+    checkpoint:
+      default_ttl: "3600s"  # Default TTL for checkpoints when client sends -1 (1 hour)
+
+    # Observability settings
+    observability:
+      prometheus_port: 9090
+      tracing_enabled: true
+      jaeger_endpoint: "http://aether-jaeger:14268/api/traces"
+      log_level: "info"

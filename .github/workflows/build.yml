@@ -1,0 +1,174 @@
+name: Build and Push Docker Images
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*.*.*' ]
+#  pull_request:
+#    branches: [ main ]
+
+env:
+  GATEWAY_IMAGE: aether
+  LITE_IMAGE: aetherlite
+
+jobs:
+  build-gateway:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      base-tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to DockerHub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/scitrera/${{ env.GATEWAY_IMAGE }}
+            scitrera/${{ env.GATEWAY_IMAGE }}
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push gateway
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: server/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-aetherlite:
+    runs-on: ubuntu-latest
+    needs: build-gateway
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/scitrera/${{ env.LITE_IMAGE }}
+            scitrera/${{ env.LITE_IMAGE }}
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push aetherlite
+        uses: docker/build-push-action@v6
+        with:
+          context: server
+          file: server/Dockerfile.aetherlite-dev
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/scitrera/${{ env.GATEWAY_IMAGE }}:${{ needs.build-gateway.outputs.base-tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+
+  build-aetherlite-dev:
+    runs-on: ubuntu-latest
+    needs: build-aetherlite
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/scitrera/${{ env.LITE_IMAGE }}
+            scitrera/${{ env.LITE_IMAGE }}
+          # aetherlite is a development-only image (hardcodes AETHER_ALLOW_DEV_MODE=true
+          # and --insecure-admin); tag with a `dev-` prefix so it can never be mistaken
+          # for a production-grade release artifact.
+          tags: |
+            type=sha,prefix=dev-
+            type=raw,value=dev-latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}},prefix=dev-
+            type=semver,pattern={{major}}.{{minor}},prefix=dev-
+
+      - name: Build and push aetherlite
+        uses: docker/build-push-action@v6
+        with:
+          context: server
+          file: server/Dockerfile.aetherlite-dev
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/scitrera/${{ env.LITE_IMAGE }}:${{ needs.build-aetherlite.outputs.base-tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

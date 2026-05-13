@@ -1,0 +1,117 @@
+# Aether Proxy Sidecar — sandbox deployment example (terminator + relay)
+#
+# This config runs a single sidecar process with two surfaces enabled,
+# sharing one gateway connection (one Aether identity, one lock):
+#
+#   INBOUND  (terminator surface)
+#     Receives ProxyHttpRequest envelopes addressed at sv::toolrunner::default
+#     and forwards them to the local tool-runner HTTP process.  Callers that
+#     know the service topic can send requests directly without passing through
+#     the sandbox.
+#
+#   OUTBOUND (relay surface)
+#     Binds a local AetherGateway gRPC server at unix:///run/aether.sock.
+#     Sandbox processes dial that socket using plain HTTP/2 with no credentials.
+#     The sidecar injects the sidecar's own API key and identity, enforces an
+#     operation allow-list and a target-topic clamp, then forwards permitted
+#     envelopes to the real gateway.
+#
+# Security model:
+#   - The sandbox holds no credentials.  The sidecar holds the API key and
+#     presents itself to the gateway.  Credential theft from the sandbox is
+#     impossible because there are no credentials to steal.
+#   - UDS path (/run/aether.sock) gates access by filesystem permissions.
+#     Only processes in the same pod/container namespace can reach the socket.
+#   - relay.allowed_ops: sandbox-default permits SendMessage, ProgressReport,
+#     and KVOperation only.  Proxy/tunnel envelopes are blocked unless you
+#     switch to sandbox-tunnels.
+#   - relay.target_topic_clamp rejects any target_topic not in allowed_targets.
+#     The sandbox cannot address arbitrary topics — it can only reach the
+#     principals listed here.
+#
+# SDK config for a sandbox process:
+#   Python:     AetherClient(gateway_address="unix:///run/aether.sock", insecure=True)
+#   Go:         aether.WithAddress("unix:///run/aether.sock"), aether.WithInsecure()
+#   TypeScript: { address: "unix:///run/aether.sock", insecure: true }
+#
+# Spawn-time grant scopes (set on the authority grant the orchestrator issues):
+#   proxy_path:    restrict which HTTP paths the sandbox may proxy through
+#                  e.g.  "toolrunner::POST /v1/run"
+#   tunnel_target: restrict which tunnel targets the sandbox may open
+#                  e.g.  "db::tcp db-primary:5432"
+#   (omit both to allow all paths/targets permitted by the upstream ACL)
+
+gateway:
+  address: gateway.example.com:50051
+  insecure: false
+  api_key_path: /etc/aether/sidecar.key
+  tls:
+    cert_file: /etc/aether/tls/cert.pem
+    key_file:  /etc/aether/tls/key.pem
+    ca_file:   /etc/aether/tls/ca.pem
+
+# Identity registered with the gateway (shared between terminator and relay
+# surfaces — both surfaces use the same Aether lock).
+service:
+  implementation: toolrunner
+  specifier: default
+
+# Tenant ID injected as X-Auth-Tenant-ID by the terminator surface.
+tenant_id: prod-tenant
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Terminator surface — backends the sidecar will forward inbound requests to.
+# ─────────────────────────────────────────────────────────────────────────────
+
+terminator:
+  enabled: true
+  backends:
+    - name: tool-api
+      kind: http
+      url: http://localhost:7000
+      allow_paths:
+        - "/v1/run"
+        - "/v1/status/*"
+        - "/healthz"
+      allow_methods:
+        - GET
+        - POST
+      max_body_bytes: 4194304      # 4 MiB — keep sandbox payloads small
+      idle_timeout_ms: 60000       # 60 s — tool runs may be slow
+      header_mode: strict          # mint X-Auth-* from OBO grant; strip Authorization
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Relay surface — sandbox process dials this UDS endpoint.
+# ─────────────────────────────────────────────────────────────────────────────
+
+relay:
+  enabled: true
+
+  # UDS path the sandbox dials.  Must be accessible from the sandbox's
+  # filesystem namespace (same pod/container or shared volume).
+  listen: unix:///run/aether.sock
+
+  # enforce: sandbox-supplied identity and resume_session_id are discarded.
+  # The sidecar always presents its own service identity to the gateway.
+  identity_override: enforce
+
+  # Named profile for the operation allow-list.
+  # sandbox-default: SendMessage, ProgressReport, KVOperation only.
+  # sandbox-tunnels: extends with ProxyHttpRequest / Tunnel* ops.
+  # tool-stub-only:  InitConnection only; sandbox can only receive, not send.
+  allowed_ops:
+    profile: sandbox-default
+
+  # Restrict which topics the sandbox may address in outbound envelopes.
+  target_topic_clamp:
+    # reject: deny any target_topic not in allowed_targets (safest; default).
+    # rewrite_first_match: rewrite to the first concrete entry instead.
+    mode: reject
+    allowed_targets:
+      # Allow the sandbox to message its orchestrator and any user window.
+      - "ag.prod-workspace.orchestrator.*"
+      - "us.*"
+
+logging:
+  level: info
+  format: json

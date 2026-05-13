@@ -1,0 +1,60 @@
+{
+  "name": "@scitrera/aether-client",
+  "version": "0.1.58",
+  "description": "TypeScript/JavaScript SDK for the Aether distributed control plane",
+  "license": "Apache-2.0",
+  "author": "Scitrera",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/scitrera/aether",
+    "directory": "sdk/typescript"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.10.0",
+    "@grpc/proto-loader": "^0.7.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "tsup": "^8.0.0",
+    "vitest": "^1.4.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "aether",
+    "scitrera",
+    "grpc",
+    "distributed",
+    "control-plane",
+    "messaging"
+  ]
+}

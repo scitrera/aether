@@ -1,0 +1,2358 @@
+syntax = "proto3";
+
+package aether.v1;
+
+option go_package = "github.com/scitrera/aether/api/proto;aether";
+
+service AetherGateway {
+  // Bi-directional stream.
+  // First message must be InitConnection.
+  // Subsequent messages are opaque Envelopes.
+  rpc Connect (stream UpstreamMessage) returns (stream DownstreamMessage);
+}
+
+message UpstreamMessage {
+  oneof payload {
+    InitConnection init = 1;
+    SendMessage send = 2;
+    SwitchWorkspace switch_workspace = 3;
+    KVOperation kv_op = 4;
+    CreateTaskRequest create_task = 5;
+    CheckpointOperation checkpoint_op = 6;
+    AdminQuery admin_query = 7;
+    SessionOperation session_op = 8;
+    TaskQuery task_query = 9;
+    TaskOperation task_op = 10;
+    WorkspaceOperation workspace_op = 11;
+    AgentOperation agent_op = 12;
+    ACLOperation acl_op = 13;
+    ProgressReport progress = 14;
+    WorkflowOperation workflow_op = 15;
+    WorkflowResponse workflow_response = 16;
+    TokenOperation token_op = 17;
+    AuditQuery audit_query = 18;
+    AuthorityGrantOperation authority_grant_op = 19;
+    ProxyHttpRequest proxy_http_request = 20;
+    ProxyHttpBodyChunk proxy_http_body_chunk = 21;
+    TunnelOpen tunnel_open = 22;
+    TunnelData tunnel_data = 23;
+    TunnelClose tunnel_close = 24;
+    ProxyHttpResponse proxy_http_response = 25;
+    TunnelAck tunnel_ack = 26;
+    ResolveAuthorityRequest resolve_authority_request = 27;
+    ConnectionStatusRequest connection_status_request = 28;
+    SubmitAuditEventRequest submit_audit_event = 29;
+  }
+}
+
+message DownstreamMessage {
+  oneof payload {
+    IncomingMessage msg = 1;
+    ConfigSnapshot config = 2;
+    Signal signal = 3;
+    ErrorResponse error = 4;
+    KVResponse kv = 5;
+    TaskAssignment task_assignment = 6;
+    ConnectionAck connection_ack = 7;
+    CheckpointResponse checkpoint = 8;
+    AdminResponse admin = 9;
+    SessionOperationResponse session_response = 10;
+    TaskQueryResponse task_query = 11;
+    TaskOperationResponse task_op = 12;
+    WorkspaceResponse workspace = 13;
+    AgentResponse agent = 14;
+    ACLResponse acl = 15;
+    ProgressUpdate progress_update = 16;
+    WorkflowResponse workflow_response = 17;
+    WorkflowOperation workflow_op = 18;
+    TokenResponse token = 19;
+    AuditQueryResponse audit_response = 20;
+    AuthorityGrantResponse authority_grant = 21;
+    CreateTaskResponse create_task = 22;
+    ProxyHttpResponse proxy_http_response = 23;
+    ProxyHttpBodyChunk proxy_http_body_chunk = 24;
+    TunnelAck tunnel_ack = 25;
+    TunnelClose tunnel_close = 26;
+    TunnelData tunnel_data = 27;
+    ProxyHttpRequest proxy_http_request = 28;
+    ResolveAuthorityResponse resolve_authority_response = 29;
+    ConnectionStatusResponse connection_status_response = 30;
+    AuthorityGrantRevocation authority_grant_revocation = 31;
+    SubmitAuditEventResponse submit_audit_event_response = 32;
+  }
+}
+
+// ConnectionAck is sent immediately after successful connection.
+// Contains the session ID that the client should store for reconnection.
+message ConnectionAck {
+  string session_id = 1;
+  // Indicates if this was a resumed session (client provided matching resume_session_id)
+  bool resumed = 2;
+  // For non-unique tasks, the server-assigned task instance ID used to construct
+  // the task's topic address (ta.{workspace}.{impl}.{assigned_id}).
+  // Empty for all other principal types.
+  string assigned_id = 3;
+}
+
+message InitConnection {
+  oneof client_type {
+    AgentIdentity agent = 1;
+    TaskIdentity task = 2;
+    UserIdentity user = 3;
+    OrchestratorIdentity orchestrator = 4;
+    WorkflowEngineIdentity workflow_engine = 5;
+    MetricsBridgeIdentity metrics_bridge = 6;
+    BridgeIdentity bridge = 7;
+    ServiceIdentity service = 8;
+  }
+  map<string, string> credentials = 10;
+  // Optional: session ID from a previous connection to resume.
+  // If provided and the lock still exists with this session ID,
+  // the connection will take over the existing lock instead of failing.
+  string resume_session_id = 11;
+}
+
+// WorkflowEngineIdentity identifies a workflow engine principal.
+// Replaces the previous bool sentinel to allow future extensibility.
+message WorkflowEngineIdentity {
+  string instance_id = 1;  // Optional instance identifier for multiple workflow engines
+}
+
+// MetricsBridgeIdentity identifies a metrics bridge principal.
+// Replaces the previous bool sentinel to allow future extensibility.
+message MetricsBridgeIdentity {
+  string instance_id = 1;  // Optional instance identifier for multiple metrics bridges
+}
+
+message OrchestratorIdentity {
+  string implementation = 1;  // e.g., "kubernetes-orchestrator", "docker-orchestrator"
+  string specifier = 2;       // Client-generated UUID for uniqueness (multiple instances)
+  repeated string supported_profiles = 3;  // Profiles this orchestrator supports
+}
+
+message BridgeIdentity {
+  string implementation = 1;  // e.g., "aether-msgbridge", "webhook-bridge"
+  string specifier = 2;       // Instance identifier for uniqueness (e.g., "default", "discord-1")
+}
+
+message ServiceIdentity {
+  string implementation = 1;  // e.g., "frontend-api", "platform-backend"
+  string specifier = 2;       // Instance identifier for uniqueness (e.g., "pod-1", "default")
+}
+
+message AgentIdentity {
+  string workspace = 1;
+  string implementation = 2;
+  string specifier = 3;
+}
+
+message TaskIdentity {
+  string workspace = 1;
+  string implementation = 2;
+  string unique_specifier = 3; // Empty for non-unique tasks
+}
+
+message UserIdentity {
+  string user_id = 1;
+  string window_id = 2;
+}
+
+message PrincipalRef {
+  string principal_type = 1;
+  string principal_id = 2;
+}
+
+message AuthorizationContext {
+  string authority_mode = 1;  // "direct" or "on_behalf_of"
+  PrincipalRef subject = 2;   // Required for on_behalf_of
+  string grant_id = 3;        // Required for on_behalf_of
+
+  // Pre-resolved grant info populated by the gateway BEFORE publishing to a
+  // terminator. The gateway already validated the grant under the calling
+  // delegate when it ran proxyACLCheck — terminators in strict mode can use
+  // this in lieu of issuing their own ResolveAuthorityRequest, eliminating a
+  // round-trip per request and removing the delegate/audience actor mismatch
+  // (the audience is not the delegate, so the audience-side resolver call
+  // would otherwise fail acl.ResolveAuthority's actor==delegate check).
+  //
+  // Trust anchor: the terminator's gRPC connection is mTLS-authenticated to
+  // the same gateway that authenticated the originating delegate, so
+  // gateway-stamped fields are trusted within a single Aether cluster.
+  // Federated/multi-cluster topologies that introduce untrusted relays MUST
+  // either re-resolve via the resolver path or extend this message with a
+  // signed attestation.
+  //
+  // Empty when unset (e.g. direct mode, plain SendMessage path, or older
+  // gateway that doesn't yet stamp resolved info — terminators fall back to
+  // the resolver path in that case).
+  ResolvedAuthorityInfo resolved = 10;
+}
+
+// ResolvedAuthorityInfo is the public-safe projection of an AuthorityGrant
+// that the gateway can stamp onto a ProxyHttpRequest after it has validated
+// the request's AuthorizationContext. Mirrors the fields that the SDK's
+// `_overlay_resolved_authority` consumes when minting the X-Auth-* headers
+// the backend uses to enforce caps (workspace scope, max access level,
+// audience binding, root-subject for audit).
+message ResolvedAuthorityInfo {
+  PrincipalRef root_subject = 1;
+  string audience_type = 2;       // "session", "task", "agent", "service"
+  string audience_id = 3;
+  int32 max_access_level = 4;     // matches acl.AccessLevel numeric scale
+  repeated string workspace_scope = 5;
+  int64 expires_at_ms = 6;        // unix milliseconds; 0 means "no expiry recorded"
+}
+
+message SendMessage {
+  string target_topic = 1;
+  bytes payload = 2;
+  MessageType message_type = 3;
+  AuthorizationContext authorization = 4;
+  // Optional: user's active app workspace. Stamped by the ws-server (or a
+  // user client that has this context) so the gateway can scope derived
+  // task-authority grants correctly at triggerOrchestration + downstream
+  // ops. Ignored when the sender is not a user principal. When absent the
+  // gateway falls back to `sender.Workspace` (session-tracked workspace,
+  // meaningful for agents/tasks but empty for users today). Will become
+  // secondary once authproxy-issued root grants are used as the primary
+  // scope source.
+  string app_workspace = 5;
+}
+
+enum MessageType {
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+  CHAT = 1;
+  CONTROL = 2;
+  TOOL_CALL = 3;
+  EVENT = 4;
+  METRIC = 5;
+  // OPAQUE: sender and receiver own the payload schema. Aether forwards verbatim
+  // and makes no payload assumptions — no validation, no text decoding for audit,
+  // no per-type behavior. Default for the SDK convenience helpers (SendToAgent,
+  // SendToUser, etc.); use CHAT explicitly for true conversational text.
+  OPAQUE = 6;
+}
+
+// Metric is the canonical payload for SendMessage when message_type == METRIC.
+// All entries are interpreted as additive deltas; negative qty requires the
+// `capability/metric_credit` ACL permission on the sender.
+message Metric {
+  // Optional correlation ID (request/trace) tying these entries to upstream work.
+  string trace_id = 1;
+
+  // One or more counter deltas. At least one entry is required.
+  repeated MetricEntry entries = 2;
+
+  // Free-form tags / hints. Documented well-known keys:
+  //   lifecycle      = "startup" | "shutdown"
+  //   source.version, source.region, source.host, ...
+  map<string, string> metadata = 3;
+
+  // Optional client-side timestamp (ms since epoch). The server always also
+  // stamps MessageEnvelope.timestamp_ms; this is for client-side ordering hints.
+  int64 client_timestamp_ms = 4;
+}
+
+// MetricEntry is one additive delta within a Metric message.
+message MetricEntry {
+  string name = 1;   // e.g. "tokens_in", "time_seconds", "pages_rendered"
+  string kind = 2;   // sub-classifier, e.g. "modelA", "" (free-form, may be empty)
+  double qty = 3;    // additive delta; negative requires capability/metric_credit
+}
+
+// PrincipalType enumerates the types of principals that can connect to the gateway.
+enum PrincipalType {
+  PRINCIPAL_TYPE_UNSPECIFIED = 0;
+  PRINCIPAL_AGENT = 1;
+  PRINCIPAL_TASK = 2;
+  PRINCIPAL_USER = 3;
+  PRINCIPAL_ORCHESTRATOR = 4;
+  PRINCIPAL_WORKFLOW_ENGINE = 5;
+  PRINCIPAL_METRICS_BRIDGE = 6;
+  PRINCIPAL_BRIDGE = 7;
+  PRINCIPAL_SERVICE = 8;
+}
+
+// TaskStatus enumerates the lifecycle states of a task.
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_QUEUED = 1;
+  TASK_STATUS_RUNNING = 2;
+  TASK_STATUS_COMPLETED = 3;
+  TASK_STATUS_FAILED = 4;
+  TASK_STATUS_CANCELLED = 5;
+}
+
+// HealthStatus enumerates the overall health states of the gateway.
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_DEGRADED = 2;
+  HEALTH_STATUS_UNHEALTHY = 3;
+}
+
+// HealthCheckStatus enumerates the result of individual component health checks.
+enum HealthCheckStatus {
+  HEALTH_CHECK_STATUS_UNSPECIFIED = 0;
+  HEALTH_CHECK_STATUS_OK = 1;
+  HEALTH_CHECK_STATUS_ERROR = 2;
+}
+
+// AccessLevel enumerates permission levels for ACL rules.
+enum AccessLevel {
+  ACCESS_LEVEL_UNSPECIFIED = 0;
+  ACCESS_LEVEL_NONE = 1;       // 0 in legacy int32
+  ACCESS_LEVEL_READ = 2;       // 10 in legacy int32
+  ACCESS_LEVEL_READWRITE = 3;  // 20 in legacy int32
+  ACCESS_LEVEL_MANAGE = 4;     // 30 in legacy int32
+  ACCESS_LEVEL_ADMIN = 5;      // 40 in legacy int32
+  ACCESS_LEVEL_SUPERADMIN = 6; // 50 in legacy int32
+}
+
+message SwitchWorkspace {
+  string new_workspace_id = 1;
+}
+
+// NOTE: KV values are opaque bytes; use msgpack (or equivalent) for structured data.
+// NOTE: Proto regeneration required after this change (run protoc or go generate).
+message KVOperation {
+  enum OpType {
+    GET = 0;
+    PUT = 1;
+    LIST = 2;
+    DELETE = 3;
+    INCREMENT = 4;
+    DECREMENT = 5;
+    INCREMENT_IF = 6;  // Atomic increment that succeeds only if result <= guard_value
+    DECREMENT_IF = 7;  // Atomic decrement that succeeds only if result >= guard_value
+  }
+  // Scope identifies the (identity x sharing) cell of the KV matrix.
+  //
+  // The four legacy values (GLOBAL, WORKSPACE, USER, USER_WORKSPACE) are
+  // preserved with their original tag numbers and semantics:
+  //   GLOBAL/WORKSPACE         = cross-agent shared
+  //   USER/USER_WORKSPACE      = per-agent (agent-private)
+  //
+  // The four new values complete the 4 (identity) x 2 (sharing) matrix:
+  //   GLOBAL_EXCLUSIVE         = per-agent, tenant-wide
+  //   WORKSPACE_EXCLUSIVE      = per-agent, per-workspace
+  //   USER_SHARED              = cross-agent, per-user
+  //   USER_WORKSPACE_SHARED    = cross-agent, per-user, per-workspace
+  enum Scope {
+    SCOPE_UNSPECIFIED = 0;
+    GLOBAL = 1;                     // shared, tenant-wide
+    WORKSPACE = 2;                  // shared, per-workspace
+    USER = 3;                       // per-agent, per-user
+    USER_WORKSPACE = 4;             // per-agent, per-user, per-workspace
+    GLOBAL_EXCLUSIVE = 5;           // per-agent, tenant-wide
+    WORKSPACE_EXCLUSIVE = 6;        // per-agent, per-workspace
+    USER_SHARED = 7;                // shared, per-user
+    USER_WORKSPACE_SHARED = 8;      // shared, per-user, per-workspace
+  }
+  OpType op = 1;
+  Scope scope = 2;
+  string key = 3;
+  bytes value = 4;
+  string user_id = 5;   // for user/user-workspace scopes
+  string workspace = 6; // for workspace/user-workspace scopes
+  int64 ttl = 7;        // TTL in seconds, 0 = no expiration
+  string request_id = 8; // Client-generated correlation ID for matching responses to requests
+  AuthorizationContext authorization = 9;
+  int64 guard_value = 10; // floor for DECREMENT_IF, ceiling for INCREMENT_IF
+  // Step size for INCREMENT_IF / DECREMENT_IF. When 0 the server uses a
+  // default of 1, matching unguarded INCREMENT/DECREMENT. Must be >= 0;
+  // negative deltas are rejected by the server.
+  int64 delta_value = 11;
+}
+
+message KVResponse {
+  bool success = 1;
+  bytes value = 2;        // for GET (bytes matches KVOperation.value type)
+  repeated string keys = 3;  // for LIST
+  // for LIST with values. Type MUST be `map<string, bytes>` (not
+  // `map<string, string>`) so binary payloads (e.g., msgpack-encoded
+  // values) survive transit. Go-side `string` accepts arbitrary bytes
+  // transparently, but Python proto deserializes a `string` field as
+  // UTF-8 `str` — destroying or silently mangling non-UTF-8 binary data.
+  // The single-value `bytes value` field above already gets this right.
+  map<string, bytes> kv_map = 4;
+  string request_id = 5;  // Echoed from the originating KVOperation for correlation
+  int64 counter_value = 6;  // Result of INCREMENT/DECREMENT (and INCREMENT_IF/DECREMENT_IF)
+  bool applied = 7;        // True iff INCREMENT_IF/DECREMENT_IF mutation was applied; for unguarded ops always true on success
+}
+
+message IncomingMessage {
+  string source_topic = 1;
+  bytes payload = 2;
+  MessageType message_type = 3;
+  // Workspace context for this message, as declared by the sender (via
+  // SendMessage.app_workspace or the workspace component of event::/metric::
+  // target topics) and verified by the gateway. Empty when no workspace
+  // applies (e.g., bridge messages, service messages). Mirrors
+  // SendMessage.app_workspace on the receive side. Workflow engines and
+  // metrics bridges, which subscribe to a workspace-agnostic fan-in shard,
+  // recover the originating workspace from this field rather than from
+  // source_topic (which carries the sender's identity-topic, not the
+  // declared event/metric workspace).
+  string workspace = 4;
+}
+
+message ConfigSnapshot {
+  // Legacy fields. The server stops auto-populating these as part of the
+  // KV scope revamp — shared workspace/global data must be queried on
+  // demand via KVOperation. Old SDK clients deserializing these will see
+  // empty maps; no consumer relied on the eager hydration path.
+  map<string, bytes> kv = 1 [deprecated = true];        // legacy: was workspace-shared
+  map<string, bytes> global_kv = 2 [deprecated = true]; // legacy: was global-shared
+  // Per-agent task context populated from TaskAssignment on connect.
+  // Contains: task_id, workspace, user, implementation, specifier, profile,
+  // plus all metadata entries and launch_params (prefixed with "lp.").
+  // Empty if no TaskAssignment exists for the connecting identity.
+  map<string, string> task_context = 3;
+  // Per-agent (exclusive) baseline KV pre-loaded at connect time.
+  map<string, bytes> workspace_exclusive_kv = 4; // per-agent, per-workspace
+  map<string, bytes> global_exclusive_kv = 5;    // per-agent, tenant-wide
+}
+
+message Signal {
+  enum SignalType {
+    FORCE_DISCONNECT = 0;
+    GRACEFUL_DISCONNECT = 1;
+  }
+  SignalType type = 1;
+  string reason = 2;
+}
+
+message ErrorResponse {
+  string code = 1;
+  string message = 2;
+  bool retryable = 3;           // Whether the client should retry this request
+  int64 retry_after_ms = 4;     // Suggested retry delay in milliseconds (0 = use default backoff)
+}
+
+// ============================================================================
+// Phase 6: Task Assignment Messages
+// ============================================================================
+
+enum TaskAssignmentMode {
+  SELF_ASSIGN = 0;  // Default: agent assigns to itself
+  TARGETED = 1;     // Assign to specific agent (may trigger orchestration)
+  POOL = 2;         // Any matching worker can claim the task
+}
+
+// TaskClass categorizes how UIs should surface a task's lifecycle.
+// Orthogonal to TaskStatus (lifecycle) and TaskAssignmentMode (assignment):
+// purely a hint for clients deciding whether/how to show progress and
+// notifications. Servers persist and propagate it but do NOT make
+// scheduling/dispatch/ACL decisions on it.
+enum TaskClass {
+  TASK_CLASS_UNSPECIFIED = 0;  // Treated as INTERACTIVE for back-compat.
+  TASK_CLASS_INTERACTIVE = 1;  // Short-lived, user actively waiting.
+                               //   Surface in foreground bell with live progress.
+  TASK_CLASS_BACKGROUND = 2;   // Long-running infrastructure task.
+                               //   Hidden from user-facing notifications by default;
+                               //   visible only in admin dashboards.
+  TASK_CLASS_BATCH = 3;        // Long-running user-initiated job.
+                               //   Suppress in-flight progress noise; DO notify on
+                               //   terminal state (completed / failed).
+}
+
+message CreateTaskRequest {
+  string task_type = 1;
+  string workspace = 2;
+
+  TaskAssignmentMode assignment_mode = 3;
+
+  // For TARGETED mode only
+  string target_agent_id = 4;  // Full identity string (e.g., "ag.prod.worker.inst-5")
+
+  // For targeted tasks that trigger orchestration
+  map<string, string> launch_param_overrides = 5;
+
+  map<string, string> metadata = 6;
+
+  // Optional binary payload for task input data (e.g., serialized configs, protobuf work items).
+  // Subject to server-enforced size limit (default 512KB).
+  bytes payload = 7;
+
+  // For POOL mode: target agent implementation type (e.g., "data-processor")
+  string target_implementation = 8;
+
+  AuthorizationContext authorization = 9;
+
+  // Optional correlation ID. If non-empty, the server will send a
+  // CreateTaskResponse with this request_id echoed so the creator can
+  // learn the resulting task_id. Leave empty for fire-and-forget semantics.
+  string request_id = 10;
+
+  // Optional. Identity string ("<workspace>::<implementation>::<specifier>")
+  // that the task's spawned worker will register as. When non-empty AND the
+  // server can mint a task token (creator has Manage on the workspace, the
+  // identity's workspace matches `workspace`, and the workspace is not on
+  // the platform-blocklist), the gateway returns a fresh single-use task
+  // token in CreateTaskResponse.task_token. The worker presents that token
+  // at connection init to authenticate AS this identity. Leave empty when
+  // the worker uses some other auth mechanism (mTLS-only, pre-issued API
+  // key, etc.) and no per-task token is wanted.
+  string target_identity = 11;
+
+  // Optional UI hint; defaults to UNSPECIFIED ⇒ INTERACTIVE.
+  TaskClass task_class = 12;
+}
+
+// CreateTaskResponse is sent in response to CreateTaskRequest when the
+// request carries a non-empty request_id. Gives the creator the server-
+// assigned task_id so it can later COMPLETE/FAIL/CANCEL the task.
+message CreateTaskResponse {
+  bool success = 1;
+  string task_id = 2;        // server-assigned task ID on success
+  string status = 3;         // e.g., "pending", "assigned", "pending_pool"
+  string error_code = 4;     // populated on failure: e.g. "ERR_PERMISSION_DENIED"
+  string error_message = 5;  // human-readable error message
+  // Echoed from the originating CreateTaskRequest for correlation
+  string request_id = 6;
+  // Optional: for TARGETED tasks successfully delivered, the receiving
+  // identity string. Empty for SELF_ASSIGN or if not yet assigned.
+  string assigned_to = 7;
+
+  // Plaintext task auth token (HMAC-stored server-side, 24h TTL). Populated
+  // ONLY when CreateTaskRequest.target_identity was non-empty AND the issue-
+  // token ACL check passed (creator has AccessManage on the workspace, the
+  // target_identity's workspace matches the task workspace, and the
+  // workspace is not platform-blocked). The worker presents this token via
+  // Credentials{"token": ...} at connection init to authenticate as the
+  // declared target_identity. Plaintext is only available here; the server
+  // stores HMAC-SHA256 only. Empty string means "no token issued" — either
+  // not requested (no target_identity), or the issue-token check denied it
+  // (the underlying CreateTask still succeeded, audit log records the
+  // denial). Token is auto-revoked when RevokeTokensForTask runs at task
+  // completion.
+  string task_token = 8;
+
+  // Authority grant ID derived for this task by establishTaskAuthorityGrant.
+  // Populated only when the caller passed an AuthorizationContext that
+  // resolved to an OBO subject (otherwise empty). Lets the creator forward
+  // this grant to a downstream worker that needs to act with the task's
+  // exact per-task workspace/scope — for example, the platform-server
+  // ws-server stamps it onto the chat_message envelope so the running
+  // CoworkAgent uses the per-message grant (which reflects the user's
+  // current workspace) instead of its long-lived startup-task grant
+  // (which was minted at agent boot with a stale workspace list).
+  string authority_grant_id = 9;
+}
+
+message TaskAssignment {
+  string task_id = 1;
+  string task_type = 2;
+  string assigned_to = 3;  // Agent identity receiving the task
+  map<string, string> metadata = 4;
+  int64 assigned_at = 5;  // Unix timestamp
+
+  // For orchestrated tasks (agent startup)
+  string profile = 6;                      // Orchestration profile (e.g., "kubernetes", "docker")
+  map<string, string> launch_params = 7;   // Launch parameters for the agent
+  string target_implementation = 8;        // Target agent implementation to start
+  string workspace = 9;                    // Workspace for the new agent
+  string specifier = 10;                   // Agent specifier (instance identifier)
+
+  // Optional binary payload carried from CreateTaskRequest.
+  bytes payload = 11;
+
+  // Optional UI hint; defaults to UNSPECIFIED ⇒ INTERACTIVE.
+  TaskClass task_class = 12;
+}
+
+// ============================================================================
+// Checkpoint Messages
+// ============================================================================
+
+// CheckpointOperation allows agents/tasks to save and load custom state.
+// This is separate from message offset tracking (handled automatically by RabbitMQ).
+// Use checkpoints to persist application-specific state that needs to survive restarts.
+message CheckpointOperation {
+  enum OpType {
+    SAVE = 0;    // Save checkpoint data
+    LOAD = 1;    // Load checkpoint data
+    DELETE = 2;  // Delete checkpoint
+    LIST = 3;    // List available checkpoints
+  }
+  OpType op = 1;
+
+  // Checkpoint key - allows multiple named checkpoints per identity.
+  // If empty, uses "default" as the key.
+  string key = 2;
+
+  // Checkpoint data (for SAVE operation)
+  bytes data = 3;
+
+  // TTL in seconds for the checkpoint:
+  //   -1 = use server default TTL (recommended for most use cases)
+  //    0 = no expiration (checkpoint persists until explicitly deleted)
+  //   >0 = specific TTL in seconds
+  int64 ttl = 4;
+
+  // Client-generated correlation ID for matching responses to requests
+  string request_id = 5;
+}
+
+// CheckpointResponse is sent in response to CheckpointOperation.
+message CheckpointResponse {
+  bool success = 1;
+
+  // For LOAD operation: the checkpoint data
+  bytes data = 2;
+
+  // For LIST operation: available checkpoint keys
+  repeated string keys = 3;
+
+  // Error message if success is false
+  string error = 4;
+
+  // Checkpoint metadata
+  int64 saved_at = 5;  // Unix timestamp when checkpoint was saved
+
+  // Echoed from the originating CheckpointOperation for correlation
+  string request_id = 6;
+}
+
+// ============================================================================
+// Admin Query Messages (Phase 1)
+// ============================================================================
+
+// AdminQuery allows clients to query gateway health, info, stats, and connections
+// through the gRPC streaming interface. This provides feature parity with the
+// REST Admin API for read-only administrative queries.
+message AdminQuery {
+  enum OpType {
+    GET_HEALTH = 0;        // GET /api/health - Health check with component status
+    GET_INFO = 1;          // GET /api/info - Gateway information
+    GET_STATS = 2;         // GET /api/stats - Gateway-wide statistics
+    LIST_CONNECTIONS = 3;  // GET /api/connections - List active connections
+    GET_CONNECTION = 4;    // GET /api/connections/{id} - Get specific connection
+  }
+  OpType op = 1;
+
+  // For GET_CONNECTION: the session ID to retrieve
+  string session_id = 2;
+
+  // For LIST_CONNECTIONS: optional filter parameters
+  ConnectionFilter filter = 3;
+
+  // Client-generated correlation ID for matching responses to requests
+  string request_id = 4;
+}
+
+// ConnectionFilter specifies filtering parameters for listing connections.
+// Matches REST API query parameters: type, workspace, limit, offset.
+message ConnectionFilter {
+  PrincipalType type = 1; // Filter by connection type
+  string workspace = 2;   // Filter by workspace
+  int32 limit = 3;        // Maximum number of results (0 = default limit)
+  int32 offset = 4;       // Offset for pagination
+}
+
+// ConnectionInfo represents an active gateway connection.
+// Matches the ConnectionInfo struct in state_provider.go.
+message ConnectionInfo {
+  string session_id = 1;       // Unique session identifier
+  PrincipalType type = 2;      // Connection type
+  string identity = 3;         // Full identity string (topic format)
+  string workspace = 4;        // Workspace the connection is associated with
+  string implementation = 5;   // Implementation identifier (for agents/tasks)
+  string specifier = 6;        // Specifier/instance identifier
+  int64 connected_at = 7;      // Unix timestamp when connected
+  string duration = 8;         // Human-readable duration string
+  string remote_addr = 9;      // Remote address of the client
+  int64 last_activity = 10;    // Unix timestamp of last activity
+}
+
+// AdminResponse is sent in response to AdminQuery operations.
+// Contains data for health, info, stats, or connection queries based on the
+// operation type that was requested.
+message AdminResponse {
+  bool success = 1;
+
+  // Error message if success is false
+  string error = 2;
+
+  // For GET_HEALTH operation
+  HealthInfo health = 3;
+
+  // For GET_INFO operation
+  GatewayInfo info = 4;
+
+  // For GET_STATS operation
+  GatewayStats stats = 5;
+
+  // For GET_CONNECTION operation (single connection)
+  ConnectionInfo connection = 6;
+
+  // For LIST_CONNECTIONS operation (multiple connections)
+  repeated ConnectionInfo connections = 7;
+
+  // For LIST_CONNECTIONS: total count (may differ from returned if paginated)
+  int32 total_count = 8;
+
+  // Echoed from the originating AdminQuery for correlation
+  string request_id = 9;
+}
+
+// HealthInfo represents the overall health status of the gateway.
+// Matches the HealthStatus struct in state_provider.go.
+message HealthInfo {
+  HealthStatus status = 1;     // Overall health status
+  int64 timestamp = 2;         // Unix timestamp of health check
+  map<string, HealthCheck> checks = 3;  // Individual component health checks
+  GatewayStats stats = 4;      // Optional gateway statistics
+}
+
+// HealthCheck represents a single component health check.
+// Matches the HealthCheck struct in state_provider.go.
+message HealthCheck {
+  HealthCheckStatus status = 1; // Component health check status
+  string latency = 2;          // Response latency (e.g., "1.5ms")
+  string error = 3;            // Error message if status is "error"
+}
+
+// GatewayInfo provides basic gateway information.
+// Matches the GatewayInfo struct in state_provider.go.
+message GatewayInfo {
+  string gateway_id = 1;       // Unique gateway identifier
+  string version = 2;          // Gateway version
+  int64 started_at = 3;        // Unix timestamp when gateway started
+  string uptime = 4;           // Human-readable uptime string
+  string go_version = 5;       // Go runtime version
+  int32 num_goroutines = 6;    // Current number of goroutines
+  double memory_alloc_mb = 7;  // Allocated memory in MB
+  int32 num_connections = 8;   // Number of active connections
+}
+
+// GatewayStats provides gateway-wide statistics.
+// Matches the GatewayStats struct in state_provider.go.
+message GatewayStats {
+  // Connection counts by type
+  int32 agent_connections = 1;
+  int32 task_connections = 2;
+  int32 user_connections = 3;
+  int32 orchestrator_connections = 4;
+  bool workflow_engine_connected = 5;
+  bool metrics_bridge_connected = 6;
+
+  // Task statistics
+  int32 total_tasks = 7;
+  int32 pending_tasks = 8;
+  int32 running_tasks = 9;
+  int32 completed_tasks = 10;
+  int32 failed_tasks = 11;
+
+  // Message statistics
+  double messages_per_second = 12;
+  int64 total_messages = 13;
+
+  // Timer statistics
+  int32 active_timers = 14;
+  int32 pending_timers = 15;
+}
+
+// ============================================================================
+// Session Operation Messages (Phase 2)
+// ============================================================================
+
+// SessionOperation covers CRUD/management operations on active gateway
+// sessions (live streaming connections). Mirrors AgentOperation in shape:
+// the same op enum carries reads (LIST/GET) and mutations (DISCONNECT).
+// REST equivalents:
+//   - GET /api/connections           → LIST
+//   - GET /api/connections/{id}      → GET
+//   - DELETE /api/connections/{id}   → DISCONNECT
+message SessionOperation {
+  enum OpType {
+    DISCONNECT = 0;  // DELETE /api/connections/{id} - Forcibly disconnect a session
+    LIST = 1;        // GET /api/connections - List active sessions
+    GET = 2;         // GET /api/connections/{id} - Get a single session
+  }
+  OpType op = 1;
+
+  // For DISCONNECT and GET: the session ID to operate on
+  string session_id = 2;
+
+  // For DISCONNECT: optional reason
+  string reason = 3;
+
+  // Client-generated correlation ID for matching responses to requests
+  string request_id = 4;
+
+  // For LIST: optional filter parameters. Reuses ConnectionFilter so REST
+  // and gRPC paths share the same shape.
+  ConnectionFilter filter = 5;
+
+  // Optional on-behalf-of authority context. When set, the gateway runs the
+  // admin ACL check against the subject (the user) rather than the actor
+  // (the platform-server). Mirrors AuditQuery.authorization.
+  AuthorizationContext authorization = 6;
+}
+
+// SessionOperationResponse is sent in response to SessionOperation.
+message SessionOperationResponse {
+  bool success = 1;
+
+  // Human-readable result message (DISCONNECT)
+  string message = 2;
+
+  // Error details if success is false
+  string error = 3;
+
+  // Echoed from the originating SessionOperation for correlation
+  string request_id = 4;
+
+  // For GET: the requested session
+  ConnectionInfo connection = 5;
+
+  // For LIST: matching sessions (already paginated per filter.limit/offset)
+  repeated ConnectionInfo connections = 6;
+
+  // For LIST: total count of matching sessions before limit/offset
+  int32 total_count = 7;
+}
+
+// ============================================================================
+// Task Management Messages (Phase 3)
+// ============================================================================
+
+// TaskQuery allows clients to list and get tasks through the gRPC streaming
+// interface. This provides feature parity with the REST Admin API for task
+// queries.
+// REST equivalents: GET /api/tasks, GET /api/tasks/{id}
+message TaskQuery {
+  enum OpType {
+    LIST = 0;  // GET /api/tasks - List tasks with optional filters
+    GET = 1;   // GET /api/tasks/{id} - Get a specific task by ID
+  }
+  OpType op = 1;
+
+  // For GET: the task ID to retrieve
+  string task_id = 2;
+
+  // For LIST: optional filter parameters
+  TaskFilter filter = 3;
+
+  // Client-generated correlation ID for matching responses to requests
+  string request_id = 4;
+}
+
+// TaskFilter specifies filtering parameters for listing tasks.
+// Matches REST API query parameters: status, workspace, type, limit, offset.
+message TaskFilter {
+  TaskStatus status = 1; // Filter by single task status (deprecated — use statuses)
+  string workspace = 2;  // Filter by workspace
+  string task_type = 3;  // Filter by task type
+  int32 limit = 4;       // Maximum number of results (0 = default limit)
+  int32 offset = 5;      // Offset for pagination
+  repeated TaskStatus statuses = 6;  // Filter by multiple task statuses (takes priority over status)
+
+  // Authority lineage filters (first-class task authority fields).
+  string subject_type = 7;             // Filter by subject principal type
+  string subject_id = 8;               // Filter by subject canonical identity
+  string authority_mode = 9;           // "direct" or "on_behalf_of"
+  string authority_grant_id = 10;      // Filter by current authority grant id
+  string root_authority_grant_id = 11; // Filter by root authority grant id
+  string parent_task_id = 12;          // Filter by parent task id (nested task trees)
+  TaskClass task_class = 13;           // Optional UI hint filter; 0 = no filter.
+  // Inverted UI hint filter: any task whose task_class appears in this list
+  // is omitted. Forward-compatible: new TaskClass values pass through unless
+  // explicitly excluded. Combinable with task_class above (positive single
+  // include) but the typical use is one or the other.
+  repeated TaskClass exclude_task_classes = 14;
+}
+
+// TaskInfo represents a task.
+// Matches the TaskInfo struct in state_provider.go.
+message TaskInfo {
+  string task_id = 1;          // Unique task identifier
+  string task_type = 2;        // Task type (e.g., "data-processing", "report-generation")
+  TaskStatus status = 3;       // Task status
+  string workspace = 4;        // Workspace the task belongs to
+  string target_topic = 5;     // Target topic for task messages
+  string assigned_to = 6;      // Agent identity assigned to handle this task
+  int64 created_at = 7;        // Unix timestamp when task was created
+  int64 started_at = 8;        // Unix timestamp when task execution started (0 if not started)
+  int64 completed_at = 9;      // Unix timestamp when task completed (0 if not completed)
+  int32 attempt = 10;          // Current attempt number
+  int32 max_attempts = 11;     // Maximum retry attempts allowed
+  string error = 12;           // Error message if task failed
+  map<string, string> metadata = 13;  // Task metadata
+
+  // First-class authority lineage (populated when the task was created under an
+  // on-behalf-of authority grant or inherited from a parent task grant).
+  string authority_mode = 14;             // "direct" or "on_behalf_of"
+  string subject_type = 15;               // Subject principal type
+  string subject_id = 16;                 // Subject canonical identity
+  string root_subject_type = 17;          // Root subject principal type
+  string root_subject_id = 18;            // Root subject canonical identity
+  string authority_grant_id = 19;         // Current authority grant id
+  string root_authority_grant_id = 20;    // Root authority grant id
+  string parent_authority_grant_id = 21;  // Parent authority grant id
+  string creator_actor_id = 22;           // Identity of the actor that created this task
+  string parent_task_id = 23;             // Parent task id when created inside another task's execution
+  TaskClass task_class = 24;              // Optional UI hint; defaults to UNSPECIFIED ⇒ INTERACTIVE.
+
+  // Disconnect grace window: connection-as-heartbeat model. When the
+  // assigned worker's gRPC stream closes (other than worker EOF, which is
+  // explicit "I'm done"), disconnected_at is stamped. The disconnect reaper
+  // fails the task when (now - disconnected_at) > grace_window_ms.
+  // disconnected_at is unix seconds; 0 means worker is currently connected.
+  int64 disconnected_at = 25;
+  int64 grace_window_ms = 26;
+}
+
+// TaskQueryResponse is sent in response to TaskQuery operations.
+// Contains task data for either GET (single task) or LIST (multiple tasks).
+message TaskQueryResponse {
+  bool success = 1;
+
+  // Error message if success is false
+  string error = 2;
+
+  // For GET operation (single task)
+  TaskInfo task = 3;
+
+  // For LIST operation (multiple tasks)
+  repeated TaskInfo tasks = 4;
+
+  // For LIST: total count (may differ from returned if paginated)
+  int32 total_count = 5;
+
+  // Echoed from the originating TaskQuery for correlation
+  string request_id = 6;
+}
+
+// TaskOperation allows clients to perform lifecycle operations on tasks.
+// This includes retrying failed tasks, canceling running/queued tasks,
+// and reporting task completion or failure from POOL workers.
+// REST equivalents: POST /api/tasks/{id}/retry, POST /api/tasks/{id}/cancel,
+//                   POST /api/tasks/{id}/complete, POST /api/tasks/{id}/fail
+message TaskOperation {
+  enum OpType {
+    RETRY = 0;      // POST /api/tasks/{id}/retry - Retry a failed task
+    CANCEL = 1;     // POST /api/tasks/{id}/cancel - Cancel a running or queued task
+    COMPLETE = 2;   // POST /api/tasks/{id}/complete - Mark a task as completed (for POOL workers)
+    FAIL = 3;       // POST /api/tasks/{id}/fail - Mark a task as failed (for POOL workers)
+  }
+  OpType op = 1;
+
+  // The task ID to operate on (required for all operations)
+  string task_id = 2;
+
+  // Optional reason for the operation (e.g., cancellation reason, failure message)
+  string reason = 3;
+
+  // Client-generated correlation ID for matching responses to requests
+  string request_id = 4;
+}
+
+// TaskOperationResponse is sent in response to TaskOperation.
+message TaskOperationResponse {
+  bool success = 1;
+
+  // Human-readable result message
+  string message = 2;
+
+  // Error details if success is false
+  string error = 3;
+
+  // Updated task information after the operation (if applicable)
+  TaskInfo task = 4;
+
+  // Echoed from the originating TaskOperation for correlation
+  string request_id = 5;
+}
+
+// ============================================================================
+// Workspace Management Messages (Phase 4)
+// ============================================================================
+
+// WorkspaceOperation allows clients to perform CRUD operations on workspaces
+// and query message flow information through the gRPC streaming interface.
+// This provides feature parity with the REST Admin API for workspace management.
+// REST equivalents:
+//   - GET /api/workspaces → LIST
+//   - POST /api/workspaces → CREATE
+//   - GET /api/workspaces/{workspace_id} → GET
+//   - PUT /api/workspaces/{workspace_id} → UPDATE
+//   - DELETE /api/workspaces/{workspace_id} → DELETE
+//   - GET /api/workspaces/{workspace_id}/message-flow → GET_MESSAGE_FLOW
+message WorkspaceOperation {
+  enum OpType {
+    LIST = 0;              // GET /api/workspaces - List all workspaces
+    GET = 1;               // GET /api/workspaces/{workspace_id} - Get a specific workspace
+    CREATE = 2;            // POST /api/workspaces - Create a new workspace
+    UPDATE = 3;            // PUT /api/workspaces/{workspace_id} - Update an existing workspace
+    DELETE = 4;            // DELETE /api/workspaces/{workspace_id} - Delete a workspace
+    GET_MESSAGE_FLOW = 5;  // GET /api/workspaces/{workspace_id}/message-flow - Get message flow graph
+  }
+  OpType op = 1;
+
+  // For GET, UPDATE, DELETE, GET_MESSAGE_FLOW: the workspace ID to operate on
+  string workspace_id = 2;
+
+  // For LIST: optional filter parameters
+  WorkspaceFilter filter = 3;
+
+  // For CREATE and UPDATE: workspace data
+  WorkspaceInfo workspace = 4;
+
+  // Client-generated correlation ID for matching responses to requests
+  string request_id = 5;
+}
+
+// WorkspaceFilter specifies filtering parameters for listing workspaces.
+// Matches REST API query parameters.
+message WorkspaceFilter {
+  string tenant_id = 1;  // Filter by tenant ID
+  int32 limit = 2;       // Maximum number of results (0 = default limit)
+  int32 offset = 3;      // Offset for pagination
+}
+
+// WorkspaceInfo represents a workspace.
+// Contains workspace metadata and optional runtime statistics.
+message WorkspaceInfo {
+  string workspace_id = 1;     // Unique workspace identifier
+  string display_name = 2;     // Human-readable display name
+  string description = 3;      // Workspace description
+  string tenant_id = 4;        // Tenant/organization ID
+  int64 created_at = 5;        // Unix timestamp when workspace was created
+  int64 updated_at = 6;        // Unix timestamp when workspace was last updated
+  map<string, string> metadata = 7;  // Custom workspace metadata
+
+  // Runtime statistics (populated by GET and LIST operations)
+  int32 active_agents = 8;     // Number of currently connected agents
+  int32 active_tasks = 9;      // Number of running tasks
+  int32 active_users = 10;     // Number of currently connected users
+  int64 total_messages = 11;   // Total messages processed in this workspace
+}
+
+// WorkspaceResponse is sent in response to WorkspaceOperation.
+// Contains workspace data based on the operation type that was requested.
+message WorkspaceResponse {
+  bool success = 1;
+
+  // Error message if success is false
+  string error = 2;
+
+  // Human-readable result message (for CREATE, UPDATE, DELETE operations)
+  string message = 3;
+
+  // For GET operation (single workspace)
+  WorkspaceInfo workspace = 4;
+
+  // For LIST operation (multiple workspaces)
+  repeated WorkspaceInfo workspaces = 5;
+
+  // For LIST: total count (may differ from returned if paginated)
+  int32 total_count = 6;
+
+  // For GET_MESSAGE_FLOW operation
+  MessageFlowInfo message_flow = 7;
+
+  // Echoed from the originating WorkspaceOperation for correlation
+  string request_id = 8;
+}
+
+// MessageFlowInfo represents the message flow graph for a workspace.
+// Shows connected entities (nodes) and message routing paths (edges).
+// Used by GET_MESSAGE_FLOW operation to visualize workspace topology.
+message MessageFlowInfo {
+  string workspace_id = 1;          // Workspace this flow belongs to
+  repeated FlowNode nodes = 2;      // All entities in the workspace
+  repeated FlowEdge edges = 3;      // Message routing paths between entities
+  int64 updated_at = 4;             // Unix timestamp when flow was last updated
+}
+
+// FlowNode represents an entity in the message flow graph.
+// Can be an agent, task, user, orchestrator, workflow engine, or metrics bridge.
+message FlowNode {
+  string id = 1;                    // Unique node identifier (session_id or entity id)
+  string label = 2;                 // Human-readable display name
+  PrincipalType type = 3;           // Entity type
+  string status = 4;                // Connection status: "connected", "disconnected"
+  string implementation = 5;        // Implementation identifier (for agents/tasks)
+  string specifier = 6;             // Specifier/instance identifier
+  string topic = 7;                 // Topic this entity subscribes to
+}
+
+// FlowEdge represents a message routing path between two entities.
+// Edges indicate that messages can flow from source to destination.
+message FlowEdge {
+  string from = 1;                  // Source node ID
+  string to = 2;                    // Destination node ID
+  string label = 3;                 // Edge description (e.g., message type, topic pattern)
+  int64 count = 4;                  // Number of messages sent over this edge (if tracked)
+}
+
+// ============================================================================
+// Agent Management Messages (Phase 5)
+// ============================================================================
+
+// AgentOperation allows clients to manage agent registrations and orchestration
+// through the gRPC streaming interface. This provides feature parity with the
+// REST Admin API for agent management.
+// REST equivalents:
+//   - GET /api/agents → LIST
+//   - POST /api/agents → REGISTER
+//   - GET /api/agents/{implementation} → GET
+//   - PUT /api/agents/{implementation} → UPDATE
+//   - DELETE /api/agents/{implementation} → DELETE
+//   - POST /api/agents/{implementation}/launch → LAUNCH
+//   - GET /api/orchestrators → LIST_ORCHESTRATORS
+message AgentOperation {
+  enum OpType {
+    LIST = 0;               // GET /api/agents - List all agent registrations
+    GET = 1;                // GET /api/agents/{implementation} - Get a specific agent registration
+    REGISTER = 2;           // POST /api/agents - Register a new agent type
+    UPDATE = 3;             // PUT /api/agents/{implementation} - Update an existing agent registration
+    DELETE = 4;             // DELETE /api/agents/{implementation} - Delete an agent registration
+    LAUNCH = 5;             // POST /api/agents/{implementation}/launch - Launch an agent via orchestration
+    LIST_ORCHESTRATORS = 6; // GET /api/orchestrators - List connected orchestrators with their profiles
+  }
+  OpType op = 1;
+
+  // For GET, UPDATE, DELETE, LAUNCH: the implementation name to operate on
+  string implementation = 2;
+
+  // For LIST: optional filter parameters
+  AgentFilter filter = 3;
+
+  // For REGISTER and UPDATE: agent registration data
+  AgentRegistrationInfo agent = 4;
+
+  // For LAUNCH: launch request details
+  AgentLaunchParams launch_params = 5;
+
+  // Client-generated correlation ID for matching responses to requests
+  string request_id = 6;
+}
+
+// AgentFilter specifies filtering parameters for listing agent registrations.
+message AgentFilter {
+  string orchestrator_profile = 1;  // Filter by orchestrator profile
+  int32 limit = 2;                  // Maximum number of results (0 = default limit)
+  int32 offset = 3;                 // Offset for pagination
+}
+
+// AgentRegistrationInfo represents an agent registration.
+// Matches the AgentRegistrationInfo struct in state_provider.go.
+// Agent registrations define how to launch agent implementations via orchestrators.
+message AgentRegistrationInfo {
+  string implementation = 1;         // Unique implementation name (e.g., "data-processor", "code-reviewer")
+  string orchestrator_profile = 2;   // Profile name for orchestration (e.g., "kubernetes", "docker")
+  string description = 3;            // Human-readable description of the agent type
+  map<string, string> launch_params = 4;  // Default launch parameters for the agent
+  int64 registered_at = 5;           // Unix timestamp when registration was created
+  int64 updated_at = 6;              // Unix timestamp when registration was last updated
+}
+
+// AgentLaunchParams specifies parameters for launching an agent via orchestration.
+// Matches the LaunchAgentRequest struct in state_provider.go.
+message AgentLaunchParams {
+  string specifier = 1;              // Instance specifier for the new agent
+  string workspace = 2;              // Workspace where the agent should operate
+  map<string, string> param_overrides = 3;  // Override default launch parameters
+}
+
+// OrchestratorInfo represents a connected orchestrator and its supported profiles.
+// Matches the OrchestratorProfileInfo struct in state_provider.go.
+message OrchestratorInfo {
+  string orchestrator_id = 1;        // Unique orchestrator identifier (topic format)
+  repeated string profiles = 2;      // List of profiles this orchestrator supports
+  int64 connected_at = 3;            // Unix timestamp when orchestrator connected
+}
+
+// AgentLaunchResult represents the result of launching an agent via orchestration.
+// Matches the LaunchAgentResponse struct in state_provider.go.
+message AgentLaunchResult {
+  string task_id = 1;    // Task ID for tracking the orchestration request
+  string message = 2;    // Human-readable status message
+}
+
+// AgentResponse is sent in response to AgentOperation.
+// Contains agent data based on the operation type that was requested.
+message AgentResponse {
+  bool success = 1;
+
+  // Error message if success is false
+  string error = 2;
+
+  // Human-readable result message (for REGISTER, UPDATE, DELETE operations)
+  string message = 3;
+
+  // For GET operation (single agent registration)
+  AgentRegistrationInfo agent = 4;
+
+  // For LIST operation (multiple agent registrations)
+  repeated AgentRegistrationInfo agents = 5;
+
+  // For LIST: total count (may differ from returned if paginated)
+  int32 total_count = 6;
+
+  // For LIST_ORCHESTRATORS operation
+  repeated OrchestratorInfo orchestrators = 7;
+
+  // For LAUNCH operation: the result of launching an agent
+  AgentLaunchResult launch_result = 8;
+
+  // Echoed from the originating AgentOperation for correlation
+  string request_id = 9;
+}
+
+// ============================================================================
+// ACL Management Messages (Phase 6)
+// ============================================================================
+
+// ACLOperation allows clients to manage access control rules, authority grants,
+// fallback policies, and audit logs through the gRPC streaming interface.
+// This provides feature parity with the REST Admin API for ACL management
+// (rules, fallback policies, audit log). Authority grant management is
+// available exclusively via the runtime AuthorityGrantOperation surface or
+// the REST admin endpoints — the duplicated streaming admin path was removed.
+// REST equivalents:
+//   - GET /api/acl/rules → LIST_RULES
+//   - POST /api/acl/rules → GRANT
+//   - GET /api/acl/rules/{rule_id} → GET_RULE
+//   - DELETE /api/acl/rules/{rule_id} → REVOKE
+//   - GET /api/acl/audit → QUERY_AUDIT
+//   - GET /api/acl/fallback-policy → GET_FALLBACK_POLICY
+//   - PUT /api/acl/fallback-policy → SET_FALLBACK_POLICY
+//   - POST /api/acl/cleanup/expired-rules → CLEANUP_EXPIRED
+//   - POST /api/acl/cleanup/audit-logs → CLEANUP_AUDIT_LOGS
+message ACLOperation {
+  enum OpType {
+    LIST_RULES = 0;               // GET /api/acl/rules - List ACL rules with optional filters
+    GET_RULE = 1;                 // GET /api/acl/rules/{rule_id} - Get a specific ACL rule
+    GRANT = 2;                    // POST /api/acl/rules - Grant access by creating a new ACL rule
+    REVOKE = 3;                   // DELETE /api/acl/rules/{rule_id} - Revoke access by deleting an ACL rule
+    QUERY_AUDIT = 4;              // GET /api/acl/audit - Query the ACL audit log
+    reserved 5, 6, 7;             // Removed: GET/CREATE/DELETE_DELEGATION_CHAIN — replaced by OBO authority grants
+    GET_FALLBACK_POLICY = 8;      // GET /api/acl/fallback-policy - Get a fallback policy by category
+    SET_FALLBACK_POLICY = 9;      // PUT /api/acl/fallback-policy - Set/update a fallback policy
+    CLEANUP_EXPIRED = 10;         // POST /api/acl/cleanup/expired-rules - Remove expired ACL rules
+    CLEANUP_AUDIT_LOGS = 11;      // POST /api/acl/cleanup/audit-logs - Remove old audit log entries
+    // Removed: LIST/GET/CREATE/RENEW/REVOKE_AUTHORITY_GRANTS (12-16) —
+    // consolidated into the runtime AuthorityGrantOperation surface. The REST
+    // admin endpoints under /api/acl/authority-grants are unaffected.
+    reserved 12, 13, 14, 15, 16;
+    reserved "LIST_AUTHORITY_GRANTS", "GET_AUTHORITY_GRANT", "CREATE_AUTHORITY_GRANT", "RENEW_AUTHORITY_GRANT", "REVOKE_AUTHORITY_GRANT";
+  }
+  OpType op = 1;
+
+  // For GET_RULE, REVOKE: the rule ID to operate on
+  // This is the unique rule_id from the database
+  string rule_id = 2;
+
+  // Removed: chain_id (3), derived_principal_type (6), derived_principal_id (7),
+  // delegation_request (13) — legacy delegation-chain fields, replaced by OBO authority grants.
+  reserved 3, 6, 7, 13;
+
+  // For GET_FALLBACK_POLICY, SET_FALLBACK_POLICY: the rule category
+  // Format: {principal_type}_{resource_type} (e.g., "user_workspace", "agent_workspace")
+  string rule_category = 4;
+
+  // For CLEANUP_AUDIT_LOGS: retention period in days (default: 90)
+  int32 retention_days = 5;
+
+  // Removed: authority_grant_id (8), authority_grant_filter (16),
+  // authority_grant_request (17), authority_grant_renew_request (18) —
+  // consolidated into AuthorityGrantOperation.
+  reserved 8, 16, 17, 18;
+  reserved "authority_grant_id", "authority_grant_filter", "authority_grant_request", "authority_grant_renew_request";
+
+  // For LIST_RULES: filter parameters (added in subtask-6-2)
+  ACLRuleFilter rule_filter = 10;
+
+  // For QUERY_AUDIT: filter parameters (added in subtask-6-2)
+  ACLAuditFilter audit_filter = 11;
+
+  // For GRANT: access grant request data (added in subtask-6-2)
+  ACLGrantRequest grant_request = 12;
+
+  // For SET_FALLBACK_POLICY: fallback policy update data (added in subtask-6-2)
+  ACLSetFallbackRequest fallback_request = 14;
+
+  // Client-generated correlation ID for matching responses to requests
+  string request_id = 19;
+}
+
+// ACLRuleFilter specifies filtering parameters for listing ACL rules.
+// Matches RuleFilter struct in internal/acl/service.go.
+message ACLRuleFilter {
+  string principal_type = 1;  // Filter by principal type (e.g., "agent", "task", "user")
+  string principal_id = 2;    // Filter by principal ID
+  string resource_type = 3;   // Filter by resource type (e.g., "workspace", "agent")
+  string resource_id = 4;     // Filter by resource ID
+  int32 limit = 5;            // Maximum number of results (0 = no limit)
+  int32 offset = 6;           // Offset for pagination
+}
+
+// ACLAuditFilter specifies filtering parameters for querying the ACL audit log.
+// Matches AuditLogFilter struct in internal/acl/audit.go.
+message ACLAuditFilter {
+  int64 start_time = 1;       // Start time filter (Unix timestamp, 0 = no start filter)
+  int64 end_time = 2;         // End time filter (Unix timestamp, 0 = no end filter)
+  string principal_type = 3;  // Filter by principal type
+  string principal_id = 4;    // Filter by principal ID
+  string resource_type = 5;   // Filter by resource type
+  string resource_id = 6;     // Filter by resource ID
+  string decision = 7;        // Filter by decision: "ALLOW" or "DENY"
+  string workspace = 8;       // Filter by workspace
+  int32 limit = 9;            // Maximum number of results (0 = no limit)
+  int32 offset = 10;          // Offset for pagination
+}
+
+// ACLGrantRequest contains data for granting access (creating an ACL rule).
+// Matches GrantAccess parameters in internal/acl/service.go.
+message ACLGrantRequest {
+  string principal_type = 1;  // Type of principal receiving access
+  string principal_id = 2;    // ID of principal receiving access
+  string resource_type = 3;   // Type of resource being accessed
+  string resource_id = 4;     // ID of resource being accessed
+  int32 access_level = 5;     // Access level to grant (0=NONE, 10=READ, 20=READWRITE, 30=MANAGE, 40=ADMIN, 50=SUPERADMIN)
+  string granted_by = 6;      // Identity of who is granting access
+  string reason = 7;          // Human-readable reason for this grant
+  int64 expires_at = 8;       // Optional expiration time (Unix timestamp, 0 = no expiration)
+}
+
+// ACLSetFallbackRequest contains data for setting a fallback policy.
+// Matches SetFallbackPolicy parameters in internal/acl/service.go.
+message ACLSetFallbackRequest {
+  string rule_category = 1;         // Rule category (e.g., "user_workspace", "agent_workspace")
+  int32 fallback_access_level = 2;  // Default access level when no rule matches
+  string updated_by = 3;            // Identity of who is updating the policy
+}
+
+message ACLAuthorityGrantFilter {
+  string root_grant_id = 1;
+  string subject_type = 2;
+  string subject_id = 3;
+  string delegate_type = 4;
+  string delegate_id = 5;
+  string audience_type = 6;
+  string audience_id = 7;
+  bool include_revoked = 8;
+  bool active_only = 9;
+  int32 limit = 10;
+  int32 offset = 11;
+}
+
+message ACLAuthorityGrantResourceScopeEntry {
+  string resource_type = 1;
+  repeated string patterns = 2;
+}
+
+message ACLAuthorityGrantRequest {
+  PrincipalRef subject = 1;
+  PrincipalRef delegate = 2;
+  PrincipalRef issued_by = 3;
+  PrincipalRef root_subject = 4;
+  string parent_grant_id = 5;
+  bool may_delegate = 6;
+  int32 remaining_hops = 7;
+  repeated string workspace_scope = 8;
+  repeated ACLAuthorityGrantResourceScopeEntry resource_scope = 9;
+  repeated string operation_scope = 10;
+  int32 max_access_level = 11;
+  string audience_type = 12;
+  string audience_id = 13;
+  bool valid_while_audience_active = 14;
+  int64 expires_at = 15;
+  int64 renewable_until = 16;
+  string reason = 17;
+  map<string, string> metadata = 18;
+}
+
+message ACLRenewAuthorityGrantRequest {
+  string grant_id = 1;
+  int64 expires_at = 2;
+  // Convenience: extend the lease by N seconds from the current server time.
+  // When > 0 this takes precedence over expires_at. The resulting expiration
+  // is still clamped against the grant's renewable_until window and (for
+  // derived grants) the parent grant's expiry.
+  int32 extend_seconds = 3;
+}
+
+// ACLRuleInfo represents an access control rule.
+// Matches the ACLRule struct in internal/acl/types.go.
+message ACLRuleInfo {
+  string rule_id = 1;          // Unique rule identifier
+  string principal_type = 2;   // Type of principal (agent, task, user, wildcard)
+  string principal_id = 3;     // Identity of principal or wildcard pattern
+  string resource_type = 4;    // Type of resource (workspace, agent, permission)
+  string resource_id = 5;      // ID of resource
+  int32 access_level = 6;      // Permission level granted (0=NONE, 10=READ, 20=READWRITE, 30=MANAGE, 40=ADMIN, 50=SUPERADMIN)
+  string access_level_name = 7; // Human-readable access level name
+  string granted_by = 8;       // Who created this rule
+  int64 granted_at = 9;        // Unix timestamp when rule was created
+  int64 expires_at = 10;       // Optional expiration time (Unix timestamp, 0 = no expiration)
+  string reason = 11;          // Human-readable reason for this grant
+}
+
+// ACLFallbackPolicyInfo represents a fallback policy for default access behavior.
+// Matches the FallbackPolicy struct in internal/acl/types.go.
+// When no explicit ACL rule matches, the fallback policy determines the default behavior.
+message ACLFallbackPolicyInfo {
+  string policy_id = 1;                   // Unique policy identifier
+  string rule_category = 2;               // Category (e.g., "user_workspace", "agent_workspace")
+  int32 fallback_access_level = 3;        // Default access level when no rule matches
+  string fallback_access_level_name = 4;  // Human-readable access level name
+  string updated_by = 5;                  // Identity of who last updated this policy
+  int64 updated_at = 6;                   // Unix timestamp when policy was last updated
+}
+
+// ACLAuditEntryInfo represents an ACL decision audit log entry.
+// Matches the AuditLogEntry struct in internal/acl/types.go.
+message ACLAuditEntryInfo {
+  int64 audit_id = 1;                     // Unique audit entry identifier
+  int64 timestamp = 2;                    // Unix timestamp when decision was made
+  string decision = 3;                    // Decision: "ALLOW" or "DENY"
+  int32 access_level = 4;                 // Effective access level granted (or 0 if denied)
+  string access_level_name = 5;           // Human-readable access level name
+  string principal_type = 6;              // Type of principal that requested access
+  string principal_id = 7;                // ID of principal that requested access
+  string resource_type = 8;               // Type of resource being accessed
+  string resource_id = 9;                 // ID of resource being accessed
+  string operation = 10;                  // Operation that was attempted
+  string workspace = 11;                  // Workspace context
+  reserved 12;                            // Removed: delegation_chain_id (legacy delegation chains)
+  string rule_id = 13;                    // Rule ID that granted access (empty if fallback or denied)
+  bool fallback_applied = 14;             // Whether fallback policy was used
+  string gateway_id = 15;                 // Gateway that processed this request
+  string session_id = 16;                 // Session ID of the connection
+  map<string, string> metadata = 17;      // Additional metadata
+}
+
+message ACLAuthorityGrantInfo {
+  string grant_id = 1;
+  string root_grant_id = 2;
+  PrincipalRef subject = 3;
+  PrincipalRef delegate = 4;
+  PrincipalRef issued_by = 5;
+  PrincipalRef root_subject = 6;
+  string parent_grant_id = 7;
+  bool may_delegate = 8;
+  int32 remaining_hops = 9;
+  repeated string workspace_scope = 10;
+  repeated ACLAuthorityGrantResourceScopeEntry resource_scope = 11;
+  repeated string operation_scope = 12;
+  int32 max_access_level = 13;
+  string access_level_name = 14;
+  string audience_type = 15;
+  string audience_id = 16;
+  bool valid_while_audience_active = 17;
+  int64 expires_at = 18;
+  int64 renewable_until = 19;
+  int64 renewed_at = 20;
+  bool revoked = 21;
+  int64 revoked_at = 22;
+  string reason = 23;
+  map<string, string> metadata = 24;
+  int64 created_at = 25;
+}
+
+// ACLCleanupResult represents the result of a cleanup operation.
+// Used for CLEANUP_EXPIRED and CLEANUP_AUDIT_LOGS responses.
+message ACLCleanupResult {
+  int64 deleted_count = 1;                // Number of items deleted
+  string message = 2;                     // Human-readable result message
+}
+
+// ACLResponse is sent in response to ACLOperation.
+// Contains data based on the operation type that was requested.
+message ACLResponse {
+  bool success = 1;
+
+  // Error message if success is false
+  string error = 2;
+
+  // Human-readable result message
+  string message = 3;
+
+  // For GET_RULE operation (single rule)
+  ACLRuleInfo rule = 4;
+
+  // For LIST_RULES operation (multiple rules)
+  repeated ACLRuleInfo rules = 5;
+
+  // For LIST_RULES: total count (may differ from returned if filtered)
+  int32 total_rules = 6;
+
+  reserved 7; // Removed: delegation_chain (legacy delegation chains)
+
+  // For GET_FALLBACK_POLICY operation (single policy)
+  ACLFallbackPolicyInfo fallback_policy = 8;
+
+  // For QUERY_AUDIT operation (multiple audit entries)
+  repeated ACLAuditEntryInfo audit_entries = 9;
+
+  // For QUERY_AUDIT: total count (may differ from returned if limited)
+  int32 total_audit_entries = 10;
+
+  // For CLEANUP_EXPIRED and CLEANUP_AUDIT_LOGS operations
+  ACLCleanupResult cleanup_result = 11;
+
+  // For GET_AUTHORITY_GRANT / CREATE_AUTHORITY_GRANT / RENEW_AUTHORITY_GRANT
+  ACLAuthorityGrantInfo authority_grant = 13;
+
+  // For LIST_AUTHORITY_GRANTS
+  repeated ACLAuthorityGrantInfo authority_grants = 14;
+  int32 total_authority_grants = 15;
+
+  // For GRANT operation: the created rule
+  // (same as 'rule' field, included for clarity)
+  // Note: Use 'rule' field to get the created rule
+
+  // Echoed from the originating ACLOperation for correlation
+  string request_id = 12;
+}
+
+// ============================================================================
+// Runtime Authority Grant Messages
+// ============================================================================
+
+// AuthorityGrantOperation allows ordinary streaming clients to exchange,
+// derive, inspect, renew, and revoke authority grants without going through
+// the admin ACL surface.
+message AuthorityGrantOperation {
+  enum OpType {
+    EXCHANGE = 0;             // Bootstrap a grant for the current actor
+    DERIVE = 1;               // Derive a child grant for another delegate from an existing parent grant
+    GET = 2;                  // Get a visible authority grant
+    RENEW = 3;                // Renew a visible authority grant lease
+    REVOKE = 4;               // Revoke a visible authority grant
+    LIST_MY_GRANTS = 5;       // List grants where actor is delegate or subject
+    LIST_GRANTS_ON_ME = 6;    // List grants where actor is subject (i.e., grants OTHERS hold on me)
+    BATCH_EXCHANGE = 7;       // Multiple AuthorityGrantExchangeRequest in one round-trip
+    DERIVE_FOR_TARGET = 8;    // Idempotent derive: returns existing visible grant or mints new
+  }
+  OpType op = 1;
+
+  // For GET, RENEW, REVOKE: the grant ID to operate on
+  string grant_id = 2;
+
+  // For EXCHANGE: authority grant exchange request
+  AuthorityGrantExchangeRequest exchange_request = 3;
+
+  // For DERIVE: child grant derivation request
+  AuthorityGrantDeriveRequest derive_request = 4;
+
+  // For RENEW: grant renewal request
+  ACLRenewAuthorityGrantRequest renew_request = 5;
+
+  // Client-generated correlation ID for matching responses to requests
+  string request_id = 6;
+
+  // For LIST_MY_GRANTS / LIST_GRANTS_ON_ME
+  AuthorityGrantListRequest list_request = 7;
+
+  // For BATCH_EXCHANGE
+  AuthorityGrantBatchExchangeRequest batch_exchange_request = 8;
+
+  // For DERIVE_FOR_TARGET
+  AuthorityGrantDeriveForTargetRequest derive_for_target_request = 9;
+}
+
+// AuthorityGrantExchangeRequest bootstraps a grant for the current actor.
+// If source_session_id is empty, only a user may self-exchange.
+// If source_session_id is set, the caller must hold the exchange_authority_grants
+// permission and the referenced session must belong to an active user.
+//
+// workspace_scope: list of workspace patterns the grant permits. Use the
+// magic value "_subject_workspaces" instead of "*" when the intent is to
+// inherit the workspace decision from the subject's own ACL (the subject
+// ACL check still runs and remains the security ceiling). "*" continues to
+// work but is treated by tooling as an over-broad grant.
+message AuthorityGrantExchangeRequest {
+  string source_session_id = 1;
+  repeated string workspace_scope = 2;
+  repeated ACLAuthorityGrantResourceScopeEntry resource_scope = 3;
+  repeated string operation_scope = 4;
+  int32 max_access_level = 5;
+  string audience_type = 6;
+  string audience_id = 7;
+  bool valid_while_audience_active = 8;
+  int64 expires_at = 9;
+  int64 renewable_until = 10;
+  bool may_delegate = 11;
+  int32 remaining_hops = 12;
+  string reason = 13;
+  map<string, string> metadata = 14;
+}
+
+// AuthorityGrantDeriveRequest derives a child grant for a downstream delegate.
+message AuthorityGrantDeriveRequest {
+  string parent_grant_id = 1;
+  PrincipalRef delegate = 2;
+  repeated string workspace_scope = 3;
+  repeated ACLAuthorityGrantResourceScopeEntry resource_scope = 4;
+  repeated string operation_scope = 5;
+  int32 max_access_level = 6;
+  string audience_type = 7;
+  string audience_id = 8;
+  bool valid_while_audience_active = 9;
+  int64 expires_at = 10;
+  int64 renewable_until = 11;
+  bool may_delegate = 12;
+  int32 remaining_hops = 13;
+  string reason = 14;
+  map<string, string> metadata = 15;
+}
+
+// AuthorityGrantResponse is sent in response to AuthorityGrantOperation.
+message AuthorityGrantResponse {
+  bool success = 1;
+  string error = 2;
+  string message = 3;
+  ACLAuthorityGrantInfo grant = 4;
+  string request_id = 5;
+  // For LIST_MY_GRANTS / LIST_GRANTS_ON_ME / BATCH_EXCHANGE results.
+  repeated ACLAuthorityGrantInfo grants = 6;
+  // Total matching rows ignoring pagination (LIST_*) or count of returned
+  // grants (BATCH_EXCHANGE).
+  int32 total = 7;
+  // Server's hint to clients on how often to revalidate cached grants
+  // (seconds). Zero means "no hint" — clients fall back to their own policy.
+  int32 cache_hint_ttl_seconds = 8;
+}
+
+// AuthorityGrantListRequest filters grants visible to the actor.
+message AuthorityGrantListRequest {
+  string audience_type = 1;       // Optional filter
+  string audience_id = 2;         // Optional filter
+  bool include_revoked = 3;
+  int32 limit = 4;                // 0 = default 100
+  int32 offset = 5;
+}
+
+// AuthorityGrantBatchExchangeRequest performs multiple exchanges in one
+// round-trip. Useful for clients bootstrapping several grants at session
+// start (e.g., one per audience) without N gateway round-trips.
+message AuthorityGrantBatchExchangeRequest {
+  repeated AuthorityGrantExchangeRequest requests = 1;
+  bool stop_on_first_error = 2;   // If true, abort batch on first failure
+}
+
+// AuthorityGrantDeriveForTargetRequest derives a child grant idempotently.
+// If the actor already holds a visible derived grant matching
+// (parent_grant_id, target, audience_type, audience_id) that is still
+// active, the existing grant is returned. Otherwise a new grant is minted
+// using the supplied parameters via the standard derive flow.
+message AuthorityGrantDeriveForTargetRequest {
+  string parent_grant_id = 1;
+  PrincipalRef target = 2;        // The downstream delegate
+  string audience_type = 3;
+  string audience_id = 4;
+  repeated string operation_scope = 5;
+  int32 max_access_level = 6;
+  int64 expires_at = 7;
+  int64 renewable_until = 8;
+  bool may_delegate = 9;
+  int32 remaining_hops = 10;
+  string reason = 11;
+}
+
+// AuthorityIdentity bundles the principal-set associated with a grant.
+// Used in new fields/messages going forward to avoid field drift between
+// the grant projections (ACLAuthorityGrantInfo, AuthorityGrantInfo,
+// ResolvedAuthorityInfo). Existing projections remain byte-identical for
+// wire compatibility; new code should prefer this sub-message.
+message AuthorityIdentity {
+  PrincipalRef subject = 1;
+  PrincipalRef root_subject = 2;
+  PrincipalRef delegate = 3;
+  PrincipalRef issued_by = 4;
+}
+
+// AuthoritySpan bundles the lifecycle and audience-binding fields of a
+// grant. Used in new fields/messages going forward; existing projections
+// remain byte-identical for wire compatibility.
+message AuthoritySpan {
+  repeated string workspace_scope = 1;
+  int32 max_access_level = 2;
+  string audience_type = 3;
+  string audience_id = 4;
+  bool valid_while_audience_active = 5;
+  int64 expires_at = 6;
+  int64 renewable_until = 7;
+  bool revoked = 8;
+}
+
+// AuthorityGrantRevocation is pushed to a connected delegate when one of
+// their grants is revoked (directly or by cascade from a parent revocation).
+// Lets SDKs proactively drop cached grants and re-mint instead of waiting
+// for the next call to fail. Best-effort: the gateway logs send failures
+// but does not retry.
+message AuthorityGrantRevocation {
+  string grant_id = 1;
+  string root_grant_id = 2;
+  string reason = 3;
+  int64 revoked_at = 4;
+  bool cascade = 5;        // True if revocation cascaded from parent
+}
+
+// ============================================================================
+// API Token Management Messages
+// ============================================================================
+
+// TokenOperation allows clients to manage API tokens through the gRPC streaming
+// interface. This provides feature parity with the REST Admin API for token management.
+// REST equivalents:
+//   - GET /api/tokens → LIST
+//   - POST /api/tokens → CREATE
+//   - GET /api/tokens/{token_id} → GET
+//   - DELETE /api/tokens/{token_id} → DELETE
+//   - POST /api/tokens/{token_id}/revoke → REVOKE
+message TokenOperation {
+  enum OpType {
+    LIST = 0;     // GET /api/tokens - List all API tokens
+    GET = 1;      // GET /api/tokens/{token_id} - Get a specific token
+    CREATE = 2;   // POST /api/tokens - Create a new API token
+    DELETE = 3;   // DELETE /api/tokens/{token_id} - Delete a token
+    REVOKE = 4;   // POST /api/tokens/{token_id}/revoke - Revoke a token
+  }
+  OpType op = 1;
+
+  // For GET, DELETE, REVOKE: the token ID to operate on
+  string token_id = 2;
+
+  // For CREATE: token creation parameters
+  TokenCreateRequest create_request = 3;
+
+  // For LIST: optional filter parameters
+  TokenFilter filter = 4;
+
+  // Correlation ID for request/response matching
+  string request_id = 5;
+}
+
+// TokenCreateRequest contains data for creating a new API token.
+message TokenCreateRequest {
+  string name = 1;                          // Human-readable token name (required)
+  string principal_type = 2;                // Principal type this token authenticates as (required: "agent", "task", "user")
+  repeated string workspace_patterns = 3;   // Glob patterns for workspace access (default: ["*"])
+  repeated string scopes = 4;               // Token scopes (default: ["connect"])
+  int32 expires_in_hours = 5;               // Token expiration in hours (0 = no expiration)
+  string created_by = 6;                    // Identity of who is creating the token (default: "admin")
+}
+
+// TokenFilter specifies filtering parameters for listing tokens.
+message TokenFilter {
+  int32 limit = 1;   // Maximum number of results (0 = default 100)
+  int32 offset = 2;  // Offset for pagination
+  bool include_revoked = 3;  // If false (default), excludes revoked tokens
+}
+
+// TokenInfo represents an API token (excludes the token hash for security).
+message TokenInfo {
+  string id = 1;                            // Unique token identifier
+  string name = 2;                          // Human-readable token name
+  string principal_type = 3;                // Principal type this token authenticates as
+  repeated string workspace_patterns = 4;   // Glob patterns for workspace access
+  repeated string scopes = 5;               // Token scopes
+  string created_by = 6;                    // Identity of who created the token
+  int64 expires_at = 7;                     // Expiration time (Unix timestamp, 0 = no expiration)
+  int64 last_used_at = 8;                   // Last usage time (Unix timestamp, 0 = never used)
+  bool revoked = 9;                         // Whether the token has been revoked
+  int64 revoked_at = 10;                    // Revocation time (Unix timestamp, 0 = not revoked)
+  int64 created_at = 11;                    // Creation time (Unix timestamp)
+  int64 updated_at = 12;                    // Last update time (Unix timestamp)
+}
+
+// TokenResponse is sent in response to TokenOperation.
+message TokenResponse {
+  bool success = 1;
+
+  // Error message if success is false
+  string error = 2;
+
+  // Human-readable result message (for DELETE, REVOKE operations)
+  string message = 3;
+
+  // For GET operation (single token)
+  TokenInfo token = 4;
+
+  // For LIST operation (multiple tokens)
+  repeated TokenInfo tokens = 5;
+
+  // For LIST: total count
+  int32 total_count = 6;
+
+  // For CREATE operation: the plaintext token (only available at creation time)
+  string plaintext_token = 7;
+
+  // For CREATE operation: the created token info
+  TokenInfo created_token = 8;
+
+  // Correlation ID echoed from the originating request
+  string request_id = 9;
+}
+
+// ============================================================================
+// Progress Reporting Messages
+// ============================================================================
+
+// ProgressKind classifies a progress update by its intended UI surface or
+// consumer, independent of where the sending agent is hosted. The WebSocket
+// relay uses this to decide which socket.io event to emit, avoiding the
+// overload of agent-hosting workspace values (e.g., `_apps`, `_chat`) for
+// UI-routing decisions.
+enum ProgressKind {
+  // Unclassified — receivers should fall back to legacy heuristics.
+  PROGRESS_KIND_UNSPECIFIED = 0;
+  // Chat conversation progress (e.g., "Processing...", "Thinking...") that
+  // should surface in a chat thread's progress bar. Requires a correlated
+  // thread_id (typically carried in metadata) and a user recipient.
+  PROGRESS_KIND_CHAT = 1;
+  // App-dashboard progress for a user-visible long-running app or job.
+  PROGRESS_KIND_APP = 2;
+  // Task lifecycle progress (started, running, finished, failed). Consumed
+  // primarily by parent agents and orchestrators via the pg.{workspace}
+  // broadcast stream — not typically routed to a user surface.
+  PROGRESS_KIND_TASK = 3;
+}
+
+// ProgressReport is sent upstream by agents/tasks to report progress on work.
+// Progress is supplemental information while a task is running — connection
+// liveness (heartbeat/lock) handles death detection separately.
+// The gateway publishes progress to the pg.{workspace} stream and fans it
+// out to subscribers (users, agents, orchestrators) with server-side filtering.
+message ProgressReport {
+  // Task or request identifier this progress relates to.
+  // For orchestrated tasks, use the Aether task_id.
+  // For ad-hoc work, use a client-chosen correlation ID.
+  string task_id = 1;
+
+  // Current state of the work (e.g., "running", "finishing", "idle").
+  // Not an enum to allow domain-specific states.
+  string state = 2;
+
+  // Completion percentage (0.0 to 1.0). -1 means indeterminate.
+  double completion = 3;
+
+  // Human-readable summary of what is currently happening.
+  string summary = 4;
+
+  // Structured step information for multi-step progress.
+  ProgressStep step = 5;
+
+  // Target recipient for this progress update (identity topic format).
+  // Empty = broadcast to all subscribers in the sender's workspace.
+  //
+  // Recipient forms for user targeting:
+  //   - "us::{user}::{window}"  — exactly one window of that user
+  //   - "us::{user}"            — every open window of that user
+  //                               (cross-workspace; bare-user form, no specifier)
+  //
+  // Other identity topics (ag::, ta::, tu::) are matched exactly at delivery.
+  // This is a privacy boundary enforced server-side.
+  string recipient = 6;
+
+  // Optional: request_id for correlating with a specific user request.
+  string request_id = 7;
+
+  // Arbitrary key-value metadata for domain-specific progress details.
+  map<string, string> metadata = 8;
+
+  // Classifies this report by its intended consumer / UI surface. When set,
+  // the gateway propagates this onto ProgressUpdate.kind and receivers can
+  // route without inspecting workspace pseudo-identifiers.
+  ProgressKind kind = 9;
+}
+
+// ProgressStep describes a discrete step within a multi-step operation.
+message ProgressStep {
+  // Step name / title (e.g., "Extracting text", "Analyzing document")
+  string name = 1;
+
+  // Detailed description of what this step is doing
+  string detail = 2;
+
+  // Step sequence number (1-based, for ordering)
+  int32 sequence = 3;
+
+  // Total number of steps if known (0 = unknown)
+  int32 total_steps = 4;
+
+  // Step type for UI rendering hints (e.g., "llm_call", "tool_use", "processing")
+  string step_type = 5;
+}
+
+// ProgressUpdate is sent downstream to subscribers with progress from agents/tasks.
+// Contains the original report plus server-added metadata. Routed through
+// the pg.{workspace} RabbitMQ stream with server-side recipient filtering.
+message ProgressUpdate {
+  // The identity of the agent/task reporting progress (topic format).
+  string source = 1;
+
+  // Task or correlation ID this progress relates to.
+  string task_id = 2;
+
+  // Current state of the work.
+  string state = 3;
+
+  // Completion percentage (0.0 to 1.0). -1 means indeterminate.
+  double completion = 4;
+
+  // Human-readable summary.
+  string summary = 5;
+
+  // Structured step information.
+  ProgressStep step = 6;
+
+  // Server timestamp when progress was received (Unix milliseconds).
+  int64 timestamp_ms = 7;
+
+  // Workspace the progress originated from.
+  string workspace = 8;
+
+  // Echoed from ProgressReport for correlation.
+  string request_id = 9;
+
+  // Arbitrary metadata from the reporter.
+  map<string, string> metadata = 10;
+
+  // Target recipient (identity topic format). Used by the gateway for
+  // server-side filtering. Empty = broadcast to all workspace subscribers.
+  // For user-typed recipients, both "us::{user}::{window}" (exact match)
+  // and bare "us::{user}" (prefix match → all that user's windows) are
+  // accepted. See ProgressReport.recipient for full semantics.
+  string recipient = 11;
+
+  // Propagated from ProgressReport.kind. See ProgressKind enum.
+  ProgressKind kind = 12;
+}
+
+// ============================================================================
+// Workflow Management Messages
+// ============================================================================
+
+// WorkflowOperation allows clients to manage workflow rules, definitions,
+// schedules, executions, and state machines through the gRPC streaming interface.
+// Operations are forwarded by the gateway to the connected workflow engine and
+// responses are relayed back to the requesting client.
+message WorkflowOperation {
+  enum OpType {
+    // Rules
+    LIST_RULES = 0;
+    GET_RULE = 1;
+    CREATE_RULE = 2;
+    UPDATE_RULE = 3;
+    DELETE_RULE = 4;
+    // Workflow Definitions
+    LIST_WORKFLOWS = 5;
+    GET_WORKFLOW = 6;
+    CREATE_WORKFLOW = 7;
+    DELETE_WORKFLOW = 8;
+    // Schedules
+    LIST_SCHEDULES = 9;
+    CREATE_SCHEDULE = 10;
+    DELETE_SCHEDULE = 11;
+    // Executions
+    LIST_EXECUTIONS = 12;
+    GET_EXECUTION = 13;
+    CANCEL_EXECUTION = 14;
+    // State Machines
+    LIST_STATE_MACHINES = 15;
+    GET_STATE_MACHINE = 16;
+    CREATE_STATE_MACHINE = 17;
+    DELETE_STATE_MACHINE = 18;
+    // State Machine Instances
+    LIST_SM_INSTANCES = 19;
+    GET_SM_INSTANCE = 20;
+    CREATE_SM_INSTANCE = 21;
+    SEND_SM_EVENT = 22;
+    // Schedule upsert (idempotent create-or-update)
+    UPSERT_SCHEDULE = 23;
+  }
+  OpType op = 1;
+  string id = 2;              // Entity ID for GET/UPDATE/DELETE
+  string secondary_id = 3;    // e.g., instance_id for SM instance ops
+  string workspace = 4;       // Workspace filter
+  bytes data = 5;             // JSON payload for CREATE/UPDATE ops
+  string request_id = 6;      // Correlation ID
+  string status_filter = 7;   // For LIST_EXECUTIONS
+}
+
+// WorkflowResponse is sent in response to WorkflowOperation.
+// Uses JSON-encoded bytes for response payloads to avoid duplicating
+// the workflow server's internal types in the proto definition.
+message WorkflowResponse {
+  bool success = 1;
+  string error = 2;
+  string message = 3;
+  bytes data = 4;             // JSON response payload (entity or list)
+  int32 total_count = 5;      // For LIST pagination
+  string request_id = 6;      // Echoed correlation ID
+}
+
+// ============================================================================
+// Internal Message Envelope (transport-agnostic)
+// ============================================================================
+
+// MessageEnvelope wraps message payloads with server-verified metadata.
+// This envelope is used internally for messages passing through the router.
+// The source is always set by the server based on authenticated identity,
+// ensuring recipients can trust the source information.
+//
+// Routing information (target topic) is kept in the transport layer
+// (e.g., RabbitMQ stream name, Kafka topic/key) for routing efficiency.
+// Application metadata that doesn't affect routing goes in this envelope.
+message MessageEnvelope {
+  // Server-verified source identity (topic format, e.g., "ag.prod.worker.inst-1")
+  // This is set by the gateway based on the authenticated sender identity.
+  string source = 1;
+
+  // The actual message payload (opaque bytes from the sender)
+  bytes payload = 2;
+
+  // Message type for processing hints
+  MessageType message_type = 3;
+
+  // Server timestamp when message was received (Unix milliseconds)
+  int64 timestamp_ms = 4;
+
+  // Optional metadata for future extensibility
+  map<string, string> metadata = 5;
+
+  // Workspace context for the message, as declared by the sender (via
+  // SendMessage.app_workspace or the workspace component of event::/metric::
+  // target topics) and verified by the gateway. Empty when no workspace
+  // applies (e.g., bridge messages, service messages). Propagated into
+  // IncomingMessage.workspace at delivery time so workflow engines and
+  // metrics bridges (which subscribe to a workspace-agnostic fan-in shard)
+  // can recover the originating workspace.
+  string workspace = 6;
+}
+
+// =========================================================================
+// Comprehensive Audit Query
+// =========================================================================
+
+// AuditQuery requests entries from the comprehensive audit log.
+// Requires system-level admin access or workspace-scoped read access.
+message AuditQuery {
+  string request_id = 1;           // Correlation ID for response matching
+
+  // Filter criteria (all optional — empty = no filter)
+  int64 start_time = 2;            // Unix timestamp (seconds) lower bound
+  int64 end_time = 3;              // Unix timestamp (seconds) upper bound
+  string event_type = 4;           // Filter: connection, auth, message, kv, task, admin, acl
+  string actor_type = 5;           // Filter: agent, task, user, system
+  string actor_id = 6;             // Filter by specific actor identity
+  string resource_type = 7;        // Filter by resource type
+  string resource_id = 8;          // Filter by resource ID
+  string operation = 9;            // Filter by operation name
+  string workspace = 10;           // Filter by workspace
+  bool only_failures = 11;         // If true, only return failed operations
+  int32 limit = 12;                // Max results (default: 100, max: 500)
+  int32 offset = 13;               // Pagination offset
+  string subject_type = 14;        // Filter by subject principal type
+  string subject_id = 15;          // Filter by subject identity
+  string authority_mode = 16;      // Filter: direct, on_behalf_of
+  string authority_grant_id = 17;  // Filter by authority grant
+  AuthorizationContext authorization = 18;
+  repeated string exclude_actor_types = 19; // Exclude rows whose actor_type is in this list (e.g. ["WorkflowEngine","Orchestrator"])
+  repeated string exclude_workspaces = 20;  // Exclude rows whose workspace is in this list (e.g. ["_system"])
+  bool exclude_service_direct = 21;         // Exclude rows where actor_type=service AND authority_mode=direct (platform-server internal plumbing)
+}
+
+// AuditQueryResponse returns comprehensive audit log entries.
+message AuditQueryResponse {
+  string request_id = 1;           // Correlation ID matching the request
+  bool success = 2;
+  string error = 3;                // Error message if success=false
+  repeated AuditEntry entries = 4;
+  int32 total_count = 5;           // Total matching entries (for pagination)
+}
+
+// AuditEntry represents a single comprehensive audit log event.
+message AuditEntry {
+  int64 audit_id = 1;
+  int64 timestamp = 2;             // Unix timestamp (seconds)
+  string event_type = 3;           // connection, auth, message, kv, task, admin, acl
+  string actor_type = 4;           // agent, task, user, system
+  string actor_id = 5;
+  string resource_type = 6;
+  string resource_id = 7;
+  string operation = 8;
+  string workspace = 9;
+  string session_id = 10;
+  string gateway_id = 11;
+  bool success = 12;
+  string error_message = 13;
+  string metadata_json = 14;       // JSON-encoded metadata map
+  string subject_type = 15;
+  string subject_id = 16;
+  string root_subject_type = 17;
+  string root_subject_id = 18;
+  string authority_mode = 19;
+  string root_authority_grant_id = 20;
+  string authority_grant_id = 21;
+  string parent_authority_grant_id = 22;
+  string source = 23;              // "gateway" (default) or "principal" — distinguishes gateway-observed events from principal-submitted ones
+}
+
+// SubmitAuditEventRequest lets a connected principal submit a structured audit
+// event for forensic recording. The gateway stamps actor identity from the
+// authenticated session and ignores any client-supplied actor fields. Allowed
+// event_type values: "message", "kv", "task", "custom". Gateway-truth
+// categories (connection, auth, admin, acl) are reserved for server emission
+// only and will be rejected.
+message SubmitAuditEventRequest {
+  string event_type    = 1;         // Required: one of "message", "kv", "task", "custom"
+  string operation     = 2;         // Free-form operation name describing what occurred
+  string resource_type = 3;         // Resource type (topic, kv_key, task, etc.)
+  string resource_id   = 4;         // Resource identifier
+  string workspace     = 5;         // Optional; defaults to caller's workspace. Cross-workspace submissions require capability/audit_submit.
+  bool   success       = 6;         // Whether the underlying operation succeeded
+  string error_message = 7;         // Optional error context for failures
+  map<string, string> metadata = 8; // Additional context — credential-shaped keys are auto-redacted
+  string client_request_id = 9;     // Correlation ID echoed in the response
+}
+
+// SubmitAuditEventResponse acknowledges a SubmitAuditEventRequest. success=false
+// indicates the event was rejected before persistence (event type forbidden,
+// rate-limited, ACL denial, audit disabled, etc.).
+message SubmitAuditEventResponse {
+  string client_request_id = 1;     // Echoes the request's correlation ID
+  bool   success           = 2;     // True iff the event was enqueued for persistence
+  string error_code        = 3;     // ERR_AUDIT_TYPE_FORBIDDEN / ERR_PERMISSION_DENIED / ERR_AUDIT_RATE_LIMITED / ERR_AUDIT_DISABLED
+  string error_message     = 4;     // Human-readable rejection reason
+}
+
+// ============================================================================
+// Proxy HTTP messages
+// ============================================================================
+
+// ProxyHttpRequest is sent upstream by an initiator to ask the gateway to
+// forward an HTTP request to a target service principal, and is also routed
+// downstream to the target service (terminator sidecar) for execution. The
+// service handles the request and returns a ProxyHttpResponse.
+message ProxyHttpRequest {
+  string request_id                      = 1;
+  string target_topic                    = 2;
+  string method                          = 3;
+  string path                            = 4;
+  map<string, string> headers            = 5;
+  bytes body                             = 6;
+  bool body_chunked                      = 7;
+  AuthorizationContext authorization     = 8;
+  string app_workspace                   = 9;
+  int64 timeout_ms                       = 10;
+  bool follow_redirects                  = 11;
+  // Optional: explicit backend name on the target sidecar. When set, the
+  // sidecar looks up the backend by BackendConfig.Name directly. The named
+  // backend's allow_methods/allow_paths still apply (defence in depth);
+  // backend_name only chooses which backend's ACL is consulted, it does
+  // not bypass it. When unset, sidecar falls back to first-match by ACL.
+  string backend_name                    = 12;
+  // Optional: opt into unbounded response streaming (SSE / log tails /
+  // model token streams). When true, timeout_ms becomes time-to-first-byte
+  // only; subsequent body bytes are governed by stream_idle_timeout_ms.
+  // The response is always chunked (body_chunked=true). Default false
+  // preserves bounded REST semantics.
+  bool stream_response_indefinitely      = 13;
+  // Optional (only meaningful when stream_response_indefinitely=true):
+  // close the response stream with ProxyError{TIMEOUT} if no body bytes
+  // flow for this duration. Default 30000 (30s) when unset.
+  int64 stream_idle_timeout_ms           = 14;
+  // Optional cap on total response body bytes. Exceeding mid-stream closes
+  // with ProxyError{PAYLOAD_TOO_LARGE}. Defaults to per-backend max body.
+  int64 max_response_body_bytes          = 15;
+  // Hop count along a proxy chain. Each gateway forwarding the request
+  // increments by 1. The gateway rejects requests where this value exceeds
+  // proxy.max_chain_depth (default 8) with ProxyError{ACL_DENIED,
+  // detail: "proxy_chain_depth_exceeded"}. Caller-set values are clamped
+  // upward by the sidecar relay floor (sandboxes can bump higher but never
+  // lower than the inbound chain depth they observed).
+  uint32 proxy_chain_depth               = 16;
+}
+
+// ProxyHttpResponse is sent in reply to a ProxyHttpRequest. Errors are
+// signalled via the `error` field; non-error responses carry the backend's
+// status code, headers, and body (chunked when too large to inline).
+message ProxyHttpResponse {
+  string request_id          = 1;
+  int32 status_code          = 2;
+  map<string, string> headers = 3;
+  bytes body                 = 4;
+  bool body_chunked          = 5;
+  ProxyError error           = 6;
+}
+
+// ProxyHttpBodyChunk carries one fragment of a chunked request or response
+// body. Sequence numbers start at 0; fin=true marks the final chunk.
+message ProxyHttpBodyChunk {
+  string request_id = 1;
+  bool is_request   = 2;
+  uint32 seq        = 3;
+  bytes data        = 4;
+  bool fin          = 5;
+}
+
+// ProxyError describes a transport-layer failure that prevented the proxy
+// from delivering the request to the backend.
+message ProxyError {
+  enum Kind {
+    UNKNOWN             = 0;
+    DIAL_FAILED         = 1;
+    TIMEOUT             = 2;
+    UPSTREAM_RESET      = 3;
+    ACL_DENIED          = 4;
+    SIDECAR_UNAVAILABLE = 5;
+    PAYLOAD_TOO_LARGE   = 6;
+    DECODE_FAILED       = 7;
+  }
+  Kind kind      = 1;
+  string message = 2;
+}
+
+// ============================================================================
+// Tunnel messages — reserved for phase T12+ (TCP/UDP/WebSocket support)
+// ============================================================================
+
+message TunnelOpen {
+  string tunnel_id                   = 1;
+  string target_topic                = 2;
+  enum Protocol {
+    TCP       = 0;
+    UDP       = 1;
+    WEBSOCKET = 2;
+  }
+  Protocol protocol                  = 3;
+  string remote_hint                 = 4;
+  map<string, string> metadata       = 5;
+  AuthorizationContext authorization = 6;
+  int64 idle_timeout_ms              = 7;
+  int64 max_bytes                    = 8;
+  string session_token               = 9;  // RESERVED for v2 reconnect/resume; ignored in v1
+  // Optional: explicit backend name on the target sidecar. When set, the
+  // sidecar looks up the tunnel backend by BackendConfig.Name directly.
+  // The named backend's allow_remote_hints still applies. When unset,
+  // sidecar falls back to first-match by remote_hint glob.
+  string backend_name                = 10;
+  // Hop count along a proxy chain. Each gateway forwarding the open
+  // increments by 1. Rejected when exceeds proxy.max_chain_depth (default 8).
+  // Same hybrid-floor clamping behavior as ProxyHttpRequest.proxy_chain_depth.
+  uint32 proxy_chain_depth           = 11;
+}
+
+message TunnelData {
+  string tunnel_id = 1;
+  uint32 seq       = 2;
+  bytes data       = 3;
+  bool fin         = 4;
+}
+
+message TunnelClose {
+  string tunnel_id = 1;
+  enum Reason {
+    NORMAL       = 0;
+    PEER_RESET   = 1;
+    IDLE_TIMEOUT = 2;
+    QUOTA        = 3;
+    ERROR        = 4;
+  }
+  Reason reason = 2;
+  string detail = 3;
+}
+
+message TunnelAck {
+  string tunnel_id = 1;
+  uint32 ack_seq   = 2;
+  uint32 credits   = 3;
+}
+
+// ============================================================================
+// Authority resolution & connection status query API (Phase 3.5a)
+//
+// These RPCs let trusted callers (e.g. the Python ProxyHttpTerminator) ask the
+// gateway to (a) resolve an authority grant to a public-safe projection and
+// validate live audience freshness, and (b) check whether a principal has a
+// live connection. Both are gated by ACL: the actor/audience of a grant can
+// resolve their own grant implicitly; everybody else needs `capability/resolve_authority`
+// (resolve) or `capability/query_connections` (status).
+// ============================================================================
+
+// ResolveAuthorityRequest asks the gateway to validate a grant against the
+// caller's actor identity and the live audience, and return a public-safe
+// projection. When `actor` is empty the gateway substitutes the calling
+// session's authenticated identity (the common case — terminators don't need
+// to fill it in for self-resolution).
+message ResolveAuthorityRequest {
+  string request_id = 1;
+  PrincipalRef actor = 2;          // Empty → use caller's session identity.
+  string grant_id = 3;
+  PrincipalRef subject = 4;
+  // Audience is supplied by the caller for non-trivial cases. The gateway
+  // additionally enforces validateGrantAudience using its own session/task
+  // tracking, so audience here is informational/correlation, not the source
+  // of truth for liveness.
+  string audience_type = 5;
+  string audience_id = 6;
+}
+
+// ResolveAuthorityResponse carries the validated, projected authority. On
+// failure (`ok=false`) `authority` is unset and `error` carries a stable
+// human-readable message. Per the spec, no grant fields are populated on
+// authorization denial.
+message ResolveAuthorityResponse {
+  string request_id = 1;
+  bool ok = 2;
+  string error = 3;
+  ResolvedAuthority authority = 4;
+}
+
+// ResolvedAuthority is the validated authority envelope returned to authorized
+// callers. The grant projection (AuthorityGrantInfo) is a subset of the
+// internal AuthorityGrant — it intentionally omits ResourceScope,
+// OperationScope, and Metadata to avoid leaking shape that the terminator
+// doesn't need.
+message ResolvedAuthority {
+  PrincipalRef actor = 1;
+  PrincipalRef subject = 2;
+  AuthorityGrantInfo grant = 3;
+}
+
+// AuthorityGrantInfo is the public-safe projection of an AuthorityGrant.
+// Distinct from ACLAuthorityGrantInfo (which is admin-facing and exposes the
+// full grant). Field set is locked to what the terminator needs to mint
+// X-Auth-* headers.
+message AuthorityGrantInfo {
+  string grant_id = 1;
+  string subject_type = 2;
+  string subject_id = 3;
+  string root_subject_type = 4;
+  string root_subject_id = 5;
+  string audience_type = 6;
+  string audience_id = 7;
+  int32 max_access_level = 8;
+  repeated string workspace_scope = 9;
+  int64 expires_at = 10;          // Unix seconds; matches the rest of the schema.
+  bool revoked = 11;
+}
+
+// ConnectionStatusRequest asks the gateway whether a principal has a live
+// connection. Self-checks (principal == caller's identity) are trivially
+// allowed; cross-principal checks require `capability/query_connections`.
+message ConnectionStatusRequest {
+  string request_id = 1;
+  PrincipalRef principal = 2;
+}
+
+// ConnectionStatusResponse reports whether the queried principal currently
+// has an active session lock. `last_seen_at` is populated only when cheaply
+// available; otherwise zero (callers must not interpret 0 as "never seen").
+message ConnectionStatusResponse {
+  string request_id = 1;
+  bool ok = 2;
+  string error = 3;
+  bool connected = 4;
+  int64 last_seen_at = 5;
+}

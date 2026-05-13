@@ -1,0 +1,87 @@
+# Aether Development Configuration
+
+# Gateway settings
+gateway:
+  port: 50051
+  ops_port: 9090
+  gateway_id: "gateway-dev-1"
+
+# Admin UI/API server
+admin:
+  enabled: true
+  port: 31880
+  cors_origin: "*"
+
+# Authentication — modes list is the single gate for enabling auth methods.
+# Provider-specific settings are nested below.
+auth:
+  modes:
+    - mtls
+    - task_token
+    - api_key
+  mtls:
+    required: false
+    mode: relaxed
+  api_key: { }
+  oauth:
+    verify_signature: false  # Disable JWT signature verification for development
+    providers: [ ]
+
+# PostgreSQL settings
+# Override any field via env var: POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER,
+# POSTGRES_DATABASE, POSTGRES_PASSWORD, POSTGRES_SSL_MODE.
+postgres:
+  host: "localhost"
+  port: 55432
+  database: "aether"
+  user: "aether"
+  # set via POSTGRES_PASSWORD env var; required for non-dev deployments
+  password: ""
+  max_connections: 25
+  max_idle_connections: 5
+  ssl_mode: "disable"
+
+# Redis settings
+redis:
+  cluster:
+    - "localhost:56379"
+  password: ""
+  db: 0
+
+# RabbitMQ settings
+# Override via env vars: STREAM_URL (rabbitmq-stream://user:pass@host:port)
+#                        AMQP_URL   (amqp://user:pass@host:port/)
+# Default credentials below are RabbitMQ's built-in dev/test defaults.
+# Change for any non-local deployment.
+rabbitmq:
+  stream_url: "rabbitmq-stream://guest:guest@localhost:55552"
+  amqp_url: "amqp://guest:guest@localhost:55672/"
+
+# Audit logging — env vars (AUDIT_*) override these values
+audit:
+  enabled: true
+  event_types: [ connection, auth, message, kv, admin, acl ]
+  verbosity: low
+  batch_size: 100
+  flush_period: "5s"
+  retention_days: 90
+  channel_buffer: 1000
+
+# Cleanup settings
+cleanup:
+  task_purge_interval: "24h"       # How often to purge (0 = disabled)
+  completed_task_retention: "168h" # 7 days
+  failed_task_retention: "336h"    # 14 days
+  cancelled_task_retention: "168h" # 7 days
+  reconciliation_interval: "1m"    # How often to reconcile (0 = disabled)
+
+# Checkpoint settings
+checkpoint:
+  default_ttl: "3600s"  # Default TTL for checkpoints when client sends -1 (1 hour)
+
+# Shutdown settings
+shutdown:
+  graceful_timeout: "30s"  # Time to wait for graceful shutdown before forcing
+
+# Log level (debug, info, warn, error)
+log_level: "debug"

@@ -1,0 +1,72 @@
+Aether Gateway {{ .Chart.AppVersion }} has been deployed.
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Endpoints (within the cluster)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  gRPC API:    {{ include "aether-gateway.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.ports.grpc }}
+  Admin UI/API: {{ include "aether-gateway.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.ports.admin }}
+  Ops/Metrics: {{ include "aether-gateway.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.ports.ops }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Quick access via port-forward
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # gRPC
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "aether-gateway.fullname" . }} {{ .Values.ports.grpc }}:{{ .Values.ports.grpc }}
+
+  # Admin UI
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "aether-gateway.fullname" . }} {{ .Values.ports.admin }}:{{ .Values.ports.admin }}
+
+  # Prometheus metrics
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "aether-gateway.fullname" . }} {{ .Values.ports.ops }}:{{ .Values.ports.ops }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if .Values.ingress.enabled }}
+External access
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- range .Values.ingress.hosts }}
+  https://{{ .host }}
+{{- end }}
+{{- else }}
+External access
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Ingress is disabled. Enable it with:
+
+    helm upgrade {{ .Release.Name }} . \
+      --set ingress.enabled=true \
+      --set ingress.hosts[0].host=aether.example.com \
+      --set ingress.tls[0].secretName=aether-tls \
+      --set "ingress.tls[0].hosts[0]=aether.example.com"
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Optional features
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  HPA (autoscaling):       autoscaling.enabled=true
+  ServiceMonitor (Prom):   serviceMonitor.enabled=true
+  NetworkPolicy:           networkPolicy.enabled=true
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Important notes
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. The default secrets.postgresPassword is "changeme" — set a
+     strong password before deploying to production.
+
+  2. RabbitMQ and Redis addresses default to in-cluster service
+     names. Update config.rabbitmq and config.redis to point at
+     your actual deployments.
+
+  3. The connection IS the distributed lock AND heartbeat —
+     session affinity on the Service ensures clients reconnect
+     to the same pod where their lock is held.
+
+  4. For mTLS, mount a certificate secret via tls.existingSecret
+     and enable auth.mtls in config.
+
+For documentation see: https://scitrera.ai

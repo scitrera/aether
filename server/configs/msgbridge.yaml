@@ -1,0 +1,56 @@
+# Aether Messaging Bridge Configuration
+# This file configures the standalone messaging bridge server that connects
+# to the Aether gateway as a Bridge client and relays messages to/from
+# external platforms (Discord, Teams, Email).
+
+aether:
+  address: "localhost:50051"
+  implementation: "aether-msgbridge"
+  specifier: "instance-1"
+  tls:
+    cert_file: ""
+    key_file: ""
+    ca_file: ""
+  credentials:
+    api_key: ""    # or use AETHER_API_KEY env var
+
+postgres:
+  host: localhost
+  port: 5432
+  database: aether
+  user: aether
+  password: ""     # or use POSTGRES_PASSWORD env var
+  ssl_mode: disable
+  max_connections: 10
+  max_idle_connections: 5
+
+platforms:
+  discord:
+    enabled: false
+    bot_token: ""        # or use DISCORD_BOT_TOKEN env var
+    application_id: ""   # or use DISCORD_APPLICATION_ID env var
+
+  teams:
+    enabled: false
+    app_id: ""           # or use TEAMS_APP_ID env var
+    app_password: ""     # or use TEAMS_APP_PASSWORD env var
+    tenant_id: ""        # or use TEAMS_TENANT_ID env var
+
+  email:
+    enabled: false
+    smtp:
+      host: ""           # or use SMTP_HOST env var
+      port: 587          # or use SMTP_PORT env var
+      username: ""       # or use SMTP_USERNAME env var
+      password: ""       # or use SMTP_PASSWORD env var
+      from_address: ""   # or use SMTP_FROM_ADDRESS env var
+      tls: true
+
+admin:
+  enabled: true
+  port: 31882
+  api_key: ""       # or use MSGBRIDGE_ADMIN_API_KEY env var
+
+logging:
+  level: info       # debug, info, warn, error
+  format: ""        # json, console (auto-detected if empty)

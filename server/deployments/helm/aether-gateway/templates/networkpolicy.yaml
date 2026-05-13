@@ -1,0 +1,43 @@
+{{- if .Values.networkPolicy.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aether-gateway.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aether-gateway.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aether-gateway.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow gRPC traffic on the gRPC port
+    - ports:
+        - port: {{ .Values.ports.grpc }}
+          protocol: TCP
+      {{- if not .Values.networkPolicy.allowAllNamespaces }}
+      from:
+        - podSelector: {}
+      {{- end }}
+    # Allow ops/metrics traffic (health probes + Prometheus scraping)
+    - ports:
+        - port: {{ .Values.ports.ops }}
+          protocol: TCP
+      {{- if not .Values.networkPolicy.allowAllNamespaces }}
+      from:
+        - podSelector: {}
+      {{- end }}
+    # Allow admin traffic restricted to same namespace by default
+    - ports:
+        - port: {{ .Values.ports.admin }}
+          protocol: TCP
+      {{- if not .Values.networkPolicy.allowAllNamespaces }}
+      from:
+        - podSelector: {}
+      {{- end }}
+    {{- with .Values.networkPolicy.additionalIngressRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

@@ -1,0 +1,42 @@
+# Sidecar B — terminator registered as sv::echo::b. Mirrors sidecar A so the
+# harness can exercise wildcard sv::echo dispatch with two reachable
+# replicas.
+
+gateway:
+  address: localhost:50051
+  insecure: true
+
+service:
+  implementation: echo
+  specifier: b
+
+tenant_id: loadtest
+
+terminator:
+  enabled: true
+  backends:
+    - name: http
+      kind: http
+      url: http://127.0.0.1:62002
+      allow_paths:
+        - "/*"
+      allow_methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+      max_body_bytes: 4194304
+      idle_timeout_ms: 30000
+      header_mode: passthrough
+
+    - name: tcp
+      kind: tcp
+      url: 127.0.0.1:62102
+      allow_remote_hints:
+        - "*"
+      max_bytes: 104857600
+      idle_timeout_ms: 60000
+
+logging:
+  level: info
+  format: json

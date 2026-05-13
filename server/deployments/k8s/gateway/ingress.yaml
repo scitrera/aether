@@ -1,0 +1,145 @@
+# Aether Gateway Ingress
+# Phase 2: Load Balancer Configuration
+# Ingress with session affinity for consistent client routing
+
+# -----------------------------------------------------------------------------
+# Ingress: Aether Gateway
+# Exposes the gateway service externally with session affinity
+# Uses nginx ingress controller with cookie-based sticky sessions
+# Ensures reconnecting clients reach the same gateway instance
+# -----------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aether-gateway
+  namespace: aether
+  labels:
+    app: aether-gateway
+    component: gateway
+  annotations:
+    # Ingress class - use nginx ingress controller
+    kubernetes.io/ingress.class: "nginx"
+
+    # Session affinity - cookie-based sticky sessions
+    # This ensures clients are routed to the same backend pod across requests
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/affinity-mode: "persistent"
+    nginx.ingress.kubernetes.io/session-cookie-name: "aether-gateway-route"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "10800"  # 3 hours
+    nginx.ingress.kubernetes.io/session-cookie-expires: "10800"  # 3 hours
+    nginx.ingress.kubernetes.io/session-cookie-change-on-failure: "true"
+
+    # Backend protocol - gRPC support
+    # Enables gRPC routing through nginx ingress
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+
+    # SSL/TLS settings for production
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+
+    # WebSocket support (gRPC uses HTTP/2)
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+
+    # Request/response size limits for large messages
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+
+    # Connection limits and timeouts
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-next-upstream: "error timeout invalid_header http_502 http_503 http_504"
+
+    # Health check behavior during rolling updates
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$http_cookie_aether_gateway_route"
+
+spec:
+  # TLS configuration
+  tls:
+  - hosts:
+    - aether.example.com
+    - gateway.aether.example.com
+    secretName: aether-gateway-tls
+
+  # Routing rules
+  rules:
+  # Main domain routing
+  - host: aether.example.com
+    http:
+      paths:
+      # gRPC service path
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: aether-gateway
+            port:
+              number: 50051
+
+  # Gateway-specific subdomain
+  - host: gateway.aether.example.com
+    http:
+      paths:
+      # gRPC service path
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: aether-gateway
+            port:
+              number: 50051
+
+  # HTTP API and health endpoints
+  - host: gateway.aether.example.com
+    http:
+      paths:
+      # Health check endpoint
+      - path: /health
+        pathType: Prefix
+        backend:
+          service:
+            name: aether-gateway
+            port:
+              number: 8080
+
+---
+# -----------------------------------------------------------------------------
+# Ingress: Aether Gateway Metrics (Optional)
+# Separate ingress for Prometheus metrics scraping
+# -----------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aether-gateway-metrics
+  namespace: aether
+  labels:
+    app: aether-gateway
+    component: gateway
+    service-type: metrics
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+
+    # No session affinity needed for metrics scraping
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+
+    # Restrict access to internal monitoring systems
+    nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+spec:
+  # TLS configuration
+  tls:
+  - hosts:
+    - metrics.aether.example.com
+    secretName: aether-gateway-tls
+
+  # Routing rules
+  rules:
+  - host: metrics.aether.example.com
+    http:
+      paths:
+      # Prometheus metrics endpoint
+      - path: /metrics
+        pathType: Prefix
+        backend:
+          service:
+            name: aether-gateway
+            port:
+              number: 9090

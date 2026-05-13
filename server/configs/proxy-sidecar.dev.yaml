@@ -1,0 +1,102 @@
+# Aether Proxy Sidecar — development configuration
+#
+# The sidecar is composed of independent surfaces (terminator, initiator,
+# relay) each gated by an `enabled: true` flag. Any subset can run
+# concurrently; this dev config turns on terminator only and stages the
+# others as commented examples.
+#
+# All fields are also overridable via environment variables (see
+# server/internal/proxysidecar/config.go for the full list of env names).
+
+# ---------------------------------------------------------------------------
+# Shared: gateway connection + service identity used by every enabled surface
+# that authenticates upstream (terminator, relay).
+# ---------------------------------------------------------------------------
+
+gateway:
+  address: localhost:50051
+  insecure: true                  # set to false to enable TLS via the tls block
+  # api_key: dev-api-key          # inline API key (env: AETHER_API_KEY)
+  # api_key_path: /etc/aether/sidecar.key
+  # tls:
+  #   cert_file: /etc/aether/tls/cert.pem
+  #   key_file:  /etc/aether/tls/key.pem
+  #   ca_file:   /etc/aether/tls/ca.pem
+
+service:
+  implementation: memorylayer
+  specifier: default
+
+# Tenant identifier injected as X-Auth-Tenant-ID by header_mode=strict|both.
+tenant_id: dev-tenant
+
+# ---------------------------------------------------------------------------
+# Terminator surface (gateway → local backend)
+# ---------------------------------------------------------------------------
+# Connects to the Aether gateway, subscribes to its sv::{impl}::{spec} topic,
+# and forwards inbound proxy envelopes to one of the configured backends.
+
+terminator:
+  enabled: true
+  backends:
+    - name: default
+      kind: http
+      url: http://localhost:61001
+      allow_paths:
+        - "/v1/*"
+        - "/healthz"
+      allow_methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+      max_body_bytes: 10485760    # 10 MiB
+      idle_timeout_ms: 30000
+      header_mode: strict          # strict | passthrough | both
+
+# ---------------------------------------------------------------------------
+# Initiator surface (local HTTP → gateway) — disabled by default
+# ---------------------------------------------------------------------------
+# Local clients (curl, scripts) send HTTP traffic to listen.bind; each request
+# becomes a ProxyHttpRequest sent to target.topic via the embedded gateway
+# client.
+#
+# initiator:
+#   enabled: true
+#   listen:
+#     bind: localhost:8888
+#   target:
+#     topic: sv::memorylayer::default
+
+# ---------------------------------------------------------------------------
+# Relay surface (sandbox plain-gRPC → gateway) — disabled by default
+# ---------------------------------------------------------------------------
+# Binds a local AetherGateway gRPC server; sandbox processes dial it without
+# credentials and the sidecar injects its own identity. See
+# proxy-sidecar.sandbox.example.yaml for a fully populated example.
+#
+# relay:
+#   enabled: true
+#   listen: unix:///run/aether.sock
+#   identity_override: enforce
+#   allowed_ops:
+#     profile: sandbox-default
+#   target_topic_clamp:
+#     mode: reject
+#     allowed_targets:
+#       - "ag.dev-workspace.orchestrator.*"
+
+logging:
+  level: info
+  format: console
+
+# ---------------------------------------------------------------------------
+# Live reload
+# ---------------------------------------------------------------------------
+# Send SIGHUP to the running process to reload this file without restarting:
+#   kill -HUP $(pidof proxy-sidecar)
+#
+# Reloadable: terminator backends (add/remove/reconfigure), gateway
+# credentials, logging.
+# Not reloadable: surface enable/disable flips (terminator.enabled, etc.).
+# In-flight requests keep their original backend reference until they complete.

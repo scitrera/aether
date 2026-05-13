@@ -1,0 +1,99 @@
+# Aether Proxy Sidecar — multi-backend terminator example
+#
+# Demonstrates three backends on a single terminator instance:
+#   api-v1   — legacy v1 REST API, path-prefix routed
+#   api-v2   — v2 REST API with stricter method list
+#   default  — catch-all fallback (all paths, all methods)
+#
+# Backend selection at runtime:
+#   Explicit:  caller sets ProxyHttpRequest.backend_name = "api-v1"
+#              (or TunnelOpen.backend_name for TCP/WebSocket/UDP tunnels).
+#              The named backend's ACL (allow_paths / allow_methods) still
+#              applies — backend_name selects which ACL to consult, it does
+#              not bypass it.
+#   Implicit:  when backend_name is absent the sidecar uses first-match-by-ACL:
+#              it walks the backends list in order and picks the first entry
+#              whose allow_paths glob and allow_methods list both match the
+#              request. The "default" backend at the end catches anything not
+#              claimed by earlier entries.
+#
+# Operator strategy — partition by path prefix:
+#   /v1/*  → api-v1
+#   /v2/*  → api-v2
+#   /*     → default (fallback)
+
+gateway:
+  address: gateway.example.com:50051
+  insecure: false
+  api_key_path: /etc/aether/sidecar.key
+  tls:
+    cert_file: /etc/aether/tls/cert.pem
+    key_file:  /etc/aether/tls/key.pem
+    ca_file:   /etc/aether/tls/ca.pem
+
+# Identity registered with the gateway.
+service:
+  implementation: memorylayer
+  specifier: default
+
+# Tenant ID injected as X-Auth-Tenant-ID (header_mode: strict | both).
+tenant_id: prod-tenant
+
+terminator:
+  enabled: true
+  backends:
+    # -----------------------------------------------------------------------
+    # api-v1: legacy v1 endpoints — read-only, conservative body limit
+    # -----------------------------------------------------------------------
+    - name: api-v1
+      kind: http
+      url: http://localhost:61001
+      allow_paths:
+        - "/v1/*"
+        - "/healthz"
+      allow_methods:
+        - GET
+        - POST
+      max_body_bytes: 4194304      # 4 MiB
+      idle_timeout_ms: 30000
+      header_mode: strict           # mint X-Auth-* from OBO grant; strip Authorization
+
+    # -----------------------------------------------------------------------
+    # api-v2: v2 endpoints — full CRUD, larger body, longer idle window
+    # -----------------------------------------------------------------------
+    - name: api-v2
+      kind: http
+      url: http://localhost:61002
+      allow_paths:
+        - "/v2/*"
+      allow_methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+      max_body_bytes: 10485760     # 10 MiB
+      idle_timeout_ms: 60000
+      header_mode: strict
+
+    # -----------------------------------------------------------------------
+    # default: catch-all — any path, any safe method, passthrough headers
+    # -----------------------------------------------------------------------
+    - name: default
+      kind: http
+      url: http://localhost:61003
+      allow_paths:
+        - "/*"
+      allow_methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+      max_body_bytes: 10485760     # 10 MiB
+      idle_timeout_ms: 30000
+      header_mode: passthrough      # caller-supplied headers forwarded unchanged
+
+logging:
+  level: info
+  format: json
