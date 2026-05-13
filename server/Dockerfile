@@ -1,6 +1,6 @@
 # Build stage
 # Build context must be the repo root: docker build -f server/Dockerfile .
-FROM golang:1.25.9-alpine AS builder
+FROM golang:1.25.10-alpine AS builder
 
 RUN apk add --no-cache ca-certificates
 
@@ -29,7 +29,7 @@ RUN cd server && \
     CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/proxy-sidecar ./cmd/proxy-sidecar
 
 # Runtime stage — distroless-style minimal image
-FROM alpine:3.23
+FROM alpine:3.23.4
 
 RUN apk add --no-cache ca-certificates tzdata && \
     addgroup -g 1000 aether && \
