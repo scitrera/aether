@@ -1,6 +1,13 @@
-# Build stage
+# Build stage — pinned to the runner's native architecture ($BUILDPLATFORM) so
+# the Go toolchain runs natively and cross-compiles to the target arch via
+# GOOS / GOARCH. Roughly an order of magnitude faster than QEMU-emulated
+# builds when the runner and target differ (e.g. amd64 runner producing
+# arm64 binaries).
 # Build context must be the repo root: docker build -f server/Dockerfile .
-FROM golang:1.25.10-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25.10-alpine AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 RUN apk add --no-cache ca-certificates
 
@@ -16,17 +23,19 @@ COPY server/ ./server/
 COPY api/ ./api/
 COPY sdk/go/ ./sdk/go/
 
-# Build all binaries as static (no CGO) with stripped debug info
+# Build all binaries as static (no CGO) with stripped debug info.
+# GOOS/GOARCH come from buildx-provided ARGs so the same Dockerfile produces
+# linux/amd64 or linux/arm64 binaries depending on the build target.
 RUN cd server && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/gateway ./cmd/gateway && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/cleanup ./cmd/cleanup && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/auth-proxy ./cmd/auth-proxy && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/init-secrets ./cmd/init-secrets && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/workflow ./cmd/workflow && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/msgbridge ./cmd/msgbridge && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/aetherlite ./cmd/aetherlite && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/proxy-sidecar ./cmd/proxy-sidecar
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/gateway ./cmd/gateway && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/cleanup ./cmd/cleanup && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/auth-proxy ./cmd/auth-proxy && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/init-secrets ./cmd/init-secrets && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/workflow ./cmd/workflow && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/msgbridge ./cmd/msgbridge && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/aetherlite ./cmd/aetherlite && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/proxy-sidecar ./cmd/proxy-sidecar
 
 # Runtime stage — distroless-style minimal image
 FROM alpine:3.23.4
