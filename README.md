@@ -81,7 +81,7 @@ AETHER_ALLOW_DEV_MODE=true ./aetherlite --dev --insecure-admin
 ```
 
 State is persisted in `./aether-lite-data/`. The gRPC gateway listens on `:50051` and the admin UI on `:31880`. See [
-`./docs/aetherlite.md`](../docs/aetherlite.md) for details.
+`./docs/aetherlite.md`](./docs/aetherlite.md) for details.
 
 > AetherLite is production-ready for single-node deployments. It does not support horizontal scaling.
 
@@ -195,8 +195,8 @@ Every connection authenticates as exactly one of eight principal types.
 | **Unique Task**     | One connection per identity | `workspace` + `implementation` + `unique_specifier` | Named finite unit of work                                                    |
 | **Non-Unique Task** | Many connections allowed    | `workspace` + `implementation` (server assigns ID)  | Workers competing for tasks on a shared broadcast topic                      |
 | **User**            | One connection per window   | `user_id` + `window_id`                             | Multiple browser tabs allowed                                                |
-| **Workflow Engine** | One active connection       | N/A                                                 | Sole subscriber to `event.*` topics                                          |
-| **Metrics Bridge**  | One active connection       | N/A                                                 | Sole subscriber to `metric.*` topics; receive-only                           |
+| **Workflow Engine** | One active connection       | N/A (Future: sharding)                              | Sole subscriber to `event.*` topics                                          |
+| **Metrics Bridge**  | One active connection       | N/A (Future: sharding)                              | Sole subscriber to `metric.*` topics; receive-only                           |
 | **Orchestrator**    | One per specifier           | `implementation` + `specifier`                      | Receives `TaskAssignment` messages to spin up compute                        |
 | **Service**         | One per specifier           | `implementation` + `specifier`                      | Cross-workspace HTTP-over-Aether proxy; addressable via `sv.{impl}.{spec}`   |
 | **Bridge**          | One per specifier           | `implementation` + `specifier`                      | Cross-workspace messaging integration; sends to any workspace subject to ACL |
@@ -261,32 +261,13 @@ Regenerate Go bindings after proto changes:
 
 ## Client SDKs
 
-- **Go SDK**: [`sdk/go/`](sdk/go/) — full-featured SDK with typed clients for all eight principal types, sync/async KV &
+- **Go SDK**: [`sdk/go/`](sdk/go) — full-featured SDK with typed clients for all eight principal types, sync/async KV &
   checkpoint helpers, reconnection with backoff, and TLS/mTLS support. See [`sdk/go/README.md`](sdk/go/README.md).
-- **Python SDK**: [`sdk/python-client/`](sdk/python-client/) — sync and async clients with feature parity, including
+- **Python SDK**: [`sdk/python-client/`](sdk/python-client) — sync and async clients with feature parity, including
   orchestrator and multiprocess orchestrator implementations. See [
   `sdk/python-client/README.md`](sdk/python-client/README.md).
-- **TypeScript SDK**: [`sdk/typescript/`](sdk/typescript/) — Agent and User clients with gRPC transport, auto-reconnect,
+- **TypeScript SDK**: [`sdk/typescript/`](sdk/typescript) — Agent and User clients with gRPC transport, auto-reconnect,
   KV operations, and typed error hierarchy. See [`sdk/typescript/README.md`](sdk/typescript/README.md).
-
-## Deployment
-
-### Docker Compose (Multi-Instance Local Testing)
-
-```bash
-docker compose -f deployments/docker-compose/multi-instance.yaml up
-```
-
-Runs three gateway instances plus an nginx load balancer with session affinity.
-
-### Kubernetes
-
-```bash
-kubectl apply -f deployments/k8s/gateway/
-```
-
-Includes a `Deployment` with multiple replicas, `ConfigMap`, `Service` with `ClientIP` session affinity, and `Ingress`
-with cookie-based session affinity.
 
 ### Horizontal Scaling Notes
 
@@ -296,26 +277,8 @@ with cookie-based session affinity.
   at-least-once delivery).
 - Locks are TTL-backed; a crashed gateway's locks expire automatically so clients can reconnect to another instance.
 
-## Documentation
-
-- [Specification](specification.md) — full system spec v4.0 (reflects actual implementation)
-- [Quickstart](docs/quickstart.md) — hello world in 15 minutes (AetherLite or full stack)
-- [AetherLite](docs/aetherlite.md) — embedded single-binary mode with no external dependencies
-- [Why Aether](docs/why-aether.md) — competitive positioning and when (not) to use Aether
-- [Error Codes](docs/error-codes.md) — categorized error codes with gRPC status mappings
-- [Monitoring](docs/monitoring.md) — Prometheus metrics, Grafana dashboard, alert rules
-- [Admin UI & API](docs/admin-ui.md) — REST API reference and WebSocket monitoring
-- [Horizontal Scaling](docs/horizontal-scaling.md) — multi-instance architecture and failover (full mode only)
-- [Load Balancer Setup](docs/load-balancer-setup.md) — nginx, AWS ALB, GCP LB configuration
-- [Audit Testing Guide](docs/audit_testing_guide.md)
-- [Proxy / Tunnel](server/docs/proxy.md) — HTTP-over-Aether proxy and TCP tunnel feature overview
-- [Proxy Quickstart](server/docs/proxy-quickstart.md) — running the proxy sidecar and integration tests locally
-- [Proxy Load Test Results](server/docs/proxy-load-test-results.md) — routing-layer benchmark results and scope caveats
-- [Proxy Cutover Playbook](server/docs/proxy-cutover.md) — production rollout criteria, SLOs, rollback steps, and
-  runbook for migrating MemoryLayer to the Aether sidecar path
-
 ## License
 
-Copyright 2025+ Scitrera
+Copyright 2025+ scitrera.ai
 
 Licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
