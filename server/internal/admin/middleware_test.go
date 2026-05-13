@@ -251,11 +251,7 @@ func websocketSubprotocols(r *http.Request) []string {
 	if h == "" {
 		return nil
 	}
-	var protocols []string
-	for _, p := range splitHeader(h) {
-		protocols = append(protocols, p)
-	}
-	return protocols
+	return append([]string(nil), splitHeader(h)...)
 }
 
 func splitHeader(h string) []string {

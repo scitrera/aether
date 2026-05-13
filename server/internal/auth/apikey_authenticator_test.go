@@ -8,18 +8,9 @@ import (
 	"github.com/scitrera/aether/pkg/models"
 )
 
-// stubTokenStore is a test double for APITokenStore that returns canned responses
-// without any database interaction.
-type stubTokenStore struct {
-	token *APIToken
-	err   error
-}
-
-// ValidateToken satisfies the interface shape expected by APIKeyAuthenticator.
-// We embed a real *APITokenStore but override its DB at the field level so we
-// can inject results without a real DB.  Because APITokenStore.ValidateToken is
-// not on an interface, we instead wrap it via a thin functional adapter so we
-// can test the authenticator logic directly.
+// APITokenStore.ValidateToken is not on an interface, so this file wraps it
+// via a thin functional adapter (tokenValidatorFunc + testableAPIKeyAuth)
+// to test the authenticator logic without a real DB.
 
 // tokenValidatorFunc is a function type that matches ValidateToken's signature.
 type tokenValidatorFunc func(ctx context.Context, tokenStr string) (*APIToken, error)

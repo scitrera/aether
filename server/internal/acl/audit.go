@@ -111,57 +111,6 @@ func buildACLMetadata(entry *AuditLogEntry) ([]byte, error) {
 	return json.Marshal(merged)
 }
 
-// writeACLEntry writes a single ACL audit entry to the database.
-func writeACLEntry(ctx context.Context, db *sql.DB, entry *AuditLogEntry) error {
-	metadataJSON, err := buildACLMetadata(entry)
-	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
-	}
-
-	success := entry.Decision == "ALLOW"
-	var errorMsg *string
-	if !success {
-		reason := "access denied"
-		errorMsg = &reason
-	}
-
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO comprehensive_audit_log (
-			timestamp, event_type, actor_type, actor_id, subject_type, subject_id,
-			root_subject_type, root_subject_id, authority_mode, root_authority_grant_id,
-			authority_grant_id, parent_authority_grant_id, resource_type, resource_id,
-			operation, workspace, session_id, gateway_id, success, error_message, metadata, source
-		) VALUES ($1, 'authorization', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
-	`,
-		entry.Timestamp,
-		entry.PrincipalType,
-		entry.PrincipalID,
-		entry.SubjectType,
-		entry.SubjectID,
-		entry.RootSubjectType,
-		entry.RootSubjectID,
-		entry.AuthorityMode,
-		entry.RootGrantID,
-		entry.AuthorityGrantID,
-		entry.ParentGrantID,
-		entry.ResourceType,
-		entry.ResourceID,
-		entry.Operation,
-		entry.Workspace,
-		entry.SessionID,
-		entry.GatewayID,
-		success,
-		errorMsg,
-		metadataJSON,
-		audit.SourceGateway,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to insert audit log entry: %w", err)
-	}
-
-	return nil
-}
-
 // aclEntryBatchWriter writes a batch of AuditLogEntries in a single transaction.
 // It is used as the BatchWriter for BaseLogger[*AuditLogEntry].
 func aclEntryBatchWriter(ctx context.Context, db *sql.DB, entries []*AuditLogEntry) error {

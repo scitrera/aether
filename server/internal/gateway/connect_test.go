@@ -972,12 +972,16 @@ func TestSendBaselineConfig_PopulatesExclusiveKVFields(t *testing.T) {
 		t.Error("expected GlobalExclusiveKv to be populated in ConfigSnapshot")
 	}
 
-	// Legacy Kv field must NOT be populated (deprecated, intentionally omitted).
-	if len(cfg.Kv) != 0 {
-		t.Errorf("expected legacy Kv field to be empty, got %d entries", len(cfg.Kv))
+	// Legacy Kv field must NOT be populated (deprecated, intentionally
+	// omitted). The lint suppressions below are required because the
+	// behavior under test is precisely the deprecation contract: the
+	// server must NOT populate these fields, so the test must reference
+	// them by name to assert emptiness.
+	if len(cfg.Kv) != 0 { //nolint:staticcheck // SA1019: intentionally asserting deprecated field is empty
+		t.Errorf("expected legacy Kv field to be empty, got %d entries", len(cfg.Kv)) //nolint:staticcheck // SA1019: intentionally asserting deprecated field is empty
 	}
-	if len(cfg.GlobalKv) != 0 {
-		t.Errorf("expected legacy GlobalKv field to be empty, got %d entries", len(cfg.GlobalKv))
+	if len(cfg.GlobalKv) != 0 { //nolint:staticcheck // SA1019: intentionally asserting deprecated field is empty
+		t.Errorf("expected legacy GlobalKv field to be empty, got %d entries", len(cfg.GlobalKv)) //nolint:staticcheck // SA1019: intentionally asserting deprecated field is empty
 	}
 }
 

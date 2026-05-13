@@ -127,7 +127,10 @@ func main() {
 	if err != nil {
 		logging.Logger.Fatal().Err(err).Msg("failed to initialize tracing")
 	}
-	defer tracingShutdown(context.Background())
+	defer func() {
+		// Best-effort tracing shutdown on exit; any error is unactionable here.
+		_ = tracingShutdown(context.Background())
+	}()
 
 	// Setup graceful shutdown.
 	ctx, cancel := context.WithCancel(context.Background())

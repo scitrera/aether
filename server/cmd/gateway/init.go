@@ -11,10 +11,8 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/scitrera/aether/internal/audit"
 	"github.com/scitrera/aether/internal/config"
-	"github.com/scitrera/aether/internal/gateway"
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/migrations"
-	"google.golang.org/grpc"
 )
 
 // loadConfig loads configuration from file and applies environment overrides
@@ -198,42 +196,6 @@ func initDatabase(ctx context.Context, cfg *config.Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("database migration failed: %w", err)
 	}
 	return db, nil
-}
-
-// createTLSServer creates a gRPC server with TLS enabled and the provided server options.
-// TLS parameters are read from the config (which may have been populated by CLI flags,
-// env vars, or auto-TLS generation).
-func createTLSServer(cfg *config.Config, opts ...grpc.ServerOption) (*grpc.Server, error) {
-	certPath := cfg.Gateway.TLS.CertFile
-	keyPath := cfg.Gateway.TLS.KeyFile
-	caPath := cfg.Gateway.TLS.CAFile
-
-	// Validate TLS parameters
-	if certPath == "" || keyPath == "" {
-		return nil, fmt.Errorf("TLS enabled but missing required parameters (cert_file, key_file)")
-	}
-
-	// Check if certificate files exist
-	if _, err := os.Stat(certPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("certificate file not found: %s", certPath)
-	}
-	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("key file not found: %s", keyPath)
-	}
-	if caPath != "" {
-		if _, err := os.Stat(caPath); os.IsNotExist(err) {
-			return nil, fmt.Errorf("CA file not found: %s", caPath)
-		}
-	}
-
-	tlsConfig := gateway.TLSConfig{
-		CertFile:   certPath,
-		KeyFile:    keyPath,
-		CAFile:     caPath,
-		ClientAuth: gateway.ParseClientAuth(cfg.Gateway.TLS.ClientAuth),
-	}
-
-	return gateway.NewGRPCServerWithTLS(tlsConfig, opts...)
 }
 
 // redactURL masks credentials in a URL for safe logging.

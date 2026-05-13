@@ -758,22 +758,6 @@ func (tas *TaskAssignmentService) revokeTaskAuthorityGrant(ctx context.Context, 
 	}
 }
 
-func taskAuthorityRootGrantID(task *tasks.ExtendedTask) string {
-	if task == nil {
-		return ""
-	}
-	if task.Authority.RootAuthorityGrantID != "" {
-		return task.Authority.RootAuthorityGrantID
-	}
-	if task.Metadata == nil {
-		return ""
-	}
-	if value, ok := task.Metadata["root_authority_grant_id"].(string); ok {
-		return value
-	}
-	return ""
-}
-
 func taskAuthorityCurrentGrantID(task *tasks.ExtendedTask) string {
 	if task == nil {
 		return ""

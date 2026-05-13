@@ -1,0 +1,67 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+  settings:
+    errcheck:
+      # Silence patterns that idiomatically ignore returns in production Go.
+      # errcheck matches on the concrete function path; we list the most common
+      # cleanup-style callers in this codebase so that defer-style Close/Shutdown
+      # patterns do not flood the lint output.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - (*database/sql.Tx).Rollback
+        - (*net/http.Server).Shutdown
+        - (*os.File).Close
+        - (*os.File).Sync
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Print
+        - fmt.Printf
+        - fmt.Println
+        - os.Setenv
+        - os.Unsetenv
+
+  exclusions:
+    # Match the v1/legacy default presets so the config does not silently
+    # increase the surface area of flagged code beyond `golangci-lint run` with
+    # no config.
+    presets:
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Test files often have intentional ignored returns from test fixtures
+      - path: _test\.go
+        linters:
+          - errcheck
+      # Defer/cleanup-style Close calls on close-shaped receivers. errcheck
+      # cannot resolve interface methods on concrete receivers, so we suppress
+      # the common patterns by the text of the message itself.
+      - linters:
+          - errcheck
+        text: 'Error return value of `[^`]+\.Close` is not checked'
+      - linters:
+          - errcheck
+        text: 'Error return value of `[^`]+\.Shutdown` is not checked'
+
+issues:
+  # Keep the v1/v2 defaults so this config does not show MORE findings than a
+  # config-less `golangci-lint run` would. Larger values are reserved for a
+  # later sweep when the underlying findings are addressed.
+  max-issues-per-linter: 50
+  max-same-issues: 3

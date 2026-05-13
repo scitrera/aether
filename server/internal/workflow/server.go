@@ -191,7 +191,11 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.adminSrv != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s.adminSrv.Stop(shutdownCtx)
+		// Best-effort admin-server shutdown during workflow server teardown;
+		// the parent process is exiting regardless of the result.
+		if err := s.adminSrv.Stop(shutdownCtx); err != nil {
+			log.Warn().Err(err).Msg("workflow admin server shutdown returned error")
+		}
 	}
 	s.leader.Release(context.Background())
 	return nil

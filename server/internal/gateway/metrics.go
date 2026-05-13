@@ -70,12 +70,6 @@ var (
 		Help:      "Total number of KV operations",
 	}, []string{"operation", "scope", "status"})
 
-	authAttempts = promauto.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "aether",
-		Name:      "auth_attempts_total",
-		Help:      "Total number of authentication attempts",
-	}, []string{"method", "status"})
-
 	connectionAttempts = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "aether",
 		Name:      "connection_attempts_total",

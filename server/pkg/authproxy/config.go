@@ -158,7 +158,7 @@ func LoadConfigFromEnv() (*Config, error) {
 		switch strings.ToLower(v) {
 		case "false", "0", "no":
 			if os.Getenv("AETHER_DEV_MODE") != "true" {
-				return nil, fmt.Errorf("Azure Entra JWT signature verification cannot be disabled outside dev mode; set AETHER_DEV_MODE=true to override")
+				return nil, fmt.Errorf("azure entra JWT signature verification cannot be disabled outside dev mode; set AETHER_DEV_MODE=true to override")
 			}
 			cfg.Entra.VerifySignature = false
 		default:

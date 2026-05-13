@@ -822,10 +822,10 @@ func (s *GatewayServer) routeTunnelAck(ctx context.Context, client *ClientSessio
 	// caller→service direction.
 	senderTopic := sender.ToTopic()
 	var destTopic string
-	switch {
-	case senderTopic == service:
+	switch senderTopic {
+	case service:
 		destTopic = caller
-	case senderTopic == caller:
+	case caller:
 		destTopic = service
 	default:
 		// Sender isn't a known peer for this tunnel. Drop.

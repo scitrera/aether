@@ -206,7 +206,15 @@ func (a *OAuthAuthenticator) parseUnverified(tokenStr string) (jwt.MapClaims, er
 }
 
 // getKeyfunc returns or lazily creates a JWKS keyfunc for the given provider.
-func (a *OAuthAuthenticator) getKeyfunc(ctx context.Context, provider OAuthProviderConfig) (keyfunc.Keyfunc, error) {
+//
+// The supplied caller context (unused below — see notes) is accepted for API
+// symmetry with other Authenticator methods, but the JWKS poll context must
+// outlive the caller so cached entries keep refreshing across requests. We
+// therefore build a fresh background context for the long-lived keyfunc and
+// track its cancel in a.cancels so Close() can stop it cleanly.
+//
+//nolint:revive // ctx accepted for callsite symmetry with peers (SA4009 expected and unrelated)
+func (a *OAuthAuthenticator) getKeyfunc(_ context.Context, provider OAuthProviderConfig) (keyfunc.Keyfunc, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 

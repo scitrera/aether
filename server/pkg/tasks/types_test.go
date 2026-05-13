@@ -144,14 +144,20 @@ func TestBackwardsCompatibilityAliases(t *testing.T) {
 	})
 
 	t.Run("TypeAliases", func(t *testing.T) {
-		// Verify ExtendedTask is alias for Task
+		// Explicit type annotations below are the *point* of this test: they
+		// verify at compile time that ExtendedTask and TaskRecord remain
+		// alias-compatible with Task. Suppressing ST1023 here keeps the
+		// type assertion visible to readers.
+		//nolint:staticcheck // ST1023: explicit types are the test assertion
 		var extTask ExtendedTask = Task{TaskID: "test"}
+		//nolint:staticcheck // ST1023: explicit types are the test assertion
 		var task Task = extTask
 		if task.TaskID != "test" {
 			t.Error("ExtendedTask should be compatible with Task")
 		}
 
 		// Verify TaskRecord is alias for Task
+		//nolint:staticcheck // ST1023: explicit types are the test assertion
 		var taskRecord TaskRecord = Task{TaskID: "test2"}
 		task = taskRecord
 		if task.TaskID != "test2" {

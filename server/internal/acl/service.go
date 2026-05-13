@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/pkg/models"
 )
 
@@ -263,9 +264,17 @@ func (s *Service) GrantAccess(ctx context.Context, principalType, principalID, r
 			exp = expiresAt.Format(time.RFC3339)
 		}
 
-		// Remove old policy for this sub+obj (handles upsert), then add new
-		s.enforcer.RemovePolicy(sub, obj)
-		s.enforcer.AddPolicy(sub, obj, act, exp, rule.RuleID)
+		// Remove old policy for this sub+obj (handles upsert), then add new.
+		// Both calls touch only the in-memory enforcer model. The persistent
+		// row already landed in `acl_rules` above; any in-memory error is
+		// logged best-effort rather than rolled back so the persisted state
+		// remains authoritative on the next reload.
+		if _, err := s.enforcer.RemovePolicy(sub, obj); err != nil {
+			logging.Logger.Warn().Err(err).Str("sub", sub).Str("obj", obj).Msg("acl: in-memory RemovePolicy failed; persisted state unchanged")
+		}
+		if _, err := s.enforcer.AddPolicy(sub, obj, act, exp, rule.RuleID); err != nil {
+			logging.Logger.Warn().Err(err).Str("sub", sub).Str("obj", obj).Msg("acl: in-memory AddPolicy failed; persisted state unchanged")
+		}
 	}
 
 	return rule, nil
@@ -293,11 +302,15 @@ func (s *Service) RevokeAccess(ctx context.Context, principalType, principalID, 
 		return ErrRuleNotFound
 	}
 
-	// Update in-memory model
+	// Update in-memory model. The DB delete above is authoritative; failure
+	// to mirror it in the enforcer is logged best-effort and will self-heal
+	// on the next ReloadPolicies / process restart.
 	if s.enforcer != nil {
 		sub := principalType + ":" + principalID
 		obj := resourceType + ":" + resourceID
-		s.enforcer.RemovePolicy(sub, obj)
+		if _, err := s.enforcer.RemovePolicy(sub, obj); err != nil {
+			logging.Logger.Warn().Err(err).Str("sub", sub).Str("obj", obj).Msg("acl: in-memory RemovePolicy failed during revoke; persisted state authoritative")
+		}
 	}
 
 	return nil
@@ -358,7 +371,8 @@ func (s *Service) ListRules(ctx context.Context, filter RuleFilter) ([]*ACLRule,
 	if filter.ResourceID != "" {
 		query += fmt.Sprintf(" AND resource_id = $%d", argIdx)
 		args = append(args, filter.ResourceID)
-		argIdx++
+		// argIdx not incremented: this is the last optional clause and no
+		// further $N placeholders are appended after it.
 	}
 
 	query += " ORDER BY granted_at DESC"
@@ -452,7 +466,9 @@ func (s *Service) CleanupExpiredRules(ctx context.Context) (int64, error) {
 	}
 
 	if deletedCount > 0 && s.enforcer != nil {
-		s.enforcer.ReloadPolicies()
+		if err := s.enforcer.ReloadPolicies(); err != nil {
+			logging.Logger.Warn().Err(err).Int64("deleted", deletedCount).Msg("acl: ReloadPolicies failed after cleanup; in-memory enforcer may lag DB until next reload")
+		}
 	}
 
 	return deletedCount, nil

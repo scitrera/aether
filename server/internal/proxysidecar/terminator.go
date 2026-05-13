@@ -86,15 +86,6 @@ func NewTerminatorFromPath(cfg *Config, cfgPath string) (*Terminator, error) {
 	return newTerminatorInternal(cfg, cfgPath, newGatewayRuntime(cfg))
 }
 
-// newTerminatorWithRuntime constructs a Terminator that shares an
-// externally-owned gatewayRuntime. The runner uses this so a single runtime
-// serves the terminator alongside any other enabled surfaces. The supplied
-// runtime must be initialised by the caller — the runner drives the
-// connection loop, not the Terminator.
-func newTerminatorWithRuntime(cfg *Config, runtime *gatewayRuntime) (*Terminator, error) {
-	return newTerminatorInternal(cfg, "", runtime)
-}
-
 func newTerminatorInternal(cfg *Config, cfgPath string, runtime *gatewayRuntime) (*Terminator, error) {
 	httpBackends, tcpBackends, wsBackends, udpBackends := buildBackends(cfg)
 
@@ -448,7 +439,9 @@ func (t *Terminator) dispatchStreamingAndRespond(ctx context.Context, req *pb.Pr
 						Data:      data[:room],
 						Fin:       false,
 					})
-					seq++
+					// seq not incremented: the next statement returns and the
+					// terminating PAYLOAD_TOO_LARGE response carries no body
+					// chunk that would consume another sequence number.
 				}
 				_ = transport.SendProxyHttpResponse(errorResponse(requestID, pb.ProxyError_PAYLOAD_TOO_LARGE,
 					fmt.Sprintf("backend %q response body exceeds limit %d", backend.cfg.Name, maxBytes)))

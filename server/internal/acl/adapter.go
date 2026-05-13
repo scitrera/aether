@@ -66,7 +66,12 @@ func (a *aclRulesAdapter) LoadPolicy(m model.Model) error {
 			exp = expiresAt.Time.Format(time.RFC3339)
 		}
 
-		persist.LoadPolicyArray([]string{"p", sub, obj, act, exp, ruleID}, m)
+		// LoadPolicyArray returns an error only when the supplied tokens fail
+		// shape validation against the Casbin model. The arity is fixed by
+		// construction here, so any failure indicates a model-config bug at
+		// startup rather than a per-row condition we could meaningfully
+		// recover from.
+		_ = persist.LoadPolicyArray([]string{"p", sub, obj, act, exp, ruleID}, m)
 	}
 
 	return rows.Err()

@@ -7,31 +7,6 @@ import (
 	"github.com/scitrera/aether/pkg/tasks"
 )
 
-// Test helper types
-
-type mockTaskStore struct {
-	tasks map[string]*tasks.TaskRecord
-}
-
-func newMockTaskStore() *mockTaskStore {
-	return &mockTaskStore{
-		tasks: make(map[string]*tasks.TaskRecord),
-	}
-}
-
-func (m *mockTaskStore) GetTask(taskID string) (*tasks.TaskRecord, error) {
-	task, ok := m.tasks[taskID]
-	if !ok {
-		return nil, nil
-	}
-	copy := *task
-	return &copy, nil
-}
-
-func (m *mockTaskStore) addTask(task *tasks.TaskRecord) {
-	m.tasks[task.TaskID] = task
-}
-
 // Tests
 
 func TestTimeoutHandler_StartTaskTimers(t *testing.T) {

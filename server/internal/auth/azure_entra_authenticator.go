@@ -141,7 +141,7 @@ func (a *AzureEntraAuthenticator) validate(ctx context.Context, tokenStr string)
 			jwt.WithAudience(a.clientID),
 		)
 		if err != nil {
-			return nil, fmt.Errorf("Azure Entra JWT validation failed: %w", err)
+			return nil, fmt.Errorf("azure entra JWT validation failed: %w", err)
 		}
 
 		var ok bool
@@ -154,7 +154,7 @@ func (a *AzureEntraAuthenticator) validate(ctx context.Context, tokenStr string)
 	// Validate issuer pattern and extract the tid embedded in the issuer URL.
 	iss := extractClaim(claims, "iss")
 	if !strings.HasPrefix(iss, entraIssuerPrefix) || !strings.HasSuffix(iss, entraIssuerSuffix) {
-		return nil, fmt.Errorf("Azure Entra JWT issuer %q does not match expected pattern", iss)
+		return nil, fmt.Errorf("azure entra JWT issuer %q does not match expected pattern", iss)
 	}
 
 	// Extract the tenant ID from the issuer URL:
@@ -168,12 +168,12 @@ func (a *AzureEntraAuthenticator) validate(ctx context.Context, tokenStr string)
 		// Single-tenant mode: issuer must match our configured tenant exactly.
 		expectedIss := entraIssuerPrefix + a.tenantID + entraIssuerSuffix
 		if iss != expectedIss {
-			return nil, fmt.Errorf("Azure Entra JWT issuer %q does not match expected single-tenant issuer %q", iss, expectedIss)
+			return nil, fmt.Errorf("azure entra JWT issuer %q does not match expected single-tenant issuer %q", iss, expectedIss)
 		}
 	} else {
 		// Multi-tenant mode: the tid in the issuer URL must match the tid claim.
 		if tid != "" && issTID != tid {
-			return nil, fmt.Errorf("Azure Entra JWT issuer tenant %q does not match tid claim %q", issTID, tid)
+			return nil, fmt.Errorf("azure entra JWT issuer tenant %q does not match tid claim %q", issTID, tid)
 		}
 		// If AllowedTenants is non-empty, the tid must be in the whitelist.
 		if len(a.allowedTenants) > 0 {
@@ -182,7 +182,7 @@ func (a *AzureEntraAuthenticator) validate(ctx context.Context, tokenStr string)
 				effectiveTID = issTID
 			}
 			if !tenantAllowed(effectiveTID, a.allowedTenants) {
-				return nil, fmt.Errorf("Azure Entra JWT tenant %q is not in the allowed tenants list", effectiveTID)
+				return nil, fmt.Errorf("azure entra JWT tenant %q is not in the allowed tenants list", effectiveTID)
 			}
 		}
 	}
@@ -190,7 +190,7 @@ func (a *AzureEntraAuthenticator) validate(ctx context.Context, tokenStr string)
 	// Require the oid claim — it is the stable Azure object ID for the user.
 	oid := extractClaim(claims, "oid")
 	if oid == "" {
-		return nil, fmt.Errorf("Azure Entra JWT is missing required oid claim")
+		return nil, fmt.Errorf("azure entra JWT is missing required oid claim")
 	}
 
 	// Build metadata from Azure-specific claims.

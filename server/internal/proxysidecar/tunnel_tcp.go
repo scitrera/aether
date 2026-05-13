@@ -63,10 +63,6 @@ const (
 	// tcpInboundAckThreshold is the consumed-byte threshold at which the
 	// sidecar emits a TunnelAck back to the caller granting more credits.
 	tcpInboundAckThreshold = tcpFrameMaxBytes
-
-	// tcpInboundAckInterval bounds ack latency when the consumer is slow
-	// enough that the byte threshold takes a while to accumulate.
-	tcpInboundAckInterval = 100 * time.Millisecond
 )
 
 // tunnelTransport sends frames produced by a tunnel back toward the caller.

@@ -592,5 +592,8 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	// Best-effort response body write; the HTTP transport already surfaces
+	// client disconnects through its own logging, so an encode error here
+	// has nowhere actionable to land.
+	_ = json.NewEncoder(w).Encode(v)
 }

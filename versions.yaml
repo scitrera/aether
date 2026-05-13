@@ -8,8 +8,8 @@
 # The `replace` directives in each go.mod handle local builds; the `require` pins handle
 # downstream `go get` from pkg.go.dev. update-versions.py keeps the require pins in sync.
 
-aether-gateway: 0.1.58
+aether-gateway: 0.1.59
 
-aether-sdk-go: 0.1.58 # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
-aether-sdk-python: 0.1.58  # scitrera-aether-client
-aether-sdk-typescript: 0.1.58  # @scitrera/aether-client
+aether-sdk-go: 0.1.59 # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
+aether-sdk-python: 0.1.59  # scitrera-aether-client
+aether-sdk-typescript: 0.1.59  # @scitrera/aether-client

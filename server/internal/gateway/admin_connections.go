@@ -99,7 +99,7 @@ func (p *GatewayStateProvider) GetConnectionByID(ctx context.Context, sessionID 
 
 	// Use in-memory ConnectedAt time, fallback to Redis if not available
 	connectedAt := session.ConnectedAt
-	duration := "unknown"
+	var duration string
 	if connectedAt.IsZero() && p.sessions != nil {
 		// Fallback: fetch from Redis (e.g., during upgrades or if in-memory field not set)
 		redis := p.sessions.GetRedisClient()

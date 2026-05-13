@@ -685,7 +685,12 @@ func (s *GatewayServer) acquireSessionLock(ctx context.Context, cs *connectionSt
 		redisOperations.WithLabelValues("session_register", "failure").Inc()
 		regCleanupCtx, regCleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer regCleanupCancel()
-		s.sessions.ReleaseLock(regCleanupCtx, cs.identity, cs.sessionID)
+		// Best-effort cleanup of the just-acquired lock after a registration
+		// failure. The TTL will expire the lock anyway, so a failure here is
+		// non-fatal — log and proceed with the registration-failure return.
+		if releaseErr := s.sessions.ReleaseLock(regCleanupCtx, cs.identity, cs.sessionID); releaseErr != nil {
+			logging.Logger.Warn().Err(releaseErr).Str("session_id", cs.sessionID).Msg("failed to release lock after session register failure; relying on TTL expiry")
+		}
 		// Audit: Session registration failure
 		sessionUUID, _ := uuid.Parse(cs.sessionID)
 		s.auditLog(ctx, audit.NewConnectionEvent(string(cs.identity.Type), cs.identity.String(), audit.OpSessionRegistered, sessionUUID, false, err.Error(), map[string]interface{}{

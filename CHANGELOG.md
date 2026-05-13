@@ -18,6 +18,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Aet
 
 ---
 
+## [0.1.59] - 2026-05-12
+
+### Security
+- Bumped Go toolchain to **1.25.10**, clearing 9 standard-library vulnerabilities affecting `net/http`, `crypto/tls`, `html/template`, and related packages (HTTP/2 SETTINGS_MAX_FRAME_SIZE DoS, TLS 1.3 KeyUpdate DoS, html/template XSS, and others).
+- Bumped `golang.org/x/net` to **v0.54.0** (HTTP/2 transport DoS in `golang.org/x/net/internal/http2`).
+- Bumped `github.com/docker/docker` (Go SDK dependency) to **v28.5.2** (latest available). Two upstream vulnerabilities tracked as known issues with no fix yet available — see `SECURITY.md`.
+
+### Changed
+- Docker images now publish **multi-architecture manifests** (`linux/amd64` and `linux/arm64`).
+- Server Dockerfile uses **Go cross-compilation** (`$BUILDPLATFORM` + `TARGETOS`/`TARGETARCH`) for native-speed arm64 builds without QEMU emulation.
+- Bumped `google.golang.org/grpc` to **v1.80.0** across the `api`, `sdk/go`, and server modules for ecosystem consistency.
+
+### Fixed
+- Numerous internal code-quality fixes surfaced by `golangci-lint`: deprecated API usages replaced (`grpc.Dial` → `grpc.NewClient`, AMQP `QueueInspect` → `QueueDeclarePassive`), error-string casing normalized, dead assignments removed, dead code pruned, ineffectual assignments eliminated. No public API changes.
+
+---
+
 ## [0.1.58] - 2026-05-12
 
 Initial public OSS release of the Aether gateway, SDKs (Go, Python, TypeScript), and API definitions.
@@ -70,5 +87,6 @@ Initial public OSS release of the Aether gateway, SDKs (Go, Python, TypeScript),
 
 ---
 
-[Unreleased]: https://github.com/scitrera/aether/compare/v0.1.58...HEAD
+[Unreleased]: https://github.com/scitrera/aether/compare/v0.1.59...HEAD
+[0.1.59]: https://github.com/scitrera/aether/compare/v0.1.58...v0.1.59
 [0.1.58]: https://github.com/scitrera/aether/releases/tag/v0.1.58

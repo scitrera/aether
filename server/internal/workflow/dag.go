@@ -182,7 +182,9 @@ func (d *DAGEngine) ProcessStepCompletion(ctx context.Context, executionID, step
 						Str("step_id", stepID).
 						Int("attempt", ss.Attempt+1).
 						Msg("retrying step")
-					d.store.IncrementStepAttempt(ctx, executionID, stepID)
+					if err := d.store.IncrementStepAttempt(ctx, executionID, stepID); err != nil {
+						log.Warn().Err(err).Str("execution_id", executionID).Str("step_id", stepID).Msg("failed to increment step attempt; retry counter may drift")
+					}
 					return d.advanceExecution(ctx, executionID, &dagDef, exec.TriggerData)
 				}
 			}
@@ -219,7 +221,9 @@ func (d *DAGEngine) MonitorExecutions(ctx context.Context) error {
 				Str("execution_id", exec.ExecutionID).
 				Dur("elapsed", time.Since(exec.StartedAt)).
 				Msg("DAG execution timed out")
-			d.store.UpdateExecutionStatus(ctx, exec.ExecutionID, ExecStatusFailed, "DAG execution timed out")
+			if err := d.store.UpdateExecutionStatus(ctx, exec.ExecutionID, ExecStatusFailed, "DAG execution timed out"); err != nil {
+				log.Warn().Err(err).Str("execution_id", exec.ExecutionID).Msg("failed to mark DAG execution timed-out; will retry on next monitor tick")
+			}
 			continue
 		}
 
@@ -237,7 +241,9 @@ func (d *DAGEngine) MonitorExecutions(ctx context.Context) error {
 						Str("execution_id", exec.ExecutionID).
 						Str("step_id", step.StepID).
 						Msg("step timed out")
-					d.store.SetStepError(ctx, exec.ExecutionID, step.StepID, "step timed out")
+					if err := d.store.SetStepError(ctx, exec.ExecutionID, step.StepID, "step timed out"); err != nil {
+						log.Warn().Err(err).Str("execution_id", exec.ExecutionID).Str("step_id", step.StepID).Msg("failed to record step timeout; will retry on next monitor tick")
+					}
 				}
 			}
 		}
@@ -261,19 +267,27 @@ func (d *DAGEngine) advanceExecution(ctx context.Context, executionID string, da
 		stepMap[steps[i].StepID] = &steps[i]
 	}
 
-	// Build step outputs map for template interpolation
+	// Build step outputs map for template interpolation. Both Unmarshal
+	// calls treat malformed JSON as "no value": template expressions then
+	// see a nil under that step, which the template engine renders as
+	// empty. We log on failure so the operator can correlate template
+	// misses with bad upstream payloads.
 	stepOutputs := make(map[string]any)
 	for _, s := range steps {
 		if s.Status == StepStatusCompleted && len(s.OutputData) > 0 {
 			var out any
-			json.Unmarshal(s.OutputData, &out)
+			if err := json.Unmarshal(s.OutputData, &out); err != nil {
+				log.Warn().Err(err).Str("execution_id", executionID).Str("step_id", s.StepID).Msg("step output not valid JSON; template interpolation will see nil")
+			}
 			stepOutputs[s.StepID] = map[string]any{"result": out}
 		}
 	}
 
 	var triggerMap any
 	if len(triggerData) > 0 {
-		json.Unmarshal(triggerData, &triggerMap)
+		if err := json.Unmarshal(triggerData, &triggerMap); err != nil {
+			log.Warn().Err(err).Str("execution_id", executionID).Msg("trigger payload not valid JSON; template interpolation will see nil")
+		}
 	}
 
 	for _, dagStep := range dagDef.Steps {
@@ -321,7 +335,9 @@ func (d *DAGEngine) advanceExecution(ctx context.Context, executionID string, da
 				Str("execution_id", executionID).
 				Str("step_id", dagStep.ID).
 				Msg("failed to create task for step")
-			d.store.SetStepError(ctx, executionID, dagStep.ID, "failed to create task: "+err.Error())
+			if storeErr := d.store.SetStepError(ctx, executionID, dagStep.ID, "failed to create task: "+err.Error()); storeErr != nil {
+				log.Warn().Err(storeErr).Str("execution_id", executionID).Str("step_id", dagStep.ID).Msg("failed to record step error; step state may stay in 'running' until the next monitor tick")
+			}
 		}
 	}
 
@@ -414,9 +430,13 @@ func (d *DAGEngine) checkExecutionComplete(ctx context.Context, executionID stri
 	}
 
 	if anyFailed {
-		d.store.UpdateExecutionStatus(ctx, executionID, ExecStatusFailed, "one or more steps failed")
+		if err := d.store.UpdateExecutionStatus(ctx, executionID, ExecStatusFailed, "one or more steps failed"); err != nil {
+			log.Warn().Err(err).Str("execution_id", executionID).Msg("failed to mark DAG execution failed; will retry on next monitor tick")
+		}
 	} else {
-		d.store.UpdateExecutionStatus(ctx, executionID, ExecStatusCompleted, "")
+		if err := d.store.UpdateExecutionStatus(ctx, executionID, ExecStatusCompleted, ""); err != nil {
+			log.Warn().Err(err).Str("execution_id", executionID).Msg("failed to mark DAG execution completed; will retry on next monitor tick")
+		}
 	}
 
 	log.Info().

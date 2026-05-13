@@ -381,12 +381,12 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 		// Add message metadata based on verbosity level
 		verbosity := s.auditLogger.GetConfig().VerbosityLevel
 		if audit.ShouldIncludeMessageMetadata(verbosity) {
-			if msg.Payload != nil && len(msg.Payload) > 0 {
+			if len(msg.Payload) > 0 {
 				msgMetadata["message_size"] = len(msg.Payload)
 			}
 		}
 		if audit.ShouldIncludeMessageContent(verbosity) {
-			if msg.Payload != nil && len(msg.Payload) > 0 {
+			if len(msg.Payload) > 0 {
 				if msg.MessageType == pb.MessageType_OPAQUE {
 					msgMetadata["message_content_format"] = "opaque"
 				} else {

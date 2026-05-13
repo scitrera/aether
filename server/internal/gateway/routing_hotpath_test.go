@@ -51,18 +51,6 @@ func newRoutingTestClient(identity models.Identity, stream *mockStream) *ClientS
 	}
 }
 
-// failingRouter wraps mockMessageRouter but makes Publish return an error.
-type failingRouter struct {
-	mockMessageRouter
-	publishErr error
-}
-
-func (r *failingRouter) Publish(_ context.Context, _ string, _ []byte) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.publishErr
-}
-
 // ---------------------------------------------------------------------------
 // Rate limiting tests
 // ---------------------------------------------------------------------------

@@ -5,7 +5,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/pem"
 	"math/big"
 	"testing"
 	"time"
@@ -306,15 +305,4 @@ func generateTestCertCN(cn string) (*x509.Certificate, *rsa.PrivateKey, error) {
 	}
 
 	return cert, privateKey, nil
-}
-
-func pemEncodePrivateKey(key *rsa.PrivateKey) ([]byte, error) {
-	return x509.MarshalPKCS1PrivateKey(key), nil
-}
-
-func pemEncodeCertificate(cert *x509.Certificate) ([]byte, error) {
-	return pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: cert.Raw,
-	}), nil
 }

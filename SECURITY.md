@@ -47,6 +47,17 @@ Out of scope:
 - Social engineering
 - Denial of service via resource exhaustion in development configurations
 
+## Known Issues
+
+The following vulnerabilities are tracked but unresolved at the time of the current release because no upstream fix is yet available. They are reachable from the published Go SDK (`github.com/scitrera/aether/sdk/go`) via the Docker-based orchestrator (`sdk/go/orchestrators/docker`):
+
+| Advisory | Affected | Status |
+|---|---|---|
+| [GO-2026-4887](https://pkg.go.dev/vuln/GO-2026-4887) | `github.com/docker/docker` ≤ v28.5.2 | No upstream fix released. Tracking. |
+| [GO-2026-4883](https://pkg.go.dev/vuln/GO-2026-4883) | `github.com/docker/docker` ≤ v28.5.2 | No upstream fix released. Tracking. |
+
+Mitigation: callers that don't need the Docker orchestrator can build their applications without importing `sdk/go/orchestrators/docker`. We will bump the dependency immediately when upstream ships fixed releases.
+
 ## Security Best Practices
 
 When deploying Aether in production:

@@ -12,8 +12,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"google.golang.org/grpc/credentials"
 )
 
 // TestTLSServerConfig tests loading TLS configuration
@@ -43,7 +41,7 @@ func TestLoadTLSConfig(t *testing.T) {
 	}
 
 	if config == nil {
-		t.Error("LoadTLSConfig() returned nil config")
+		t.Fatal("LoadTLSConfig() returned nil config")
 	}
 
 	if config.ClientAuth != tls.RequireAndVerifyClientCert {
@@ -243,7 +241,7 @@ func TestNewClientTLSConfig(t *testing.T) {
 
 	config := NewClientTLSConfig("test-server", clientCert, caPool)
 	if config == nil {
-		t.Error("NewClientTLSConfig() returned nil config")
+		t.Fatal("NewClientTLSConfig() returned nil config")
 	}
 
 	if config.ServerName != "test-server" {
@@ -464,12 +462,4 @@ func parsePEMCert(pemData []byte) (*x509.Certificate, error) {
 		return nil, nil
 	}
 	return x509.ParseCertificate(block.Bytes)
-}
-
-func getTLSInfoFromCert(cert *x509.Certificate) credentials.TLSInfo {
-	return credentials.TLSInfo{
-		State: tls.ConnectionState{
-			PeerCertificates: []*x509.Certificate{cert},
-		},
-	}
 }

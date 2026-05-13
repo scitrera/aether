@@ -71,12 +71,6 @@ func (s *Store) isEncryptedKey(key string) bool {
 	return strings.HasPrefix(key, EncryptedKeyPrefix)
 }
 
-// stripEncryptedPrefix returns the key without the encryption prefix.
-// If the key doesn't have the prefix, it returns the key unchanged.
-func (s *Store) stripEncryptedPrefix(key string) string {
-	return strings.TrimPrefix(key, EncryptedKeyPrefix)
-}
-
 // encryptValue encrypts the value if encryption is configured and the key is encrypted.
 // Returns the value unchanged if encryption is not configured.
 func (s *Store) encryptValue(key, value string) (string, error) {

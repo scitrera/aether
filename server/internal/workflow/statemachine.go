@@ -242,8 +242,12 @@ func (e *StateMachineEngine) MonitorTimeouts(ctx context.Context) error {
 
 		currentCfg, ok := def.States[inst.CurrentState]
 		if !ok || currentCfg.TimeoutAction == "" {
-			// No timeout action defined; just clear the timeout
-			e.store.ClearInstanceTimeout(ctx, inst.InstanceID)
+			// No timeout action defined; just clear the timeout. Best-effort:
+			// a stale timeout row simply causes the next monitor tick to
+			// re-evaluate and clear it then.
+			if err := e.store.ClearInstanceTimeout(ctx, inst.InstanceID); err != nil {
+				log.Warn().Err(err).Str("instance_id", inst.InstanceID).Msg("failed to clear instance timeout; will retry on next monitor tick")
+			}
 			continue
 		}
 

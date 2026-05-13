@@ -11,29 +11,6 @@ import (
 	"github.com/scitrera/aether/pkg/tasks"
 )
 
-// mockDB is a mock implementation for testing without real database
-type mockDB struct {
-	rows []*mockRow
-	idx  int
-}
-
-type mockRow struct {
-	columns []interface{}
-}
-
-func (m *mockDB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
-	// Return a limited set of mock rows
-	return nil, nil
-}
-
-func (m *mockDB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	return nil, nil
-}
-
-func (m *mockDB) Stats() sql.DBStats {
-	return sql.DBStats{}
-}
-
 // setupPollerTestDB creates a database connection using dev infrastructure
 func setupPollerTestDB(t *testing.T) (*sql.DB, string, func()) {
 	t.Helper()

@@ -211,16 +211,20 @@ func (oqm *OrchestratedQueueManager) ConsumeOrchestratedTasks(
 			var payload OrchestratedTaskPayload
 			if err := json.Unmarshal(delivery.Body, &payload); err != nil {
 				logging.Logger.Error().Err(err).Msg("failed to unmarshal task payload")
-				delivery.Nack(false, true) // Requeue
+				if nackErr := delivery.Nack(false, true); nackErr != nil { // Requeue
+					logging.Logger.Warn().Err(nackErr).Msg("failed to nack undecodable task; channel may close on next delivery")
+				}
 				continue
 			}
 
 			// Send to task channel
 			taskChan <- &payload
 
-			// Auto-ack after processing
-			// Note: In production, orchestrator should manually ack after agent starts
-			delivery.Ack(false)
+			// Auto-ack after processing.
+			// Note: In production, orchestrator should manually ack after agent starts.
+			if ackErr := delivery.Ack(false); ackErr != nil {
+				logging.Logger.Warn().Err(ackErr).Msg("failed to ack delivered task; redelivery may occur")
+			}
 		}
 	}()
 
@@ -236,7 +240,16 @@ func (oqm *OrchestratedQueueManager) GetQueueDepth(workspace string) (int, error
 
 	queueName := oqm.getQueueName(workspace)
 
-	queue, err := oqm.channel.QueueInspect(queueName)
+	// QueueInspect was deprecated in amqp091-go in favor of a passive
+	// declare that returns the same Queue struct. Per amqp091-go docs:
+	// "QueueDeclarePassive is the supported way to test for the existence
+	// of a queue and retrieve its current depth." The flags here mirror
+	// DeclareOrchestratedQueue (durable/autoDelete/exclusive/no-wait, and
+	// the 24h x-message-ttl table arg) so brokers do not raise a
+	// PRECONDITION_FAILED on a mismatched re-declare.
+	queue, err := oqm.channel.QueueDeclarePassive(queueName, true, false, false, false, amqp.Table{
+		"x-message-ttl": int32(86400000),
+	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to inspect queue %s: %w", queueName, err)
 	}

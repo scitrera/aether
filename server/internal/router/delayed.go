@@ -317,8 +317,11 @@ func IsPluginAvailable(amqpURL string) bool {
 		return false
 	}
 
-	// Clean up test exchange
-	ch.ExchangeDelete("aether_test_delayed", false, false)
+	// Clean up test exchange. The probe has already established that the
+	// plugin is loaded; failing to delete the throwaway exchange here just
+	// leaves a no-op resource behind and doesn't change the answer to the
+	// caller's question.
+	_ = ch.ExchangeDelete("aether_test_delayed", false, false)
 
 	return true
 }

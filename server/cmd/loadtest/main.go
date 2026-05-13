@@ -62,8 +62,8 @@ func (s *LoadTestStats) Print() {
 func simulateAgent(ctx context.Context, agentID int, stats *LoadTestStats, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	// Connect to gateway
-	conn, err := grpc.Dial(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Connect to gateway. NewClient is the post-1.x successor to grpc.Dial.
+	conn, err := grpc.NewClient(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		logging.Logger.Error().Err(err).Int("agent_id", agentID).Msg("failed to connect")
 		stats.errors.Add(1)

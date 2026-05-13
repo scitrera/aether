@@ -180,7 +180,12 @@ func SetupTestDB(t *testing.T) (*TestDB, func()) {
 	// Cleanup function releases lock and truncates tables
 	cleanup := func() {
 		testDB.TruncateTestTables(t)
-		db.ExecContext(ctx, "SELECT pg_advisory_unlock(42424242)")
+		// Best-effort advisory-lock release. If the unlock fails (e.g. the
+		// session is already closing), the lock is released by Postgres on
+		// connection teardown anyway.
+		if _, err := db.ExecContext(ctx, "SELECT pg_advisory_unlock(42424242)"); err != nil {
+			t.Logf("failed to release advisory lock: %v", err)
+		}
 	}
 
 	// Truncate tables before tests to ensure clean state

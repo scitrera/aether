@@ -148,12 +148,6 @@ func TestRouteMessage_ZeroPayload_AllowedThrough(t *testing.T) {
 // Circuit breaker open path
 // ---------------------------------------------------------------------------
 
-// openCircuitRouter is a MessageRouter whose Publish always returns an error,
-// allowing us to trip the circuit breaker open.
-type openCircuitRouter struct {
-	errorPublishRouter
-}
-
 func newOpenCircuitBreaker() *circuitbreaker.CircuitBreaker {
 	// maxFailures=1 means the circuit opens after a single failure.
 	cb := circuitbreaker.New("test-open-cb", circuitbreaker.WithMaxFailures(1))

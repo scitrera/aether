@@ -104,9 +104,8 @@ func main() {
 	}()
 
 	var (
-		sup         *proxysidecar.Supervisor
-		childCh     <-chan struct{}
-		childExited bool
+		sup     *proxysidecar.Supervisor
+		childCh <-chan struct{}
 	)
 	if len(childArgv) > 0 {
 		s, err := proxysidecar.NewSupervisor(childArgv)
@@ -129,7 +128,10 @@ func main() {
 			log.Info().Msg("received SIGHUP, reloading config")
 			go runner.Reload()
 		case sig := <-sigCh:
-			if sup != nil && !childExited {
+			// Each branch below transitions immediately to shutdown via
+			// `goto done`, so we never re-enter this case after handling a
+			// signal. That removes the need to track a child-exited flag.
+			if sup != nil {
 				log.Info().Str("signal", sig.String()).Msg("forwarding signal to wrapped process")
 				if err := sup.Signal(sig); err != nil {
 					log.Warn().Err(err).Str("signal", sig.String()).Msg("supervisor: forward signal failed")
@@ -140,17 +142,15 @@ func main() {
 			cancel()
 			goto done
 		case <-childCh:
-			childExited = true
 			log.Info().Int("status", sup.ExitCode()).Msg("wrapped process exited, shutting down")
 			cancel()
 			goto done
 		case err := <-errCh:
 			if err != nil {
-				if sup != nil && !childExited {
+				if sup != nil {
 					log.Error().Err(err).Msg("proxy sidecar error; signalling wrapped process")
 					_ = sup.Signal(syscall.SIGTERM)
 					<-childCh
-					childExited = true
 					goto done
 				}
 				log.Fatal().Err(err).Msg("proxy sidecar error")

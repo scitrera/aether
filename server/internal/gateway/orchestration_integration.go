@@ -54,7 +54,7 @@ func InitializeOrchestrationServices(
 	if redisClient == nil {
 		return nil, &errors.InitializationError{
 			Component: "OrchestrationServices",
-			Err:       fmt.Errorf("Redis client required"),
+			Err:       fmt.Errorf("redis client required"),
 		}
 	}
 
@@ -875,8 +875,11 @@ func (s *GatewayServer) deliverTaskToOrchestrator(task *orchestration.Orchestrat
 	taskDetails, err := s.orchestration.Dispatcher.GetTaskDetails(ctx, task.QueueID)
 	if err != nil {
 		logging.Logger.Error().Err(err).Str("queue_id", task.QueueID).Msg("failed to get task details")
-		// Unclaim so another gateway can try
-		s.orchestration.Dispatcher.UnclaimTask(ctx, task.QueueID)
+		// Unclaim so another gateway can try. The error path here is
+		// non-fatal; the claim TTL also expires it, so we just log.
+		if unclaimErr := s.orchestration.Dispatcher.UnclaimTask(ctx, task.QueueID); unclaimErr != nil {
+			logging.Logger.Warn().Err(unclaimErr).Str("queue_id", task.QueueID).Msg("failed to unclaim task after GetTaskDetails error; relying on claim TTL")
+		}
 		return
 	}
 
@@ -908,7 +911,9 @@ func (s *GatewayServer) deliverTaskToOrchestrator(task *orchestration.Orchestrat
 	targetAgentIdentity, terr := models.AgentTopic(task.Workspace, task.TargetImplementation, specifier)
 	if terr != nil {
 		logging.Logger.Error().Err(terr).Str("task_id", task.TaskID).Str("workspace", task.Workspace).Str("implementation", task.TargetImplementation).Str("specifier", specifier).Msg("invalid target agent identity; unclaiming task")
-		s.orchestration.Dispatcher.UnclaimTask(ctx, task.QueueID)
+		if unclaimErr := s.orchestration.Dispatcher.UnclaimTask(ctx, task.QueueID); unclaimErr != nil {
+			logging.Logger.Warn().Err(unclaimErr).Str("queue_id", task.QueueID).Msg("failed to unclaim task after invalid target identity; relying on claim TTL")
+		}
 		return
 	}
 
@@ -956,8 +961,12 @@ func (s *GatewayServer) deliverTaskToOrchestrator(task *orchestration.Orchestrat
 		// Unclaim the task so another gateway/orchestrator can retry
 		if unclaimErr := s.orchestration.Dispatcher.UnclaimTask(ctx, task.QueueID); unclaimErr != nil {
 			logging.Logger.Error().Err(unclaimErr).Str("queue_id", task.QueueID).Msg("failed to unclaim task for retry")
-			// Mark as failed if we can't unclaim
-			s.orchestration.Dispatcher.FailTask(ctx, task.QueueID, "delivery failed, unclaim failed: "+err.Error())
+			// Mark as failed if we can't unclaim. If FailTask itself errors,
+			// the claim will still expire via TTL and the row stays in the
+			// failed/retry pipeline.
+			if failErr := s.orchestration.Dispatcher.FailTask(ctx, task.QueueID, "delivery failed, unclaim failed: "+err.Error()); failErr != nil {
+				logging.Logger.Error().Err(failErr).Str("queue_id", task.QueueID).Msg("failed to mark task failed after unclaim failure; relying on claim TTL")
+			}
 		}
 		return
 	}

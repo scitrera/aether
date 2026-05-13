@@ -518,9 +518,7 @@ func main() {
 	// Steady state: hold for steadyDur after ramp completes.
 	steadyDeadline := startedAt.Add(*rampDur).Add(*steadyDur)
 	for time.Now().Before(steadyDeadline) {
-		select {
-		case <-time.After(time.Until(steadyDeadline)):
-		}
+		<-time.After(time.Until(steadyDeadline))
 	}
 
 	// Stop traffic.

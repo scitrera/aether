@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 )
@@ -169,8 +170,10 @@ func TestDAGEngine_checkExecutionComplete_doesNotMarkCompleteWhenStepsRunning(t 
 		{StepID: "a", Status: StepStatusCompleted},
 		{StepID: "b", Status: StepStatusRunning},
 	}
-	// Should not panic; actual DB call skipped because allDone=false
-	d.checkExecutionComplete(nil, "exec-1", steps)
+	// Should not panic; actual DB call skipped because allDone=false.
+	// Pass context.TODO so SA1012 (nil context) is not flagged — the
+	// receiver never touches the context in this allDone=false path.
+	d.checkExecutionComplete(context.TODO(), "exec-1", steps)
 }
 
 // ---- StateMachineEngine definition validation ----

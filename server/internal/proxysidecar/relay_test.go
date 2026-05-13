@@ -28,7 +28,6 @@ type fakeGateway struct {
 
 type fakeGatewayStream struct {
 	server pb.AetherGateway_ConnectServer
-	ackErr error
 
 	mu       sync.Mutex
 	received []*pb.UpstreamMessage

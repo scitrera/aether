@@ -245,7 +245,10 @@ func main() {
 	if err != nil {
 		logging.Logger.Fatal().Err(err).Msg("failed to initialize tracing")
 	}
-	defer tracingShutdown(context.Background())
+	defer func() {
+		// Best-effort tracing shutdown on exit; any error is unactionable here.
+		_ = tracingShutdown(context.Background())
+	}()
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
 		logging.Logger.Info().Str("endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")).Msg("OpenTelemetry tracing enabled")
 	} else {
