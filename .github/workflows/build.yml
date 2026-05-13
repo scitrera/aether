@@ -9,6 +9,11 @@ on:
     #    branches: [ main ]
     tags: [ 'v*.*.*' ]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Override version (e.g. 0.1.58 or v0.1.58). Leaving empty produces sha-only tags. Used when redeploying an existing release with rebuilt artifacts.'
+        required: false
+        type: string
 #  pull_request:
 #    branches: [ main ]
 
@@ -46,6 +51,16 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Compute workflow_dispatch version tags
+        id: ver
+        if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+        shell: bash
+        run: |
+          VER="${{ inputs.version }}"
+          VER="${VER#v}"  # strip optional leading 'v'
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "major_minor=$(echo "$VER" | cut -d. -f1-2)" >> "$GITHUB_OUTPUT"
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -58,6 +73,9 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.ver.outputs.version }},enable=${{ steps.ver.outputs.version != '' }}
+            type=raw,value=${{ steps.ver.outputs.major_minor }},enable=${{ steps.ver.outputs.major_minor != '' }}
+            type=raw,value=latest,enable=${{ steps.ver.outputs.version != '' }}
 
       - name: Build and push gateway
         uses: docker/build-push-action@v6
@@ -78,6 +96,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      base-tag: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -98,6 +118,16 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Compute workflow_dispatch version tags
+        id: ver
+        if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+        shell: bash
+        run: |
+          VER="${{ inputs.version }}"
+          VER="${VER#v}"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "major_minor=$(echo "$VER" | cut -d. -f1-2)" >> "$GITHUB_OUTPUT"
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -110,6 +140,9 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.ver.outputs.version }},enable=${{ steps.ver.outputs.version != '' }}
+            type=raw,value=${{ steps.ver.outputs.major_minor }},enable=${{ steps.ver.outputs.major_minor != '' }}
+            type=raw,value=latest,enable=${{ steps.ver.outputs.version != '' }}
 
       - name: Build and push aetherlite
         uses: docker/build-push-action@v6
@@ -153,6 +186,16 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Compute workflow_dispatch version tags
+        id: ver
+        if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+        shell: bash
+        run: |
+          VER="${{ inputs.version }}"
+          VER="${VER#v}"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "major_minor=$(echo "$VER" | cut -d. -f1-2)" >> "$GITHUB_OUTPUT"
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -168,6 +211,9 @@ jobs:
             type=raw,value=dev-latest,enable={{is_default_branch}}
             type=semver,pattern={{version}},prefix=dev-
             type=semver,pattern={{major}}.{{minor}},prefix=dev-
+            type=raw,value=dev-${{ steps.ver.outputs.version }},enable=${{ steps.ver.outputs.version != '' }}
+            type=raw,value=dev-${{ steps.ver.outputs.major_minor }},enable=${{ steps.ver.outputs.major_minor != '' }}
+            type=raw,value=dev-latest,enable=${{ steps.ver.outputs.version != '' }}
 
       - name: Build and push aetherlite
         uses: docker/build-push-action@v6
