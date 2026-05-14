@@ -148,7 +148,34 @@ func (r *Relay) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		log.Info().Msg("proxy sidecar relay shutting down")
-		server.GracefulStop()
+		// Bound GracefulStop so a mid-handshake inbound connection that
+		// never sent the HTTP/2 preface (or any other stuck stream)
+		// doesn't pin shutdown forever. grpc.Server.GracefulStop has no
+		// internal timeout and waits on its connection WaitGroup
+		// indefinitely; if a peer has accept()ed a TCP socket but not
+		// yet sent the preface, the goroutine pins forever. Falling back to
+		// Stop() after a fixed window force-closes those sockets and
+		// lets the Serve goroutine return.
+		//
+		// 3 s is enough headroom for normal in-flight streams to drain;
+		// production sidecars rarely see anywhere near that on clean
+		// SIGTERM. Mid-handshake conns add zero latency to the normal
+		// path because the GracefulStop completes before the window.
+		const gracePeriod = 3 * time.Second
+		gracefulDone := make(chan struct{})
+		go func() {
+			server.GracefulStop()
+			close(gracefulDone)
+		}()
+		select {
+		case <-gracefulDone:
+		case <-time.After(gracePeriod):
+			log.Warn().
+				Dur("grace", gracePeriod).
+				Msg("relay: GracefulStop exceeded grace window; forcing Stop()")
+			server.Stop()
+			<-gracefulDone
+		}
 		<-serveErr
 		return nil
 	case err := <-serveErr:
