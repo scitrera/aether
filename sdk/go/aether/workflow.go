@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	pb "github.com/scitrera/aether/api/proto"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -90,17 +91,53 @@ func NewWorkflowEngineClient(opts WorkflowEngineOptions) (*WorkflowEngineClient,
 		Credentials: opts.Credentials,
 	}
 
-	// Create base client
+	return newWorkflowEngineClientFromConfig(cfg, opts.Specifier, opts.Credentials)
+}
+
+// NewWorkflowEngineClientWithConn creates a WorkflowEngineClient that uses the
+// provided pre-dialed *grpc.ClientConn instead of dialing an address.
+//
+// This is intended for embedded callers (e.g. AetherLite's workflow engine)
+// that already have a *grpc.ClientConn pointing at an in-process bufconn-
+// backed gRPC server. Skipping the dial step avoids the TLS-over-loopback
+// trap that previously caused the embedded workflow engine to fail handshake
+// and enter a reconnect loop.
+//
+// Lifetime: by default the conn is caller-managed — Close() on the resulting
+// client does NOT close conn. Pass ownsConn=true to transfer ownership.
+//
+// opts.ServerAddr may be empty when using this constructor; opts.TLS is
+// ignored (the conn provides its own transport).
+func NewWorkflowEngineClientWithConn(conn *grpc.ClientConn, opts WorkflowEngineOptions, ownsConn bool) (*WorkflowEngineClient, error) {
+	if conn == nil {
+		return nil, NewInvalidArgumentError("conn must not be nil", "conn")
+	}
+	// Bypass opts.Validate()'s ServerAddr requirement — the conn is the
+	// connection. Other Workflow-engine-specific validation in
+	// WorkflowEngineOptions.Validate is currently just ClientOptions.Validate,
+	// so this is the only check we skip.
+
+	cfg := BaseClientConfig{
+		Connection:        opts.Connection,
+		Credentials:       opts.Credentials,
+		PreDialedConn:     conn,
+		OwnsPreDialedConn: ownsConn,
+	}
+	return newWorkflowEngineClientFromConfig(cfg, opts.Specifier, opts.Credentials)
+}
+
+// newWorkflowEngineClientFromConfig is the shared post-dial setup used by
+// both NewWorkflowEngineClient and NewWorkflowEngineClientWithConn.
+func newWorkflowEngineClientFromConfig(cfg BaseClientConfig, specifier string, creds map[string]string) (*WorkflowEngineClient, error) {
 	base, err := NewBaseClient(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create workflow engine client
 	wc := &WorkflowEngineClient{
 		BaseClient:  base,
-		specifier:   opts.Specifier,
-		credentials: opts.Credentials,
+		specifier:   specifier,
+		credentials: creds,
 	}
 
 	// Set the init message builder

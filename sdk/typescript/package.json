@@ -3,7 +3,8 @@
   "version": "0.1.60",
   "description": "TypeScript/JavaScript SDK for the Aether distributed control plane",
   "license": "Apache-2.0",
-  "author": "Scitrera",
+  "author": "scitrera.ai",
+  "homepage": "https://memorylayer.ai",
   "repository": {
     "type": "git",
     "url": "https://github.com/scitrera/aether",
@@ -38,8 +39,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@grpc/grpc-js": "^1.10.0",
-    "@grpc/proto-loader": "^0.7.0"
+    "@grpc/grpc-js": "1.14.3",
+    "@grpc/proto-loader": "0.8.1"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

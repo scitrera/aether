@@ -2021,3 +2021,90 @@ class TestAsyncSubmitAuditEvent:
         )
         assert result is None
 
+
+# =============================================================================
+# ErrorResponse request_id correlation tests
+# =============================================================================
+
+class TestListenLoopErrorCorrelation:
+    """Tests for ErrorResponse.request_id correlation in _listen_loop."""
+
+    @pytest.mark.asyncio
+    async def test_correlated_error_rejects_pending_future(self):
+        """A correlated ErrorResponse (non-empty request_id) should set_exception
+        on the matching pending future with the appropriate AetherError subclass."""
+        from scitrera_aether_client.exceptions import PermissionDeniedError
+
+        client = BaseAsyncAetherClient(auto_reconnect=False)
+
+        # Pre-register a pending future for request "abc-123".
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future = loop.create_future()
+        client._pending_requests["abc-123"] = fut
+
+        # Build a DownstreamMessage carrying an ErrorResponse with request_id.
+        err_response = aether_pb2.ErrorResponse(
+            code="ERR_PERMISSION_DENIED",
+            message="denied",
+            request_id="abc-123",
+        )
+        downstream = aether_pb2.DownstreamMessage(error=err_response)
+
+        # Inject a mock stream that yields one message then stops.
+        async def _mock_stream():
+            yield downstream
+
+        client._stream = _mock_stream()
+        client._stop_event.clear()
+
+        await client._listen_loop()
+
+        # The future must be done and must carry a PermissionDeniedError.
+        assert fut.done(), "Future should have been resolved by the listen loop"
+        exc = fut.exception()
+        assert isinstance(exc, PermissionDeniedError), (
+            f"Expected PermissionDeniedError, got {type(exc).__name__}: {exc}"
+        )
+        assert exc.code == "ERR_PERMISSION_DENIED"
+        assert exc.message == "denied"
+        # Future must have been removed from pending map.
+        assert "abc-123" not in client._pending_requests
+
+    @pytest.mark.asyncio
+    async def test_uncorrelated_error_routes_to_on_error(self):
+        """An ErrorResponse with empty request_id should call the global _on_error
+        handler and must NOT reject any pending future."""
+        client = BaseAsyncAetherClient(auto_reconnect=False)
+
+        errors_received = []
+        client.on_error = lambda err: errors_received.append(err)
+
+        # Register a pending future that should remain untouched.
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future = loop.create_future()
+        client._pending_requests["should-not-be-touched"] = fut
+
+        # Build an ErrorResponse with an empty request_id (un-correlated).
+        err_response = aether_pb2.ErrorResponse(
+            code="CONNECTION_ERROR",
+            message="connection-scoped error",
+            request_id="",  # empty — must not match anything
+        )
+        downstream = aether_pb2.DownstreamMessage(error=err_response)
+
+        async def _mock_stream():
+            yield downstream
+
+        client._stream = _mock_stream()
+        client._stop_event.clear()
+
+        await client._listen_loop()
+
+        # The pending future for an unrelated request_id must remain untouched.
+        assert not fut.done(), "Pending future should not have been touched"
+        # The global error handler should have been invoked.
+        assert len(errors_received) == 1
+        assert errors_received[0].code == "CONNECTION_ERROR"
+        # Cleanup.
+        fut.cancel()
+

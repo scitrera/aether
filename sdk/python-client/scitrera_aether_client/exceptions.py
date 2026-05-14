@@ -349,6 +349,41 @@ class CheckpointError(AetherError):
 # Utility Functions
 # =============================================================================
 
+def error_response_to_aether_error(err) -> "AetherError":
+    """
+    Convert a protobuf ErrorResponse to an appropriate AetherError subclass.
+
+    Mapping rationale: the gateway uses string error codes rather than gRPC
+    status codes for application-level errors.  We mirror the intent of
+    from_grpc_error() so callers awaiting a pending future receive the same
+    subclass they would from a gRPC-level rejection.
+
+    - PERMISSION_DENIED / ERR_PERMISSION_DENIED  → PermissionDeniedError
+    - UNAUTHENTICATED / ERR_UNAUTHENTICATED       → AuthenticationError
+    - NOT_FOUND / ERR_NOT_FOUND                  → NotFoundError
+    - INVALID_ARGUMENT / ERR_INVALID_ARGUMENT    → InvalidArgumentError
+    - ERR_QUOTA_* / QUOTA_*                      → plain AetherError (no
+      dedicated subclass; caller can inspect .code)
+    - KV_ERROR and other gateway-internal codes  → plain AetherError (gateway
+      intentionally hides internal details)
+    - anything else                              → plain AetherError
+    """
+    code = err.code or ""
+    message = err.message or "Unknown error"
+    code_upper = code.upper()
+
+    if "PERMISSION_DENIED" in code_upper:
+        return PermissionDeniedError(message=message, code=code, details=None)
+    if "UNAUTHENTICATED" in code_upper:
+        return AuthenticationError(message=message, code=code, details=None)
+    if "NOT_FOUND" in code_upper:
+        return NotFoundError(message=message, code=code, details=None)
+    if "INVALID_ARGUMENT" in code_upper:
+        return InvalidArgumentError(message=message, code=code, details=None)
+    # Default: plain AetherError (covers ERR_QUOTA_*, KV_ERROR, and unknowns)
+    return AetherError(message=message, code=code, details=None)
+
+
 def from_grpc_error(error: grpc.RpcError) -> AetherError:
     """
     Convert a gRPC error to an appropriate AetherError subclass.

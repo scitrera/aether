@@ -36,15 +36,15 @@ classifiers = [
     "Framework :: AsyncIO",
 ]
 dependencies = [
-    "grpcio>=1.76.0",
-    "protobuf>=5.29.0,<8.0",
+    "grpcio==1.80.0",
+    "protobuf>6",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "grpcio-tools>=1.76.0",
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
+    "grpcio==1.80.0",
+    "pytest==9.0.3",
+    "pytest==9.0.3",
     "mypy>=1.8.0",
     "types-protobuf>=4.24.0",
     "grpc-stubs>=1.53.0",

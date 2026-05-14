@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc"
 	"gopkg.in/yaml.v3"
 )
 
@@ -50,6 +51,14 @@ type AetherConfig struct {
 	Workspace      string            `yaml:"workspace"`
 	TLS            TLSConfig         `yaml:"tls"`
 	Credentials    CredentialsConfig `yaml:"credentials"`
+
+	// InProcessConn, when non-nil, takes precedence over Address/TLS — the
+	// workflow engine constructs its aether client from this pre-dialed
+	// *grpc.ClientConn instead of dialing. Not yaml-serializable; set
+	// programmatically by callers that embed the workflow engine in the
+	// same process as the gateway (AetherLite). The conn typically points
+	// at an in-process bufconn-backed gRPC server.
+	InProcessConn *grpc.ClientConn `yaml:"-"`
 }
 
 type TLSConfig struct {
@@ -224,8 +233,8 @@ func (c *Config) applyEnvOverrides() {
 
 func (c *Config) Validate() error {
 	var errs []string
-	if c.Aether.Address == "" {
-		errs = append(errs, "aether.address is required")
+	if c.Aether.Address == "" && c.Aether.InProcessConn == nil {
+		errs = append(errs, "aether.address is required (or set aether.InProcessConn for embedded callers)")
 	}
 	if c.Mode != ModeLite {
 		if c.Postgres.Host == "" {

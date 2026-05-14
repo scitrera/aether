@@ -44,6 +44,15 @@ type BaseClient struct {
 	tlsConfig  *TLSConfig
 	creds      map[string]string
 
+	// preDialedConn, when non-nil, takes precedence over serverAddr/tlsConfig.
+	// Used by embedded callers (e.g. AetherLite's workflow engine) that
+	// already have a *grpc.ClientConn pointing at an in-process bufconn-
+	// backed gRPC server. ownsPreDialedConn controls whether Close() also
+	// closes preDialedConn — false for caller-managed lifetime (the default
+	// for the bufconn case, where the parent process owns the listener).
+	preDialedConn     *grpc.ClientConn
+	ownsPreDialedConn bool
+
 	// gRPC connection state
 	conn   *grpc.ClientConn
 	client pb.AetherGatewayClient
@@ -135,14 +144,14 @@ type BaseClient struct {
 // (NewAgentClient, NewTaskClient, etc.) rather than directly by users.
 type BaseClientConfig struct {
 	// ServerAddr is the gRPC server address (host:port).
-	// Required.
+	// Required unless PreDialedConn is set.
 	ServerAddr string
 
 	// Connection configures retry and backoff behavior.
 	Connection ConnectionOptions
 
 	// TLS configures TLS/mTLS for secure connections.
-	// If nil, insecure connections are used.
+	// If nil, insecure connections are used. Ignored when PreDialedConn is set.
 	TLS *TLSConfig
 
 	// Credentials for authentication.
@@ -152,6 +161,18 @@ type BaseClientConfig struct {
 	// QueueSize is the size of the outgoing message queue.
 	// Default: 100.
 	QueueSize int
+
+	// PreDialedConn, when non-nil, is used in place of dialing ServerAddr.
+	// This is for embedded callers that already have a *grpc.ClientConn
+	// pointing at an in-process server (e.g. bufconn-backed). When set,
+	// ServerAddr is optional and TLS is ignored — the conn provides its own
+	// transport. See NewClientWithConn / NewWorkflowEngineClientWithConn.
+	PreDialedConn *grpc.ClientConn
+
+	// OwnsPreDialedConn controls whether Close() closes PreDialedConn.
+	// Default: false (caller-managed lifetime). Set to true to transfer
+	// ownership to the client.
+	OwnsPreDialedConn bool
 }
 
 // NewBaseClient creates a new BaseClient with the given configuration.
@@ -159,7 +180,7 @@ type BaseClientConfig struct {
 // The client is created but not connected. Call Connect() to establish
 // the connection to the server.
 func NewBaseClient(cfg BaseClientConfig) (*BaseClient, error) {
-	if cfg.ServerAddr == "" {
+	if cfg.PreDialedConn == nil && cfg.ServerAddr == "" {
 		return nil, NewInvalidArgumentError("server address is required", "ServerAddr")
 	}
 
@@ -183,6 +204,8 @@ func NewBaseClient(cfg BaseClientConfig) (*BaseClient, error) {
 		handlers:                NewHandlers(),
 		kvResponseQueue:         make(chan *KVResponse, 10),
 		checkpointResponseQueue: make(chan *CheckpointResponse, 10),
+		preDialedConn:           cfg.PreDialedConn,
+		ownsPreDialedConn:       cfg.OwnsPreDialedConn,
 	}
 
 	return bc, nil
@@ -319,25 +342,35 @@ tryConnect:
 
 // doConnect performs the actual connection attempt without retry logic.
 func (c *BaseClient) doConnect(ctx context.Context) error {
-	// Build dial options
-	dialOpts, err := c.buildDialOptions()
-	if err != nil {
-		return err
-	}
+	var conn *grpc.ClientConn
 
-	// Create a lazy gRPC connection. grpc.NewClient does not block; the
-	// underlying transport is established on the first RPC call. Any
-	// connection-level errors will surface when establishStream opens the
-	// bidirectional stream below. ConnectTimeout is enforced there via the
-	// stream context rather than at dial time.
-	conn, err := grpc.NewClient(c.serverAddr, dialOpts...)
-	if err != nil {
-		return &ConnectionError{
-			AetherError: AetherError{
-				Message: fmt.Sprintf("failed to connect to %s", c.serverAddr),
-				Details: err.Error(),
-				cause:   err,
-			},
+	// If the caller supplied a pre-dialed conn (e.g. an in-process
+	// bufconn-backed connection), reuse it. The underlying conn is
+	// long-lived; we just rebind the gateway client + open a fresh
+	// stream below. This also makes reconnect cheap — no re-dial needed.
+	if c.preDialedConn != nil {
+		conn = c.preDialedConn
+	} else {
+		// Build dial options
+		dialOpts, err := c.buildDialOptions()
+		if err != nil {
+			return err
+		}
+
+		// Create a lazy gRPC connection. grpc.NewClient does not block; the
+		// underlying transport is established on the first RPC call. Any
+		// connection-level errors will surface when establishStream opens the
+		// bidirectional stream below. ConnectTimeout is enforced there via the
+		// stream context rather than at dial time.
+		conn, err = grpc.NewClient(c.serverAddr, dialOpts...)
+		if err != nil {
+			return &ConnectionError{
+				AetherError: AetherError{
+					Message: fmt.Sprintf("failed to connect to %s", c.serverAddr),
+					Details: err.Error(),
+					cause:   err,
+				},
+			}
 		}
 	}
 
@@ -348,7 +381,11 @@ func (c *BaseClient) doConnect(ctx context.Context) error {
 
 	// Establish the bidirectional stream
 	if err := c.establishStream(ctx); err != nil {
-		conn.Close()
+		// Only close the conn if we dialed it ourselves. For pre-dialed
+		// conns the caller owns the lifetime.
+		if c.preDialedConn == nil {
+			conn.Close()
+		}
 		c.mu.Lock()
 		c.conn = nil
 		c.client = nil
@@ -426,14 +463,19 @@ func (c *BaseClient) Close() error {
 		c.cancel()
 	}
 
-	// Close the gRPC connection
+	// Close the gRPC connection. For pre-dialed conns, only close when
+	// the caller transferred ownership via OwnsPreDialedConn=true.
+	// Otherwise the parent process (which dialed the conn) closes it.
 	if c.conn != nil {
-		if err := c.conn.Close(); err != nil {
-			return &ConnectionClosedError{
-				AetherError: AetherError{
-					Message: "error closing connection",
-					cause:   err,
-				},
+		closeConn := c.preDialedConn == nil || c.ownsPreDialedConn
+		if closeConn {
+			if err := c.conn.Close(); err != nil {
+				return &ConnectionClosedError{
+					AetherError: AetherError{
+						Message: "error closing connection",
+						cause:   err,
+					},
+				}
 			}
 		}
 	}
@@ -1260,12 +1302,17 @@ func (c *BaseClient) cleanupForReconnect() {
 	c.stream = nil
 	c.streamMu.Unlock()
 
-	// Close the gRPC connection
+	// Close the gRPC connection. For pre-dialed conns we keep the
+	// underlying ClientConn alive across reconnect — the in-process
+	// listener doesn't need rebuilding, and a fresh stream is reopened
+	// in doConnect. Avoids tearing down a perfectly good bufconn.
 	c.mu.Lock()
 	if c.conn != nil {
-		c.conn.Close()
-		c.conn = nil
-		c.client = nil
+		if c.preDialedConn == nil {
+			c.conn.Close()
+			c.conn = nil
+			c.client = nil
+		}
 	}
 	c.mu.Unlock()
 

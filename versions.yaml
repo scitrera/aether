@@ -1,15 +1,46 @@
-# Authoritative Versions for all packages
-# scripts/update-versions.py can check all versions against this file and update all package to be in sync
+# Authoritative versions for all Aether OSS packages.
+# Run: python scripts/update-versions.py             to sync
+# Run: python scripts/update-versions.py --check     to verify (CI-friendly)
 #
 # Go modules are released in lockstep: `aether-gateway` (server/), `aether-sdk-go` (sdk/go/),
-# and the implicit `aether-api` (api/) module all share the same version tag. This is required
-# because server/go.mod and sdk/go/go.mod both `require github.com/scitrera/aether/api` at the
-# same version, and server/go.mod additionally requires `github.com/scitrera/aether/sdk/go`.
-# The `replace` directives in each go.mod handle local builds; the `require` pins handle
-# downstream `go get` from pkg.go.dev. update-versions.py keeps the require pins in sync.
+# and the implicit `aether-api` (api/) module all share the same version tag. server/go.mod
+# and sdk/go/go.mod both `require github.com/scitrera/aether/api` at the same version, and
+# server/go.mod additionally requires `github.com/scitrera/aether/sdk/go`. The `replace`
+# directives in each go.mod handle local builds; the `require` pins handle downstream
+# `go get` from pkg.go.dev. The gomod_require rules below keep those pins in sync.
 
 aether-gateway: 0.1.60
 
-aether-sdk-go: 0.1.60 # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
-aether-sdk-python: 0.1.60  # scitrera-aether-client
+aether-sdk-go: 0.1.60        # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
+aether-sdk-python: 0.1.60    # scitrera-aether-client
 aether-sdk-typescript: 0.1.60  # @scitrera/aether-client
+
+go_toolchain:
+  go: "1.25.10"
+
+# set explicit versions where possible to protect against supply chain attacks
+preferred_versions:
+  go:
+    "google.golang.org/grpc": "1.81.1"
+    "google.golang.org/protobuf": "1.36.11"
+  python:
+    "grpcio": 1.80.0
+    "grpcio-tools": 1.80.0
+    "protobuf": ">6"  # TODO: pin version that will be compatible with opentelemetry grpc
+    "pytest": 9.0.3
+  typescript:
+    "@grpc/grpc-js": "1.14.3"
+    "@grpc/proto-loader": "0.8.1"
+
+project_rules:
+  aether-gateway:
+    - { type: go_version,    path: server/internal/version/version.go }
+    - { type: gomod_require, path: server/go.mod, args: [ github.com/scitrera/aether/api ] }
+    - { type: gomod_require, path: server/go.mod, args: [ github.com/scitrera/aether/sdk/go ] }
+  aether-sdk-go:
+    - { type: gomod_require, path: sdk/go/go.mod, args: [ github.com/scitrera/aether/api ] }
+  aether-sdk-python:
+    - { type: pyproject, path: sdk/python-client/pyproject.toml }
+    - { type: init_py,   path: sdk/python-client/scitrera_aether_client/__init__.py }
+  aether-sdk-typescript:
+    - { type: package, path: sdk/typescript/package.json }

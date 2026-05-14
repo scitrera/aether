@@ -50,8 +50,10 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	otelgrpcfilters "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc/filters"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/test/bufconn"
 
 	"database/sql"
 )
@@ -382,6 +384,61 @@ func main() {
 	healthServer.SetServingStatus("", pb_health.HealthCheckResponse_SERVING)
 	healthServer.SetServingStatus("aether.v1.AetherGateway", pb_health.HealthCheckResponse_SERVING)
 
+	// In-process gRPC listener for embedded clients (workflow engine).
+	//
+	// Wires a second *grpc.Server backed by google.golang.org/grpc/test/bufconn
+	// (memory-only listener) with InProcessUnary/StreamInterceptor installed.
+	// The interceptors tag every incoming RPC context with an in-process marker
+	// so authenticateMTLS treats the connection like an anonymous-mTLS cert —
+	// trust the InitConnection-claimed identity, no transport cert required.
+	//
+	// Why: AetherLite runs the gateway and the workflow engine in the same
+	// process. Dialing TCP+TLS over loopback is overhead with no security gain
+	// (bytes never leave the process) and failing to wire TLS at all causes
+	// the workflow engine to fail handshake against an mTLS-required gateway
+	// and enter a reconnect loop. bufconn sidesteps both.
+	//
+	// Note: msgbridge is also embedded in lite mode. It still uses the
+	// network path (cfg.Aether.Address) for now — out of scope for this
+	// change but the primitives above are reusable when needed.
+	const inProcBufSize = 1024 * 1024
+	bufLis := bufconn.Listen(inProcBufSize)
+	inProcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(gateway.InProcessUnaryInterceptor),
+		grpc.StreamInterceptor(gateway.InProcessStreamInterceptor),
+		grpc.MaxRecvMsgSize(4*1024*1024),
+		grpc.MaxSendMsgSize(16*1024*1024),
+	)
+	pb.RegisterAetherGatewayServer(inProcServer, gatewayServer)
+	pb_health.RegisterHealthServer(inProcServer, healthServer)
+	go func() {
+		logging.Logger.Info().Msg("AetherLite in-process gRPC listener active (bufconn)")
+		if err := inProcServer.Serve(bufLis); err != nil {
+			// During shutdown bufLis.Close + inProcServer.GracefulStop produce
+			// a benign closed-listener error; only log when ctx is still alive.
+			if ctx.Err() == nil {
+				logging.Logger.Error().Err(err).Msg("in-process gRPC server error")
+			}
+		}
+	}()
+
+	// Pre-dialed *grpc.ClientConn for the in-process listener. Used by the
+	// embedded workflow engine (and reusable for any other embedded client
+	// that needs to call into the gateway). insecure creds are fine here —
+	// the conn never leaves the process; trust is established by the
+	// in-process interceptors on the server side.
+	inProcConn, err := grpc.NewClient(
+		"passthrough://bufnet",
+		grpc.WithContextDialer(func(dialCtx context.Context, _ string) (net.Conn, error) {
+			return bufLis.DialContext(dialCtx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Msg("failed to construct in-process gRPC client conn")
+	}
+	defer inProcConn.Close()
+
 	// Start gRPC server.
 	grpcAddr := fmt.Sprintf(":%d", cfg.Gateway.Port)
 	lis, err := net.Listen("tcp", grpcAddr)
@@ -441,7 +498,10 @@ func main() {
 
 	// ===== Start embedded workflow server =====
 	if *enableWorkflow {
-		wfCfg := buildWorkflowConfig()
+		// inProcConn drives the workflow engine's aether client through the
+		// bufconn in-process listener — no TLS, no localhost dial, no
+		// reconnect-loop trap.
+		wfCfg := buildWorkflowConfig(inProcConn)
 		wfSrv, err := workflow.NewServer(wfCfg)
 		if err != nil {
 			logging.Logger.Fatal().Err(err).Msg("failed to create workflow server")
@@ -451,7 +511,7 @@ func main() {
 				logging.Logger.Error().Err(err).Msg("workflow server error")
 			}
 		}()
-		logging.Logger.Info().Str("gateway", wfCfg.Aether.Address).Msg("embedded workflow server starting")
+		logging.Logger.Info().Msg("embedded workflow server starting (in-process gRPC)")
 	}
 
 	// ===== Start embedded msgbridge server (only if enabled) =====
@@ -498,6 +558,15 @@ func main() {
 		if err := adminServer.Stop(shutdownCtx); err != nil {
 			logging.Logger.Error().Err(err).Msg("admin server shutdown error")
 		}
+	}
+
+	// Stop the in-process gRPC server first. The workflow engine's aether
+	// client is connected through bufconn; tearing down the server here
+	// pushes it into the same shutdown path as a network disconnect, and
+	// the ctx.Done() above already signaled its reconnect loop to exit.
+	inProcServer.GracefulStop()
+	if err := bufLis.Close(); err != nil {
+		logging.Logger.Debug().Err(err).Msg("bufconn listener close error (likely benign)")
 	}
 
 	gatewayServer.Stop()
@@ -581,7 +650,12 @@ func buildGatewayConfig() *config.Config {
 // buildWorkflowConfig constructs a workflow.Config for lite mode.
 // If --workflow-config is provided it is loaded and mode overridden to lite;
 // otherwise sensible defaults pointing at the local gateway are used.
-func buildWorkflowConfig() *workflow.Config {
+//
+// inProcConn, when non-nil, is stashed on cfg.Aether.InProcessConn so the
+// workflow engine constructs its aether client off the in-process bufconn
+// listener instead of dialing. Address is cleared in that case — it would
+// be misleading to keep "localhost:50051" around when the conn is in-process.
+func buildWorkflowConfig(inProcConn *grpc.ClientConn) *workflow.Config {
 	if *workflowConfigFile != "" {
 		cfg, err := workflow.LoadConfig(*workflowConfigFile)
 		if err != nil {
@@ -589,13 +663,22 @@ func buildWorkflowConfig() *workflow.Config {
 		}
 		cfg.Mode = workflow.ModeLite
 		cfg.SQLite.Path = filepath.Join(*dataDir, "workflow.db")
+		if inProcConn != nil {
+			cfg.Aether.InProcessConn = inProcConn
+			cfg.Aether.Address = "" // In-process takes precedence; address ignored.
+		}
 		return cfg
 	}
 
 	cfg := &workflow.Config{}
 	cfg.Mode = workflow.ModeLite
 	cfg.SQLite.Path = filepath.Join(*dataDir, "workflow.db")
-	cfg.Aether.Address = fmt.Sprintf("localhost:%d", *port)
+	if inProcConn != nil {
+		cfg.Aether.InProcessConn = inProcConn
+		// Address intentionally left empty — InProcessConn supersedes it.
+	} else {
+		cfg.Aether.Address = fmt.Sprintf("localhost:%d", *port)
+	}
 	cfg.Aether.Implementation = "aether-workflow"
 	cfg.Aether.Workspace = "_system"
 	cfg.Admin.Enabled = true

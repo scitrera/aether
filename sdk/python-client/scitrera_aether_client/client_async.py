@@ -510,7 +510,14 @@ class BaseAsyncAetherClient:
                     if self.on_signal:
                         await _maybe_await(self.on_signal, response.signal)
                 elif payload_type == "error":
-                    await self._on_error(response.error)
+                    err = response.error
+                    req_id = err.request_id
+                    pending = self._pending_requests.pop(req_id, None) if req_id else None
+                    if pending is not None and not pending.done():
+                        from scitrera_aether_client.exceptions import error_response_to_aether_error
+                        pending.set_exception(error_response_to_aether_error(err))
+                    else:
+                        await self._on_error(err)
                 elif payload_type == "kv":
                     resp = response.kv
                     req_id = resp.request_id

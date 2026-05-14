@@ -179,8 +179,12 @@ func (s *Server) Run(ctx context.Context) error {
 		}()
 	}
 
+	aetherDesc := s.cfg.Aether.Address
+	if s.cfg.Aether.InProcessConn != nil {
+		aetherDesc = "in-process (bufconn)"
+	}
 	log.Info().
-		Str("aether", s.cfg.Aether.Address).
+		Str("aether", aetherDesc).
 		Str("workspace", s.cfg.Aether.Workspace).
 		Bool("admin", s.cfg.Admin.Enabled).
 		Msg("workflow server running")
@@ -274,6 +278,23 @@ func (s *Server) initAetherClient() error {
 
 	if s.cfg.Aether.Credentials.APIKey != "" {
 		opts.Credentials = aether.NewCredentials().WithAPIKey(s.cfg.Aether.Credentials.APIKey)
+	}
+
+	// In-process (embedded) mode: reuse a pre-dialed *grpc.ClientConn
+	// instead of dialing. Mutually exclusive with the TLS file path below —
+	// the conn provides its own transport. AetherLite uses this to avoid
+	// TLS-over-loopback for the embedded workflow engine.
+	if s.cfg.Aether.InProcessConn != nil {
+		// ownsConn=false: the caller (cmd/aetherlite/main.go) owns the
+		// bufconn-backed listener lifetime. Closing the SDK client must
+		// NOT tear down the listener.
+		client, err := aether.NewWorkflowEngineClientWithConn(s.cfg.Aether.InProcessConn, opts, false)
+		if err != nil {
+			return err
+		}
+		s.client = client
+		log.Info().Msg("Aether client created (in-process conn)")
+		return nil
 	}
 
 	if s.cfg.Aether.TLS.CertFile != "" {

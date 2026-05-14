@@ -321,7 +321,15 @@ class BaseAetherClient:
                     if self.on_signal:
                         self.on_signal(response.signal)
                 elif payload_type == "error":
-                    self._on_error(response.error)
+                    err = response.error
+                    req_id = err.request_id
+                    with self._pending_requests_lock:
+                        pending = self._pending_requests.pop(req_id, None) if req_id else None
+                    if pending is not None:
+                        from scitrera_aether_client.exceptions import error_response_to_aether_error
+                        pending.put_nowait(error_response_to_aether_error(err))
+                    else:
+                        self._on_error(err)
                 elif payload_type == "kv":
                     resp = response.kv
                     req_id = resp.request_id
@@ -693,9 +701,15 @@ class BaseAetherClient:
         try:
             self.request_queue.put(message)
             try:
-                return response_queue.get(timeout=timeout)
+                result = response_queue.get(timeout=timeout)
             except queue.Empty:
                 return None
+            # If the listen loop posted an AetherError (correlated error
+            # response), re-raise it so callers get a proper exception rather
+            # than a silent None or a raw error object.
+            if isinstance(result, AetherError):
+                raise result
+            return result
         finally:
             with self._pending_requests_lock:
                 self._pending_requests.pop(request_id, None)

@@ -64,6 +64,20 @@ func (h *AuthHandler) authenticateMTLS(ctx context.Context) (identity models.Ide
 	ctx, span := tracing.Tracer.Start(ctx, "gateway.AuthenticateMTLS")
 	defer span.End()
 
+	// In-process bufconn connection (AetherLite embedded workflow engine).
+	// Mirrors the anonymous-mTLS path below: returns hasCertificate=true,
+	// isAnonymous=true so resolveConnectionIdentity falls through to
+	// InitConnection-based identity resolution and the mtlsRequired check
+	// in connect.go is satisfied without requiring a transport cert. The
+	// bytes never leave the process so transport identity adds nothing.
+	if IsInProcessConn(ctx) {
+		logging.Logger.Info().Msg("in-process gRPC connection detected (bufconn, transport-trust-only)")
+		h.auditLog(ctx, audit.NewAuthEvent("in_process", "in_process", audit.OpAuthMTLSSuccess, "", uuid.New(), true, "", map[string]interface{}{
+			"in_process_conn": true,
+		}))
+		return identity, certPrincipalType, true, true, nil
+	}
+
 	if !IsMTLSConnection(ctx) {
 		return identity, certPrincipalType, false, false, nil
 	}
