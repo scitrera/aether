@@ -48,10 +48,9 @@ jobs:
           cache-dependency-path: server/go.sum
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
           version: 'v2.11.4'
-          install-mode: goinstall
           working-directory: server
           args: --timeout=5m
         continue-on-error: false
