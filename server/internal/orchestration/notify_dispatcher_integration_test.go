@@ -27,7 +27,7 @@ func TestOrchestrationRetryIntegration(t *testing.T) {
 	taskStore := tasks.NewTaskStore(testDB.DB)
 	// Use isolated metrics registry for tests to avoid conflicts
 	testMetrics := NewDispatcherMetricsWithRegistry(prometheus.NewRegistry())
-	dispatcher, err := NewOrchestratorTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
+	dispatcher, err := NewNotifyTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
 	if err != nil {
 		t.Fatalf("Failed to create dispatcher: %v", err)
 	}

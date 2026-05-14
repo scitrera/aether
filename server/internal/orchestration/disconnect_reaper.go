@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/pkg/tasks"
+	taskstore "github.com/scitrera/aether/internal/storage/tasks"
 )
 
 // DisconnectReaper periodically scans tasks whose worker has been disconnected
@@ -16,7 +16,8 @@ import (
 // state-machine transition; concurrent calls on already-terminal tasks are
 // no-ops.
 type DisconnectReaper struct {
-	taskStore   *tasks.TaskStore
+	// taskStore is the tasks domain Store (internal/storage/tasks).
+	taskStore   taskstore.Store
 	taskService *TaskAssignmentService
 	sessions    SessionLivenessProbe
 	interval    time.Duration
@@ -32,7 +33,7 @@ type SessionLivenessProbe interface {
 
 // NewDisconnectReaper builds a reaper. Call Run in its own goroutine.
 func NewDisconnectReaper(
-	taskStore *tasks.TaskStore,
+	taskStore taskstore.Store,
 	taskService *TaskAssignmentService,
 	sessions SessionLivenessProbe,
 ) *DisconnectReaper {

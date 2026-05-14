@@ -9,15 +9,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/scitrera/aether/internal/acl"
 	"github.com/scitrera/aether/internal/admin"
 	"github.com/scitrera/aether/internal/kv"
 	"github.com/scitrera/aether/internal/quota"
-	"github.com/scitrera/aether/internal/registry"
 	"github.com/scitrera/aether/internal/router"
 	"github.com/scitrera/aether/internal/state"
+	aclstore "github.com/scitrera/aether/internal/storage/acl"
+	regstore "github.com/scitrera/aether/internal/storage/registry"
+	taskstore "github.com/scitrera/aether/internal/storage/tasks"
 	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
 )
 
 const adminVersion = "0.1.0"
@@ -29,16 +29,27 @@ var adminIdentity = models.Identity{Type: models.PrincipalAgent, ID: "admin", Im
 // This is the integrated implementation for Option A (embedded admin UI).
 // For future extraction (Option C), this would be replaced by an API client.
 type GatewayStateProvider struct {
-	gatewayID     string
-	startedAt     time.Time
-	sessions      *state.SessionRegistry
-	kvStore       *kv.Store
-	taskStore     *tasks.TaskStore
-	agentRegistry *registry.AgentRegistry
-	profileMgr    *registry.OrchestratorProfileManager
-	aclService    *acl.Service
-	db            *sql.DB
-	router        *router.Router
+	gatewayID string
+	startedAt time.Time
+	sessions  *state.SessionRegistry
+	// kvStore is the KV store used for admin KV and workspace operations.
+	// Must be non-nil; both the Redis-backed *kv.Store (full mode) and the
+	// Badger-backed *kv.BadgerKVStore (lite mode) satisfy KVReadWriter.
+	kvStore KVReadWriter
+	// taskStore is the tasks domain Store (internal/storage/tasks).
+	taskStore taskstore.Store
+	// agentRegistry holds the bundled registry surface (internal/storage/registry).
+	// Both the agent-implementation catalog and orchestrator-profile fleet share
+	// this single interface field; admin call sites use it for both List+Get on
+	// agents AND ListAllProfiles on orchestrators.
+	agentRegistry regstore.Store
+	// profileMgr aliases the same bundled registry.Store as agentRegistry — kept
+	// as a distinct field name so existing admin call sites read naturally.
+	profileMgr regstore.Store
+	// aclService is the ACL domain Store (internal/storage/acl).
+	aclService aclstore.Store
+	db         *sql.DB
+	router     *router.Router
 
 	// Reference to gateway server for active streams
 	gateway *GatewayServer
@@ -55,15 +66,21 @@ type GatewayStateProvider struct {
 	messageCount atomic.Int64
 }
 
-// NewGatewayStateProvider creates a state provider with access to gateway internals
+// NewGatewayStateProvider creates a state provider with access to gateway internals.
+//
+// As of Stage 1 of the storage-interfaces refactor, taskStore/agentRegistry/
+// profileMgr/aclService are interface-typed against internal/storage/<domain>.
+// Production callers pass the same bundled registry.Store for both
+// agentRegistry and profileMgr (the legacy split into AgentRegistry and
+// OrchestratorProfileManager is now hidden behind that interface).
 func NewGatewayStateProvider(
 	gatewayID string,
 	sessions *state.SessionRegistry,
-	kvStore *kv.Store,
-	taskStore *tasks.TaskStore,
-	agentRegistry *registry.AgentRegistry,
-	profileMgr *registry.OrchestratorProfileManager,
-	aclService *acl.Service,
+	kvStore KVReadWriter,
+	taskStore taskstore.Store,
+	agentRegistry regstore.Store,
+	profileMgr regstore.Store,
+	aclService aclstore.Store,
 	db *sql.DB,
 	r *router.Router,
 ) *GatewayStateProvider {
@@ -258,3 +275,11 @@ func formatDuration(d time.Duration) string {
 
 // Ensure GatewayStateProvider implements StateProvider
 var _ admin.StateProvider = (*GatewayStateProvider)(nil)
+
+// Compile-time assertions: both KV backends must satisfy KVReadWriter so that
+// callers can pass either *kv.Store (Redis/full mode) or *kv.BadgerKVStore
+// (Badger/lite mode) to NewGatewayStateProvider without a nil placeholder.
+var (
+	_ KVReadWriter = (*kv.Store)(nil)
+	_ KVReadWriter = (*kv.BadgerKVStore)(nil)
+)

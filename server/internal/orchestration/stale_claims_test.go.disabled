@@ -26,7 +26,7 @@ func TestStaleClaimDetection(t *testing.T) {
 	t.Skip("Stale claim detection functionality pending implementation")
 
 	// Create dispatcher instance
-	dispatcher, err := NewOrchestratorTaskDispatcher(
+	dispatcher, err := NewNotifyTaskDispatcher(
 		testDB.DB,
 		"",             // No listener needed for this test
 		30*time.Second, // Poll interval

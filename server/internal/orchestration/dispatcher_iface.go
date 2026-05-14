@@ -6,7 +6,7 @@ import (
 )
 
 // TaskDispatcher abstracts the orchestration task dispatch lifecycle.
-// The PostgreSQL-backed OrchestratorTaskDispatcher satisfies this interface;
+// The PostgreSQL-backed NotifyTaskDispatcher satisfies this interface;
 // in-process implementations can provide lightweight alternatives for lite mode.
 type TaskDispatcher interface {
 	// SetCallback sets the callback function for handling received task notifications.
@@ -39,5 +39,5 @@ type TaskDispatcher interface {
 	RecoverStaleClaims(ctx context.Context, threshold time.Duration) (int, error)
 }
 
-// Compile-time check: *OrchestratorTaskDispatcher satisfies TaskDispatcher.
-var _ TaskDispatcher = (*OrchestratorTaskDispatcher)(nil)
+// Compile-time check: *NotifyTaskDispatcher satisfies TaskDispatcher.
+var _ TaskDispatcher = (*NotifyTaskDispatcher)(nil)

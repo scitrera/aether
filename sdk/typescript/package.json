@@ -1,6 +1,6 @@
 {
   "name": "@scitrera/aether-client",
-  "version": "0.1.59",
+  "version": "0.1.60",
   "description": "TypeScript/JavaScript SDK for the Aether distributed control plane",
   "license": "Apache-2.0",
   "author": "Scitrera",

@@ -4307,6 +4307,7 @@ type ErrorResponse struct {
 	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
 	Retryable     bool                   `protobuf:"varint,3,opt,name=retryable,proto3" json:"retryable,omitempty"`                             // Whether the client should retry this request
 	RetryAfterMs  int64                  `protobuf:"varint,4,opt,name=retry_after_ms,json=retryAfterMs,proto3" json:"retry_after_ms,omitempty"` // Suggested retry delay in milliseconds (0 = use default backoff)
+	RequestId     string                 `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`             // Set when the error correlates to a specific upstream request (KV op,
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4367,6 +4368,13 @@ func (x *ErrorResponse) GetRetryAfterMs() int64 {
 		return x.RetryAfterMs
 	}
 	return 0
+}
+
+func (x *ErrorResponse) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
 }
 
 type CreateTaskRequest struct {
@@ -13959,12 +13967,14 @@ const file_aether_proto_rawDesc = "" +
 	"\n" +
 	"SignalType\x12\x14\n" +
 	"\x10FORCE_DISCONNECT\x10\x00\x12\x17\n" +
-	"\x13GRACEFUL_DISCONNECT\x10\x01\"\x81\x01\n" +
+	"\x13GRACEFUL_DISCONNECT\x10\x01\"\xa0\x01\n" +
 	"\rErrorResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1c\n" +
 	"\tretryable\x18\x03 \x01(\bR\tretryable\x12$\n" +
-	"\x0eretry_after_ms\x18\x04 \x01(\x03R\fretryAfterMs\"\x8d\x06\n" +
+	"\x0eretry_after_ms\x18\x04 \x01(\x03R\fretryAfterMs\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x05 \x01(\tR\trequestId\"\x8d\x06\n" +
 	"\x11CreateTaskRequest\x12\x1b\n" +
 	"\ttask_type\x18\x01 \x01(\tR\btaskType\x12\x1c\n" +
 	"\tworkspace\x18\x02 \x01(\tR\tworkspace\x12F\n" +

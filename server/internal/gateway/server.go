@@ -8,17 +8,23 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
+	// Legacy acl package retained for constants (ResourceTypeKVScope, RuleCategory,
+	// AccessReadWrite, SystemPrincipal) that aclstore re-exports but the legacy
+	// import path is unchanged across the rest of the package — keeping both keeps
+	// the import graph flat. Stage 1 is mechanical; Stage 2 can prune.
 	"github.com/scitrera/aether/internal/acl"
 	"github.com/scitrera/aether/internal/admin"
-	"github.com/scitrera/aether/internal/audit"
 	"github.com/scitrera/aether/internal/auth"
 	"github.com/scitrera/aether/internal/circuitbreaker"
 	"github.com/scitrera/aether/internal/cleanup"
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/internal/orchestration"
 	"github.com/scitrera/aether/internal/quota"
+	aclstore "github.com/scitrera/aether/internal/storage/acl"
+	aclpg "github.com/scitrera/aether/internal/storage/acl/postgres"
+	auditstore "github.com/scitrera/aether/internal/storage/audit"
+	taskstore "github.com/scitrera/aether/internal/storage/tasks"
 	"github.com/scitrera/aether/internal/timer"
-	"github.com/scitrera/aether/pkg/tasks"
 )
 
 // GatewayServer implements the Aether gateway gRPC service.
@@ -28,12 +34,15 @@ type GatewayServer struct {
 	router      MessageRouter
 	kv          KVReadWriter
 	checkpoints CheckpointManager
-	taskStore   *tasks.TaskStore
+	// taskStore is the tasks domain Store (internal/storage/tasks).
+	taskStore   taskstore.Store
 	timerSeq    *timer.TimerSequence
 	timeoutHdlr *timer.TimeoutHandler
-	// acl is retained directly for use in connection and workspace-switch checks.
-	acl         *acl.Service
-	auditLogger *audit.AuditLogger
+	// acl is the ACL domain Store (internal/storage/acl), used in connection
+	// and workspace-switch checks (plus everywhere else acl.Service was used).
+	acl aclstore.Store
+	// auditLogger is the audit domain Store (internal/storage/audit).
+	auditLogger auditstore.Store
 	gatewayID   string
 	// Map of active streams by session ID
 	activeStreams sync.Map
@@ -266,10 +275,10 @@ func WithProxyMaxChainDepth(maxChainDepth uint32) GatewayOption {
 	}
 }
 
-// WithACLService injects a pre-constructed ACL service into the gateway server,
-// replacing any ACL service that would have been created internally from db+gatewayID.
-// Use this to share a single ACL service instance across the gateway and state provider.
-func WithACLService(svc *acl.Service) GatewayOption {
+// WithACLService injects a pre-constructed ACL store into the gateway server,
+// replacing any ACL store that would have been created internally from db+gatewayID.
+// Use this to share a single ACL store instance across the gateway and state provider.
+func WithACLService(svc aclstore.Store) GatewayOption {
 	return func(s *GatewayServer) {
 		if svc == nil {
 			return
@@ -287,7 +296,7 @@ func WithACLService(svc *acl.Service) GatewayOption {
 }
 
 // NewGatewayServer creates a new GatewayServer with the given dependencies and options.
-func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVReadWriter, checkpointStore CheckpointManager, taskStore *tasks.TaskStore, db *sql.DB, gatewayID string, auditLogger *audit.AuditLogger, mtlsConfig MTLSConfig, opts ...GatewayOption) *GatewayServer {
+func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVReadWriter, checkpointStore CheckpointManager, taskStore taskstore.Store, db *sql.DB, gatewayID string, auditLogger auditstore.Store, mtlsConfig MTLSConfig, opts ...GatewayOption) *GatewayServer {
 	ts := timer.NewTimerSequence()
 
 	// Implement actual reschedule function that persists retry timing
@@ -352,7 +361,7 @@ func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVR
 	// Initialize ACL service from db only when none was supplied via WithACLService.
 	// Note: ACL schema is created by migrations/002_acl_schema.sql
 	if s.acl == nil && db != nil {
-		aclService := acl.NewService(db, gatewayID)
+		aclService := aclpg.New(db, gatewayID)
 		logging.Logger.Debug().Msg("ACL service initialized")
 		s.acl = aclService
 		s.kvHandler = newKVHandlerFromService(kvStore, auditLogger, aclService)

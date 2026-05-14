@@ -19,19 +19,31 @@ import (
 	"github.com/scitrera/aether/internal/orchestration"
 	"github.com/scitrera/aether/internal/registry"
 	"github.com/scitrera/aether/internal/state"
+	regstore "github.com/scitrera/aether/internal/storage/registry"
+	regpg "github.com/scitrera/aether/internal/storage/registry/postgres"
+	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	"github.com/scitrera/aether/pkg/errors"
 	"github.com/scitrera/aether/pkg/models"
 	"github.com/scitrera/aether/pkg/tasks"
 )
 
-// OrchestrationServices holds orchestration components
+// OrchestrationServices holds orchestration components.
+//
+// Per the storage-interfaces Stage 1 plan (§14.1 nil-tolerance), the registry
+// surface is now a single `Registry` field of interface type
+// (internal/storage/registry.Store) bundling the former AgentRegistry +
+// ProfileManager method sets. Both full mode (Redis-backed) and lite mode
+// (Badger-backed) construct a non-nil Registry — there is no defensible
+// nil/opt-out path, so consumer code can dereference Registry methods without
+// a nil guard.
 type OrchestrationServices struct {
-	AgentRegistry  *registry.AgentRegistry
-	ProfileManager *registry.OrchestratorProfileManager
-	TaskService    *orchestration.TaskAssignmentService
-	QueueCloser    io.Closer // Closes the underlying queue connection (AMQP or in-process)
-	Dispatcher     orchestration.TaskDispatcher
-	TokenStore     state.TokenStore
+	// Registry bundles the agent-implementation catalog and the orchestrator
+	// profile fleet. Required non-nil.
+	Registry    regstore.Store
+	TaskService *orchestration.TaskAssignmentService
+	QueueCloser io.Closer // Closes the underlying queue connection (AMQP or in-process)
+	Dispatcher  orchestration.TaskDispatcher
+	TokenStore  state.TokenStore
 }
 
 // InitializeOrchestrationServices creates Orchestration services with proper dependency injection.
@@ -65,9 +77,13 @@ func InitializeOrchestrationServices(
 		}
 	}
 
-	// Agent Registry
-	agentRegistry := registry.NewAgentRegistry(db)
-	logging.Logger.Debug().Msg("agent registry initialized")
+	// Registry (bundles AgentRegistry + OrchestratorProfileManager). The
+	// underlying ProfileStateStore is the Redis-backed impl shipped with the
+	// legacy internal/registry package — keeps the round-robin counter
+	// gateway-fleet-coherent.
+	profileStateStore := registry.NewRedisProfileStateStore(redisClient)
+	registryStore := regpg.New(db, profileStateStore)
+	logging.Logger.Debug().Msg("registry store initialized")
 
 	// Queue Manager
 	queueManager, err := orchestration.NewOrchestratedQueueManager(amqpURL)
@@ -79,27 +95,23 @@ func InitializeOrchestrationServices(
 	}
 	logging.Logger.Debug().Msg("orchestrated queue manager initialized")
 
-	// Profile Manager (with actual Redis client)
-	profileManager := registry.NewOrchestratorProfileManagerWithRedis(db, redisClient)
-	logging.Logger.Debug().Msg("orchestrator profile manager initialized")
-
 	// Extended task store
-	orchestrationTaskStore := tasks.NewTaskStore(db)
+	orchestrationTaskStore := taskpg.New(db)
 	logging.Logger.Debug().Msg("orchestration task store initialized")
 
 	// Task Assignment Service (fully wired with dependencies)
 	taskService := orchestration.NewTaskAssignmentService(
 		db,
 		orchestrationTaskStore,
-		agentRegistry,
+		registryStore,
 		sessionRegistry,
 		queueManager,
-		profileManager,
+		registryStore,
 	)
 	logging.Logger.Debug().Msg("task assignment service initialized")
 
-	// Orchestrator Task Dispatcher (callback set by gateway server later)
-	dispatcher, err := orchestration.NewOrchestratorTaskDispatcher(
+	// NotifyTaskDispatcher (callback set by gateway server later)
+	dispatcher, err := orchestration.NewNotifyTaskDispatcher(
 		db,
 		postgresConnStr,
 		10*time.Second, // Poll interval
@@ -107,11 +119,11 @@ func InitializeOrchestrationServices(
 	)
 	if err != nil {
 		return nil, &errors.InitializationError{
-			Component: "OrchestratorTaskDispatcher",
+			Component: "NotifyTaskDispatcher",
 			Err:       err,
 		}
 	}
-	logging.Logger.Debug().Msg("orchestrator task dispatcher initialized")
+	logging.Logger.Debug().Msg("notify task dispatcher initialized")
 
 	// Token Store for orchestrated agent authentication
 	tokenStore := state.NewRedisTokenStore(redisClient)
@@ -126,12 +138,11 @@ func InitializeOrchestrationServices(
 	taskService.SetOrchestratorDispatcher(dispatcher)
 
 	return &OrchestrationServices{
-		AgentRegistry:  agentRegistry,
-		ProfileManager: profileManager,
-		TaskService:    taskService,
-		QueueCloser:    queueManager,
-		Dispatcher:     dispatcher,
-		TokenStore:     tokenStore,
+		Registry:    registryStore,
+		TaskService: taskService,
+		QueueCloser: queueManager,
+		Dispatcher:  dispatcher,
+		TokenStore:  tokenStore,
 	}, nil
 }
 
@@ -141,7 +152,7 @@ func (s *GatewayServer) handleOrchestratorConnection(
 	identity models.Identity,
 	init *pb.InitConnection,
 ) error {
-	if s.orchestration == nil || s.orchestration.ProfileManager == nil {
+	if s.orchestration == nil || s.orchestration.Registry == nil {
 		logging.Logger.Debug().Msg("orchestration not initialized, skipping orchestrator profile registration")
 		return nil
 	}
@@ -164,7 +175,7 @@ func (s *GatewayServer) handleOrchestratorConnection(
 	}
 
 	// Register profiles
-	err := s.orchestration.ProfileManager.RegisterProfiles(
+	err := s.orchestration.Registry.RegisterProfiles(
 		ctx,
 		orchestratorID,
 		supportedProfiles,
@@ -1083,7 +1094,7 @@ func (s *GatewayServer) findOrchestratorByProfile(profile, workspace string) *Cl
 		}
 
 		ctx := context.Background()
-		supports, err := s.orchestration.ProfileManager.OrchestratorSupportsProfile(
+		supports, err := s.orchestration.Registry.OrchestratorSupportsProfile(
 			ctx,
 			client.Identity.String(),
 			profile,

@@ -157,7 +157,7 @@ func main() {
 
 	// Initialize dispatcher for stale claim recovery if DB is available
 	if db != nil {
-		dispatcher, err := orchestration.NewOrchestratorTaskDispatcher(db, "", 0, nil)
+		dispatcher, err := orchestration.NewNotifyTaskDispatcher(db, "", 0, nil)
 		if err != nil {
 			logging.Logger.Warn().Err(err).Msg("failed to create dispatcher for stale claim recovery")
 		} else {

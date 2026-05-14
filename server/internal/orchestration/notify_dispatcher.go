@@ -13,14 +13,20 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/scitrera/aether/internal/logging"
+	taskstore "github.com/scitrera/aether/internal/storage/tasks"
+	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	"github.com/scitrera/aether/pkg/tasks"
 )
 
-// OrchestratorTaskDispatcher listens for orchestration tasks via PostgreSQL NOTIFY
+// NotifyTaskDispatcher listens for orchestration tasks via PostgreSQL NOTIFY
 // and delivers them to connected orchestrators via a callback.
-type OrchestratorTaskDispatcher struct {
-	db           *sql.DB
-	taskStore    *tasks.TaskStore
+// For contexts where a NOTIFY connection is undesirable (lite mode, SQLite),
+// use PollingTaskDispatcher instead, which uses the same SQL table but wakes
+// up solely on a poll ticker rather than a pq.Listener.
+type NotifyTaskDispatcher struct {
+	db *sql.DB
+	// taskStore is the tasks domain Store (internal/storage/tasks).
+	taskStore    taskstore.Store
 	listener     *pq.Listener
 	pollInterval time.Duration
 
@@ -47,15 +53,17 @@ type OrchestrationTaskNotification struct {
 	TargetImplementation string `json:"target_implementation"`
 }
 
-// NewOrchestratorTaskDispatcher creates a new dispatcher.
+// NewNotifyTaskDispatcher creates a new NotifyTaskDispatcher.
 // connStr is the PostgreSQL connection string for pq.Listener.
-func NewOrchestratorTaskDispatcher(
+// When connStr is empty, NOTIFY is disabled and the dispatcher falls back to
+// polling only — equivalent to PollingTaskDispatcher but with the same struct.
+func NewNotifyTaskDispatcher(
 	db *sql.DB,
 	connStr string,
 	pollInterval time.Duration,
 	onTaskReceived func(task *OrchestrationTaskNotification),
 	optionalMetrics ...*DispatcherMetrics, // Optional: pass custom metrics for tests
-) (*OrchestratorTaskDispatcher, error) {
+) (*NotifyTaskDispatcher, error) {
 	var listener *pq.Listener
 
 	if connStr != "" {
@@ -81,9 +89,9 @@ func NewOrchestratorTaskDispatcher(
 		metrics = NewDispatcherMetrics()
 	}
 
-	return &OrchestratorTaskDispatcher{
+	return &NotifyTaskDispatcher{
 		db:             db,
-		taskStore:      tasks.NewTaskStore(db),
+		taskStore:      taskpg.New(db),
 		listener:       listener,
 		pollInterval:   pollInterval,
 		onTaskReceived: onTaskReceived,
@@ -95,14 +103,14 @@ func NewOrchestratorTaskDispatcher(
 
 // SetCallback sets the callback function for handling received tasks.
 // This allows setting the callback after dispatcher creation.
-func (d *OrchestratorTaskDispatcher) SetCallback(callback func(task *OrchestrationTaskNotification)) {
+func (d *NotifyTaskDispatcher) SetCallback(callback func(task *OrchestrationTaskNotification)) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.onTaskReceived = callback
 }
 
 // Start begins listening for orchestration tasks.
-func (d *OrchestratorTaskDispatcher) Start(ctx context.Context) error {
+func (d *NotifyTaskDispatcher) Start(ctx context.Context) error {
 	d.mu.Lock()
 	if d.running {
 		d.mu.Unlock()
@@ -129,7 +137,7 @@ func (d *OrchestratorTaskDispatcher) Start(ctx context.Context) error {
 }
 
 // Stop gracefully shuts down the dispatcher.
-func (d *OrchestratorTaskDispatcher) Stop() {
+func (d *NotifyTaskDispatcher) Stop() {
 	d.mu.Lock()
 	if !d.running {
 		d.mu.Unlock()
@@ -149,19 +157,19 @@ func (d *OrchestratorTaskDispatcher) Stop() {
 }
 
 // IsRunning returns whether the dispatcher is currently running.
-func (d *OrchestratorTaskDispatcher) IsRunning() bool {
+func (d *NotifyTaskDispatcher) IsRunning() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.running
 }
 
 // GetQueueDepth returns the current pending queue depth by querying the database directly.
-func (d *OrchestratorTaskDispatcher) GetQueueDepth() float64 {
+func (d *NotifyTaskDispatcher) GetQueueDepth() float64 {
 	ctx := context.Background()
 	var count int
 	if err := d.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM orchestrated_task_queue WHERE status = 'pending'
-	`).Scan(&count); err != nil {
+		SELECT COUNT(*) FROM orchestrated_task_queue WHERE status = $1
+	`, string(QueueStatusPending)).Scan(&count); err != nil {
 		logging.Logger.Error().Err(err).Msg("dispatcher failed to query queue depth")
 		return 0
 	}
@@ -170,7 +178,7 @@ func (d *OrchestratorTaskDispatcher) GetQueueDepth() float64 {
 
 // GetStats returns current dispatcher statistics including queue depth, rates, and latencies.
 // This collects metrics from both Prometheus counters/histograms and direct database queries.
-func (d *OrchestratorTaskDispatcher) GetStats(ctx context.Context) (*DispatcherStats, error) {
+func (d *NotifyTaskDispatcher) GetStats(ctx context.Context) (*DispatcherStats, error) {
 	stats := &DispatcherStats{}
 
 	// Queue depth from direct database query
@@ -228,7 +236,7 @@ func (d *OrchestratorTaskDispatcher) GetStats(ctx context.Context) (*DispatcherS
 }
 
 // run is the main dispatch loop.
-func (d *OrchestratorTaskDispatcher) run(ctx context.Context) {
+func (d *NotifyTaskDispatcher) run(ctx context.Context) {
 	defer d.wg.Done()
 
 	ticker := time.NewTicker(d.pollInterval)
@@ -256,7 +264,7 @@ func (d *OrchestratorTaskDispatcher) run(ctx context.Context) {
 }
 
 // handleNotification processes a PostgreSQL NOTIFY event.
-func (d *OrchestratorTaskDispatcher) handleNotification(notification *pq.Notification) {
+func (d *NotifyTaskDispatcher) handleNotification(notification *pq.Notification) {
 	if notification == nil || notification.Channel != "orchestration_task" {
 		return
 	}
@@ -278,7 +286,7 @@ func (d *OrchestratorTaskDispatcher) handleNotification(notification *pq.Notific
 }
 
 // pollPendingTasks polls for pending orchestration tasks as a backup.
-func (d *OrchestratorTaskDispatcher) pollPendingTasks(ctx context.Context) {
+func (d *NotifyTaskDispatcher) pollPendingTasks(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -290,12 +298,12 @@ func (d *OrchestratorTaskDispatcher) pollPendingTasks(ctx context.Context) {
 	query := `
 		SELECT queue_id, task_id, profile, workspace, target_implementation
 		FROM orchestrated_task_queue
-		WHERE status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+		WHERE status = $1 AND (next_retry_at IS NULL OR next_retry_at <= NOW())
 		ORDER BY created_at ASC
 		LIMIT 10
 	`
 
-	rows, err := d.db.QueryContext(ctx, query)
+	rows, err := d.db.QueryContext(ctx, query, string(QueueStatusPending))
 	if err != nil {
 		if ctx.Err() == nil {
 			logging.Logger.Error().Err(err).Msg("dispatcher failed to poll tasks")
@@ -327,7 +335,7 @@ func (d *OrchestratorTaskDispatcher) pollPendingTasks(ctx context.Context) {
 
 // sampleQueueDepth queries the current queue depth and updates the Prometheus gauge.
 // This runs periodically in the dispatcher run loop to track queue buildup.
-func (d *OrchestratorTaskDispatcher) sampleQueueDepth(ctx context.Context) {
+func (d *NotifyTaskDispatcher) sampleQueueDepth(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -340,16 +348,16 @@ var ErrTaskAlreadyClaimed = fmt.Errorf("task already claimed")
 // ClaimTask attempts to claim a task for an orchestrator.
 // Returns ErrTaskAlreadyClaimed if another gateway/orchestrator already claimed it.
 // This is the key mechanism for ensuring exclusive delivery across multiple gateways.
-func (d *OrchestratorTaskDispatcher) ClaimTask(ctx context.Context, queueID, orchestratorID string) error {
+func (d *NotifyTaskDispatcher) ClaimTask(ctx context.Context, queueID, orchestratorID string) error {
 	startTime := time.Now()
 
 	query := `
 		UPDATE orchestrated_task_queue
-		SET status = 'claimed', claimed_by = $2, claimed_at = NOW()
-		WHERE queue_id = $1 AND status = 'pending'
+		SET status = $3, claimed_by = $2, claimed_at = NOW()
+		WHERE queue_id = $1 AND status = $4
 	`
 
-	result, err := d.db.ExecContext(ctx, query, queueID, orchestratorID)
+	result, err := d.db.ExecContext(ctx, query, queueID, orchestratorID, string(QueueStatusClaimed), string(QueueStatusPending))
 	if err != nil {
 		return err
 	}
@@ -375,7 +383,7 @@ func (d *OrchestratorTaskDispatcher) ClaimTask(ctx context.Context, queueID, orc
 // Used when delivery fails and we want another orchestrator/gateway to try.
 // Implements retry limiting with exponential backoff. If the task has exhausted
 // its retries (retry_count >= max_retries - 1), it is moved to the DLQ instead.
-func (d *OrchestratorTaskDispatcher) UnclaimTask(ctx context.Context, queueID string) error {
+func (d *NotifyTaskDispatcher) UnclaimTask(ctx context.Context, queueID string) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -388,8 +396,8 @@ func (d *OrchestratorTaskDispatcher) UnclaimTask(ctx context.Context, queueID st
 	err = tx.QueryRowContext(ctx, `
 		SELECT task_id, workspace, retry_count, max_retries
 		FROM orchestrated_task_queue
-		WHERE queue_id = $1 AND status = 'claimed'
-	`, queueID).Scan(&taskID, &workspace, &retryCount, &maxRetries)
+		WHERE queue_id = $1 AND status = $2
+	`, queueID, string(QueueStatusClaimed)).Scan(&taskID, &workspace, &retryCount, &maxRetries)
 	if err != nil {
 		return fmt.Errorf("query task for unclaim: %w", err)
 	}
@@ -408,13 +416,13 @@ func (d *OrchestratorTaskDispatcher) UnclaimTask(ctx context.Context, queueID st
 
 	_, err = tx.ExecContext(ctx, `
 		UPDATE orchestrated_task_queue
-		SET status = 'pending',
+		SET status = $4,
 		    claimed_by = NULL,
 		    claimed_at = NULL,
 		    retry_count = $2,
 		    next_retry_at = NOW() + ($3 || ' seconds')::interval
 		WHERE queue_id = $1
-	`, queueID, newRetryCount, fmt.Sprintf("%d", backoffSeconds))
+	`, queueID, newRetryCount, fmt.Sprintf("%d", backoffSeconds), string(QueueStatusPending))
 	if err != nil {
 		return fmt.Errorf("update task for retry: %w", err)
 	}
@@ -438,16 +446,16 @@ func (d *OrchestratorTaskDispatcher) UnclaimTask(ctx context.Context, queueID st
 }
 
 // moveToDeadLetterTx moves a task to the DLQ within an existing transaction.
-func (d *OrchestratorTaskDispatcher) moveToDeadLetterTx(ctx context.Context, tx *sql.Tx, queueID, taskID, workspace string, retryCount int) error {
+func (d *NotifyTaskDispatcher) moveToDeadLetterTx(ctx context.Context, tx *sql.Tx, queueID, taskID, workspace string, retryCount int) error {
 	reason := "Max retries exceeded - failed to deliver to orchestrator"
 	attemptCount := retryCount + 1
 
 	// Mark the queue entry as failed
 	_, err := tx.ExecContext(ctx, `
 		UPDATE orchestrated_task_queue
-		SET status = 'failed', error_message = $2, completed_at = NOW()
+		SET status = $3, error_message = $2, completed_at = NOW()
 		WHERE queue_id = $1
-	`, queueID, reason)
+	`, queueID, reason, string(QueueStatusFailed))
 	if err != nil {
 		return fmt.Errorf("mark task failed: %w", err)
 	}
@@ -486,16 +494,16 @@ func (d *OrchestratorTaskDispatcher) moveToDeadLetterTx(ctx context.Context, tx 
 // RecoverStaleClaims finds tasks stuck in 'claimed' status longer than the given
 // threshold and unclaims them. This handles gateway crashes that leave tasks in limbo.
 // Returns the number of tasks recovered.
-func (d *OrchestratorTaskDispatcher) RecoverStaleClaims(ctx context.Context, threshold time.Duration) (int, error) {
+func (d *NotifyTaskDispatcher) RecoverStaleClaims(ctx context.Context, threshold time.Duration) (int, error) {
 	query := `
 		SELECT queue_id
 		FROM orchestrated_task_queue
-		WHERE status = 'claimed' AND claimed_at < NOW() - $1::interval
+		WHERE status = $2 AND claimed_at < NOW() - $1::interval
 		ORDER BY claimed_at ASC
 		LIMIT 50
 	`
 
-	rows, err := d.db.QueryContext(ctx, query, fmt.Sprintf("%d seconds", int(threshold.Seconds())))
+	rows, err := d.db.QueryContext(ctx, query, fmt.Sprintf("%d seconds", int(threshold.Seconds())), string(QueueStatusClaimed))
 	if err != nil {
 		return 0, fmt.Errorf("query stale claims: %w", err)
 	}
@@ -522,14 +530,14 @@ func (d *OrchestratorTaskDispatcher) RecoverStaleClaims(ctx context.Context, thr
 }
 
 // CompleteTask marks a task as completed.
-func (d *OrchestratorTaskDispatcher) CompleteTask(ctx context.Context, queueID string) error {
+func (d *NotifyTaskDispatcher) CompleteTask(ctx context.Context, queueID string) error {
 	query := `
 		UPDATE orchestrated_task_queue
-		SET status = 'completed', completed_at = NOW()
+		SET status = $2, completed_at = NOW()
 		WHERE queue_id = $1
 	`
 
-	_, err := d.db.ExecContext(ctx, query, queueID)
+	_, err := d.db.ExecContext(ctx, query, queueID, string(QueueStatusCompleted))
 	if err != nil {
 		return err
 	}
@@ -541,14 +549,14 @@ func (d *OrchestratorTaskDispatcher) CompleteTask(ctx context.Context, queueID s
 }
 
 // FailTask marks a task as failed.
-func (d *OrchestratorTaskDispatcher) FailTask(ctx context.Context, queueID, errorMsg string) error {
+func (d *NotifyTaskDispatcher) FailTask(ctx context.Context, queueID, errorMsg string) error {
 	query := `
 		UPDATE orchestrated_task_queue
-		SET status = 'failed', error_message = $2, completed_at = NOW()
+		SET status = $3, error_message = $2, completed_at = NOW()
 		WHERE queue_id = $1
 	`
 
-	_, err := d.db.ExecContext(ctx, query, queueID, errorMsg)
+	_, err := d.db.ExecContext(ctx, query, queueID, errorMsg, string(QueueStatusFailed))
 	if err != nil {
 		return err
 	}
@@ -564,13 +572,13 @@ func (d *OrchestratorTaskDispatcher) FailTask(ctx context.Context, queueID, erro
 // the agent successfully attached via StartTaskWithAgent) so the dispatcher
 // stops re-dispatching it via stale-claim recovery. No-op if no matching row
 // exists or the row is already in a terminal state. Idempotent.
-func (d *OrchestratorTaskDispatcher) CompleteTaskByTaskID(ctx context.Context, taskID string) error {
+func (d *NotifyTaskDispatcher) CompleteTaskByTaskID(ctx context.Context, taskID string) error {
 	query := `
 		UPDATE orchestrated_task_queue
-		SET status = 'completed', completed_at = NOW()
-		WHERE task_id = $1 AND status IN ('pending', 'claimed')
+		SET status = $2, completed_at = NOW()
+		WHERE task_id = $1 AND status IN ($3, $4)
 	`
-	_, err := d.db.ExecContext(ctx, query, taskID)
+	_, err := d.db.ExecContext(ctx, query, taskID, string(QueueStatusCompleted), string(QueueStatusPending), string(QueueStatusClaimed))
 	return err
 }
 
@@ -578,18 +586,18 @@ func (d *OrchestratorTaskDispatcher) CompleteTaskByTaskID(ctx context.Context, t
 // failed with the given reason. Called when a task itself is failed or
 // cancelled so the queue entry is retired rather than recovered by stale-claim
 // sweeps. Idempotent.
-func (d *OrchestratorTaskDispatcher) FailTaskByTaskID(ctx context.Context, taskID, errorMsg string) error {
+func (d *NotifyTaskDispatcher) FailTaskByTaskID(ctx context.Context, taskID, errorMsg string) error {
 	query := `
 		UPDATE orchestrated_task_queue
-		SET status = 'failed', error_message = $2, completed_at = NOW()
-		WHERE task_id = $1 AND status IN ('pending', 'claimed')
+		SET status = $3, error_message = $2, completed_at = NOW()
+		WHERE task_id = $1 AND status IN ($4, $5)
 	`
-	_, err := d.db.ExecContext(ctx, query, taskID, errorMsg)
+	_, err := d.db.ExecContext(ctx, query, taskID, errorMsg, string(QueueStatusFailed), string(QueueStatusPending), string(QueueStatusClaimed))
 	return err
 }
 
 // GetTaskDetails retrieves full task details including launch params.
-func (d *OrchestratorTaskDispatcher) GetTaskDetails(ctx context.Context, queueID string) (*OrchestratedTaskPayload, error) {
+func (d *NotifyTaskDispatcher) GetTaskDetails(ctx context.Context, queueID string) (*OrchestratedTaskPayload, error) {
 	query := `
 		SELECT task_id, target_implementation, workspace, profile, launch_params
 		FROM orchestrated_task_queue

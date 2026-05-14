@@ -7,11 +7,12 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/acl"
 	"github.com/scitrera/aether/internal/audit"
 	"github.com/scitrera/aether/internal/auth"
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/internal/state"
+	aclstore "github.com/scitrera/aether/internal/storage/acl"
+	auditstore "github.com/scitrera/aether/internal/storage/audit"
 	"github.com/scitrera/aether/internal/tracing"
 	"github.com/scitrera/aether/pkg/models"
 	"go.opentelemetry.io/otel/attribute"
@@ -26,15 +27,17 @@ type AuthHandler struct {
 	authenticator *auth.CompositeAuthenticator
 	mtlsRequired  bool
 	mtlsMode      MTLSMode
-	acl           *acl.Service
-	auditLogger   *audit.AuditLogger
+	// acl is the ACL domain Store (internal/storage/acl).
+	acl aclstore.Store
+	// auditLogger is the audit domain Store (internal/storage/audit).
+	auditLogger auditstore.Store
 	// tokenStore is used to validate orchestration task tokens for agents.
 	// It is set when orchestration is configured and may be nil.
 	tokenStore state.TokenStore
 }
 
 // newAuthHandler creates an AuthHandler from gateway server configuration.
-func newAuthHandler(authenticator *auth.CompositeAuthenticator, mtlsRequired bool, mtlsMode MTLSMode, aclService *acl.Service, auditLogger *audit.AuditLogger) *AuthHandler {
+func newAuthHandler(authenticator *auth.CompositeAuthenticator, mtlsRequired bool, mtlsMode MTLSMode, aclService aclstore.Store, auditLogger auditstore.Store) *AuthHandler {
 	return &AuthHandler{
 		authenticator: authenticator,
 		mtlsRequired:  mtlsRequired,
@@ -46,6 +49,8 @@ func newAuthHandler(authenticator *auth.CompositeAuthenticator, mtlsRequired boo
 
 // auditLog logs an audit event if the audit logger is configured.
 func (h *AuthHandler) auditLog(ctx context.Context, event *audit.AuditEvent) {
+	// audit.AuditEvent is aliased as auditstore.Event by the new interface package,
+	// so the same legacy-type pointer satisfies both signatures.
 	if h.auditLogger != nil {
 		h.auditLogger.LogEvent(ctx, event)
 	}

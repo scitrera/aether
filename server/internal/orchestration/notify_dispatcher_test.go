@@ -25,7 +25,7 @@ func TestUnclaimTaskRetryLimit(t *testing.T) {
 	ctx := context.Background()
 	// Use isolated metrics registry for tests to avoid conflicts
 	testMetrics := NewDispatcherMetricsWithRegistry(prometheus.NewRegistry())
-	dispatcher, err := NewOrchestratorTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
+	dispatcher, err := NewNotifyTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
 	if err != nil {
 		t.Fatalf("Failed to create dispatcher: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestRetryBackoff(t *testing.T) {
 	ctx := context.Background()
 	// Use isolated metrics registry for tests to avoid conflicts
 	testMetrics := NewDispatcherMetricsWithRegistry(prometheus.NewRegistry())
-	dispatcher, err := NewOrchestratorTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
+	dispatcher, err := NewNotifyTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
 	if err != nil {
 		t.Fatalf("Failed to create dispatcher: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestRetryAuditEvents(t *testing.T) {
 	taskStore := tasks.NewTaskStore(testDB.DB)
 	// Use isolated metrics registry for tests to avoid conflicts
 	testMetrics := NewDispatcherMetricsWithRegistry(prometheus.NewRegistry())
-	dispatcher, err := NewOrchestratorTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
+	dispatcher, err := NewNotifyTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
 	if err != nil {
 		t.Fatalf("Failed to create dispatcher: %v", err)
 	}
@@ -505,7 +505,7 @@ func TestRecoverStaleClaims(t *testing.T) {
 
 	ctx := context.Background()
 	testMetrics := NewDispatcherMetricsWithRegistry(prometheus.NewRegistry())
-	dispatcher, err := NewOrchestratorTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
+	dispatcher, err := NewNotifyTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
 	if err != nil {
 		t.Fatalf("Failed to create dispatcher: %v", err)
 	}

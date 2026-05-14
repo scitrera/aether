@@ -16,7 +16,6 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/acl"
 	"github.com/scitrera/aether/internal/admin"
 	"github.com/scitrera/aether/internal/audit"
 	"github.com/scitrera/aether/internal/auth"
@@ -33,11 +32,15 @@ import (
 	"github.com/scitrera/aether/internal/router"
 	"github.com/scitrera/aether/internal/secrets"
 	"github.com/scitrera/aether/internal/state"
+	aclpg "github.com/scitrera/aether/internal/storage/acl/postgres"
+	regstore "github.com/scitrera/aether/internal/storage/registry"
+	regpg "github.com/scitrera/aether/internal/storage/registry/postgres"
+	taskstore "github.com/scitrera/aether/internal/storage/tasks"
+	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	"github.com/scitrera/aether/internal/tracing"
 	versionpkg "github.com/scitrera/aether/internal/version"
 	"github.com/scitrera/aether/pkg/certgen"
 	"github.com/scitrera/aether/pkg/crypto"
-	"github.com/scitrera/aether/pkg/tasks"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	otelgrpcfilters "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc/filters"
 	"google.golang.org/grpc"
@@ -299,7 +302,7 @@ func main() {
 	var kvStore gateway.KVReadWriter
 	var checkpointStore gateway.CheckpointManager
 	var msgRouter gateway.MessageRouter
-	var taskStore *tasks.TaskStore
+	var taskStore taskstore.Store
 	var redisClient redis.UniversalClient // nil in lite mode
 	var gatewayOpts []gateway.GatewayOption
 
@@ -379,7 +382,7 @@ func main() {
 
 		// Initialize task store
 		if db != nil {
-			taskStore = tasks.NewTaskStore(db)
+			taskStore = taskpg.New(db)
 			logging.Logger.Debug().Msg("task store initialized")
 		}
 	}
@@ -584,9 +587,9 @@ func main() {
 	// acl.AuditLogger each ran their own writer against
 	// comprehensive_audit_log. In postgres deployments there is one DB
 	// and one batcher, so the same constructor naturally works there too.
-	var sharedACLService *acl.Service
+	var sharedACLService *aclpg.Store
 	if db != nil {
-		sharedACLService = acl.NewServiceWithSharedAudit(db, auditLogger, db, cfg.Gateway.GatewayID)
+		sharedACLService = aclpg.NewWithSharedAudit(db, auditLogger, db, cfg.Gateway.GatewayID)
 		gatewayOpts = append(gatewayOpts, gateway.WithACLService(sharedACLService))
 		logging.Logger.Debug().Msg("shared ACL service initialized")
 	}
@@ -672,15 +675,24 @@ func main() {
 		}
 	}()
 
-	// Create shared state provider (used by both ops and admin servers)
-	var agentRegistry *registry.AgentRegistry
-	var profileMgr *registry.OrchestratorProfileManager
+	// Create shared state provider (used by both ops and admin servers).
+	//
+	// As of Stage 1 of the storage-interfaces refactor, the legacy
+	// AgentRegistry + OrchestratorProfileManager pair is bundled into a single
+	// internal/storage/registry.Store via regpg.New(db, profileStateStore).
+	// When the redis client is missing (extremely rare in full-gateway mode;
+	// the validation above forbids this), agentRegistry is constructed against
+	// a nil profile state store. SelectOrchestrator falls back to its
+	// in-process counter in that case, but the rest of the registry surface
+	// works the same.
+	var agentRegistry regstore.Store
 
 	if db != nil {
-		agentRegistry = registry.NewAgentRegistry(db)
+		var profileStateStore registry.ProfileStateStore
 		if redisClient != nil {
-			profileMgr = registry.NewOrchestratorProfileManagerWithRedis(db, redisClient)
+			profileStateStore = registry.NewRedisProfileStateStore(redisClient)
 		}
+		agentRegistry = regpg.New(db, profileStateStore)
 	}
 
 	// State provider uses concrete types for admin operations.
@@ -690,10 +702,6 @@ func main() {
 	if sr, ok := sessions.(*state.SessionRegistry); ok {
 		stateSessionRegistry = sr
 	}
-	var stateKVStore *kv.Store
-	if ks, ok := kvStore.(*kv.Store); ok {
-		stateKVStore = ks
-	}
 	var stateRouter *router.Router
 	if rr, ok := msgRouter.(*router.Router); ok {
 		stateRouter = rr
@@ -701,10 +709,10 @@ func main() {
 	stateProvider := gateway.NewGatewayStateProvider(
 		cfg.Gateway.GatewayID,
 		stateSessionRegistry,
-		stateKVStore,
+		kvStore,
 		taskStore,
 		agentRegistry,
-		profileMgr,
+		agentRegistry, // same bundled registry.Store for both slots
 		sharedACLService,
 		db,
 		stateRouter,

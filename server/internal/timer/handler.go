@@ -5,18 +5,20 @@ import (
 	"time"
 
 	"github.com/scitrera/aether/internal/logging"
+	taskstore "github.com/scitrera/aether/internal/storage/tasks"
 	"github.com/scitrera/aether/pkg/tasks"
 )
 
 // TimeoutHandler handles task timeout events and updates task state
 type TimeoutHandler struct {
-	taskStore  *tasks.TaskStore
+	// taskStore is the tasks domain Store (internal/storage/tasks).
+	taskStore  taskstore.Store
 	timerSeq   *TimerSequence
 	reschedule func(taskID string, delay time.Duration) // For retry scheduling
 }
 
 // NewTimeoutHandler creates a new TimeoutHandler
-func NewTimeoutHandler(taskStore *tasks.TaskStore, timerSeq *TimerSequence, rescheduleFn func(taskID string, delay time.Duration)) *TimeoutHandler {
+func NewTimeoutHandler(taskStore taskstore.Store, timerSeq *TimerSequence, rescheduleFn func(taskID string, delay time.Duration)) *TimeoutHandler {
 	h := &TimeoutHandler{
 		taskStore:  taskStore,
 		timerSeq:   timerSeq,

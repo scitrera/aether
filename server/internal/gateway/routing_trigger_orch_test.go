@@ -10,6 +10,7 @@ import (
 	"github.com/scitrera/aether/internal/orchestration"
 	"github.com/scitrera/aether/internal/registry"
 	"github.com/scitrera/aether/internal/state"
+	regpg "github.com/scitrera/aether/internal/storage/registry/postgres"
 	"github.com/scitrera/aether/internal/testutil"
 	"github.com/scitrera/aether/pkg/models"
 	"github.com/scitrera/aether/pkg/tasks"
@@ -36,7 +37,11 @@ func TestTriggerOrchestrationPropagatesSenderToStartupTask(t *testing.T) {
 	implementation := "fixaa-gateway-worker"
 	workspace := "fixaa-gateway-ws"
 
-	agentRegistry := registry.NewAgentRegistry(testDB.DB)
+	// Stage 1 storage-interfaces refactor: NewTaskAssignmentService and
+	// OrchestrationServices.Registry both take the bundled
+	// internal/storage/registry.Store. Passing nil for the profile state store
+	// is fine — these tests don't exercise SelectOrchestrator.
+	agentRegistry := regpg.New(testDB.DB, nil)
 	if err := agentRegistry.Register(ctx, &registry.AgentRegistration{
 		Implementation: implementation,
 		LaunchParams: map[string]interface{}{
@@ -64,8 +69,8 @@ func TestTriggerOrchestrationPropagatesSenderToStartupTask(t *testing.T) {
 		gatewayID: "test-fixaa",
 		taskStore: taskStore,
 		orchestration: &OrchestrationServices{
-			AgentRegistry: agentRegistry,
-			TaskService:   taskService,
+			Registry:    agentRegistry,
+			TaskService: taskService,
 		},
 	}
 
@@ -128,7 +133,11 @@ func TestTriggerOrchestrationMintsGrantForStartupTask(t *testing.T) {
 	implementation := "fixaaa-gateway-worker"
 	workspace := "fixaaa-gateway-ws"
 
-	agentRegistry := registry.NewAgentRegistry(testDB.DB)
+	// Stage 1 storage-interfaces refactor: NewTaskAssignmentService and
+	// OrchestrationServices.Registry both take the bundled
+	// internal/storage/registry.Store. Passing nil for the profile state store
+	// is fine — these tests don't exercise SelectOrchestrator.
+	agentRegistry := regpg.New(testDB.DB, nil)
 	if err := agentRegistry.Register(ctx, &registry.AgentRegistration{
 		Implementation: implementation,
 		LaunchParams: map[string]interface{}{
@@ -158,8 +167,8 @@ func TestTriggerOrchestrationMintsGrantForStartupTask(t *testing.T) {
 		taskStore: taskStore,
 		acl:       aclSvc,
 		orchestration: &OrchestrationServices{
-			AgentRegistry: agentRegistry,
-			TaskService:   taskService,
+			Registry:    agentRegistry,
+			TaskService: taskService,
 		},
 	}
 
@@ -248,7 +257,11 @@ func TestTriggerOrchestration_PropagatesTriggerTimestampThroughGrantMint(t *test
 	implementation := "trigger-ts-preservation-worker"
 	workspace := "trigger-ts-preservation-ws"
 
-	agentRegistry := registry.NewAgentRegistry(testDB.DB)
+	// Stage 1 storage-interfaces refactor: NewTaskAssignmentService and
+	// OrchestrationServices.Registry both take the bundled
+	// internal/storage/registry.Store. Passing nil for the profile state store
+	// is fine — these tests don't exercise SelectOrchestrator.
+	agentRegistry := regpg.New(testDB.DB, nil)
 	if err := agentRegistry.Register(ctx, &registry.AgentRegistration{
 		Implementation: implementation,
 		LaunchParams:   map[string]interface{}{"profile": "docker"},
@@ -271,8 +284,8 @@ func TestTriggerOrchestration_PropagatesTriggerTimestampThroughGrantMint(t *test
 		taskStore: taskStore,
 		acl:       aclSvc,
 		orchestration: &OrchestrationServices{
-			AgentRegistry: agentRegistry,
-			TaskService:   taskService,
+			Registry:    agentRegistry,
+			TaskService: taskService,
 		},
 	}
 
@@ -338,7 +351,11 @@ func TestTriggerOrchestration_IncludesAppWorkspaceInGrantScope(t *testing.T) {
 	workspace := "_apps"
 	appWorkspace := "default"
 
-	agentRegistry := registry.NewAgentRegistry(testDB.DB)
+	// Stage 1 storage-interfaces refactor: NewTaskAssignmentService and
+	// OrchestrationServices.Registry both take the bundled
+	// internal/storage/registry.Store. Passing nil for the profile state store
+	// is fine — these tests don't exercise SelectOrchestrator.
+	agentRegistry := regpg.New(testDB.DB, nil)
 	if err := agentRegistry.Register(ctx, &registry.AgentRegistration{
 		Implementation: implementation,
 		LaunchParams:   map[string]interface{}{"profile": "docker"},
@@ -361,8 +378,8 @@ func TestTriggerOrchestration_IncludesAppWorkspaceInGrantScope(t *testing.T) {
 		taskStore: taskStore,
 		acl:       aclSvc,
 		orchestration: &OrchestrationServices{
-			AgentRegistry: agentRegistry,
-			TaskService:   taskService,
+			Registry:    agentRegistry,
+			TaskService: taskService,
 		},
 	}
 

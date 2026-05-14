@@ -13,6 +13,8 @@ import (
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/internal/registry"
 	"github.com/scitrera/aether/internal/state"
+	regstore "github.com/scitrera/aether/internal/storage/registry"
+	taskstore "github.com/scitrera/aether/internal/storage/tasks"
 	"github.com/scitrera/aether/pkg/errors"
 	"github.com/scitrera/aether/pkg/models"
 	"github.com/scitrera/aether/pkg/tasks"
@@ -38,14 +40,19 @@ type SessionLivenessRegistry interface {
 var _ SessionLivenessRegistry = (*state.SessionRegistry)(nil)
 var _ SessionLivenessRegistry = (*state.BadgerSessionRegistry)(nil)
 
-// TaskAssignmentService handles task creation and assignment for orchestration patterns
+// TaskAssignmentService handles task creation and assignment for orchestration patterns.
+//
+// As of Stage 1 of the storage-interfaces refactor, taskStore and agentRegistry
+// are interface-typed (internal/storage/tasks.Store and
+// internal/storage/registry.Store). The legacy AgentRegistry method `Exists`
+// is part of registry.Store, so handleTargeted continues to compile unchanged.
 type TaskAssignmentService struct {
 	db              *sql.DB
-	taskStore       *tasks.TaskStore
-	agentRegistry   *registry.AgentRegistry
+	taskStore       taskstore.Store
+	agentRegistry   regstore.Store
 	sessionRegistry SessionLivenessRegistry
 	queueManager    *OrchestratedQueueManager // Kept for backward compatibility
-	profileManager  *registry.OrchestratorProfileManager
+	profileManager  regstore.Store
 	tokenStore      state.TokenStore
 	grantService    authorityGrantService
 	dispatcher      queueRetirementDispatcher
@@ -62,14 +69,20 @@ type authorityGrantService interface {
 	RevokeAuthorityGrant(ctx context.Context, grantID string) error
 }
 
-// NewTaskAssignmentService creates a new task assignment service
+// NewTaskAssignmentService creates a new task assignment service.
+//
+// agentRegistry and profileManager are typed against the shared
+// internal/storage/registry.Store interface. Production callers (full +
+// lite) pass the same bundled registry.Store for both parameters; the
+// two-parameter signature preserves source compatibility for tests that
+// supply nil for either slot.
 func NewTaskAssignmentService(
 	db *sql.DB,
-	taskStore *tasks.TaskStore,
-	agentRegistry *registry.AgentRegistry,
+	taskStore taskstore.Store,
+	agentRegistry regstore.Store,
 	sessionRegistry SessionLivenessRegistry,
 	queueManager *OrchestratedQueueManager,
-	profileManager *registry.OrchestratorProfileManager,
+	profileManager regstore.Store,
 ) *TaskAssignmentService {
 	// Defensive: the consumer code derefs sessionRegistry unconditionally in
 	// handleTargeted and createOrchestratedStartupTask. Callers that pass nil

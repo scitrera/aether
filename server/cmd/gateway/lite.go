@@ -127,11 +127,11 @@ func initLiteBackends(ctx context.Context, cfg *config.Config) (*liteBackends, e
 	var gatewayOpts []gateway.GatewayOption
 	gatewayOpts = append(gatewayOpts, gateway.WithQuotaManager(quotaManager))
 
-	// 8. Orchestration services (lite mode — polling dispatcher, no AMQP)
-	dispatcher := orchestration.NewMemoryTaskDispatcher(db)
+	// 8. Orchestration services (lite mode — polling dispatcher, no AMQP, no pq.Listener)
+	dispatcher := orchestration.NewPollingTaskDispatcher(db)
 	orchServices := &gateway.OrchestrationServices{
 		Dispatcher:  dispatcher,
-		QueueCloser: orchestration.NewMemoryQueueCloser(),
+		QueueCloser: orchestration.NewNoopQueueCloser(),
 		TokenStore:  tokenStore,
 		TaskService: orchestration.NewTaskAssignmentService(
 			db, taskStore, nil, nil, nil, nil,

@@ -17,8 +17,8 @@ import (
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/internal/orchestration"
 	"github.com/scitrera/aether/internal/state"
+	taskstore "github.com/scitrera/aether/internal/storage/tasks"
 	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
 )
 
 // Config holds configuration for cleanup jobs
@@ -79,7 +79,8 @@ var _ SessionRegistry = (*state.BadgerSessionRegistry)(nil)
 // Service provides cleanup operations for the gateway.
 // It can be used for both background goroutines and standalone cleanup commands.
 type Service struct {
-	taskStore       *tasks.TaskStore
+	// taskStore is the tasks domain Store (internal/storage/tasks).
+	taskStore       taskstore.Store
 	taskService     *orchestration.TaskAssignmentService
 	dispatcher      orchestration.TaskDispatcher
 	sessionRegistry SessionRegistry
@@ -88,7 +89,7 @@ type Service struct {
 
 // NewService creates a new cleanup service
 func NewService(
-	taskStore *tasks.TaskStore,
+	taskStore taskstore.Store,
 	taskService *orchestration.TaskAssignmentService,
 	sessionRegistry SessionRegistry,
 	config *Config,

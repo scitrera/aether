@@ -20,7 +20,12 @@ var (
 // like '::interval' in single-quoted text, it will be incorrectly rewritten.
 // The restricted cast regex above reduces but does not eliminate this risk.
 func rewriteQuery(query string) string {
-	query = rePlaceholder.ReplaceAllString(query, "?")
+	// $N -> ?N. Preserves PostgreSQL's positional-reuse semantics
+	// (same N resolves to the same arg value) and matches SQLite's
+	// ?NNN syntax: https://sqlite.org/lang_expr.html#varparam.
+	query = rePlaceholder.ReplaceAllStringFunc(query, func(m string) string {
+		return "?" + m[1:]
+	})
 	query = reNow.ReplaceAllString(query, "CURRENT_TIMESTAMP")
 	query = reCast.ReplaceAllString(query, "")
 	return query

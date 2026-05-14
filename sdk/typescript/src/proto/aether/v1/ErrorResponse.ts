@@ -13,6 +13,10 @@ export interface ErrorResponse {
    * Suggested retry delay in milliseconds (0 = use default backoff)
    */
   'retryAfterMs'?: (number | string | Long);
+  /**
+   * Set when the error correlates to a specific upstream request (KV op,
+   */
+  'requestId'?: (string);
 }
 
 export interface ErrorResponse__Output {
@@ -26,4 +30,8 @@ export interface ErrorResponse__Output {
    * Suggested retry delay in milliseconds (0 = use default backoff)
    */
   'retryAfterMs': (string);
+  /**
+   * Set when the error correlates to a specific upstream request (KV op,
+   */
+  'requestId': (string);
 }

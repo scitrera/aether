@@ -615,16 +615,18 @@ class Signal(_message.Message):
     def __init__(self, type: _Optional[_Union[Signal.SignalType, str]] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class ErrorResponse(_message.Message):
-    __slots__ = ("code", "message", "retryable", "retry_after_ms")
+    __slots__ = ("code", "message", "retryable", "retry_after_ms", "request_id")
     CODE_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
     RETRYABLE_FIELD_NUMBER: _ClassVar[int]
     RETRY_AFTER_MS_FIELD_NUMBER: _ClassVar[int]
+    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
     code: str
     message: str
     retryable: bool
     retry_after_ms: int
-    def __init__(self, code: _Optional[str] = ..., message: _Optional[str] = ..., retryable: bool = ..., retry_after_ms: _Optional[int] = ...) -> None: ...
+    request_id: str
+    def __init__(self, code: _Optional[str] = ..., message: _Optional[str] = ..., retryable: bool = ..., retry_after_ms: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class CreateTaskRequest(_message.Message):
     __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class")

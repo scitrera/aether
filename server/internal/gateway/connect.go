@@ -760,9 +760,9 @@ func (s *GatewayServer) startLockRefresh(sessionCtx context.Context, sessionCanc
 				redisOperations.WithLabelValues("lock_refresh", "success").Inc()
 
 				// Update orchestrator profile heartbeat to keep it alive in the database
-				if identity.Type == models.PrincipalOrchestrator && s.orchestration != nil && s.orchestration.ProfileManager != nil {
+				if identity.Type == models.PrincipalOrchestrator && s.orchestration != nil && s.orchestration.Registry != nil {
 					heartbeatCtx, heartbeatCancel := context.WithTimeout(sessionCtx, 5*time.Second)
-					if err := s.orchestration.ProfileManager.UpdateHeartbeat(heartbeatCtx, identity.String()); err != nil {
+					if err := s.orchestration.Registry.UpdateHeartbeat(heartbeatCtx, identity.String()); err != nil {
 						logging.Logger.Warn().Err(err).Str("identity", identity.String()).Msg("failed to update orchestrator heartbeat")
 						// Non-fatal - orchestrator will just appear offline in UI after 60s, but will remain functional
 					}

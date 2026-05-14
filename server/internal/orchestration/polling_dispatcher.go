@@ -10,17 +10,22 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/scitrera/aether/internal/logging"
+	taskstore "github.com/scitrera/aether/internal/storage/tasks"
+	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	"github.com/scitrera/aether/pkg/tasks"
 )
 
-// MemoryTaskDispatcher is an in-memory (polling-only) implementation of TaskDispatcher.
-// It uses the same PostgreSQL task queue tables as OrchestratorTaskDispatcher but
-// does not require a pq.Listener / NOTIFY connection — it relies purely on polling.
-// This is intended for lite/embedded mode where a separate NOTIFY connection is
-// undesirable or unavailable.
-type MemoryTaskDispatcher struct {
-	db           *sql.DB
-	taskStore    *tasks.TaskStore
+// PollingTaskDispatcher is a polling-only implementation of TaskDispatcher.
+// It uses the same orchestrated_task_queue SQL table as NotifyTaskDispatcher
+// but does NOT open a separate pq.Listener / PostgreSQL NOTIFY connection —
+// it relies purely on polling at pollInterval cadence. State is durable in
+// SQL (postgres or sqlite); the "polling" qualifier describes the wake-up
+// mechanism, not the storage backend. Used in lite mode and other contexts
+// where a NOTIFY connection is undesirable or unavailable.
+type PollingTaskDispatcher struct {
+	db *sql.DB
+	// taskStore is the tasks domain Store (internal/storage/tasks).
+	taskStore    taskstore.Store
 	pollInterval time.Duration
 
 	onTaskReceived func(task *OrchestrationTaskNotification)
@@ -33,12 +38,12 @@ type MemoryTaskDispatcher struct {
 	running bool
 }
 
-// NewMemoryTaskDispatcher creates a new polling-only task dispatcher.
-// db must be a valid *sql.DB connected to the PostgreSQL instance.
-func NewMemoryTaskDispatcher(db *sql.DB) *MemoryTaskDispatcher {
-	return &MemoryTaskDispatcher{
+// NewPollingTaskDispatcher creates a new PollingTaskDispatcher.
+// db must be a valid *sql.DB (PostgreSQL or SQLite via sqlite_compat).
+func NewPollingTaskDispatcher(db *sql.DB) *PollingTaskDispatcher {
+	return &PollingTaskDispatcher{
 		db:           db,
-		taskStore:    tasks.NewTaskStore(db),
+		taskStore:    taskpg.New(db),
 		pollInterval: 2 * time.Second,
 		stopCh:       make(chan struct{}),
 		instanceID:   uuid.New().String()[:8],
@@ -46,14 +51,14 @@ func NewMemoryTaskDispatcher(db *sql.DB) *MemoryTaskDispatcher {
 }
 
 // SetCallback sets the callback function for handling received task notifications.
-func (d *MemoryTaskDispatcher) SetCallback(callback func(task *OrchestrationTaskNotification)) {
+func (d *PollingTaskDispatcher) SetCallback(callback func(task *OrchestrationTaskNotification)) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.onTaskReceived = callback
 }
 
 // Start begins the polling goroutine that checks for pending orchestration tasks.
-func (d *MemoryTaskDispatcher) Start(ctx context.Context) error {
+func (d *PollingTaskDispatcher) Start(ctx context.Context) error {
 	d.mu.Lock()
 	if d.running {
 		d.mu.Unlock()
@@ -62,7 +67,7 @@ func (d *MemoryTaskDispatcher) Start(ctx context.Context) error {
 	d.running = true
 	d.mu.Unlock()
 
-	logging.Logger.Info().Str("instance", d.instanceID).Msg("memory dispatcher started (polling only)")
+	logging.Logger.Info().Str("instance", d.instanceID).Msg("polling dispatcher started (polling only)")
 
 	d.wg.Add(1)
 	go d.run(ctx)
@@ -71,7 +76,7 @@ func (d *MemoryTaskDispatcher) Start(ctx context.Context) error {
 }
 
 // Stop gracefully shuts down the dispatcher.
-func (d *MemoryTaskDispatcher) Stop() {
+func (d *PollingTaskDispatcher) Stop() {
 	d.mu.Lock()
 	if !d.running {
 		d.mu.Unlock()
@@ -83,11 +88,11 @@ func (d *MemoryTaskDispatcher) Stop() {
 	close(d.stopCh)
 	d.wg.Wait()
 
-	logging.Logger.Info().Str("instance", d.instanceID).Msg("memory dispatcher stopped")
+	logging.Logger.Info().Str("instance", d.instanceID).Msg("polling dispatcher stopped")
 }
 
 // run is the main polling loop.
-func (d *MemoryTaskDispatcher) run(ctx context.Context) {
+func (d *PollingTaskDispatcher) run(ctx context.Context) {
 	defer d.wg.Done()
 
 	ticker := time.NewTicker(d.pollInterval)
@@ -106,7 +111,7 @@ func (d *MemoryTaskDispatcher) run(ctx context.Context) {
 }
 
 // pollPendingTasks queries for pending orchestration tasks and delivers them via callback.
-func (d *MemoryTaskDispatcher) pollPendingTasks(ctx context.Context) {
+func (d *PollingTaskDispatcher) pollPendingTasks(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -114,15 +119,15 @@ func (d *MemoryTaskDispatcher) pollPendingTasks(ctx context.Context) {
 	query := `
 		SELECT queue_id, task_id, profile, workspace, target_implementation
 		FROM orchestrated_task_queue
-		WHERE status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+		WHERE status = $1 AND (next_retry_at IS NULL OR next_retry_at <= NOW())
 		ORDER BY created_at ASC
 		LIMIT 10
 	`
 
-	rows, err := d.db.QueryContext(ctx, query)
+	rows, err := d.db.QueryContext(ctx, query, string(QueueStatusPending))
 	if err != nil {
 		if ctx.Err() == nil {
-			logging.Logger.Error().Err(err).Msg("memory dispatcher failed to poll tasks")
+			logging.Logger.Error().Err(err).Msg("polling dispatcher failed to poll tasks")
 		}
 		return
 	}
@@ -131,11 +136,11 @@ func (d *MemoryTaskDispatcher) pollPendingTasks(ctx context.Context) {
 	for rows.Next() {
 		var task OrchestrationTaskNotification
 		if err := rows.Scan(&task.QueueID, &task.TaskID, &task.Profile, &task.Workspace, &task.TargetImplementation); err != nil {
-			logging.Logger.Error().Err(err).Msg("memory dispatcher failed to scan row")
+			logging.Logger.Error().Err(err).Msg("polling dispatcher failed to scan row")
 			continue
 		}
 
-		logging.Logger.Info().Str("task_id", task.TaskID).Str("profile", task.Profile).Msg("memory dispatcher polled pending task")
+		logging.Logger.Info().Str("task_id", task.TaskID).Str("profile", task.Profile).Msg("polling dispatcher polled pending task")
 
 		d.mu.RLock()
 		callback := d.onTaskReceived
@@ -145,20 +150,20 @@ func (d *MemoryTaskDispatcher) pollPendingTasks(ctx context.Context) {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		logging.Logger.Error().Err(err).Msg("memory dispatcher error iterating pending tasks")
+		logging.Logger.Error().Err(err).Msg("polling dispatcher error iterating pending tasks")
 	}
 }
 
 // ClaimTask attempts to claim a task for an orchestrator.
 // Returns ErrTaskAlreadyClaimed if another gateway already claimed it.
-func (d *MemoryTaskDispatcher) ClaimTask(ctx context.Context, queueID, orchestratorID string) error {
+func (d *PollingTaskDispatcher) ClaimTask(ctx context.Context, queueID, orchestratorID string) error {
 	query := `
 		UPDATE orchestrated_task_queue
-		SET status = 'claimed', claimed_by = $2, claimed_at = NOW()
-		WHERE queue_id = $1 AND status = 'pending'
+		SET status = $3, claimed_by = $2, claimed_at = NOW()
+		WHERE queue_id = $1 AND status = $4
 	`
 
-	result, err := d.db.ExecContext(ctx, query, queueID, orchestratorID)
+	result, err := d.db.ExecContext(ctx, query, queueID, orchestratorID, string(QueueStatusClaimed), string(QueueStatusPending))
 	if err != nil {
 		return err
 	}
@@ -172,13 +177,13 @@ func (d *MemoryTaskDispatcher) ClaimTask(ctx context.Context, queueID, orchestra
 		return ErrTaskAlreadyClaimed
 	}
 
-	logging.Logger.Info().Str("queue_id", queueID).Str("orchestrator_id", orchestratorID).Msg("memory dispatcher claimed task")
+	logging.Logger.Info().Str("queue_id", queueID).Str("orchestrator_id", orchestratorID).Msg("polling dispatcher claimed task")
 	return nil
 }
 
 // UnclaimTask releases a claimed task back to pending status for retry.
 // Implements retry limiting with exponential backoff; moves to DLQ when retries are exhausted.
-func (d *MemoryTaskDispatcher) UnclaimTask(ctx context.Context, queueID string) error {
+func (d *PollingTaskDispatcher) UnclaimTask(ctx context.Context, queueID string) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -190,8 +195,8 @@ func (d *MemoryTaskDispatcher) UnclaimTask(ctx context.Context, queueID string) 
 	err = tx.QueryRowContext(ctx, `
 		SELECT task_id, workspace, retry_count, max_retries
 		FROM orchestrated_task_queue
-		WHERE queue_id = $1 AND status = 'claimed'
-	`, queueID).Scan(&taskID, &workspace, &retryCount, &maxRetries)
+		WHERE queue_id = $1 AND status = $2
+	`, queueID, string(QueueStatusClaimed)).Scan(&taskID, &workspace, &retryCount, &maxRetries)
 	if err != nil {
 		return fmt.Errorf("query task for unclaim: %w", err)
 	}
@@ -208,13 +213,13 @@ func (d *MemoryTaskDispatcher) UnclaimTask(ctx context.Context, queueID string) 
 
 	_, err = tx.ExecContext(ctx, `
 		UPDATE orchestrated_task_queue
-		SET status = 'pending',
+		SET status = $4,
 		    claimed_by = NULL,
 		    claimed_at = NULL,
 		    retry_count = $2,
 		    next_retry_at = NOW() + ($3 || ' seconds')::interval
 		WHERE queue_id = $1
-	`, queueID, newRetryCount, fmt.Sprintf("%d", backoffSeconds))
+	`, queueID, newRetryCount, fmt.Sprintf("%d", backoffSeconds), string(QueueStatusPending))
 	if err != nil {
 		return fmt.Errorf("update task for retry: %w", err)
 	}
@@ -237,15 +242,15 @@ func (d *MemoryTaskDispatcher) UnclaimTask(ctx context.Context, queueID string) 
 }
 
 // moveToDeadLetterTx moves a task to the DLQ within an existing transaction.
-func (d *MemoryTaskDispatcher) moveToDeadLetterTx(ctx context.Context, tx *sql.Tx, queueID, taskID, workspace string, retryCount int) error {
+func (d *PollingTaskDispatcher) moveToDeadLetterTx(ctx context.Context, tx *sql.Tx, queueID, taskID, workspace string, retryCount int) error {
 	reason := "Max retries exceeded - failed to deliver to orchestrator"
 	attemptCount := retryCount + 1
 
 	_, err := tx.ExecContext(ctx, `
 		UPDATE orchestrated_task_queue
-		SET status = 'failed', error_message = $2, completed_at = NOW()
+		SET status = $3, error_message = $2, completed_at = NOW()
 		WHERE queue_id = $1
-	`, queueID, reason)
+	`, queueID, reason, string(QueueStatusFailed))
 	if err != nil {
 		return fmt.Errorf("mark task failed: %w", err)
 	}
@@ -277,29 +282,29 @@ func (d *MemoryTaskDispatcher) moveToDeadLetterTx(ctx context.Context, tx *sql.T
 }
 
 // CompleteTask marks a task as completed.
-func (d *MemoryTaskDispatcher) CompleteTask(ctx context.Context, queueID string) error {
+func (d *PollingTaskDispatcher) CompleteTask(ctx context.Context, queueID string) error {
 	query := `
 		UPDATE orchestrated_task_queue
-		SET status = 'completed', completed_at = NOW()
+		SET status = $2, completed_at = NOW()
 		WHERE queue_id = $1
 	`
-	_, err := d.db.ExecContext(ctx, query, queueID)
+	_, err := d.db.ExecContext(ctx, query, queueID, string(QueueStatusCompleted))
 	return err
 }
 
 // FailTask marks a task as failed with an error message.
-func (d *MemoryTaskDispatcher) FailTask(ctx context.Context, queueID, errorMsg string) error {
+func (d *PollingTaskDispatcher) FailTask(ctx context.Context, queueID, errorMsg string) error {
 	query := `
 		UPDATE orchestrated_task_queue
-		SET status = 'failed', error_message = $2, completed_at = NOW()
+		SET status = $3, error_message = $2, completed_at = NOW()
 		WHERE queue_id = $1
 	`
-	_, err := d.db.ExecContext(ctx, query, queueID, errorMsg)
+	_, err := d.db.ExecContext(ctx, query, queueID, errorMsg, string(QueueStatusFailed))
 	return err
 }
 
 // GetTaskDetails retrieves full task details including launch params.
-func (d *MemoryTaskDispatcher) GetTaskDetails(ctx context.Context, queueID string) (*OrchestratedTaskPayload, error) {
+func (d *PollingTaskDispatcher) GetTaskDetails(ctx context.Context, queueID string) (*OrchestratedTaskPayload, error) {
 	query := `
 		SELECT task_id, target_implementation, workspace, profile, launch_params
 		FROM orchestrated_task_queue
@@ -322,7 +327,7 @@ func (d *MemoryTaskDispatcher) GetTaskDetails(ctx context.Context, queueID strin
 
 	if launchParamsJSON != nil {
 		if err := json.Unmarshal(launchParamsJSON, &task.LaunchParams); err != nil {
-			logging.Logger.Error().Err(err).Msg("memory dispatcher failed to unmarshal launch params")
+			logging.Logger.Error().Err(err).Msg("polling dispatcher failed to unmarshal launch params")
 		}
 	}
 
@@ -331,16 +336,16 @@ func (d *MemoryTaskDispatcher) GetTaskDetails(ctx context.Context, queueID strin
 
 // RecoverStaleClaims finds tasks stuck in 'claimed' status longer than the given
 // threshold and unclaims them. Returns the number of tasks recovered.
-func (d *MemoryTaskDispatcher) RecoverStaleClaims(ctx context.Context, threshold time.Duration) (int, error) {
+func (d *PollingTaskDispatcher) RecoverStaleClaims(ctx context.Context, threshold time.Duration) (int, error) {
 	query := `
 		SELECT queue_id
 		FROM orchestrated_task_queue
-		WHERE status = 'claimed' AND claimed_at < NOW() - $1::interval
+		WHERE status = $2 AND claimed_at < NOW() - $1::interval
 		ORDER BY claimed_at ASC
 		LIMIT 50
 	`
 
-	rows, err := d.db.QueryContext(ctx, query, fmt.Sprintf("%d seconds", int(threshold.Seconds())))
+	rows, err := d.db.QueryContext(ctx, query, fmt.Sprintf("%d seconds", int(threshold.Seconds())), string(QueueStatusClaimed))
 	if err != nil {
 		return 0, fmt.Errorf("query stale claims: %w", err)
 	}
@@ -350,16 +355,16 @@ func (d *MemoryTaskDispatcher) RecoverStaleClaims(ctx context.Context, threshold
 	for rows.Next() {
 		var queueID string
 		if err := rows.Scan(&queueID); err != nil {
-			logging.Logger.Error().Err(err).Msg("memory dispatcher failed to scan stale claim")
+			logging.Logger.Error().Err(err).Msg("polling dispatcher failed to scan stale claim")
 			continue
 		}
 
 		if err := d.UnclaimTask(ctx, queueID); err != nil {
-			logging.Logger.Error().Err(err).Str("queue_id", queueID).Msg("memory dispatcher failed to recover stale claim")
+			logging.Logger.Error().Err(err).Str("queue_id", queueID).Msg("polling dispatcher failed to recover stale claim")
 			continue
 		}
 
-		logging.Logger.Info().Str("queue_id", queueID).Msg("memory dispatcher recovered stale claim")
+		logging.Logger.Info().Str("queue_id", queueID).Msg("polling dispatcher recovered stale claim")
 		recovered++
 	}
 

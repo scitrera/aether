@@ -13,6 +13,8 @@ import (
 	"github.com/scitrera/aether/internal/acl"
 	"github.com/scitrera/aether/internal/audit"
 	"github.com/scitrera/aether/internal/kv"
+	aclstore "github.com/scitrera/aether/internal/storage/acl"
+	auditstore "github.com/scitrera/aether/internal/storage/audit"
 	"github.com/scitrera/aether/internal/tracing"
 	"github.com/scitrera/aether/pkg/models"
 	"go.opentelemetry.io/otel/attribute"
@@ -28,13 +30,14 @@ type KVACLChecker interface {
 
 // KVHandler handles KV operations for the gateway
 type KVHandler struct {
-	kvStore     KVReadWriter
-	auditLogger *audit.AuditLogger
+	kvStore KVReadWriter
+	// auditLogger is the audit domain Store (internal/storage/audit).
+	auditLogger auditstore.Store
 	aclService  KVACLChecker // nil when PostgreSQL unavailable
 }
 
 // NewKVHandler creates a new KV handler
-func NewKVHandler(store KVReadWriter, auditLogger *audit.AuditLogger, aclService KVACLChecker) *KVHandler {
+func NewKVHandler(store KVReadWriter, auditLogger auditstore.Store, aclService KVACLChecker) *KVHandler {
 	return &KVHandler{
 		kvStore:     store,
 		auditLogger: auditLogger,
@@ -42,11 +45,13 @@ func NewKVHandler(store KVReadWriter, auditLogger *audit.AuditLogger, aclService
 	}
 }
 
-// newKVHandlerFromService creates a KV handler from a concrete *acl.Service,
+// newKVHandlerFromService creates a KV handler from an ACL store implementation,
 // correctly handling nil (no PostgreSQL) to avoid non-nil interface with nil value.
-func newKVHandlerFromService(store KVReadWriter, auditLogger *audit.AuditLogger, aclService *acl.Service) *KVHandler {
+func newKVHandlerFromService(store KVReadWriter, auditLogger auditstore.Store, aclService aclstore.Store) *KVHandler {
 	var checker KVACLChecker
 	if aclService != nil {
+		// aclstore.Store satisfies KVACLChecker — both CheckAccess and
+		// CheckAccessWithAuthority are part of the storage interface.
 		checker = aclService
 	}
 	return NewKVHandler(store, auditLogger, checker)

@@ -1,4 +1,4 @@
-__version__ = "0.1.59"
+__version__ = "0.1.60"
 
 # Import the proxy module for its side effect: installs the
 # ``ProxyHttpResponse`` / ``ProxyHttpBodyChunk`` dispatcher hook on

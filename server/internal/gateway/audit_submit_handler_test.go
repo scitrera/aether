@@ -143,12 +143,20 @@ func newAuditSubmitTestClient(stream *mockStream, principalType models.Principal
 // newAuditSubmitTestServer builds a GatewayServer with the supplied audit
 // logger (may be nil to exercise the "audit disabled" path) and no ACL —
 // suitable for handler-level tests that only need handleSubmitAuditEvent.
+//
+// Stage 1 storage-interfaces note: GatewayServer.auditLogger is now an
+// interface field (auditstore.Store). Assigning a typed nil *audit.AuditLogger
+// to it would produce a non-nil interface with a nil concrete pointer — the
+// classic §14.6 hazard. Explicitly handle the nil case to keep the
+// `s.auditLogger == nil` guard in handleSubmitAuditEvent honest.
 func newAuditSubmitTestServer(logger *audit.AuditLogger, principalRL *quota.PrincipalRateLimiter) *GatewayServer {
 	s := &GatewayServer{
 		gatewayID:     "test-gateway",
-		auditLogger:   logger,
 		authHandler:   newAuthHandler(nil, false, MTLSModeStrict, nil, nil),
 		quotaEnforcer: newQuotaEnforcer(100, 200),
+	}
+	if logger != nil {
+		s.auditLogger = logger
 	}
 	s.quotaEnforcer.foreignAuditRateLimiter = principalRL
 	return s

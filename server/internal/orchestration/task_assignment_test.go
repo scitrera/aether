@@ -9,6 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/scitrera/aether/internal/registry"
 	"github.com/scitrera/aether/internal/state"
+	regpg "github.com/scitrera/aether/internal/storage/registry/postgres"
 	"github.com/scitrera/aether/internal/testutil"
 	"github.com/scitrera/aether/pkg/models"
 	"github.com/scitrera/aether/pkg/tasks"
@@ -227,8 +228,12 @@ func newTestTaskService(t *testing.T) (*TaskAssignmentService, string, string) {
 
 	ctx := context.Background()
 	implementation := "fixaa-test-worker"
-	agentRegistry := registry.NewAgentRegistry(testDB.DB)
-	if err := agentRegistry.Register(ctx, &registry.AgentRegistration{
+	// regpg.New bundles AgentRegistry + OrchestratorProfileManager into the
+	// internal/storage/registry.Store interface that NewTaskAssignmentService
+	// now expects. Passing nil for the profile state store is fine here — the
+	// test doesn't exercise SelectOrchestrator.
+	registryStore := regpg.New(testDB.DB, nil)
+	if err := registryStore.Register(ctx, &registry.AgentRegistration{
 		Implementation: implementation,
 		LaunchParams: map[string]interface{}{
 			"profile": "docker",
@@ -242,7 +247,7 @@ func newTestTaskService(t *testing.T) (*TaskAssignmentService, string, string) {
 	sessionRegistry := state.NewSessionRegistryFromClient(redisClient)
 
 	taskStore := tasks.NewTaskStore(testDB.DB)
-	service := NewTaskAssignmentService(testDB.DB, taskStore, agentRegistry, sessionRegistry, nil, nil)
+	service := NewTaskAssignmentService(testDB.DB, taskStore, registryStore, sessionRegistry, nil, nil)
 
 	workspace := "fixaa-test-ws"
 	return service, implementation, workspace

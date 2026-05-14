@@ -17,7 +17,7 @@ CREATE TABLE tasks (
     specifier           VARCHAR(255),                   -- Agent instance (optional)
 
     -- Lifecycle status
-    status              VARCHAR(50) NOT NULL DEFAULT 'pending',  -- pending, assigned, running, completed, failed, cancelled, dlq
+    status              VARCHAR(50) NOT NULL DEFAULT 'pending',  -- pending, assigned, starting, running, completed, failed, cancelled, dlq
     priority            INT NOT NULL DEFAULT 0,
 
     -- Timestamps

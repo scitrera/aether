@@ -752,7 +752,7 @@ func (s *GatewayServer) triggerOrchestration(ctx context.Context, sender models.
 	)
 
 	// Check if agent implementation exists in registry
-	exists, err := s.orchestration.AgentRegistry.Exists(ctx, identity.Implementation)
+	exists, err := s.orchestration.Registry.Exists(ctx, identity.Implementation)
 	if err != nil {
 		logging.Logger.Error().Err(err).Str("implementation", identity.Implementation).Msg("failed to check agent registry")
 		return
@@ -935,7 +935,7 @@ func (s *GatewayServer) handleKVOp(ctx context.Context, client *ClientSession, o
 			workspace = ident.Workspace
 		}
 		if err := s.quotaEnforcer.quotaManager.CheckKVValueSize(ctx, workspace, len(op.Value)); err != nil {
-			sendClientError(client, "ERR_QUOTA_001", err.Error())
+			sendClientError(client, "ERR_QUOTA_001", err.Error(), withRequestID(op.GetRequestId()))
 			return
 		}
 	}
@@ -955,7 +955,7 @@ func (s *GatewayServer) handleKVOp(ctx context.Context, client *ClientSession, o
 
 	resolvedAuthority, err := s.resolveAuthorizationContext(ctx, client, ident, op.GetAuthorization())
 	if err != nil {
-		sendClientError(client, "ERR_PERMISSION_DENIED", "invalid authorization context")
+		sendClientError(client, "ERR_PERMISSION_DENIED", "invalid authorization context", withRequestID(op.GetRequestId()))
 		return
 	}
 
@@ -1001,7 +1001,7 @@ func (s *GatewayServer) handleKVOp(ctx context.Context, client *ClientSession, o
 	if err != nil {
 		logging.Logger.Error().Err(err).Msg("KV operation failed")
 		// Send generic error to avoid leaking internal details (e.g. Redis internals) to clients.
-		sendClientError(client, "KV_ERROR", "internal error processing KV operation")
+		sendClientError(client, "KV_ERROR", "internal error processing KV operation", withRequestID(op.GetRequestId()))
 	} else {
 		workspace := op.Workspace
 		if workspace == "" {

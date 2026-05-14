@@ -19,7 +19,6 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/acl"
 	"github.com/scitrera/aether/internal/admin"
 	"github.com/scitrera/aether/internal/audit"
 	"github.com/scitrera/aether/internal/checkpoint"
@@ -36,6 +35,9 @@ import (
 	routerpkg "github.com/scitrera/aether/internal/router"
 	"github.com/scitrera/aether/internal/secrets"
 	"github.com/scitrera/aether/internal/state"
+	aclpg "github.com/scitrera/aether/internal/storage/acl/postgres"
+	regpg "github.com/scitrera/aether/internal/storage/registry/postgres"
+	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	"github.com/scitrera/aether/internal/tracing"
 	versionpkg "github.com/scitrera/aether/internal/version"
 	"github.com/scitrera/aether/internal/workflow"
@@ -43,8 +45,8 @@ import (
 	sqliteauditmigrations "github.com/scitrera/aether/migrations/sqlite_audit"
 	pb_health "google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/scitrera/aether/pkg/crypto"
 	_ "github.com/scitrera/aether/pkg/dbcompat" // registers "sqlite_compat" driver
-	"github.com/scitrera/aether/pkg/tasks"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	otelgrpcfilters "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc/filters"
 	"google.golang.org/grpc"
@@ -133,6 +135,17 @@ func main() {
 		}
 	}
 
+	// Initialize HMAC key for token hashing before any token-mint path runs.
+	// Required by crypto.HashAPIToken / GenerateToken — without this call,
+	// orchestrated task creation logs `"failed to generate auth token: crypto:
+	// HMAC key not initialized"` and the agent boots with task_token=None.
+	// Full gateway does the same at cmd/gateway/main.go:232-235; lite was
+	// missing the call.
+	if cfg.Auth.TokenHMACKey != "" {
+		crypto.InitTokenHMAC([]byte(cfg.Auth.TokenHMACKey))
+		log.Println("Token HMAC key initialized")
+	}
+
 	// Reloadable credential wrapper — same as the full gateway. Holds the
 	// admin API key, TLS keypair, and token HMAC key behind atomics so
 	// SIGHUP rotation lands on the next handshake / next admin auth check.
@@ -216,7 +229,7 @@ func main() {
 	checkpointStore := checkpoint.NewBadgerCheckpointStore(badgerDB)
 	tokenStore := state.NewBadgerTokenStore(badgerDB)
 	msgRouter := routerpkg.NewBadgerRouter(badgerDB)
-	taskStore := tasks.NewTaskStore(db)
+	taskStore := taskpg.New(db)
 
 	quotaDefaults := quota.DefaultQuotas{
 		MaxConnectionsPerWorkspace: 1000,
@@ -226,32 +239,32 @@ func main() {
 	}
 	quotaManager := quota.NewMemoryQuotaManager(quotaDefaults)
 
-	// Orchestration (memory dispatcher — no AMQP).
-	dispatcher := orchestration.NewMemoryTaskDispatcher(db)
+	// Orchestration (polling dispatcher — no AMQP, no pq.Listener).
+	dispatcher := orchestration.NewPollingTaskDispatcher(db)
 	// Badger-backed profile state store gives lite mode round-robin
 	// orchestrator selection without needing Redis. Wires up the first-ever
-	// ProfileManager in aetherlite; previously this was nil and every
-	// orchestrator connection logged "orchestration not initialized".
+	// Registry in aetherlite; previously the legacy ProfileManager was nil
+	// and every orchestrator connection logged "orchestration not initialized".
+	//
+	// As of Stage 1 of the storage-interfaces refactor, registry.AgentRegistry
+	// and registry.OrchestratorProfileManager are bundled into a single
+	// internal/storage/registry.Store; the consumer interface methods
+	// (`Exists`, `RegisterProfiles`, etc.) are unchanged so call sites do not
+	// require additional updates beyond the field rename.
 	profileStateStore := registry.NewBadgerProfileStateStore(badgerDB)
-	profileMgr := registry.NewOrchestratorProfileManager(db, profileStateStore)
-	// AgentRegistry is required by TaskAssignmentService.handleTargeted — it
-	// calls agentRegistry.Exists() to validate that target agent for any
-	// non-orchestrated task targeted at an agent identity. Passing nil here
-	// causes a SIGSEGV the first time a chat message creates such a task.
-	agentRegistry := registry.NewAgentRegistry(db)
+	registryStore := regpg.New(db, profileStateStore)
 	orchServices := &gateway.OrchestrationServices{
-		AgentRegistry:  agentRegistry,
-		ProfileManager: profileMgr,
-		Dispatcher:     dispatcher,
-		QueueCloser:    orchestration.NewMemoryQueueCloser(),
-		TokenStore:     tokenStore,
+		Registry:    registryStore,
+		Dispatcher:  dispatcher,
+		QueueCloser: orchestration.NewNoopQueueCloser(),
+		TokenStore:  tokenStore,
 		TaskService: orchestration.NewTaskAssignmentService(
 			db,
 			taskStore,
-			agentRegistry,
+			registryStore,
 			sessions, // orchestration.SessionLivenessRegistry — was nil; consumer derefs IsOnline.
 			nil,      // queueManager: AMQP-only legacy; nil-tolerant (never deref'd).
-			profileMgr,
+			registryStore,
 		),
 	}
 	orchServices.TaskService.SetTokenStore(tokenStore)
@@ -284,7 +297,7 @@ func main() {
 	// goroutine), and audit READS use auditDB directly. This eliminates
 	// the WAL writer-vs-writer SQLITE_BUSY contention we previously hit
 	// in lite mode under load.
-	sharedACLService := acl.NewServiceWithSharedAudit(db, auditLogger, auditDB, cfg.Gateway.GatewayID)
+	sharedACLService := aclpg.NewWithSharedAudit(db, auditLogger, auditDB, cfg.Gateway.GatewayID)
 	gatewayOpts = append(gatewayOpts, gateway.WithACLService(sharedACLService))
 
 	// Cleanup service.
@@ -382,15 +395,16 @@ func main() {
 		}
 	}()
 
-	// State provider for admin. AgentRegistry + ProfileManager already
-	// constructed above for the orchestration wiring; reuse them here.
+	// State provider for admin. Registry already constructed above for the
+	// orchestration wiring; reuse it here for both agentRegistry+profileMgr
+	// slots (the bundled internal/storage/registry.Store covers both).
 	stateProvider := gateway.NewGatewayStateProvider(
 		cfg.Gateway.GatewayID,
-		nil, // no Redis session registry in lite mode
-		nil, // no Redis KV store in lite mode
+		nil,     // no Redis session registry in lite mode
+		kvStore, // Badger-backed KV store (satisfies KVReadWriter)
 		taskStore,
-		agentRegistry,
-		profileMgr,
+		registryStore,
+		registryStore,
 		sharedACLService,
 		db,
 		nil, // no RabbitMQ router in lite mode

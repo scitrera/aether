@@ -22,8 +22,8 @@ require (
 	github.com/redis/go-redis/v9 v9.17.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/zerolog v1.34.0
-	github.com/scitrera/aether/api v0.1.59
-	github.com/scitrera/aether/sdk/go v0.1.59
+	github.com/scitrera/aether/api v0.1.60
+	github.com/scitrera/aether/sdk/go v0.1.60
 	github.com/stretchr/testify v1.11.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0

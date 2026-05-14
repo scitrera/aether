@@ -428,6 +428,9 @@ message ErrorResponse {
   string message = 2;
   bool retryable = 3;           // Whether the client should retry this request
   int64 retry_after_ms = 4;     // Suggested retry delay in milliseconds (0 = use default backoff)
+  string request_id = 5;        // Set when the error correlates to a specific upstream request (KV op,
+                                 // checkpoint, task, etc). Empty when the error is connection-scoped /
+                                 // un-correlated.
 }
 
 // ============================================================================

@@ -6,6 +6,9 @@ import (
 
 // sendClientError sends a structured error response to the client.
 // Optional errorOpt functions can set Retryable, RetryAfterMs, or RequestId fields.
+// Use withRequestID when the error is in direct response to a specific RPC so the
+// client can correlate the error to its originating request future; omit for
+// connection-scoped or un-correlated errors.
 func sendClientError(client *ClientSession, code, message string, opts ...errorOpt) {
 	resp := &pb.ErrorResponse{Code: code, Message: message}
 	for _, opt := range opts {
@@ -30,5 +33,15 @@ func withRetryable(retryable bool) errorOpt {
 func withRetryAfter(ms int64) errorOpt {
 	return func(r *pb.ErrorResponse) {
 		r.RetryAfterMs = ms
+	}
+}
+
+// withRequestID sets the RequestId field on the error response so the
+// client can correlate the error to its originating request future.
+// Use whenever the error is in direct response to a specific RPC; omit
+// for connection-scoped or un-correlated errors.
+func withRequestID(id string) errorOpt {
+	return func(r *pb.ErrorResponse) {
+		r.RequestId = id
 	}
 }
