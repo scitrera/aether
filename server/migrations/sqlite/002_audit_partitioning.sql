@@ -1,0 +1,21 @@
+-- Migration 002: Audit partitioning (SQLite no-op counterpart of postgres 011)
+--
+-- SQLite no-op: PostgreSQL migration 011 converts comprehensive_audit_log into
+-- a partitioned table using `PARTITION BY RANGE (timestamp)` plus per-month
+-- partitions, and defines PL/pgSQL helper functions to roll new partitions
+-- and drop old ones for retention. SQLite has no partitioning at all (the
+-- database is a single file with no per-range storage), and no PL/pgSQL.
+--
+-- The comprehensive_audit_log table already exists with the same column set
+-- and indexes via 001_full_schema.sql (see "Comprehensive Audit Log" section
+-- there), so this migration intentionally does nothing. Retention is managed
+-- by the application's cleanup service (DELETE by age) rather than by
+-- dropping partitions.
+--
+-- The postgres-side acl_audit_log VIEW recreated in 011 is also skipped:
+-- the lite-mode application code does not query that view. If a consumer is
+-- ever added that needs it, a follow-up sqlite migration should emit a
+-- regular CREATE VIEW with the JSON->>'...' references replaced by
+-- json_extract() calls.
+
+-- Intentionally empty.

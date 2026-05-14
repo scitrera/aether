@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"flag"
 	"fmt"
 	"log"
@@ -33,11 +34,13 @@ import (
 	"github.com/scitrera/aether/internal/quota"
 	"github.com/scitrera/aether/internal/registry"
 	routerpkg "github.com/scitrera/aether/internal/router"
+	"github.com/scitrera/aether/internal/secrets"
 	"github.com/scitrera/aether/internal/state"
 	"github.com/scitrera/aether/internal/tracing"
 	versionpkg "github.com/scitrera/aether/internal/version"
 	"github.com/scitrera/aether/internal/workflow"
 	sqlitemigrations "github.com/scitrera/aether/migrations/sqlite"
+	sqliteauditmigrations "github.com/scitrera/aether/migrations/sqlite_audit"
 	pb_health "google.golang.org/grpc/health/grpc_health_v1"
 
 	_ "github.com/scitrera/aether/pkg/dbcompat" // registers "sqlite_compat" driver
@@ -70,6 +73,7 @@ AetherLite v%s — embedded single-binary server
 // user can still override on the command line.
 var (
 	configFile    = flag.String("config", config.EnvStr("AETHERLITE_CONFIG", ""), "Optional path to a gateway config file (env: AETHERLITE_CONFIG)")
+	secretsFile   = flag.String("secrets-file", config.EnvStr("AETHERLITE_SECRETS_FILE", ""), "Optional generated-secrets.yaml; merged into config (HMAC, admin key, TLS paths) (env: AETHERLITE_SECRETS_FILE)")
 	dataDir       = flag.String("data-dir", config.EnvStr("AETHERLITE_DATA_DIR", "./aether-lite-data"), "Data directory for SQLite and Badger storage (env: AETHERLITE_DATA_DIR)")
 	port          = flag.Int("port", config.EnvInt("AETHERLITE_PORT", 50051), "gRPC server port (env: AETHERLITE_PORT)")
 	adminPort     = flag.Int("admin-port", config.EnvInt("AETHERLITE_ADMIN_PORT", 31880), "Admin UI port (env: AETHERLITE_ADMIN_PORT)")
@@ -119,6 +123,23 @@ func main() {
 	// Build gateway config (always lite mode).
 	cfg := buildGatewayConfig()
 
+	// Merge a generated-secrets.yaml (if provided / present) into cfg.
+	// This is how `init-secrets --generate-tls` hands us the TLS cert/key/CA
+	// paths and the admin/HMAC keys — same mechanism the full gateway uses.
+	// Missing file is non-fatal; we just run without auto-populated secrets.
+	if *secretsFile != "" {
+		if _, err := secrets.EnsureSecrets(cfg, *secretsFile, false); err != nil {
+			log.Printf("WARNING: failed to load secrets file %q: %v", *secretsFile, err)
+		}
+	}
+
+	// Reloadable credential wrapper — same as the full gateway. Holds the
+	// admin API key, TLS keypair, and token HMAC key behind atomics so
+	// SIGHUP rotation lands on the next handshake / next admin auth check.
+	// configFile may be empty in pure-CLI mode, in which case Reload is a
+	// no-op but the wrapper still serves the initially-loaded values.
+	reloadableCfg := config.NewReloadableConfig(*configFile, cfg)
+
 	// Initialize structured logger.
 	logging.Init(cfg.LogLevel)
 
@@ -138,6 +159,10 @@ func main() {
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// SIGHUP hot-reloads admin API key, TLS cert/key, and token HMAC key.
+	// Shared helper with the full gateway — keep them in lockstep.
+	gateway.RunSIGHUPReloader(ctx, reloadableCfg)
 
 	// ===== Initialize lite backends =====
 	logging.Logger.Info().Str("data_dir", *dataDir).Msg("starting AetherLite (embedded backends)")
@@ -169,6 +194,22 @@ func main() {
 		logging.Logger.Fatal().Err(err).Msg("failed to run SQLite migrations")
 	}
 
+	// Open dedicated audit SQLite handle. The comprehensive_audit_log writer
+	// is an async batcher (audit.AuditLogger + acl.AuditLogger); isolating it
+	// onto its own WAL writer lock keeps it from blocking the synchronous
+	// task-read hot path that runs against the main aether.db handle.
+	auditSQLitePath := filepath.Join(*dataDir, "audit.db")
+	auditDB, err := openSQLite(ctx, auditSQLitePath)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Str("path", auditSQLitePath).Msg("failed to open audit SQLite database")
+	}
+	defer auditDB.Close()
+
+	// Run audit SQLite migrations (separate embed.FS).
+	if err := runAuditSQLiteMigrations(ctx, auditDB); err != nil {
+		logging.Logger.Fatal().Err(err).Msg("failed to run audit SQLite migrations")
+	}
+
 	// Build lite-mode subsystems.
 	sessions := state.NewBadgerSessionRegistry(badgerDB)
 	kvStore := kv.NewBadgerKVStore(badgerDB)
@@ -187,12 +228,30 @@ func main() {
 
 	// Orchestration (memory dispatcher — no AMQP).
 	dispatcher := orchestration.NewMemoryTaskDispatcher(db)
+	// Badger-backed profile state store gives lite mode round-robin
+	// orchestrator selection without needing Redis. Wires up the first-ever
+	// ProfileManager in aetherlite; previously this was nil and every
+	// orchestrator connection logged "orchestration not initialized".
+	profileStateStore := registry.NewBadgerProfileStateStore(badgerDB)
+	profileMgr := registry.NewOrchestratorProfileManager(db, profileStateStore)
+	// AgentRegistry is required by TaskAssignmentService.handleTargeted — it
+	// calls agentRegistry.Exists() to validate that target agent for any
+	// non-orchestrated task targeted at an agent identity. Passing nil here
+	// causes a SIGSEGV the first time a chat message creates such a task.
+	agentRegistry := registry.NewAgentRegistry(db)
 	orchServices := &gateway.OrchestrationServices{
-		Dispatcher:  dispatcher,
-		QueueCloser: orchestration.NewMemoryQueueCloser(),
-		TokenStore:  tokenStore,
+		AgentRegistry:  agentRegistry,
+		ProfileManager: profileMgr,
+		Dispatcher:     dispatcher,
+		QueueCloser:    orchestration.NewMemoryQueueCloser(),
+		TokenStore:     tokenStore,
 		TaskService: orchestration.NewTaskAssignmentService(
-			db, taskStore, nil, nil, nil, nil,
+			db,
+			taskStore,
+			agentRegistry,
+			sessions, // orchestration.SessionLivenessRegistry — was nil; consumer derefs IsOnline.
+			nil,      // queueManager: AMQP-only legacy; nil-tolerant (never deref'd).
+			profileMgr,
 		),
 	}
 	orchServices.TaskService.SetTokenStore(tokenStore)
@@ -212,8 +271,20 @@ func main() {
 	foreignAuditRL := quota.NewPrincipalRateLimiter(float64(config.EnvInt("AETHER_AUDIT_FOREIGN_RATE_PER_SEC", 100)))
 	gatewayOpts = append(gatewayOpts, gateway.WithForeignAuditRateLimiter(foreignAuditRL))
 
-	// ACL service (SQLite-backed).
-	sharedACLService := acl.NewService(db, cfg.Gateway.GatewayID)
+	// Audit logger (constructed before the ACL service so we can share
+	// the single batched writer goroutine — see acl/audit.go for the
+	// contention rationale).
+	auditCfg := audit.DefaultConfig()
+	auditCfg.Enabled = cfg.Audit.Enabled
+	auditLogger := audit.NewAuditLogger(auditDB, cfg.Gateway.GatewayID, auditCfg)
+	defer auditLogger.Close()
+
+	// ACL service (SQLite-backed). ACL rules live in aether.db; audit
+	// writes funnel through the shared auditLogger above (single writer
+	// goroutine), and audit READS use auditDB directly. This eliminates
+	// the WAL writer-vs-writer SQLITE_BUSY contention we previously hit
+	// in lite mode under load.
+	sharedACLService := acl.NewServiceWithSharedAudit(db, auditLogger, auditDB, cfg.Gateway.GatewayID)
 	gatewayOpts = append(gatewayOpts, gateway.WithACLService(sharedACLService))
 
 	// Cleanup service.
@@ -226,16 +297,16 @@ func main() {
 	}
 	gatewayOpts = append(gatewayOpts, gateway.WithCleanupService(cleanupConfig))
 
-	// Audit logger.
-	auditCfg := audit.DefaultConfig()
-	auditCfg.Enabled = cfg.Audit.Enabled
-	auditLogger := audit.NewAuditLogger(db, cfg.Gateway.GatewayID, auditCfg)
-	defer auditLogger.Close()
-
-	// mTLS config (disabled in lite mode by default).
+	// mTLS config — Required defaults to false in lite mode, but when the
+	// config supplies an explicit mTLS block we honour it. Mode controls how
+	// strictly identity assertions are bound to the presented cert (strict /
+	// relaxed); matches the full gateway's semantics.
 	mtlsConfig := gateway.MTLSConfig{
-		Required: false,
-		Mode:     gateway.MTLSModeStrict,
+		Required: cfg.Auth.MTLS.Required,
+		Mode:     gateway.MTLSMode(cfg.Auth.MTLS.Mode),
+	}
+	if mtlsConfig.Mode == "" {
+		mtlsConfig.Mode = gateway.MTLSModeStrict
 	}
 
 	// Create gateway server.
@@ -272,7 +343,24 @@ func main() {
 		}),
 	}
 
-	grpcServer := grpc.NewServer(serverOpts...)
+	// Create gRPC server with optional TLS via the shared helper. When
+	// TLS is enabled, the helper wires a dynamic cert callback against
+	// reloadableCfg so SIGHUP rotation lands on the next handshake — same
+	// behaviour as the full gateway.
+	grpcServer, tlsEnabled, err := gateway.NewGRPCServerFromConfig(cfg, reloadableCfg, serverOpts...)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Msg("failed to create gRPC server")
+	}
+	if tlsEnabled {
+		logging.Logger.Info().
+			Str("cert", cfg.Gateway.TLS.CertFile).
+			Str("key", cfg.Gateway.TLS.KeyFile).
+			Str("ca", cfg.Gateway.TLS.CAFile).
+			Str("client_auth", cfg.Gateway.TLS.ClientAuth).
+			Msg("AetherLite TLS enabled (dynamic certificate rotation active)")
+	} else {
+		logging.Logger.Debug().Msg("AetherLite TLS disabled (plaintext gRPC)")
+	}
 	pb.RegisterAetherGatewayServer(grpcServer, gatewayServer)
 
 	// gRPC health service.
@@ -294,15 +382,15 @@ func main() {
 		}
 	}()
 
-	// State provider for admin.
-	agentRegistry := registry.NewAgentRegistry(db)
+	// State provider for admin. AgentRegistry + ProfileManager already
+	// constructed above for the orchestration wiring; reuse them here.
 	stateProvider := gateway.NewGatewayStateProvider(
 		cfg.Gateway.GatewayID,
 		nil, // no Redis session registry in lite mode
 		nil, // no Redis KV store in lite mode
 		taskStore,
 		agentRegistry,
-		nil, // no orchestrator profile manager in lite mode
+		profileMgr,
 		sharedACLService,
 		db,
 		nil, // no RabbitMQ router in lite mode
@@ -547,8 +635,23 @@ func openSQLite(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// runSQLiteMigrations applies gateway SQLite migrations from the embedded filesystem.
+// runSQLiteMigrations applies gateway SQLite migrations (aether.db) from the embedded filesystem.
 func runSQLiteMigrations(ctx context.Context, db *sql.DB) error {
+	return applySQLiteMigrations(ctx, db, sqlitemigrations.MigrationFS, "aether.db")
+}
+
+// runAuditSQLiteMigrations applies the dedicated audit-DB migrations to
+// the audit.db handle. The audit migrations live in a separate embed.FS
+// (migrations/sqlite_audit/) so we can ship them on their own writer
+// lock without touching the main aether.db schema set.
+func runAuditSQLiteMigrations(ctx context.Context, db *sql.DB) error {
+	return applySQLiteMigrations(ctx, db, sqliteauditmigrations.MigrationFS, "audit.db")
+}
+
+// applySQLiteMigrations is the shared body used by both migration runners.
+// `fs` provides the *.sql files (alphabetical order); `label` is included
+// in log messages so operators can tell which DB the migration ran against.
+func applySQLiteMigrations(ctx context.Context, db *sql.DB, fs embed.FS, label string) error {
 	if _, err := db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version TEXT PRIMARY KEY,
@@ -558,7 +661,7 @@ func runSQLiteMigrations(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("failed to create schema_migrations table: %w", err)
 	}
 
-	entries, err := sqlitemigrations.MigrationFS.ReadDir(".")
+	entries, err := fs.ReadDir(".")
 	if err != nil {
 		return fmt.Errorf("failed to read SQLite migrations: %w", err)
 	}
@@ -579,7 +682,7 @@ func runSQLiteMigrations(ctx context.Context, db *sql.DB) error {
 			continue
 		}
 
-		content, err := sqlitemigrations.MigrationFS.ReadFile(entry.Name())
+		content, err := fs.ReadFile(entry.Name())
 		if err != nil {
 			return fmt.Errorf("failed to read migration %s: %w", entry.Name(), err)
 		}
@@ -591,7 +694,7 @@ func runSQLiteMigrations(ctx context.Context, db *sql.DB) error {
 		); err != nil {
 			return fmt.Errorf("failed to record migration %s: %w", entry.Name(), err)
 		}
-		logging.Logger.Debug().Str("version", version).Msg("SQLite migration applied")
+		logging.Logger.Debug().Str("db", label).Str("version", version).Msg("SQLite migration applied")
 	}
 	return nil
 }

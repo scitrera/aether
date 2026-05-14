@@ -12,34 +12,45 @@ import (
 	"github.com/scitrera/aether/pkg/models"
 )
 
-const (
-	aclChannelBuffer = 1000
-	aclBatchSize     = 100
-	aclFlushPeriod   = 5 * time.Second
-)
-
-// AuditLogger records ACL decisions to the audit log
-// Uses buffered channel for async writes to avoid blocking ACL checks
+// AuditLogger records ACL decisions to the audit log.
+//
+// Historically this type owned its own batched writer goroutine flushing
+// INSERTs to comprehensive_audit_log. Two batchers writing to the same
+// SQLite WAL writer lock (one here, one in internal/audit) caused
+// SQLITE_BUSY contention in lite mode. The writer goroutine has been
+// removed; this type is now a thin adapter that translates ACL decisions
+// into audit.AuditEvent values and hands them to the shared
+// audit.AuditLogger (which owns the single producer→writer goroutine).
+//
+// Reads (QueryAuditLog, CleanupOldLogs) still use a *sql.DB handle
+// directly — they don't contend with the writer.
 type AuditLogger struct {
-	base      *audit.BaseLogger[*AuditLogEntry]
+	shared    *audit.AuditLogger // shared writer for all comprehensive_audit_log INSERTs
+	db        *sql.DB            // read-side handle (audit.db in lite; aether.db in postgres)
 	gatewayID string
 }
 
-// NewAuditLogger creates a new audit logger with buffered async writes
-func NewAuditLogger(db *sql.DB, gatewayID string) *AuditLogger {
-	logger := &AuditLogger{
+// NewAuditLogger creates an ACL audit-log adapter that funnels writes
+// through the shared audit.AuditLogger. The `db` handle is used only for
+// read-side operations (QueryAuditLog, CleanupOldLogs) and must point at
+// the same physical file the shared writer is targeting — audit.db in
+// the lite split layout, aether.db otherwise.
+//
+// shared may be nil if audit logging is disabled at the platform level;
+// LogDecision becomes a no-op in that case.
+//
+// The "authorization" event type (audit.EventTypeAuthorization) is the
+// canonical event_type for ACL decisions in comprehensive_audit_log
+// (per migrations 008–018 and the acl_audit_log view). It is included
+// in audit.DefaultConfig().EnabledEventTypes so ACL decisions are not
+// silently dropped by the shared writer's gating logic — no extra
+// configuration shim is needed here.
+func NewAuditLogger(shared *audit.AuditLogger, db *sql.DB, gatewayID string) *AuditLogger {
+	return &AuditLogger{
+		shared:    shared,
+		db:        db,
 		gatewayID: gatewayID,
 	}
-
-	logger.base = audit.NewBaseLogger[*AuditLogEntry](
-		db,
-		aclBatchSize,
-		aclFlushPeriod,
-		aclChannelBuffer,
-		aclEntryBatchWriter,
-	)
-
-	return logger
 }
 
 // buildEntry constructs an AuditLogEntry from a decision and principal.
@@ -89,11 +100,66 @@ func (a *AuditLogger) buildEntry(decision *ACLDecision, principal models.Identit
 	return entry
 }
 
-// LogDecision records an ACL decision to the audit log (async)
+// LogDecision records an ACL decision through the shared audit writer.
+// Non-blocking: drops if the shared queue is full (same performance safety
+// valve as audit.AuditLogger.LogEvent).
 func (a *AuditLogger) LogDecision(ctx context.Context, decision *ACLDecision, principal models.Identity, resourceType, resourceID, operation, workspace string, sessionID uuid.UUID) {
+	if a.shared == nil {
+		return
+	}
 	entry := a.buildEntry(decision, principal, resourceType, resourceID, operation, workspace, sessionID)
-	// Non-blocking; drop if channel full (performance safety valve)
-	a.base.Enqueue(entry)
+	event := a.entryToEvent(entry)
+	a.shared.LogEvent(ctx, event)
+}
+
+// entryToEvent translates an ACL AuditLogEntry into an audit.AuditEvent
+// suitable for the shared writer. Field shape matches the INSERT that the
+// old acl.aclEntryBatchWriter performed (event_type='authorization',
+// success=ALLOW, error="access denied" on deny, metadata carries
+// decision/access_level/fallback_applied/rule_id plus any extras).
+func (a *AuditLogger) entryToEvent(entry *AuditLogEntry) *audit.AuditEvent {
+	success := entry.Decision == DecisionAllow
+	errorMsg := ""
+	if !success {
+		errorMsg = "access denied"
+	}
+
+	// Build the metadata map by reusing the JSON-side merge in
+	// buildACLMetadata, then unmarshalling back into a map. This keeps the
+	// merged shape identical to what the previous batched writer persisted
+	// (preserves caller-supplied extras alongside the ACL-specific fields).
+	var metadata map[string]interface{}
+	if raw, err := buildACLMetadata(entry); err == nil {
+		_ = json.Unmarshal(raw, &metadata)
+	}
+	if metadata == nil {
+		metadata = make(map[string]interface{})
+	}
+
+	return &audit.AuditEvent{
+		Timestamp:              entry.Timestamp,
+		EventType:              audit.EventTypeAuthorization,
+		ActorType:              entry.PrincipalType,
+		ActorID:                entry.PrincipalID,
+		SubjectType:            entry.SubjectType,
+		SubjectID:              entry.SubjectID,
+		RootSubjectType:        entry.RootSubjectType,
+		RootSubjectID:          entry.RootSubjectID,
+		AuthorityMode:          entry.AuthorityMode,
+		RootAuthorityGrantID:   entry.RootGrantID,
+		AuthorityGrantID:       entry.AuthorityGrantID,
+		ParentAuthorityGrantID: entry.ParentGrantID,
+		ResourceType:           entry.ResourceType,
+		ResourceID:             entry.ResourceID,
+		Operation:              entry.Operation,
+		Workspace:              entry.Workspace,
+		SessionID:              entry.SessionID,
+		GatewayID:              entry.GatewayID,
+		Success:                success,
+		ErrorMessage:           errorMsg,
+		Metadata:               metadata,
+		Source:                 audit.SourceGateway,
+	}
 }
 
 // buildACLMetadata merges the ACL-specific fields into the metadata JSONB.
@@ -111,87 +177,22 @@ func buildACLMetadata(entry *AuditLogEntry) ([]byte, error) {
 	return json.Marshal(merged)
 }
 
-// aclEntryBatchWriter writes a batch of AuditLogEntries in a single transaction.
-// It is used as the BatchWriter for BaseLogger[*AuditLogEntry].
-func aclEntryBatchWriter(ctx context.Context, db *sql.DB, entries []*AuditLogEntry) error {
-	if len(entries) == 0 {
-		return nil
-	}
-
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO comprehensive_audit_log (
-			timestamp, event_type, actor_type, actor_id, subject_type, subject_id,
-			root_subject_type, root_subject_id, authority_mode, root_authority_grant_id,
-			authority_grant_id, parent_authority_grant_id, resource_type, resource_id,
-			operation, workspace, session_id, gateway_id, success, error_message, metadata, source
-		) VALUES ($1, 'authorization', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, entry := range entries {
-		metadataJSON, err := buildACLMetadata(entry)
-		if err != nil {
-			return fmt.Errorf("failed to marshal metadata: %w", err)
-		}
-
-		success := entry.Decision == "ALLOW"
-		var errorMsg *string
-		if !success {
-			reason := "access denied"
-			errorMsg = &reason
-		}
-
-		_, err = stmt.ExecContext(ctx,
-			entry.Timestamp,
-			entry.PrincipalType,
-			entry.PrincipalID,
-			entry.SubjectType,
-			entry.SubjectID,
-			entry.RootSubjectType,
-			entry.RootSubjectID,
-			entry.AuthorityMode,
-			entry.RootGrantID,
-			entry.AuthorityGrantID,
-			entry.ParentGrantID,
-			entry.ResourceType,
-			entry.ResourceID,
-			entry.Operation,
-			entry.Workspace,
-			entry.SessionID,
-			entry.GatewayID,
-			success,
-			errorMsg,
-			metadataJSON,
-			audit.SourceGateway,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to insert audit entry: %w", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
+// Close releases adapter references. The shared writer's Close is owned
+// by the gateway shutdown sequence (not the ACL layer), so this is a
+// no-op that exists only to preserve the prior API.
+func (a *AuditLogger) Close() error {
+	a.shared = nil
+	a.db = nil
 	return nil
 }
 
-// Close stops the audit logger and flushes remaining entries
-func (a *AuditLogger) Close() error {
-	return a.base.Close()
-}
-
-// QueryAuditLog retrieves audit log entries matching the given filters
+// QueryAuditLog retrieves audit log entries matching the given filters.
+// Reads run against the same physical file the shared writer targets;
+// SQLite's WAL allows concurrent readers alongside the single writer.
 func (a *AuditLogger) QueryAuditLog(ctx context.Context, filter AuditLogFilter) ([]*AuditLogEntry, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("acl audit logger has no read database handle")
+	}
 	query := `
 		SELECT audit_id, timestamp, decision, access_level, principal_type, principal_id,
 		       subject_type, subject_id, root_subject_type, root_subject_id,
@@ -261,7 +262,7 @@ func (a *AuditLogger) QueryAuditLog(ctx context.Context, filter AuditLogFilter) 
 		args = append(args, filter.Limit)
 	}
 
-	rows, err := a.base.DB().QueryContext(ctx, query, args...)
+	rows, err := a.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query audit log: %w", err)
 	}
@@ -350,12 +351,16 @@ type AuditLogFilter struct {
 	Limit         int
 }
 
-// CleanupOldLogs removes audit logs older than the retention period
+// CleanupOldLogs removes audit logs older than the retention period.
+// Runs against the read-side DB handle; the shared writer is not involved.
 func (a *AuditLogger) CleanupOldLogs(ctx context.Context, retentionDays int) (int64, error) {
+	if a.db == nil {
+		return 0, fmt.Errorf("acl audit logger has no read database handle")
+	}
 	query := `SELECT cleanup_old_audit_logs($1)`
 
 	var deletedCount int64
-	err := a.base.DB().QueryRowContext(ctx, query, retentionDays).Scan(&deletedCount)
+	err := a.db.QueryRowContext(ctx, query, retentionDays).Scan(&deletedCount)
 	if err != nil {
 		return 0, fmt.Errorf("failed to cleanup old audit logs: %w", err)
 	}

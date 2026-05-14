@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -291,27 +290,8 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	// SIGHUP triggers a hot-reload of reloadable credentials.
-	sighup := make(chan os.Signal, 1)
-	signal.Notify(sighup, syscall.SIGHUP)
-	go func() {
-		for range sighup {
-			logging.Logger.Info().Msg("received SIGHUP, reloading configuration...")
-			reloaded, err := reloadableCfg.Reload()
-			if err != nil {
-				logging.Logger.Error().Err(err).Msg("config reload failed")
-				continue
-			}
-			// Re-initialize HMAC key if it changed.
-			if newKey := reloadableCfg.TokenHMACKey(); newKey != "" {
-				crypto.InitTokenHMAC([]byte(newKey))
-			}
-			if len(reloaded) == 0 {
-				logging.Logger.Info().Msg("config reload complete: no credential changes detected")
-			} else {
-				logging.Logger.Info().Strs("reloaded", reloaded).Msg("config reload complete")
-			}
-		}
-	}()
+	// Shared helper with aetherlite — keeps the two binaries in lockstep.
+	gateway.RunSIGHUPReloader(ctx, reloadableCfg)
 
 	// Backend variables — set by either lite-mode or standard initialization.
 	var db *sql.DB
@@ -597,9 +577,16 @@ func main() {
 
 	// Create the ACL service once so it is shared between the gateway server and the
 	// state provider, avoiding duplicate Casbin enforcer instances with independent caches.
+	//
+	// Audit writes funnel through the shared auditLogger constructed above
+	// (single batched writer goroutine), eliminating the SQLITE_BUSY WAL
+	// contention we previously hit when audit.AuditLogger and the old
+	// acl.AuditLogger each ran their own writer against
+	// comprehensive_audit_log. In postgres deployments there is one DB
+	// and one batcher, so the same constructor naturally works there too.
 	var sharedACLService *acl.Service
 	if db != nil {
-		sharedACLService = acl.NewService(db, cfg.Gateway.GatewayID)
+		sharedACLService = acl.NewServiceWithSharedAudit(db, auditLogger, db, cfg.Gateway.GatewayID)
 		gatewayOpts = append(gatewayOpts, gateway.WithACLService(sharedACLService))
 		logging.Logger.Debug().Msg("shared ACL service initialized")
 	}
@@ -635,23 +622,16 @@ func main() {
 		}),
 	}
 
-	// Create gRPC server with optional TLS (config-driven).
-	// When TLS is enabled we use a GetCertificate callback so that SIGHUP certificate
-	// rotation takes effect on the next TLS handshake without a server restart.
-	var grpcServer *grpc.Server
-	if tlsEnabled {
-		clientAuth := gateway.ParseClientAuth(cfg.Gateway.TLS.ClientAuth)
-		getCert := func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			cert := reloadableCfg.TLSCertificate()
-			if cert == nil {
-				return nil, fmt.Errorf("no TLS certificate loaded")
-			}
-			return cert, nil
-		}
-		grpcServer, err = gateway.NewGRPCServerWithDynamicTLS(getCert, cfg.Gateway.TLS.CAFile, clientAuth, serverOpts...)
-		if err != nil {
-			logging.Logger.Fatal().Err(err).Msg("failed to create TLS server")
-		}
+	// Create gRPC server with optional TLS via the shared helper. When TLS
+	// is enabled the helper wires a dynamic-cert callback against
+	// reloadableCfg so SIGHUP rotation lands on the next handshake without
+	// a server restart. Shared with aetherlite to keep the two binaries
+	// in lockstep.
+	grpcServer, tlsActive, err := gateway.NewGRPCServerFromConfig(cfg, reloadableCfg, serverOpts...)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Msg("failed to create gRPC server")
+	}
+	if tlsActive {
 		logging.Logger.Info().
 			Str("cert", cfg.Gateway.TLS.CertFile).
 			Str("key", cfg.Gateway.TLS.KeyFile).
@@ -659,7 +639,6 @@ func main() {
 			Str("client_auth", cfg.Gateway.TLS.ClientAuth).
 			Msg("TLS enabled (dynamic certificate rotation active)")
 	} else {
-		grpcServer = grpc.NewServer(serverOpts...)
 		logging.Logger.Debug().Msg("TLS disabled (insecure gRPC)")
 	}
 
@@ -700,7 +679,7 @@ func main() {
 	if db != nil {
 		agentRegistry = registry.NewAgentRegistry(db)
 		if redisClient != nil {
-			profileMgr = registry.NewOrchestratorProfileManager(db, redisClient)
+			profileMgr = registry.NewOrchestratorProfileManagerWithRedis(db, redisClient)
 		}
 	}
 

@@ -80,7 +80,7 @@ func InitializeOrchestrationServices(
 	logging.Logger.Debug().Msg("orchestrated queue manager initialized")
 
 	// Profile Manager (with actual Redis client)
-	profileManager := registry.NewOrchestratorProfileManager(db, redisClient)
+	profileManager := registry.NewOrchestratorProfileManagerWithRedis(db, redisClient)
 	logging.Logger.Debug().Msg("orchestrator profile manager initialized")
 
 	// Extended task store

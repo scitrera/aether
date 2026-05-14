@@ -52,13 +52,37 @@ func DefaultConfig() *Config {
 	}
 }
 
+// SessionRegistry is the narrow surface the cleanup service needs from a
+// session store: leader-election lock acquire/release/refresh plus a
+// stale-lock sweeper. Both *state.SessionRegistry (Redis) and
+// *state.BadgerSessionRegistry (lite) satisfy this surface.
+//
+// History: until 2026-05-13 this field was typed as *state.SessionRegistry.
+// In lite mode the gateway type-asserted *state.BadgerSessionRegistry to the
+// concrete Redis type, which failed silently and left the field nil — the
+// `if s.sessionRegistry == nil` guard in StartBackground then bypassed
+// leader election entirely. Functional degradation, but not a crash. The
+// interface restores symmetry: lite mode now uses real leader-election
+// state (trivially: there's only one candidate), and the seam is in place
+// for a future multi-node lite story without retyping the struct field.
+type SessionRegistry interface {
+	AcquireLock(ctx context.Context, identity models.Identity, sessionID string) (bool, error)
+	ReleaseLock(ctx context.Context, identity models.Identity, sessionID string) error
+	RefreshLock(ctx context.Context, identity models.Identity, sessionID string) (bool, error)
+	CleanupStaleLocks(ctx context.Context) (int, error)
+}
+
+// compile-time conformance.
+var _ SessionRegistry = (*state.SessionRegistry)(nil)
+var _ SessionRegistry = (*state.BadgerSessionRegistry)(nil)
+
 // Service provides cleanup operations for the gateway.
 // It can be used for both background goroutines and standalone cleanup commands.
 type Service struct {
 	taskStore       *tasks.TaskStore
 	taskService     *orchestration.TaskAssignmentService
 	dispatcher      orchestration.TaskDispatcher
-	sessionRegistry *state.SessionRegistry
+	sessionRegistry SessionRegistry
 	config          *Config
 }
 
@@ -66,7 +90,7 @@ type Service struct {
 func NewService(
 	taskStore *tasks.TaskStore,
 	taskService *orchestration.TaskAssignmentService,
-	sessionRegistry *state.SessionRegistry,
+	sessionRegistry SessionRegistry,
 	config *Config,
 ) *Service {
 	if config == nil {

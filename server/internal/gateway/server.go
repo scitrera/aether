@@ -17,7 +17,6 @@ import (
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/internal/orchestration"
 	"github.com/scitrera/aether/internal/quota"
-	"github.com/scitrera/aether/internal/state"
 	"github.com/scitrera/aether/internal/timer"
 	"github.com/scitrera/aether/pkg/tasks"
 )
@@ -569,8 +568,13 @@ func (s *GatewayServer) SetOrchestrationServices(orchestration *OrchestrationSer
 //
 // Deprecated: Use WithCleanupService option with NewGatewayServer instead.
 func (s *GatewayServer) SetCleanupService(cleanupConfig *cleanup.Config) {
-	// Extract concrete SessionRegistry for cleanup service (which requires it)
-	sessionRegistry, _ := s.sessions.(*state.SessionRegistry)
+	// Adapt the gateway's SessionManager to the cleanup-service surface. Both
+	// *state.SessionRegistry (Redis) and *state.BadgerSessionRegistry (lite)
+	// satisfy cleanup.SessionRegistry. Earlier code asserted only the concrete
+	// Redis type and silently dropped lite-mode leader election (functional
+	// regression, not a crash, but still wrong); the narrower interface assert
+	// produces a non-nil value for either backend.
+	sessionRegistry, _ := s.sessions.(cleanup.SessionRegistry)
 
 	// Create cleanup service with available dependencies
 	cleanupSvc := cleanup.NewService(

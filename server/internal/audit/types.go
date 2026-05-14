@@ -17,7 +17,15 @@ const (
 	EventTypeTask       = "task"       // Task lifecycle operations
 	EventTypeAdmin      = "admin"      // Administrative actions
 	EventTypeACL        = "acl"        // ACL decisions (for integration with existing ACL audit)
-	EventTypeCustom     = "custom"     // Custom event type for principal-submitted events
+	// EventTypeAuthorization is the canonical event_type string used by the
+	// ACL audit adapter (internal/acl) when forwarding decisions through the
+	// shared audit writer. Distinct from EventTypeACL: "authorization" is
+	// the value that already lives in comprehensive_audit_log per migrations
+	// 008–018 (e.g. the acl_audit_log view filters on it), so we preserve
+	// the schema's existing convention rather than rewriting historical
+	// rows. The acl.AuditLogger.entryToEvent translation sets this value.
+	EventTypeAuthorization = "authorization"
+	EventTypeCustom        = "custom" // Custom event type for principal-submitted events
 )
 
 // Source values distinguish gateway-emitted audit rows from principal-submitted ones.
@@ -202,6 +210,7 @@ func DefaultConfig() *Config {
 			EventTypeTask,
 			EventTypeAdmin,
 			EventTypeACL,
+			EventTypeAuthorization,
 		},
 		VerbosityLevel: DefaultVerbosityLevel,
 		BatchSize:      DefaultBatchSize,
@@ -237,7 +246,8 @@ func (c *Config) IsEventTypeEnabled(eventType string) bool {
 func ValidateEventType(eventType string) error {
 	switch eventType {
 	case EventTypeConnection, EventTypeAuth, EventTypeMessage,
-		EventTypeKV, EventTypeTask, EventTypeAdmin, EventTypeACL, EventTypeCustom:
+		EventTypeKV, EventTypeTask, EventTypeAdmin, EventTypeACL,
+		EventTypeAuthorization, EventTypeCustom:
 		return nil
 	default:
 		return ErrInvalidEventType
@@ -271,6 +281,8 @@ func EventTypeName(eventType string) string {
 		return "Administrative"
 	case EventTypeACL:
 		return "Access Control"
+	case EventTypeAuthorization:
+		return "Authorization"
 	default:
 		return "Unknown"
 	}

@@ -18,12 +18,32 @@ import (
 	"github.com/scitrera/aether/pkg/tasks"
 )
 
+// SessionLivenessRegistry is the narrow surface TaskAssignmentService needs
+// from a session registry: "is this identity online right now?" plus the
+// context-aware reconciliation probe. Both *state.SessionRegistry (Redis)
+// and *state.BadgerSessionRegistry (lite) satisfy this interface, so the
+// concrete-typed field no longer forces aetherlite to pass nil.
+//
+// History: until 2026-05-13 this field was typed as *state.SessionRegistry,
+// which aetherlite could not supply (its registry is Badger-backed). Passing
+// nil compiled cleanly and the gateway started up healthy, but the first
+// chat message creating an agent-targeted task crashed inside
+// handleTargeted → sessionRegistry.IsOnline.
+type SessionLivenessRegistry interface {
+	IsOnline(identity models.Identity) bool
+	IsActive(ctx context.Context, identity string) (bool, error)
+}
+
+// compile-time conformance: keep both concrete impls in sync with the interface.
+var _ SessionLivenessRegistry = (*state.SessionRegistry)(nil)
+var _ SessionLivenessRegistry = (*state.BadgerSessionRegistry)(nil)
+
 // TaskAssignmentService handles task creation and assignment for orchestration patterns
 type TaskAssignmentService struct {
 	db              *sql.DB
 	taskStore       *tasks.TaskStore
 	agentRegistry   *registry.AgentRegistry
-	sessionRegistry *state.SessionRegistry
+	sessionRegistry SessionLivenessRegistry
 	queueManager    *OrchestratedQueueManager // Kept for backward compatibility
 	profileManager  *registry.OrchestratorProfileManager
 	tokenStore      state.TokenStore
@@ -47,10 +67,17 @@ func NewTaskAssignmentService(
 	db *sql.DB,
 	taskStore *tasks.TaskStore,
 	agentRegistry *registry.AgentRegistry,
-	sessionRegistry *state.SessionRegistry,
+	sessionRegistry SessionLivenessRegistry,
 	queueManager *OrchestratedQueueManager,
 	profileManager *registry.OrchestratorProfileManager,
 ) *TaskAssignmentService {
+	// Defensive: the consumer code derefs sessionRegistry unconditionally in
+	// handleTargeted and createOrchestratedStartupTask. Callers that pass nil
+	// would crash on the first agent-targeted task; surface the misconfiguration
+	// in startup logs instead of a runtime SIGSEGV.
+	if sessionRegistry == nil {
+		logging.Logger.Warn().Msg("NewTaskAssignmentService: sessionRegistry is nil — agent-targeted tasks will panic; wire a real SessionLivenessRegistry impl")
+	}
 	return &TaskAssignmentService{
 		db:              db,
 		taskStore:       taskStore,

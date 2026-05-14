@@ -1,0 +1,21 @@
+-- Migration 003: Phase 0 authority-grant and audit-lineage foundation
+-- SQLite counterpart of postgres migration 012_authority_grants_phase0.sql.
+--
+-- The acl_authority_grants table and the authority-lineage columns on
+-- comprehensive_audit_log (subject_type/id, root_subject_type/id,
+-- authority_mode, root_authority_grant_id, authority_grant_id,
+-- parent_authority_grant_id) are already created by 001_full_schema.sql
+-- (its consolidated schema bakes in 001-012). All CREATE / ALTER statements
+-- below are therefore no-ops on a fresh database; they exist here only as
+-- guards for any pre-existing aether-lite databases that pre-date the
+-- consolidated 001 file.
+--
+-- The postgres-side acl_audit_log VIEW is skipped (see note in 002).
+
+-- The acl_authority_grants table is fully defined in 001_full_schema.sql.
+-- CREATE TABLE IF NOT EXISTS would simply be a no-op here, so nothing to do.
+
+-- Lineage columns are already present on comprehensive_audit_log per 001.
+-- SQLite cannot conditionally guard ALTER TABLE ADD COLUMN on "if not exists"
+-- (older versions error out if the column already exists). Treat this whole
+-- migration as a no-op; if you are creating a fresh DB it ran from 001.

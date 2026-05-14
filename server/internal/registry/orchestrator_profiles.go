@@ -20,21 +20,43 @@ type OrchestratorProfile struct {
 	LastHeartbeat  time.Time
 }
 
+// ProfileStateStore is the runtime state surface OrchestratorProfileManager
+// needs from a shared/distributed counter substrate.
+//
+// Today only the round-robin Incr counter is required; the persistent
+// orchestrator_profiles table lives in SQL (opm.db). Keeping the surface
+// tight: AetherLite needs a Badger impl, the full gateway uses Redis.
+type ProfileStateStore interface {
+	// Incr atomically increments the counter at key and returns the new
+	// value. Missing keys are treated as 0 (Redis INCR semantics).
+	// Used to drive round-robin orchestrator selection across gateway
+	// instances.
+	Incr(ctx context.Context, key string) (int64, error)
+}
+
 // OrchestratorProfileManager manages orchestrator profile registration and selection
 type OrchestratorProfileManager struct {
 	db        *sql.DB
-	redis     redis.UniversalClient
+	state     ProfileStateStore
 	mu        sync.RWMutex
-	profileRR map[string]int64 // Round-robin counters per profile
+	profileRR map[string]int64 // In-memory fallback when state store fails
 }
 
 // NewOrchestratorProfileManager creates a new orchestrator profile manager
-func NewOrchestratorProfileManager(db *sql.DB, redisClient redis.UniversalClient) *OrchestratorProfileManager {
+// backed by the given state store. Use NewRedisProfileStateStore for the
+// full gateway path or NewBadgerProfileStateStore for AetherLite.
+func NewOrchestratorProfileManager(db *sql.DB, state ProfileStateStore) *OrchestratorProfileManager {
 	return &OrchestratorProfileManager{
 		db:        db,
-		redis:     redisClient,
+		state:     state,
 		profileRR: make(map[string]int64),
 	}
+}
+
+// NewOrchestratorProfileManagerWithRedis is the historical redis-backed
+// constructor, retained as a thin convenience helper for cmd/gateway.
+func NewOrchestratorProfileManagerWithRedis(db *sql.DB, redisClient redis.UniversalClient) *OrchestratorProfileManager {
+	return NewOrchestratorProfileManager(db, NewRedisProfileStateStore(redisClient))
 }
 
 // RegisterProfiles registers an orchestrator's supported profiles
@@ -196,10 +218,10 @@ func (opm *OrchestratorProfileManager) SelectOrchestrator(
 	// Use Redis to maintain round-robin counter across gateway instances
 	key := fmt.Sprintf("orch:rr:%s:%s", workspace, profile)
 
-	// Increment and get counter
-	counter, err := opm.redis.Incr(ctx, key).Result()
+	// Increment and get counter (Redis or Badger, depending on wiring).
+	counter, err := opm.state.Incr(ctx, key)
 	if err != nil {
-		// Fallback to in-memory round-robin if Redis fails
+		// Fallback to in-memory round-robin if state store fails.
 		opm.mu.Lock()
 		counter = opm.profileRR[key]
 		opm.profileRR[key]++

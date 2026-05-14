@@ -401,6 +401,68 @@ func (r *BadgerSessionRegistry) IsActive(ctx context.Context, identity string) (
 	return true, nil
 }
 
+// IsOnline mirrors SessionRegistry.IsOnline: returns true when an identity
+// has a live session lock in Badger. Used by TaskAssignmentService.handleTargeted
+// to decide whether to deliver immediately or trigger orchestration. Without
+// this method the lite gateway would crash with SIGSEGV the first time a chat
+// message creates an agent-targeted task.
+func (r *BadgerSessionRegistry) IsOnline(identity models.Identity) bool {
+	active, err := r.IsActive(context.Background(), identity.String())
+	if err != nil {
+		return false
+	}
+	return active
+}
+
+// AcquireLock implements the simple SetNX-style acquire used by the cleanup
+// service's leader election. Mirrors SessionRegistry.AcquireLock: returns
+// (true, nil) when the lock was claimed fresh, (false, nil) when an existing
+// lock blocks acquisition. Badger TTL handles auto-expiry just like Redis.
+//
+// AetherLite is a single-node deployment, so "leader election" is effectively
+// trivial — there is only one candidate. The contract still has to be honored
+// because cleanup.BackgroundRunner.leaderElectionLoop calls AcquireLock
+// unconditionally once a non-nil sessionRegistry is wired.
+func (r *BadgerSessionRegistry) AcquireLock(ctx context.Context, identity models.Identity, sessionID string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	key := lockKey(identity.String())
+	acquired := false
+
+	err := r.db.Update(func(txn *badger.Txn) error {
+		_, getErr := txn.Get(key)
+		if getErr == nil {
+			// Lock already held by some other holder; reject.
+			return nil
+		}
+		if getErr != badger.ErrKeyNotFound {
+			return getErr
+		}
+		entry := badger.NewEntry(key, []byte(sessionID)).WithTTL(LockTTL)
+		if setErr := txn.SetEntry(entry); setErr != nil {
+			return setErr
+		}
+		acquired = true
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("badger AcquireLock: %w", err)
+	}
+	return acquired, nil
+}
+
+// CleanupStaleLocks is a no-op for Badger. Badger entries written via
+// WithTTL auto-expire without a sweeper. The Redis impl exists to delete
+// legacy locks created before TTL was introduced; that migration concept
+// has no analog in the lite path, which never had un-TTL'd locks. The
+// method exists so BadgerSessionRegistry satisfies the cleanup-service
+// SessionRegistry interface and a real (non-nil) impl can be wired in
+// lite mode for the leader-election code path.
+func (r *BadgerSessionRegistry) CleanupStaleLocks(ctx context.Context) (int, error) {
+	return 0, nil
+}
+
 // FindHealthyServiceInstances scans the Badger lock keyspace for sv::{impl}::*
 // holders. The TTL filter is intentionally a no-op in lite mode: a single-node
 // deployment without a Redis lock manager has no notion of "TTL within 5s" and

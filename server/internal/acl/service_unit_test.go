@@ -170,7 +170,7 @@ func TestCheckAccess_NilEnforcerDeniesAccess(t *testing.T) {
 	svc := &Service{
 		db:        db,
 		enforcer:  nil, // nil enforcer — must deny all access (fail-closed)
-		audit:     NewAuditLogger(db, "test-gw"),
+		audit:     NewAuditLogger(nil, db, "test-gw"),
 		gatewayID: "test-gw",
 	}
 	defer svc.Close()

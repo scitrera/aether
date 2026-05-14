@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/scitrera/aether/internal/audit"
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/pkg/models"
 )
@@ -30,21 +31,76 @@ type Service struct {
 	audit     *AuditLogger
 	gatewayID string
 
+	// ownsAudit is true when this Service constructed its own private
+	// *audit.AuditLogger (legacy NewService/NewServiceWithAuditDB compat
+	// path) and is therefore responsible for Closing it. When the audit
+	// writer is shared (NewServiceWithSharedAudit), the caller owns its
+	// lifecycle and Close() must not stop the goroutine.
+	ownsAudit bool
+
 	// fallbackCache caches per-category fallback policy query results to avoid
 	// hitting the database on every unenforced access check.
 	fallbackCache sync.Map // key: string (category), value: fallbackCacheEntry
 }
 
-// NewService creates a new ACL service
+// NewService creates a new ACL service whose ACL rules and audit log both
+// live in the same database (postgres path, or single-file aetherlite).
+//
+// COMPAT PATH: builds a private *audit.AuditLogger writer goroutine in
+// addition to the gateway's own. Callers that want a single contention-free
+// writer should use NewServiceWithSharedAudit instead and pass the same
+// audit.AuditLogger that the gateway constructs at startup.
 func NewService(db *sql.DB, gatewayID string) *Service {
+	return NewServiceWithAuditDB(db, db, gatewayID)
+}
+
+// NewServiceWithAuditDB creates a new ACL service backed by `db` for ACL
+// state (acl_rules, acl_fallback_policies, acl_authority_grants) and by
+// `auditDB` for the comprehensive_audit_log writer.
+//
+// COMPAT PATH: this constructor builds its own *audit.AuditLogger writer
+// goroutine. Two writers (gateway audit + ACL audit) targeting the same
+// table re-introduce the WAL writer-vs-writer contention this refactor
+// eliminates. Production gateway/aetherlite paths now call
+// NewServiceWithSharedAudit so a single writer drains both producers;
+// this wrapper exists only for utility tooling (init-secrets, authproxy)
+// where the audit batcher is short-lived or contention is not a concern.
+func NewServiceWithAuditDB(db, auditDB *sql.DB, gatewayID string) *Service {
+	// Build a private audit writer with default config. Lifetime tied to
+	// the Service via Close().
+	privateAudit := audit.NewAuditLogger(auditDB, gatewayID, audit.DefaultConfig())
+	svc := newServiceWithShared(db, privateAudit, auditDB, gatewayID)
+	svc.ownsAudit = true
+	return svc
+}
+
+// NewServiceWithSharedAudit creates an ACL service that funnels audit
+// writes through `sharedAudit` (owned by the caller — typically the
+// gateway constructed it at startup). `db` carries ACL rule state;
+// `auditDB` is the read-side handle for ACL audit queries and must
+// point at the same physical file as `sharedAudit` (audit.db in lite,
+// aether.db in postgres). Pass the same *sql.DB for db/auditDB in
+// single-file deployments.
+//
+// This is the contention-free path: only one batched writer goroutine
+// (the shared one) ever touches comprehensive_audit_log.
+func NewServiceWithSharedAudit(db *sql.DB, sharedAudit *audit.AuditLogger, auditDB *sql.DB, gatewayID string) *Service {
+	return newServiceWithShared(db, sharedAudit, auditDB, gatewayID)
+}
+
+// newServiceWithShared is the shared body used by both ACL service
+// constructors. The enforcer is built from `db`; the audit adapter wraps
+// `sharedAudit` (writes) and `auditDB` (reads).
+func newServiceWithShared(db *sql.DB, sharedAudit *audit.AuditLogger, auditDB *sql.DB, gatewayID string) *Service {
 	enforcer, err := NewCasbinEnforcer(db)
 	if err != nil {
-		// If the enforcer fails to initialize (e.g., table doesn't exist yet),
-		// create a service without it. CheckAccess will deny all requests when
-		// the enforcer is nil to prevent unauthorized access (fail-closed).
+		// If the enforcer fails to initialize (e.g., table doesn't exist
+		// yet), create a service without it. CheckAccess will deny all
+		// requests when the enforcer is nil to prevent unauthorized
+		// access (fail-closed).
 		return &Service{
 			db:        db,
-			audit:     NewAuditLogger(db, gatewayID),
+			audit:     NewAuditLogger(sharedAudit, auditDB, gatewayID),
 			gatewayID: gatewayID,
 		}
 	}
@@ -52,7 +108,7 @@ func NewService(db *sql.DB, gatewayID string) *Service {
 	return &Service{
 		db:        db,
 		enforcer:  enforcer,
-		audit:     NewAuditLogger(db, gatewayID),
+		audit:     NewAuditLogger(sharedAudit, auditDB, gatewayID),
 		gatewayID: gatewayID,
 	}
 }
@@ -60,9 +116,21 @@ func NewService(db *sql.DB, gatewayID string) *Service {
 // NOTE: ACL migrations are now handled by migrations/runner.go using embedded SQL files.
 // See migrations/003_acl_schema.sql for the schema definition.
 
-// Close shuts down the ACL service and flushes audit logs
+// Close shuts down the ACL service and, when this Service owns its
+// private audit writer (legacy NewService / NewServiceWithAuditDB
+// constructors), flushes and stops the underlying audit goroutine.
+// When the writer is shared (NewServiceWithSharedAudit) the caller owns
+// it and Close() does not stop the goroutine.
 func (s *Service) Close() error {
-	return s.audit.Close()
+	if s.ownsAudit && s.audit != nil && s.audit.shared != nil {
+		if err := s.audit.shared.Close(); err != nil {
+			return err
+		}
+	}
+	if s.audit != nil {
+		_ = s.audit.Close()
+	}
+	return nil
 }
 
 // CheckAccess is the main entry point for access control checks.

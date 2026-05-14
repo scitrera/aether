@@ -277,8 +277,8 @@ func TestLoadConfigFromEnv_AllEventTypes(t *testing.T) {
 
 	cfg := LoadConfigFromEnv()
 
-	if len(cfg.EnabledEventTypes) != 7 {
-		t.Errorf("'all' should produce 7 event types, got %d", len(cfg.EnabledEventTypes))
+	if len(cfg.EnabledEventTypes) != 8 {
+		t.Errorf("'all' should produce 8 event types, got %d", len(cfg.EnabledEventTypes))
 	}
 }
 
@@ -288,7 +288,7 @@ func TestLoadConfigFromEnv_InvalidEventTypes(t *testing.T) {
 	cfg := LoadConfigFromEnv()
 
 	// Should fall back to default since no valid types
-	if len(cfg.EnabledEventTypes) != 7 {
+	if len(cfg.EnabledEventTypes) != 8 {
 		t.Errorf("invalid types should keep default, got %d", len(cfg.EnabledEventTypes))
 	}
 }
