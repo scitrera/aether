@@ -284,7 +284,62 @@ func TestCleanupConfig_GetReconciliationInterval(t *testing.T) {
 	}
 }
 
+// clearConfigOverrideEnv clears (via t.Setenv to "") every env var that
+// Config.ApplyEnvOverrides reads. Used by tests that assert on YAML-loaded
+// config to guarantee no ambient env (CI service ports, dev-shell exports,
+// etc.) overrides the fixture and corrupts the assertion.
+//
+// Empty string is treated as "unset" by the override logic in gateway.go
+// (every override checks `if v := os.Getenv(...); v != ""` before applying),
+// so t.Setenv("X", "") is the right way to neutralize without touching the
+// actual process environment after the test.
+//
+// Keep this list in sync with gateway.go::ApplyEnvOverrides. If a new
+// override is added there and the corresponding env var leaks into CI, the
+// next TestLoad-style assertion will start failing with a confusing
+// "want X, got Y" diff like the CI #25890721308 REDIS_ADDR case.
+func clearConfigOverrideEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"PORT",
+		"AETHER_GATEWAY_ID",
+		"AETHER_ADMIN_PORT",
+		"AETHER_ADMIN_ENABLED",
+		"AETHER_ADMIN_API_KEY",
+		"AETHER_ADMIN_TLS_CERT_FILE",
+		"AETHER_ADMIN_TLS_KEY_FILE",
+		"POSTGRES_HOST",
+		"POSTGRES_PORT",
+		"POSTGRES_USER",
+		"POSTGRES_PASSWORD",
+		"POSTGRES_DATABASE",
+		"REDIS_ADDR",
+		"REDIS_PASSWORD",
+		"STREAM_URL",
+		"AMQP_URL",
+		"AETHER_TLS_CERT_FILE",
+		"AETHER_TLS_KEY_FILE",
+		"AETHER_TLS_CA_FILE",
+		"AETHER_TLS_CLIENT_AUTH",
+		"AETHER_ACL_REQUIRED",
+		"AETHER_AUTH_MODES",
+		"AETHER_TOKEN_HMAC_KEY",
+		"AETHER_LOG_LEVEL",
+		"AETHER_AUDIT_ENABLED",
+		"AETHER_AUDIT_BATCH_SIZE",
+		"AETHER_AUDIT_FLUSH_PERIOD",
+		"AETHER_AUDIT_RETENTION_DAYS",
+		"AETHER_AUDIT_CHANNEL_BUFFER",
+		"AETHER_AUDIT_VERBOSITY_LEVEL",
+		"AETHER_AUDIT_EVENT_TYPES",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
 func TestLoad(t *testing.T) {
+	clearConfigOverrideEnv(t)
+
 	// Create a temporary config file
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "test.yaml")
@@ -817,6 +872,8 @@ func TestConfig_Validate(t *testing.T) {
 }
 
 func TestGatewayTLSConfig_YAML(t *testing.T) {
+	clearConfigOverrideEnv(t)
+
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "tls.yaml")
 
