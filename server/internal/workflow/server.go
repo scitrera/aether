@@ -16,6 +16,17 @@ import (
 
 	wfmigrations "github.com/scitrera/aether/internal/workflow/migrations"
 	wfmigrationslite "github.com/scitrera/aether/internal/workflow/migrations/sqlite"
+
+	// Register the "sqlite_compat" driver used by lite-mode workflow.db.
+	// dbcompat wraps modernc.org/sqlite with timestamp-coercion and
+	// PostgreSQL-flavored SQL rewriting — without it, columns like
+	// next_fire_at (stored as Go's time.Time.String() format) come back
+	// as plain strings and break rows.Scan into *time.Time, producing
+	// the recurring "scheduler poll error: unsupported Scan ... type
+	// string into type *time.Time" log line. dbcompat also transitively
+	// registers the base "sqlite" driver, so this is the only driver
+	// import the workflow package needs.
+	_ "github.com/scitrera/aether/pkg/dbcompat"
 )
 
 // Server is the top-level workflow server that orchestrates all components.
@@ -208,7 +219,14 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) initDatabase(ctx context.Context) error {
 	if s.cfg.Mode == ModeLite {
 		dsn := s.cfg.SQLite.DSN()
-		db, err := sql.Open("sqlite", dsn)
+		// Use sqlite_compat (not bare "sqlite") so columns containing Go
+		// time.Time.String() values — written by ExecContext when a
+		// *time.Time parameter is bound — get coerced back to time.Time
+		// at Scan time. Without this, next_fire_at / last_fired_at and
+		// any other *time.Time scan targets fail with "unsupported Scan
+		// ... type string into type *time.Time" and the scheduler poll
+		// log fills up.
+		db, err := sql.Open("sqlite_compat", dsn)
 		if err != nil {
 			return fmt.Errorf("opening SQLite database %s: %w", dsn, err)
 		}
