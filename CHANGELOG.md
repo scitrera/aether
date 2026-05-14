@@ -126,6 +126,7 @@ Initial public OSS release of the Aether gateway, SDKs (Go, Python, TypeScript),
 
 ---
 
-[Unreleased]: https://github.com/scitrera/aether/compare/v0.1.59...HEAD
+[Unreleased]: https://github.com/scitrera/aether/compare/v0.1.60...HEAD
+[0.1.60]: https://github.com/scitrera/aether/compare/v0.1.59...v0.1.60
 [0.1.59]: https://github.com/scitrera/aether/compare/v0.1.58...v0.1.59
 [0.1.58]: https://github.com/scitrera/aether/releases/tag/v0.1.58
