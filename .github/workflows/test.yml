@@ -75,8 +75,27 @@ jobs:
           - 55552:5552
           - 55672:5672
         env:
-          RABBITMQ_STREAM_ADVERTISED_HOST: 127.0.0.1
-          RABBITMQ_STREAM_ADVERTISED_PORT: '55552'
+          # Force RabbitMQ Streams to advertise an address the test client
+          # (running on the runner host, not inside the docker network) can
+          # actually reach. Without this, the broker hands clients its
+          # Docker-generated container hostname (e.g. b58b5094e4dc) in the
+          # Metadata response; the runner's resolver returns NXDOMAIN and
+          # all producer/consumer connection attempts fail with
+          # `lookup <hostname> on 127.0.0.53:53: server misbehaving`.
+          #
+          # RABBITMQ_STREAM_ADVERTISED_HOST / _PORT are NOT recognized env
+          # vars — the stream-plugin's nested config keys
+          # (`stream.advertised_host`, `stream.advertised_port`) don't have
+          # env-var auto-mappings in the official RabbitMQ image. Setting
+          # them does nothing, which is what caused the silent failure.
+          #
+          # RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS IS honored: the entrypoint
+          # forwards it to the Erlang VM, which applies the values directly
+          # to the rabbitmq_stream application before plugin start. This is
+          # the GHA-compatible equivalent of the rabbitmq.conf snippet used
+          # by server/scripts/run_proxy_load_test.sh and
+          # server/deployments/docker-compose/nginx/rabbitmq.conf.
+          RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: '-rabbitmq_stream advertised_host "127.0.0.1" -rabbitmq_stream advertised_port 55552'
         options: >-
           --health-cmd "rabbitmq-diagnostics -q ping"
           --health-interval 15s
