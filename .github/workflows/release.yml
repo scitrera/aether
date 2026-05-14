@@ -3,6 +3,17 @@ name: Release
 on:
   push:
     tags: [ 'v*.*.*' ]
+  # Manual trigger lets us re-run a failed release without re-tagging
+  # (re-tagging can re-trigger sibling tag-on-push workflows that
+  # succeeded last time and are not idempotent on re-runs). Pick the
+  # existing tag in the Actions UI as the workflow ref, OR pass it
+  # explicitly via the `tag` input below — the input wins when set.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.1.60). Leave blank to use the ref selected in the UI.'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -14,6 +25,11 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # On workflow_dispatch with a `tag` input, check out the
+          # tag's commit explicitly so subsequent steps see the same
+          # tree state the tagged release was built from. On tag push
+          # this falls through to the default (github.ref).
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
@@ -33,3 +49,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          # When triggered manually with a `tag` input, target that tag
+          # explicitly. Otherwise fall back to softprops' default of
+          # github.ref (which is the tag for push events, or whatever
+          # the user selected in the UI for workflow_dispatch).
+          tag_name: ${{ inputs.tag || '' }}

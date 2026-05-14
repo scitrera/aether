@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -601,11 +602,18 @@ func TestComposite_ShutdownClosesBothSurfaces(t *testing.T) {
 
 	h.cancel()
 
-	// The Run goroutine should exit within a bounded time.
+	// The Run goroutine should exit within a bounded time. 30s is generous
+	// for any reasonable CI runner load spike (the original 5s flaked on
+	// GHA under contention even though local runs return in ~1s). If we
+	// genuinely deadlock, 30s is still well below the per-test default
+	// timeout, and the goroutine-stack dump below names where Run is
+	// blocked — turning a "didn't exit" mystery into actionable evidence.
 	select {
 	case <-h.done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("runner Run goroutine did not exit after context cancel")
+	case <-time.After(30 * time.Second):
+		buf := make([]byte, 1<<20)
+		n := runtime.Stack(buf, true)
+		t.Fatalf("runner Run goroutine did not exit after context cancel; goroutine dump:\n%s", buf[:n])
 	}
 }
 
