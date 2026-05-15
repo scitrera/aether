@@ -139,7 +139,7 @@ func TestTaskAssignmentServiceCancelTaskRevokesAuthorityGrant(t *testing.T) {
 
 	ctx := context.Background()
 	taskStore := taskpg.New(testDB.DB)
-	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
+	service := NewTaskAssignmentService(taskStore, nil, nil, nil, nil)
 	grantService := &stubAuthorityGrantService{}
 	service.SetAuthorityGrantService(grantService)
 
@@ -183,7 +183,7 @@ func TestTaskAssignmentServiceCancelTaskDoesNotRevokeOnlyRoot(t *testing.T) {
 
 	ctx := context.Background()
 	taskStore := taskpg.New(testDB.DB)
-	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
+	service := NewTaskAssignmentService(taskStore, nil, nil, nil, nil)
 	grantService := &stubAuthorityGrantService{}
 	service.SetAuthorityGrantService(grantService)
 
@@ -248,7 +248,7 @@ func newTestTaskService(t *testing.T) (*TaskAssignmentService, string, string) {
 	sessionRegistry := state.NewSessionRegistryFromClient(redisClient)
 
 	taskStore := taskpg.New(testDB.DB)
-	service := NewTaskAssignmentService(testDB.DB, taskStore, registryStore, sessionRegistry, nil, nil)
+	service := NewTaskAssignmentService(taskStore, registryStore, sessionRegistry, nil, nil)
 
 	workspace := "fixaa-test-ws"
 	return service, implementation, workspace
@@ -617,7 +617,7 @@ func TestStartTaskWithAgent_RetiresQueueRow(t *testing.T) {
 
 	ctx := context.Background()
 	taskStore := taskpg.New(testDB.DB)
-	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
+	service := NewTaskAssignmentService(taskStore, nil, nil, nil, nil)
 	stub := &stubDispatcher{}
 	service.SetOrchestratorDispatcher(stub)
 
@@ -662,7 +662,7 @@ func TestCompleteTask_RetiresQueueRow(t *testing.T) {
 
 	ctx := context.Background()
 	taskStore := taskpg.New(testDB.DB)
-	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
+	service := NewTaskAssignmentService(taskStore, nil, nil, nil, nil)
 	stub := &stubDispatcher{}
 	service.SetOrchestratorDispatcher(stub)
 
@@ -704,7 +704,7 @@ func TestFailTask_RetiresQueueRow(t *testing.T) {
 
 	ctx := context.Background()
 	taskStore := taskpg.New(testDB.DB)
-	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
+	service := NewTaskAssignmentService(taskStore, nil, nil, nil, nil)
 	stub := &stubDispatcher{}
 	service.SetOrchestratorDispatcher(stub)
 
@@ -753,7 +753,7 @@ func TestCancelTask_RetiresQueueRow(t *testing.T) {
 
 	ctx := context.Background()
 	taskStore := taskpg.New(testDB.DB)
-	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
+	service := NewTaskAssignmentService(taskStore, nil, nil, nil, nil)
 	stub := &stubDispatcher{}
 	service.SetOrchestratorDispatcher(stub)
 
@@ -803,7 +803,7 @@ func TestStartTaskWithAgent_NoDispatcherIsSafe(t *testing.T) {
 	ctx := context.Background()
 	taskStore := taskpg.New(testDB.DB)
 	// Intentionally no SetOrchestratorDispatcher call.
-	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
+	service := NewTaskAssignmentService(taskStore, nil, nil, nil, nil)
 
 	taskID := uuid.New().String()
 	_, err := testDB.DB.ExecContext(ctx, `

@@ -101,7 +101,6 @@ func InitializeOrchestrationServices(
 
 	// Task Assignment Service (fully wired with dependencies)
 	taskService := orchestration.NewTaskAssignmentService(
-		db,
 		orchestrationTaskStore,
 		registryStore,
 		sessionRegistry,

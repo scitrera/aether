@@ -303,7 +303,6 @@ func main() {
 		QueueCloser: orchestration.NewNoopQueueCloser(),
 		TokenStore:  tokenStore,
 		TaskService: orchestration.NewTaskAssignmentService(
-			db,
 			taskStore,
 			registryStore,
 			sessions, // orchestration.SessionLivenessRegistry — was nil; consumer derefs IsOnline.

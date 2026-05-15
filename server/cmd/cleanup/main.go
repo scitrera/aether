@@ -140,7 +140,6 @@ func main() {
 	var taskService *orchestration.TaskAssignmentService
 	if db != nil {
 		taskService = orchestration.NewTaskAssignmentService(
-			db,
 			taskStore,
 			nil, // agentRegistry - not needed for reconciliation
 			sessions,

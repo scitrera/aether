@@ -135,7 +135,7 @@ func initLiteBackends(ctx context.Context, cfg *config.Config) (*liteBackends, e
 		QueueCloser: orchestration.NewNoopQueueCloser(),
 		TokenStore:  tokenStore,
 		TaskService: orchestration.NewTaskAssignmentService(
-			db, taskStore, nil, nil, nil, nil,
+			taskStore, nil, nil, nil, nil,
 		),
 	}
 	orchServices.TaskService.SetTokenStore(tokenStore)

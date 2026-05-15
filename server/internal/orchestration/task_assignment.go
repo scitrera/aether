@@ -2,7 +2,6 @@ package orchestration
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -47,7 +46,6 @@ var _ SessionLivenessRegistry = (*state.BadgerSessionRegistry)(nil)
 // internal/storage/registry.Store). The legacy AgentRegistry method `Exists`
 // is part of registry.Store, so handleTargeted continues to compile unchanged.
 type TaskAssignmentService struct {
-	db              *sql.DB
 	taskStore       taskstore.Store
 	agentRegistry   regstore.Store
 	sessionRegistry SessionLivenessRegistry
@@ -77,7 +75,6 @@ type authorityGrantService interface {
 // two-parameter signature preserves source compatibility for tests that
 // supply nil for either slot.
 func NewTaskAssignmentService(
-	db *sql.DB,
 	taskStore taskstore.Store,
 	agentRegistry regstore.Store,
 	sessionRegistry SessionLivenessRegistry,
@@ -92,7 +89,6 @@ func NewTaskAssignmentService(
 		logging.Logger.Warn().Msg("NewTaskAssignmentService: sessionRegistry is nil — agent-targeted tasks will panic; wire a real SessionLivenessRegistry impl")
 	}
 	return &TaskAssignmentService{
-		db:              db,
 		taskStore:       taskStore,
 		agentRegistry:   agentRegistry,
 		sessionRegistry: sessionRegistry,

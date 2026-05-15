@@ -432,7 +432,7 @@ func runQueuePollAndClaim(t *testing.T, store tasks.Store, db *sql.DB) {
 	}
 
 	queueID := uuid.New().String()
-	insertQueueEntry(t, db, queueID, task.TaskID, "test-impl", "_test", "kubernetes")
+	insertQueueEntry(t, store, queueID, task.TaskID, "test-impl", "_test", "kubernetes")
 
 	// CountPendingQueueEntries should include this entry
 	count, err := store.CountPendingQueueEntries(ctx)
@@ -500,8 +500,8 @@ func runQueueCompleteAndFail(t *testing.T, store tasks.Store, db *sql.DB) {
 
 	queueID1 := uuid.New().String()
 	queueID2 := uuid.New().String()
-	insertQueueEntry(t, db, queueID1, task1.TaskID, "impl-a", "_test", "docker")
-	insertQueueEntry(t, db, queueID2, task2.TaskID, "impl-b", "_test", "docker")
+	insertQueueEntry(t, store, queueID1, task1.TaskID, "impl-a", "_test", "docker")
+	insertQueueEntry(t, store, queueID2, task2.TaskID, "impl-b", "_test", "docker")
 
 	// Complete one
 	if err := store.CompleteQueueEntry(ctx, queueID1); err != nil {
@@ -542,8 +542,8 @@ func runQueueByTaskID(t *testing.T, store tasks.Store, db *sql.DB) {
 
 	queueID1 := uuid.New().String()
 	queueID2 := uuid.New().String()
-	insertQueueEntry(t, db, queueID1, task1.TaskID, "impl-c", "_test", "local")
-	insertQueueEntry(t, db, queueID2, task2.TaskID, "impl-d", "_test", "local")
+	insertQueueEntry(t, store, queueID1, task1.TaskID, "impl-c", "_test", "local")
+	insertQueueEntry(t, store, queueID2, task2.TaskID, "impl-d", "_test", "local")
 
 	// Complete by task ID
 	if err := store.CompleteQueueEntryByTaskID(ctx, task1.TaskID); err != nil {
@@ -579,7 +579,7 @@ func runQueueEntryDetails(t *testing.T, store tasks.Store, db *sql.DB) {
 	}
 
 	queueID := uuid.New().String()
-	insertQueueEntryWithParams(t, db, queueID, task.TaskID, "test-impl", "_test", "k8s", `{"image":"test:latest","replicas":"1"}`)
+	insertQueueEntryWithParams(t, store, queueID, task.TaskID, "test-impl", "_test", "k8s", `{"image":"test:latest","replicas":"1"}`)
 
 	details, err := store.GetQueueEntryDetails(ctx, queueID)
 	if err != nil {
@@ -635,7 +635,7 @@ func runQueueStaleClaimedEntries(t *testing.T, store tasks.Store, db *sql.DB) {
 	}
 
 	queueID := uuid.New().String()
-	insertQueueEntry(t, db, queueID, task.TaskID, "stale-impl", "_test", "docker")
+	insertQueueEntry(t, store, queueID, task.TaskID, "stale-impl", "_test", "docker")
 
 	// Claim it first
 	claimed, err := store.ClaimQueueEntry(ctx, queueID, "stale-orchestrator")
@@ -681,36 +681,19 @@ func runQueueStaleClaimedEntries(t *testing.T, store tasks.Store, db *sql.DB) {
 // insertQueueEntry inserts a pending queue entry via raw SQL. The Store
 // interface does not expose queue-entry creation (that lives in the task
 // assignment service), so tests must seed the table directly.
-func insertQueueEntry(t *testing.T, db *sql.DB, queueID, taskID, impl, workspace, profile string) {
+func insertQueueEntry(t *testing.T, store tasks.Store, queueID, taskID, impl, workspace, profile string) {
 	t.Helper()
-	insertQueueEntryWithParams(t, db, queueID, taskID, impl, workspace, profile, "")
+	insertQueueEntryWithParams(t, store, queueID, taskID, impl, workspace, profile, "")
 }
 
-func insertQueueEntryWithParams(t *testing.T, db *sql.DB, queueID, taskID, impl, workspace, profile, launchParamsJSON string) {
+func insertQueueEntryWithParams(t *testing.T, store tasks.Store, queueID, taskID, impl, workspace, profile, launchParamsJSON string) {
 	t.Helper()
-	ctx := context.Background()
-
-	var lpArg interface{}
+	var lp []byte
 	if launchParamsJSON != "" {
-		lpArg = launchParamsJSON
+		lp = []byte(launchParamsJSON)
 	}
-
-	if isPostgres(db) {
-		_, err := db.ExecContext(ctx, `
-			INSERT INTO orchestrated_task_queue (queue_id, task_id, target_implementation, workspace, profile, status, launch_params)
-			VALUES ($1, $2, $3, $4, $5, 'pending', $6)
-		`, queueID, taskID, impl, workspace, profile, lpArg)
-		if err != nil {
-			t.Fatalf("insert queue entry (postgres): %v", err)
-		}
-	} else {
-		_, err := db.ExecContext(ctx, `
-			INSERT INTO orchestrated_task_queue (queue_id, task_id, target_implementation, workspace, profile, status, launch_params)
-			VALUES (?, ?, ?, ?, ?, 'pending', ?)
-		`, queueID, taskID, impl, workspace, profile, lpArg)
-		if err != nil {
-			t.Fatalf("insert queue entry (sqlite): %v", err)
-		}
+	if err := store.InsertQueueEntry(context.Background(), queueID, taskID, impl, workspace, profile, lp); err != nil {
+		t.Fatalf("insert queue entry: %v", err)
 	}
 }
 

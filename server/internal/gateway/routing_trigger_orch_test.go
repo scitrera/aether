@@ -58,7 +58,6 @@ func TestTriggerOrchestrationPropagatesSenderToStartupTask(t *testing.T) {
 
 	taskStore := taskpg.New(testDB.DB)
 	taskService := orchestration.NewTaskAssignmentService(
-		testDB.DB,
 		taskStore,
 		agentRegistry,
 		sessionRegistry,
@@ -155,7 +154,6 @@ func TestTriggerOrchestrationMintsGrantForStartupTask(t *testing.T) {
 	taskStore := taskpg.New(testDB.DB)
 	aclSvc := acl.NewService(testDB.DB, "gateway-test-fixaaa-routing")
 	taskService := orchestration.NewTaskAssignmentService(
-		testDB.DB,
 		taskStore,
 		agentRegistry,
 		sessionRegistry,
@@ -277,7 +275,7 @@ func TestTriggerOrchestration_PropagatesTriggerTimestampThroughGrantMint(t *test
 	taskStore := taskpg.New(testDB.DB)
 	aclSvc := acl.NewService(testDB.DB, "gateway-test-trigger-ts")
 	taskService := orchestration.NewTaskAssignmentService(
-		testDB.DB, taskStore, agentRegistry, sessionRegistry, nil, nil,
+		taskStore, agentRegistry, sessionRegistry, nil, nil,
 	)
 
 	server := &GatewayServer{
@@ -371,7 +369,7 @@ func TestTriggerOrchestration_IncludesAppWorkspaceInGrantScope(t *testing.T) {
 	taskStore := taskpg.New(testDB.DB)
 	aclSvc := acl.NewService(testDB.DB, "gateway-test-appws-scope")
 	taskService := orchestration.NewTaskAssignmentService(
-		testDB.DB, taskStore, agentRegistry, sessionRegistry, nil, nil,
+		taskStore, agentRegistry, sessionRegistry, nil, nil,
 	)
 
 	server := &GatewayServer{
