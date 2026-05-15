@@ -732,19 +732,9 @@ For full details on sidecar deployment, service addressing, ACL/OBO model,
 limits, audit events, and failure modes, see
 [server/docs/proxy.md](../../server/docs/proxy.md).
 
-## Key Architectural Principle
-
-**Connection = Lock = Heartbeat**: The active gRPC stream IS the distributed lock AND the liveness proof for the connected identity. No separate heartbeat API exists. When the stream closes, the lock is released automatically.
-
-## Requirements
-
-- Python 3.11+
-- grpcio >= 1.76.0
-- protobuf >= 5.29.0
-
 ## License
 
-Copyright 2024-2025 Scitrera. Licensed under the Apache License, Version 2.0.
+Copyright 2025-2026 Scitrera LLC. Licensed under the Apache License, Version 2.0.
 
 ## Links
 
