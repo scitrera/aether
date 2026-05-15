@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,26 +12,11 @@ import (
 	"github.com/rs/zerolog/log"
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/sdk/go/aether"
-
-	wfmigrations "github.com/scitrera/aether/internal/workflow/migrations"
-	wfmigrationslite "github.com/scitrera/aether/internal/workflow/migrations/sqlite"
-
-	// Register the "sqlite_compat" driver used by lite-mode workflow.db.
-	// dbcompat wraps modernc.org/sqlite with timestamp-coercion and
-	// PostgreSQL-flavored SQL rewriting — without it, columns like
-	// next_fire_at (stored as Go's time.Time.String() format) come back
-	// as plain strings and break rows.Scan into *time.Time, producing
-	// the recurring "scheduler poll error: unsupported Scan ... type
-	// string into type *time.Time" log line. dbcompat also transitively
-	// registers the base "sqlite" driver, so this is the only driver
-	// import the workflow package needs.
-	_ "github.com/scitrera/aether/pkg/dbcompat"
 )
 
 // Server is the top-level workflow server that orchestrates all components.
 type Server struct {
 	cfg       *Config
-	db        *sql.DB
 	redis     redis.UniversalClient
 	client    *aether.WorkflowEngineClient
 	store     WorkflowStore
@@ -43,63 +27,28 @@ type Server struct {
 	executor  *Executor
 	stateMach *StateMachineEngine
 	adminSrv  *AdminServer
-
-	// ownsDB is true when the Server opened the database itself (via
-	// NewServer / initDatabase). When false the caller injected a
-	// pre-built store via NewServerWithStore and retains DB ownership.
-	ownsDB bool
 }
 
-// NewServer creates a new workflow server from the given configuration.
-// The server opens its own database (postgres or sqlite depending on
-// cfg.Mode), runs migrations, and constructs a legacy Store internally.
-// This is the backward-compatible constructor used by existing callers.
-func NewServer(cfg *Config) (*Server, error) {
-	return &Server{cfg: cfg, ownsDB: true}, nil
-}
-
-// NewServerWithStore creates a workflow server that uses a pre-built
-// workflow store instead of opening a database and running migrations
-// itself. The caller retains ownership of the store's underlying
-// resources (database handle, etc.).
+// NewServer creates a new workflow server bound to the given config and
+// pre-built workflow store. The caller is responsible for opening the
+// database (postgres or sqlite), running migrations against it, and
+// constructing the matching store implementation (wfpg.New for postgres,
+// wfsqlite.New for sqlite). The store's underlying resources stay owned
+// by the caller; the workflow package never touches `database/sql` or any
+// DB driver directly.
 //
-// This constructor enables the Stage 2.5 / Wave 3 cut-over: the caller
-// (e.g. cmd/aetherlite) can open workflow.db with the bare "sqlite"
-// driver, construct a native wfsqlite.Store, and inject it here —
-// bypassing the legacy sqlite_compat + dbcompat translation path
-// entirely.
-//
-// When store is non-nil the server skips initDatabase and migration
-// steps in Run(). Redis, Aether client, leader election, and all other
-// subsystems are initialized normally.
-func NewServerWithStore(cfg *Config, store WorkflowStore) (*Server, error) {
+// Returns an error if store is nil (§14.1: nil Store is a class-A crash).
+func NewServer(cfg *Config, store WorkflowStore) (*Server, error) {
 	if store == nil {
-		return nil, fmt.Errorf("NewServerWithStore requires a non-nil store (§14.1: nil Store is a class-A crash)")
+		return nil, fmt.Errorf("workflow.NewServer requires a non-nil store (§14.1: nil Store is a class-A crash)")
 	}
-	return &Server{cfg: cfg, store: store, ownsDB: false}, nil
+	return &Server{cfg: cfg, store: store}, nil
 }
 
 // Run initializes all components and starts the server. Blocks until ctx is cancelled.
 func (s *Server) Run(ctx context.Context) error {
-	// 1. Connect to database and run migrations — skipped when a
-	//    pre-built store was injected via NewServerWithStore.
-	if s.ownsDB {
-		if err := s.initDatabase(ctx); err != nil {
-			return err
-		}
-		defer s.db.Close()
-
-		// 3. Run workflow migrations
-		if s.cfg.Mode == ModeLite {
-			if err := wfmigrationslite.Run(ctx, s.db); err != nil {
-				return err
-			}
-		} else {
-			if err := wfmigrations.Run(ctx, s.db); err != nil {
-				return err
-			}
-		}
-	}
+	// 1. The store is already constructed and migrated by the caller.
+	//    The workflow package never opens databases or runs migrations.
 
 	// 2. Connect to Redis (skipped in lite mode)
 	if s.cfg.Mode != ModeLite {
@@ -248,50 +197,6 @@ func (s *Server) Run(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) initDatabase(ctx context.Context) error {
-	if s.cfg.Mode == ModeLite {
-		dsn := s.cfg.SQLite.DSN()
-		// Use sqlite_compat (not bare "sqlite") so columns containing Go
-		// time.Time.String() values — written by ExecContext when a
-		// *time.Time parameter is bound — get coerced back to time.Time
-		// at Scan time. Without this, next_fire_at / last_fired_at and
-		// any other *time.Time scan targets fail with "unsupported Scan
-		// ... type string into type *time.Time" and the scheduler poll
-		// log fills up.
-		db, err := sql.Open("sqlite_compat", dsn)
-		if err != nil {
-			return fmt.Errorf("opening SQLite database %s: %w", dsn, err)
-		}
-		// SQLite performs best with serialized writes via a single connection
-		db.SetMaxOpenConns(1)
-		if err := db.PingContext(ctx); err != nil {
-			db.Close()
-			return fmt.Errorf("pinging SQLite database: %w", err)
-		}
-		s.db = db
-		log.Info().Str("path", dsn).Msg("SQLite connection established")
-		return nil
-	}
-
-	db, err := sql.Open("postgres", s.cfg.Postgres.DSN())
-	if err != nil {
-		return err
-	}
-	if s.cfg.Postgres.MaxConnections > 0 {
-		db.SetMaxOpenConns(s.cfg.Postgres.MaxConnections)
-	}
-	if s.cfg.Postgres.MaxIdleConnections > 0 {
-		db.SetMaxIdleConns(s.cfg.Postgres.MaxIdleConnections)
-	}
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
-		return err
-	}
-	s.db = db
-	log.Info().Msg("PostgreSQL connection established")
-	return nil
-}
-
 func (s *Server) initRedis() {
 	addrs := s.cfg.Redis.Cluster
 	if len(addrs) == 1 {
@@ -386,11 +291,7 @@ func (s *Server) initComponents() {
 		impl = "aether-workflow"
 	}
 
-	// If a store was injected via NewServerWithStore, use it as-is.
-	// Otherwise construct the legacy store from the DB we opened.
-	if s.store == nil {
-		s.store = NewStore(s.db, s.cfg.Mode == ModeLite)
-	}
+	// s.store is guaranteed non-nil by NewServer.
 	s.executor = NewExecutor(s.client, s.cfg.Aether.Workspace)
 	if s.cfg.Mode == ModeLite {
 		s.leader = NewSingleNodeLeaderElector()

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/lib/pq"
@@ -35,23 +34,33 @@ type APITokenCreateResult struct {
 	APIToken *APIToken `json:"api_token"`
 }
 
-// APITokenStore manages long-lived API tokens in PostgreSQL
-type APITokenStore struct {
+// PostgresAPITokenStore manages long-lived API tokens in PostgreSQL.
+// It implements the APITokenStore interface.
+type PostgresAPITokenStore struct {
 	db          *sql.DB
 	tokenLength int
 }
 
-// NewAPITokenStore creates a new PostgreSQL-backed API token store
-func NewAPITokenStore(db *sql.DB) *APITokenStore {
-	return &APITokenStore{
+// Compile-time conformance assert.
+var _ APITokenStore = (*PostgresAPITokenStore)(nil)
+
+// NewPostgresAPITokenStore creates a new PostgreSQL-backed API token store.
+func NewPostgresAPITokenStore(db *sql.DB) *PostgresAPITokenStore {
+	return &PostgresAPITokenStore{
 		db:          db,
 		tokenLength: 32, // 256 bits
 	}
 }
 
+// NewAPITokenStore is a backwards-compatible alias for NewPostgresAPITokenStore.
+// Callers that have not yet migrated to the new name can continue using this.
+func NewAPITokenStore(db *sql.DB) *PostgresAPITokenStore {
+	return NewPostgresAPITokenStore(db)
+}
+
 // CreateToken generates a new API token, hashes it with SHA256, and stores it in the api_tokens table.
 // The plaintext token is only available in the returned result; it is never stored.
-func (s *APITokenStore) CreateToken(ctx context.Context, name, principalType string, workspacePatterns, scopes []string, createdBy string, expiresAt *time.Time) (*APITokenCreateResult, error) {
+func (s *PostgresAPITokenStore) CreateToken(ctx context.Context, name, principalType string, workspacePatterns, scopes []string, createdBy string, expiresAt *time.Time) (*APITokenCreateResult, error) {
 	// Generate cryptographically secure random token
 	tokenStr, tokenHash, err := crypto.GenerateToken(s.tokenLength)
 	if err != nil {
@@ -103,7 +112,7 @@ func (s *APITokenStore) CreateToken(ctx context.Context, name, principalType str
 
 // ValidateToken hashes the provided token string, looks it up by hash, checks that it is
 // not revoked or expired, atomically updates last_used_at, and returns the token record.
-func (s *APITokenStore) ValidateToken(ctx context.Context, tokenStr string) (*APIToken, error) {
+func (s *PostgresAPITokenStore) ValidateToken(ctx context.Context, tokenStr string) (*APIToken, error) {
 	tokenHash, err := crypto.HashToken(tokenStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash token: %w", err)
@@ -148,7 +157,7 @@ func (s *APITokenStore) ValidateToken(ctx context.Context, tokenStr string) (*AP
 }
 
 // RevokeToken sets revoked=true and revoked_at=now for the token identified by ID
-func (s *APITokenStore) RevokeToken(ctx context.Context, tokenID string) error {
+func (s *PostgresAPITokenStore) RevokeToken(ctx context.Context, tokenID string) error {
 	now := time.Now()
 	query := `UPDATE api_tokens SET revoked = true, revoked_at = $1, updated_at = $1 WHERE id = $2`
 	result, err := s.db.ExecContext(ctx, query, now, tokenID)
@@ -166,7 +175,7 @@ func (s *APITokenStore) RevokeToken(ctx context.Context, tokenID string) error {
 }
 
 // GetToken retrieves a token by its ID
-func (s *APITokenStore) GetToken(ctx context.Context, tokenID string) (*APIToken, error) {
+func (s *PostgresAPITokenStore) GetToken(ctx context.Context, tokenID string) (*APIToken, error) {
 	query := `
 		SELECT id, token_hash, name, principal_type, workspace_patterns, scopes, created_by, expires_at, last_used_at, revoked, revoked_at, created_at, updated_at
 		FROM api_tokens
@@ -201,7 +210,7 @@ func (s *APITokenStore) GetToken(ctx context.Context, tokenID string) (*APIToken
 // ListTokens returns API tokens with pagination (for admin use).
 // limit <= 0 defaults to 100; limit is capped at 1000. offset < 0 defaults to 0.
 // If includeRevoked is false, revoked tokens are excluded from the result.
-func (s *APITokenStore) ListTokens(ctx context.Context, limit, offset int, includeRevoked bool) ([]*APIToken, error) {
+func (s *PostgresAPITokenStore) ListTokens(ctx context.Context, limit, offset int, includeRevoked bool) ([]*APIToken, error) {
 	if limit <= 0 || limit > 1000 {
 		if limit <= 0 {
 			limit = 100
@@ -258,7 +267,7 @@ func (s *APITokenStore) ListTokens(ctx context.Context, limit, offset int, inclu
 }
 
 // DeleteToken performs a hard delete of a token by its ID
-func (s *APITokenStore) DeleteToken(ctx context.Context, tokenID string) error {
+func (s *PostgresAPITokenStore) DeleteToken(ctx context.Context, tokenID string) error {
 	query := `DELETE FROM api_tokens WHERE id = $1`
 	result, err := s.db.ExecContext(ctx, query, tokenID)
 	if err != nil {
@@ -272,24 +281,4 @@ func (s *APITokenStore) DeleteToken(ctx context.Context, tokenID string) error {
 		return fmt.Errorf("token not found: %s", tokenID)
 	}
 	return nil
-}
-
-// MatchesWorkspace checks if a workspace matches any of the token's workspace_patterns
-// using filepath.Match style globbing
-func (s *APITokenStore) MatchesWorkspace(token *APIToken, workspace string) bool {
-	if len(token.WorkspacePatterns) == 0 {
-		// No patterns means access to all workspaces
-		return true
-	}
-	for _, pattern := range token.WorkspacePatterns {
-		matched, err := filepath.Match(pattern, workspace)
-		if err != nil {
-			// Invalid pattern, skip it
-			continue
-		}
-		if matched {
-			return true
-		}
-	}
-	return false
 }

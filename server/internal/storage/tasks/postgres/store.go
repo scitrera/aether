@@ -300,6 +300,86 @@ func (s *Store) FailQueueEntryByTaskID(ctx context.Context, taskID, errorMsg str
 }
 
 // =========================================================================
+// Admin workspace queries
+// =========================================================================
+
+func (s *Store) ListDistinctTaskWorkspaces(ctx context.Context) ([]*tasks.WorkspaceTaskSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT workspace, MIN(created_at) AS created_at, COUNT(*) AS task_count
+		FROM tasks
+		WHERE workspace IS NOT NULL AND workspace != ''
+		GROUP BY workspace
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []*tasks.WorkspaceTaskSummary
+	for rows.Next() {
+		var ws tasks.WorkspaceTaskSummary
+		// Scan created_at as interface{} to handle both postgres (time.Time)
+		// and dbcompat (string) drivers transparently.
+		var createdAtRaw interface{}
+		if err := rows.Scan(&ws.Workspace, &createdAtRaw, &ws.TaskCount); err != nil {
+			return nil, err
+		}
+		if createdAtRaw != nil {
+			switch v := createdAtRaw.(type) {
+			case time.Time:
+				ws.CreatedAt = v
+			case string:
+				if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+					ws.CreatedAt = t
+				} else if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+					ws.CreatedAt = t
+				} else if t, err := time.Parse("2006-01-02T15:04:05.000", v); err == nil {
+					ws.CreatedAt = t
+				}
+			}
+		}
+		results = append(results, &ws)
+	}
+	return results, rows.Err()
+}
+
+func (s *Store) GetWorkspaceTaskStats(ctx context.Context, workspaceID string) (*tasks.WorkspaceTaskStats, error) {
+	var stats tasks.WorkspaceTaskStats
+	var count sql.NullInt64
+	// Scan created_at as interface{} to handle both postgres (time.Time)
+	// and dbcompat (string) drivers transparently.
+	var createdAtRaw interface{}
+
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), MIN(created_at)
+		FROM tasks
+		WHERE workspace = $1
+	`, workspaceID).Scan(&count, &createdAtRaw)
+	if err != nil {
+		return nil, err
+	}
+
+	if count.Valid {
+		stats.TaskCount = count.Int64
+	}
+	if createdAtRaw != nil {
+		switch v := createdAtRaw.(type) {
+		case time.Time:
+			stats.CreatedAt = v
+		case string:
+			if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+				stats.CreatedAt = t
+			} else if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				stats.CreatedAt = t
+			} else if t, err := time.Parse("2006-01-02T15:04:05.000", v); err == nil {
+				stats.CreatedAt = t
+			}
+		}
+	}
+	return &stats, nil
+}
+
+// =========================================================================
 // Overrides for methods using NOW() — ensure time functions work
 // =========================================================================
 

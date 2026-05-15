@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log"
@@ -13,8 +14,14 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/rs/zerolog"
+	wfpg "github.com/scitrera/aether/internal/storage/workflow/postgres"
+	wfsqlite "github.com/scitrera/aether/internal/storage/workflow/sqlite"
 	versionpkg "github.com/scitrera/aether/internal/version"
 	"github.com/scitrera/aether/internal/workflow"
+	wfmigrations "github.com/scitrera/aether/internal/workflow/migrations"
+
+	// Register the bare "sqlite" driver for SQLite mode.
+	_ "modernc.org/sqlite"
 )
 
 var (
@@ -78,10 +85,59 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	srv, err := workflow.NewServer(cfg)
-	if err != nil {
-		log.Fatalf("Failed to create workflow server: %v", err)
+	// The workflow package no longer opens databases or runs migrations.
+	// Caller is responsible for opening the right DB (postgres or sqlite),
+	// running migrations, and constructing the matching store impl.
+	var (
+		srv     *workflow.Server
+		closeDB func()
+	)
+	if cfg.Mode == workflow.ModeLite {
+		dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", cfg.SQLite.Path)
+		db, openErr := sql.Open("sqlite", dsn)
+		if openErr != nil {
+			log.Fatalf("Failed to open SQLite database %s: %v", cfg.SQLite.Path, openErr)
+		}
+		// wfsqlite.New runs its own native migration set.
+		store, storeErr := wfsqlite.New(db)
+		if storeErr != nil {
+			_ = db.Close()
+			log.Fatalf("Failed to construct native sqlite workflow store: %v", storeErr)
+		}
+		srv, err = workflow.NewServer(cfg, store)
+		if err != nil {
+			_ = db.Close()
+			log.Fatalf("Failed to create workflow server: %v", err)
+		}
+		closeDB = func() { _ = db.Close() }
+	} else {
+		db, openErr := sql.Open("postgres", cfg.Postgres.DSN())
+		if openErr != nil {
+			log.Fatalf("Failed to open PostgreSQL database: %v", openErr)
+		}
+		if cfg.Postgres.MaxConnections > 0 {
+			db.SetMaxOpenConns(cfg.Postgres.MaxConnections)
+		}
+		if cfg.Postgres.MaxIdleConnections > 0 {
+			db.SetMaxIdleConns(cfg.Postgres.MaxIdleConnections)
+		}
+		if pingErr := db.PingContext(ctx); pingErr != nil {
+			_ = db.Close()
+			log.Fatalf("Failed to ping PostgreSQL database: %v", pingErr)
+		}
+		if migErr := wfmigrations.Run(ctx, db); migErr != nil {
+			_ = db.Close()
+			log.Fatalf("Failed to run workflow PostgreSQL migrations: %v", migErr)
+		}
+		store := wfpg.New(db, false)
+		srv, err = workflow.NewServer(cfg, store)
+		if err != nil {
+			_ = db.Close()
+			log.Fatalf("Failed to create workflow server: %v", err)
+		}
+		closeDB = func() { _ = db.Close() }
 	}
+	defer closeDB()
 
 	// Run server in goroutine
 	errChan := make(chan error, 1)

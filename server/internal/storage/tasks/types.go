@@ -13,6 +13,8 @@ package tasks
 // and query tasks — no double-import of the legacy package required.
 
 import (
+	"time"
+
 	legacy "github.com/scitrera/aether/pkg/tasks"
 )
 
@@ -126,6 +128,23 @@ const (
 	TimerTypeScheduleToClose = legacy.TimerTypeScheduleToClose
 	TimerTypeRetry           = legacy.TimerTypeRetry
 )
+
+// WorkspaceTaskSummary is the per-workspace aggregate returned by
+// ListDistinctTaskWorkspaces. It carries the workspace identifier, the
+// earliest task creation timestamp, and the total task count.
+type WorkspaceTaskSummary struct {
+	Workspace string
+	CreatedAt time.Time
+	TaskCount int64
+}
+
+// WorkspaceTaskStats is the single-workspace aggregate returned by
+// GetWorkspaceTaskStats. It carries the total task count and the earliest
+// task creation timestamp for a specific workspace.
+type WorkspaceTaskStats struct {
+	TaskCount int64
+	CreatedAt time.Time
+}
 
 // Task audit event types — values stored in task_audit_events.event_type.
 const (

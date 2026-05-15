@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"database/sql"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -21,7 +20,6 @@ import (
 	"github.com/scitrera/aether/internal/orchestration"
 	"github.com/scitrera/aether/internal/quota"
 	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	aclpg "github.com/scitrera/aether/internal/storage/acl/postgres"
 	auditstore "github.com/scitrera/aether/internal/storage/audit"
 	taskstore "github.com/scitrera/aether/internal/storage/tasks"
 	"github.com/scitrera/aether/internal/timer"
@@ -296,7 +294,10 @@ func WithACLService(svc aclstore.Store) GatewayOption {
 }
 
 // NewGatewayServer creates a new GatewayServer with the given dependencies and options.
-func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVReadWriter, checkpointStore CheckpointManager, taskStore taskstore.Store, db *sql.DB, gatewayID string, auditLogger auditstore.Store, mtlsConfig MTLSConfig, opts ...GatewayOption) *GatewayServer {
+// NewGatewayServer creates a new GatewayServer. Callers MUST supply an ACL
+// service via WithACLService — there is no fallback constructor. Both
+// production binaries (cmd/gateway, cmd/aetherlite) wire ACL explicitly.
+func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVReadWriter, checkpointStore CheckpointManager, taskStore taskstore.Store, gatewayID string, auditLogger auditstore.Store, mtlsConfig MTLSConfig, opts ...GatewayOption) *GatewayServer {
 	ts := timer.NewTimerSequence()
 
 	// Implement actual reschedule function that persists retry timing
@@ -358,18 +359,6 @@ func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVR
 		opt(s)
 	}
 
-	// Initialize ACL service from db only when none was supplied via WithACLService.
-	// Note: ACL schema is created by migrations/002_acl_schema.sql
-	if s.acl == nil && db != nil {
-		aclService := aclpg.New(db, gatewayID)
-		logging.Logger.Debug().Msg("ACL service initialized")
-		s.acl = aclService
-		s.kvHandler = newKVHandlerFromService(kvStore, auditLogger, aclService)
-		// Preserve tokenStore across authHandler rebuild (see WithACLService note above).
-		previousTokenStore := s.authHandler.tokenStore
-		s.authHandler = newAuthHandler(s.authHandler.authenticator, cfg.Required, cfg.Mode, aclService, auditLogger)
-		s.authHandler.tokenStore = previousTokenStore
-	}
 	if s.acl != nil && s.orchestration != nil && s.orchestration.TaskService != nil {
 		s.orchestration.TaskService.SetAuthorityGrantService(s.acl)
 	}

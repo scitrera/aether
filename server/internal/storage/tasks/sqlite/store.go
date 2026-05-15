@@ -1757,6 +1757,62 @@ func scanDLQRow(rows *sql.Rows) (*tasks.DLQRecord, error) {
 }
 
 // =============================================================================
+// Admin workspace queries
+// =============================================================================
+
+func (s *Store) ListDistinctTaskWorkspaces(ctx context.Context) ([]*tasks.WorkspaceTaskSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT workspace, MIN(created_at) AS created_at, COUNT(*) AS task_count
+		FROM tasks
+		WHERE workspace IS NOT NULL AND workspace != ''
+		GROUP BY workspace
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []*tasks.WorkspaceTaskSummary
+	for rows.Next() {
+		var ws tasks.WorkspaceTaskSummary
+		var createdAtStr string
+		if err := rows.Scan(&ws.Workspace, &createdAtStr, &ws.TaskCount); err != nil {
+			return nil, err
+		}
+		ws.CreatedAt, err = parseTimestamp(createdAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at for workspace %q: %w", ws.Workspace, err)
+		}
+		results = append(results, &ws)
+	}
+	return results, rows.Err()
+}
+
+func (s *Store) GetWorkspaceTaskStats(ctx context.Context, workspaceID string) (*tasks.WorkspaceTaskStats, error) {
+	var stats tasks.WorkspaceTaskStats
+	var count int64
+	var createdAtStr sql.NullString
+
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), MIN(created_at)
+		FROM tasks
+		WHERE workspace = ?
+	`, workspaceID).Scan(&count, &createdAtStr)
+	if err != nil {
+		return nil, err
+	}
+
+	stats.TaskCount = count
+	if createdAtStr.Valid {
+		stats.CreatedAt, err = parseTimestamp(createdAtStr.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+	}
+	return &stats, nil
+}
+
+// =============================================================================
 // Internal: timestamp parsing and helpers
 // =============================================================================
 

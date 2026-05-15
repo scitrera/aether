@@ -16,7 +16,7 @@ import (
 func (p *GatewayStateProvider) ListTokens(ctx context.Context, limit, offset int, includeRevoked bool) ([]*admin.TokenInfo, error) {
 	store := p.tokenStore()
 	if store == nil {
-		return nil, fmt.Errorf("token management not available (no PostgreSQL)")
+		return nil, fmt.Errorf("token management not available (no token store configured)")
 	}
 	tokens, err := store.ListTokens(ctx, limit, offset, includeRevoked)
 	if err != nil {
@@ -32,7 +32,7 @@ func (p *GatewayStateProvider) ListTokens(ctx context.Context, limit, offset int
 func (p *GatewayStateProvider) GetToken(ctx context.Context, tokenID string) (*admin.TokenInfo, error) {
 	store := p.tokenStore()
 	if store == nil {
-		return nil, fmt.Errorf("token management not available (no PostgreSQL)")
+		return nil, fmt.Errorf("token management not available (no token store configured)")
 	}
 	t, err := store.GetToken(ctx, tokenID)
 	if err != nil {
@@ -44,7 +44,7 @@ func (p *GatewayStateProvider) GetToken(ctx context.Context, tokenID string) (*a
 func (p *GatewayStateProvider) CreateToken(ctx context.Context, req *admin.CreateTokenRequest) (*admin.CreateTokenResult, error) {
 	store := p.tokenStore()
 	if store == nil {
-		return nil, fmt.Errorf("token management not available (no PostgreSQL)")
+		return nil, fmt.Errorf("token management not available (no token store configured)")
 	}
 
 	workspacePatterns := req.WorkspacePatterns
@@ -80,7 +80,7 @@ func (p *GatewayStateProvider) CreateToken(ctx context.Context, req *admin.Creat
 func (p *GatewayStateProvider) DeleteToken(ctx context.Context, tokenID string) error {
 	store := p.tokenStore()
 	if store == nil {
-		return fmt.Errorf("token management not available (no PostgreSQL)")
+		return fmt.Errorf("token management not available (no token store configured)")
 	}
 	return store.DeleteToken(ctx, tokenID)
 }
@@ -88,17 +88,14 @@ func (p *GatewayStateProvider) DeleteToken(ctx context.Context, tokenID string) 
 func (p *GatewayStateProvider) RevokeToken(ctx context.Context, tokenID string) error {
 	store := p.tokenStore()
 	if store == nil {
-		return fmt.Errorf("token management not available (no PostgreSQL)")
+		return fmt.Errorf("token management not available (no token store configured)")
 	}
 	return store.RevokeToken(ctx, tokenID)
 }
 
-// tokenStore returns a new APITokenStore if the database is available.
-func (p *GatewayStateProvider) tokenStore() *auth.APITokenStore {
-	if p.db == nil {
-		return nil
-	}
-	return auth.NewAPITokenStore(p.db)
+// tokenStore returns the configured APITokenStore, or nil if none was provided.
+func (p *GatewayStateProvider) tokenStore() auth.APITokenStore {
+	return p.apiTokenStore
 }
 
 // authTokenToAdmin converts an auth.APIToken to an admin.TokenInfo.

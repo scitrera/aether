@@ -402,6 +402,29 @@ type Store interface {
 	GetDLQTasks(ctx context.Context, workspace string, category string, limit int, offset int) ([]*DLQRecord, error)
 
 	// =========================================================================
+	// Admin workspace queries
+	//
+	// These methods replace the direct SQL that the admin workspace handlers
+	// previously executed against a raw *sql.DB on GatewayStateProvider.
+	// Moving them here ensures that lite mode (tasks.db) and full mode
+	// (postgres) both route through the correct database handle. None of
+	// these queries JOIN across domain boundaries.
+	// =========================================================================
+
+	// ListDistinctTaskWorkspaces returns one row per non-empty workspace
+	// found in the tasks table, carrying the earliest created_at timestamp
+	// and the total task count for that workspace. Used by the admin
+	// GetWorkspaces handler to merge task-derived workspace info with
+	// active-session and KV-metadata sources.
+	ListDistinctTaskWorkspaces(ctx context.Context) ([]*WorkspaceTaskSummary, error)
+
+	// GetWorkspaceTaskStats returns the total task count and earliest
+	// created_at for a single workspace. Used by the admin
+	// GetWorkspaceByID handler. Returns zero values (count=0, zero time)
+	// when no tasks exist for the workspace — this is not an error.
+	GetWorkspaceTaskStats(ctx context.Context, workspaceID string) (*WorkspaceTaskStats, error)
+
+	// =========================================================================
 	// Purge / retention
 	// =========================================================================
 

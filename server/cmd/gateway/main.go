@@ -303,27 +303,15 @@ func main() {
 	var checkpointStore gateway.CheckpointManager
 	var msgRouter gateway.MessageRouter
 	var taskStore taskstore.Store
-	var redisClient redis.UniversalClient // nil in lite mode
+	var redisClient redis.UniversalClient
 	var gatewayOpts []gateway.GatewayOption
 
 	if cfg.IsLiteMode() {
-		// ===== LITE MODE: embedded backends (SQLite + Badger) =====
-		logging.Logger.Info().Msg("starting in AetherLite mode (embedded backends)")
-		backends, err := initLiteBackends(ctx, cfg)
-		if err != nil {
-			logging.Logger.Fatal().Err(err).Msg("failed to initialize lite backends")
-		}
-		defer backends.Close()
+		logging.Logger.Fatal().Msg("cmd/gateway no longer supports lite mode — use the cmd/aetherlite binary for embedded single-binary deployments (per-domain native sqlite stores)")
+	}
 
-		db = backends.db
-		sessions = backends.sessions
-		kvStore = backends.kvStore
-		checkpointStore = backends.checkpoints
-		msgRouter = backends.router
-		taskStore = backends.taskStore
-		gatewayOpts = backends.gatewayOpts
-	} else {
-		// ===== FULL MODE: PostgreSQL + Redis + RabbitMQ =====
+	// ===== FULL MODE: PostgreSQL + Redis + RabbitMQ =====
+	{
 
 		// Initialize PostgreSQL
 		var dbErr error
@@ -418,8 +406,8 @@ func main() {
 		logging.Logger.Debug().Msg("checkpoint default TTL: no expiration")
 	}
 
-	// Quota management for multi-tenant deployments (skip in lite mode — already configured)
-	if cfg.Quotas.Enabled && !cfg.IsLiteMode() {
+	// Quota management for multi-tenant deployments.
+	if cfg.Quotas.Enabled {
 		defaults := quota.DefaultQuotas{
 			MaxConnectionsPerWorkspace: cfg.Quotas.MaxConnectionsPerWorkspace,
 			MaxMessageRatePerIdentity:  cfg.Quotas.MaxMessageRatePerIdentity,
@@ -466,7 +454,7 @@ func main() {
 	// Hoisted so the auth setup below can wire the task-token authenticator
 	// against orchestrationServices.TokenStore.
 	var orchestrationServices *gateway.OrchestrationServices
-	if !cfg.IsLiteMode() && db != nil && cfg.RabbitMQ.AMQPURL != "" {
+	if db != nil && cfg.RabbitMQ.AMQPURL != "" {
 		redisSessions, _ := sessions.(*state.SessionRegistry)
 		svcs, err := gateway.InitializeOrchestrationServices(
 			db,
@@ -594,7 +582,7 @@ func main() {
 		logging.Logger.Debug().Msg("shared ACL service initialized")
 	}
 
-	gatewayServer := gateway.NewGatewayServer(sessions, msgRouter, kvStore, checkpointStore, taskStore, db, cfg.Gateway.GatewayID, auditLogger, mtlsConfig, gatewayOpts...)
+	gatewayServer := gateway.NewGatewayServer(sessions, msgRouter, kvStore, checkpointStore, taskStore, cfg.Gateway.GatewayID, auditLogger, mtlsConfig, gatewayOpts...)
 	defer gatewayServer.Stop()
 
 	// Shared gRPC server hardening options applied to both TLS and non-TLS paths.
@@ -706,6 +694,12 @@ func main() {
 	if rr, ok := msgRouter.(*router.Router); ok {
 		stateRouter = rr
 	}
+	// Construct the API token store for the admin state provider.
+	// The full gateway always uses the PostgreSQL-backed implementation.
+	var adminTokenStore auth.APITokenStore
+	if db != nil {
+		adminTokenStore = auth.NewPostgresAPITokenStore(db)
+	}
 	stateProvider := gateway.NewGatewayStateProvider(
 		cfg.Gateway.GatewayID,
 		stateSessionRegistry,
@@ -714,6 +708,7 @@ func main() {
 		agentRegistry,
 		agentRegistry, // same bundled registry.Store for both slots
 		sharedACLService,
+		adminTokenStore,
 		db,
 		stateRouter,
 	)

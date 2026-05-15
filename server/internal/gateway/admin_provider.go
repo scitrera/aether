@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/scitrera/aether/internal/admin"
+	"github.com/scitrera/aether/internal/auth"
 	"github.com/scitrera/aether/internal/kv"
 	"github.com/scitrera/aether/internal/quota"
 	"github.com/scitrera/aether/internal/router"
@@ -48,8 +49,12 @@ type GatewayStateProvider struct {
 	profileMgr regstore.Store
 	// aclService is the ACL domain Store (internal/storage/acl).
 	aclService aclstore.Store
-	db         *sql.DB
-	router     *router.Router
+	// apiTokenStore is the API token domain store (internal/auth).
+	// Both the PostgreSQL-backed and SQLite-backed implementations satisfy
+	// this interface. When nil, admin token endpoints return "not available".
+	apiTokenStore auth.APITokenStore
+	db            *sql.DB
+	router        *router.Router
 
 	// Reference to gateway server for active streams
 	gateway *GatewayServer
@@ -81,6 +86,7 @@ func NewGatewayStateProvider(
 	agentRegistry regstore.Store,
 	profileMgr regstore.Store,
 	aclService aclstore.Store,
+	apiTokenStore auth.APITokenStore,
 	db *sql.DB,
 	r *router.Router,
 ) *GatewayStateProvider {
@@ -93,6 +99,7 @@ func NewGatewayStateProvider(
 		agentRegistry: agentRegistry,
 		profileMgr:    profileMgr,
 		aclService:    aclService,
+		apiTokenStore: apiTokenStore,
 		db:            db,
 		router:        r,
 		eventSubs:     make(map[chan *admin.Event]struct{}),
@@ -144,6 +151,15 @@ func (p *GatewayStateProvider) GetHealthStatus(ctx context.Context) (*admin.Heal
 	checks := make(map[string]*admin.HealthCheck)
 	overallStatus := "healthy"
 
+	// The three external-backend checks below (Redis, PostgreSQL, RabbitMQ)
+	// are full-mode infrastructure. In AetherLite, these are intentionally
+	// replaced by embedded backends (Badger sessions, per-domain native
+	// SQLite, BadgerRouter) and the corresponding fields on GatewayStateProvider
+	// are nil by design. A nil field reports status "not_configured" without
+	// degrading the overall health, because "not configured" is the correct
+	// operational state in lite — not a fault. A configured backend that
+	// fails its ping is still reported as "error" + degraded.
+
 	// Check Redis
 	redisCheck := &admin.HealthCheck{Status: "ok"}
 	if p.sessions != nil {
@@ -157,9 +173,7 @@ func (p *GatewayStateProvider) GetHealthStatus(ctx context.Context) (*admin.Heal
 			redisCheck.Latency = time.Since(start).String()
 		}
 	} else {
-		redisCheck.Status = "error"
-		redisCheck.Error = "not configured"
-		overallStatus = "degraded"
+		redisCheck.Status = "not_configured"
 	}
 	checks["redis"] = redisCheck
 
@@ -175,9 +189,7 @@ func (p *GatewayStateProvider) GetHealthStatus(ctx context.Context) (*admin.Heal
 			pgCheck.Latency = time.Since(start).String()
 		}
 	} else {
-		pgCheck.Status = "error"
-		pgCheck.Error = "not configured"
-		// PostgreSQL is optional, don't mark as degraded
+		pgCheck.Status = "not_configured"
 	}
 	checks["postgresql"] = pgCheck
 
@@ -193,9 +205,7 @@ func (p *GatewayStateProvider) GetHealthStatus(ctx context.Context) (*admin.Heal
 			rmqCheck.Latency = time.Since(start).String()
 		}
 	} else {
-		rmqCheck.Status = "error"
-		rmqCheck.Error = "not configured"
-		overallStatus = "degraded"
+		rmqCheck.Status = "not_configured"
 	}
 	checks["rabbitmq"] = rmqCheck
 

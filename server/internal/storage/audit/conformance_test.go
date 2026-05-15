@@ -12,10 +12,8 @@ package audit_test
 import (
 	"context"
 	"database/sql"
-	"embed"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -25,9 +23,6 @@ import (
 	auditpg "github.com/scitrera/aether/internal/storage/audit/postgres"
 	auditsqlite "github.com/scitrera/aether/internal/storage/audit/sqlite"
 	"github.com/scitrera/aether/internal/testutil"
-	sqliteauditmigrations "github.com/scitrera/aether/migrations/sqlite_audit"
-
-	_ "github.com/scitrera/aether/pkg/dbcompat" // registers "sqlite_compat" driver
 )
 
 // storeFactory builds a Store and returns a cleanup func. The factory may
@@ -41,7 +36,6 @@ func TestStoreConformance(t *testing.T) {
 		factory storeFactory
 	}{
 		{name: "postgres", factory: postgresFactory},
-		{name: "sqlite", factory: sqliteFactory},
 		{name: "sqlite_native", factory: sqliteNativeFactory},
 	}
 
@@ -219,46 +213,6 @@ func postgresFactory(t *testing.T) (audit.Store, bool, func()) {
 	return store, true, cleanup
 }
 
-// sqliteFactory opens a fresh temp-dir SQLite database via the sqlite_compat
-// driver (so dbcompat handles the postgres-flavored SQL the legacy logger
-// still emits in Stage 1), runs the sqlite_audit migration set, and
-// constructs a postgres-impl audit.Store on top of that handle.
-//
-// CleanupOldLogs is unsupported in this configuration because the legacy
-// logger calls a postgres stored function not present in the SQLite
-// migration set. Stage 2 closes that gap.
-func sqliteFactory(t *testing.T) (audit.Store, bool, func()) {
-	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "audit.db")
-	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_busy_timeout=5000", dbPath)
-	db, err := sql.Open("sqlite_compat", dsn)
-	if err != nil {
-		t.Fatalf("sql.Open sqlite_compat: %v", err)
-	}
-	// Single-writer pool to match aetherlite's audit.db semantics and avoid
-	// SQLITE_BUSY in WAL mode.
-	db.SetMaxOpenConns(1)
-
-	ctx := context.Background()
-	if err := applySQLiteMigrationsForTest(ctx, db, sqliteauditmigrations.MigrationFS); err != nil {
-		_ = db.Close()
-		t.Fatalf("apply sqlite_audit migrations: %v", err)
-	}
-
-	gatewayID := fmt.Sprintf("conformance-gw-%d", time.Now().UnixNano())
-	cfg := audit.DefaultConfig()
-	cfg.BatchSize = 1
-	cfg.FlushPeriod = 50 * time.Millisecond
-	cfg.ChannelBuffer = 16
-	store := auditpg.New(db, gatewayID, cfg)
-
-	cleanup := func() {
-		_ = store.Close()
-		_ = db.Close()
-	}
-	return store, false, cleanup
-}
-
 // sqliteNativeFactory opens a fresh temp-dir SQLite database using the
 // native audit.sqlite.Store implementation (Stage 2). This uses the bare
 // "sqlite" driver (modernc.org/sqlite) directly — no dbcompat translation.
@@ -294,53 +248,6 @@ func sqliteNativeFactory(t *testing.T) (audit.Store, bool, func()) {
 	}
 	// supportsCleanup=true: native impl has parameterized DELETE.
 	return store, true, cleanup
-}
-
-// applySQLiteMigrationsForTest is a test-local copy of the
-// cmd/aetherlite/main.go helper. We duplicate it here (rather than
-// importing) because the conformance package shouldn't pull on cmd/* code
-// just for migration plumbing.
-func applySQLiteMigrationsForTest(ctx context.Context, db *sql.DB, fs embed.FS) error {
-	if _, err := db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version TEXT PRIMARY KEY,
-			applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)
-	`); err != nil {
-		return fmt.Errorf("create schema_migrations: %w", err)
-	}
-	entries, err := fs.ReadDir(".")
-	if err != nil {
-		return fmt.Errorf("read embed fs: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".sql" {
-			continue
-		}
-		version := strings.TrimSuffix(entry.Name(), ".sql")
-		var count int
-		if err := db.QueryRowContext(ctx,
-			"SELECT COUNT(*) FROM schema_migrations WHERE version = ?", version,
-		).Scan(&count); err != nil {
-			return fmt.Errorf("check migration %s: %w", version, err)
-		}
-		if count > 0 {
-			continue
-		}
-		content, err := fs.ReadFile(entry.Name())
-		if err != nil {
-			return fmt.Errorf("read %s: %w", entry.Name(), err)
-		}
-		if _, err := db.ExecContext(ctx, string(content)); err != nil {
-			return fmt.Errorf("exec %s: %w", entry.Name(), err)
-		}
-		if _, err := db.ExecContext(ctx,
-			"INSERT INTO schema_migrations (version) VALUES (?)", version,
-		); err != nil {
-			return fmt.Errorf("record %s: %w", version, err)
-		}
-	}
-	return nil
 }
 
 // =============================================================================

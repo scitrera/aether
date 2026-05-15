@@ -226,55 +226,49 @@ func TestAPIKeyAuth_InvalidPrincipalTypeOnTokenReturnsError(t *testing.T) {
 	}
 }
 
-// --- APITokenStore.MatchesWorkspace (pure logic, no DB) ---
+// --- MatchesWorkspace (free function, pure logic, no DB) ---
 
 func TestMatchesWorkspace_EmptyPatternsAllowsAll(t *testing.T) {
-	store := &APITokenStore{}
 	token := &APIToken{WorkspacePatterns: []string{}}
-	if !store.MatchesWorkspace(token, "any-workspace") {
+	if !MatchesWorkspace(token, "any-workspace") {
 		t.Error("empty patterns should match any workspace")
 	}
 }
 
 func TestMatchesWorkspace_ExactPatternMatches(t *testing.T) {
-	store := &APITokenStore{}
 	token := &APIToken{WorkspacePatterns: []string{"production"}}
-	if !store.MatchesWorkspace(token, "production") {
+	if !MatchesWorkspace(token, "production") {
 		t.Error("exact pattern should match")
 	}
 }
 
 func TestMatchesWorkspace_ExactPatternDoesNotMatchOther(t *testing.T) {
-	store := &APITokenStore{}
 	token := &APIToken{WorkspacePatterns: []string{"production"}}
-	if store.MatchesWorkspace(token, "staging") {
+	if MatchesWorkspace(token, "staging") {
 		t.Error("exact pattern should not match different workspace")
 	}
 }
 
 func TestMatchesWorkspace_GlobPatternMatches(t *testing.T) {
-	store := &APITokenStore{}
 	token := &APIToken{WorkspacePatterns: []string{"prod-*"}}
-	if !store.MatchesWorkspace(token, "prod-eu") {
+	if !MatchesWorkspace(token, "prod-eu") {
 		t.Error("glob pattern prod-* should match prod-eu")
 	}
-	if !store.MatchesWorkspace(token, "prod-us") {
+	if !MatchesWorkspace(token, "prod-us") {
 		t.Error("glob pattern prod-* should match prod-us")
 	}
 }
 
 func TestMatchesWorkspace_GlobPatternDoesNotMatchNonPrefix(t *testing.T) {
-	store := &APITokenStore{}
 	token := &APIToken{WorkspacePatterns: []string{"prod-*"}}
-	if store.MatchesWorkspace(token, "staging-eu") {
+	if MatchesWorkspace(token, "staging-eu") {
 		t.Error("glob pattern prod-* should not match staging-eu")
 	}
 }
 
 func TestMatchesWorkspace_MultiplePatterns_FirstMatch(t *testing.T) {
-	store := &APITokenStore{}
 	token := &APIToken{WorkspacePatterns: []string{"staging", "prod-*"}}
-	if !store.MatchesWorkspace(token, "prod-asia") {
+	if !MatchesWorkspace(token, "prod-asia") {
 		t.Error("should match via second pattern prod-*")
 	}
 }

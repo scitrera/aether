@@ -12,7 +12,6 @@ package registry_test
 import (
 	"context"
 	"database/sql"
-	"embed"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -26,10 +25,7 @@ import (
 	registrypg "github.com/scitrera/aether/internal/storage/registry/postgres"
 	registrysqlite "github.com/scitrera/aether/internal/storage/registry/sqlite"
 	"github.com/scitrera/aether/internal/testutil"
-	sqlitemigrations "github.com/scitrera/aether/migrations/sqlite"
 	sqliteregistrymigrations "github.com/scitrera/aether/migrations/sqlite_registry"
-
-	_ "github.com/scitrera/aether/pkg/dbcompat" // registers "sqlite_compat" driver
 )
 
 // storeFactory builds a Store and returns a cleanup func plus a capability
@@ -69,7 +65,6 @@ func TestStoreConformance(t *testing.T) {
 		factory storeFactory
 	}{
 		{name: "postgres", factory: postgresFactory},
-		{name: "sqlite", factory: sqliteFactory},
 		{name: "sqlite_native", factory: sqliteNativeFactory},
 	}
 
@@ -367,59 +362,6 @@ func postgresFactory(t *testing.T) (registry.Store, caps, func()) {
 	}, cleanup
 }
 
-// sqliteFactory opens a fresh temp-dir SQLite database via the sqlite_compat
-// driver (so dbcompat handles the postgres-flavored SQL the legacy registry
-// still emits in Stage 1), runs the sqlite migration set, and constructs a
-// postgres-impl registry.Store on top of that handle. The ProfileStateStore
-// is a Badger instance in another temp dir.
-//
-// Capability gates on this backend (all closed in Stage 2 by a native
-// sqlite Store impl that rewrites the offending queries):
-//
-//   - activeProfileFilter: legacy SQL uses `INTERVAL '60 seconds'`
-//     literals — dbcompat's regex doesn't cover the INTERVAL-prefix form.
-//   - staleCleanup: legacy SQL passes maxAge.String() against `$1::interval`;
-//     dbcompat strips the cast but SQLite can't do timestamp - text math.
-//   - launchParamsLookup: legacy query references `$1` in two positions;
-//     dbcompat's blind `$N` → `?` rewrite produces an arity mismatch.
-//
-// Note: AetherLite does not exercise any of these capability-gated paths
-// today (lite mode is single-orchestrator, no profile fleet) — so these
-// gaps don't block runtime use. They're documented here so Stage 2 closes
-// them deliberately.
-func sqliteFactory(t *testing.T) (registry.Store, caps, func()) {
-	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "registry.db")
-	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_busy_timeout=5000", dbPath)
-	db, err := sql.Open("sqlite_compat", dsn)
-	if err != nil {
-		t.Fatalf("sql.Open sqlite_compat: %v", err)
-	}
-	// Single-writer pool to match aetherlite's semantics and avoid
-	// SQLITE_BUSY in WAL mode.
-	db.SetMaxOpenConns(1)
-
-	ctx := context.Background()
-	if err := applySQLiteMigrationsForTest(ctx, db, sqlitemigrations.MigrationFS); err != nil {
-		_ = db.Close()
-		t.Fatalf("apply sqlite migrations: %v", err)
-	}
-
-	stateDB, closeBadger := openTestBadger(t)
-	state := legacyregistry.NewBadgerProfileStateStore(stateDB)
-	store := registrypg.New(db, state)
-
-	cleanup := func() {
-		closeBadger()
-		_ = db.Close()
-	}
-	return store, caps{
-		activeProfileFilter: false,
-		staleCleanup:        false,
-		launchParamsLookup:  false,
-	}, cleanup
-}
-
 // openTestBadger spins up a fresh embedded Badger instance in a temp
 // directory and returns it along with a close func. Used as the
 // ProfileStateStore backing for both subtests so we exercise the round-robin
@@ -433,53 +375,6 @@ func openTestBadger(t *testing.T) (*badger.DB, func()) {
 		t.Fatalf("badger.Open: %v", err)
 	}
 	return db, func() { _ = db.Close() }
-}
-
-// applySQLiteMigrationsForTest is a test-local copy of the cmd/aetherlite
-// migration helper. We duplicate it here (rather than importing) because
-// the conformance package shouldn't pull on cmd/* code just for migration
-// plumbing.
-func applySQLiteMigrationsForTest(ctx context.Context, db *sql.DB, fs embed.FS) error {
-	if _, err := db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version TEXT PRIMARY KEY,
-			applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)
-	`); err != nil {
-		return fmt.Errorf("create schema_migrations: %w", err)
-	}
-	entries, err := fs.ReadDir(".")
-	if err != nil {
-		return fmt.Errorf("read embed fs: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".sql" {
-			continue
-		}
-		version := strings.TrimSuffix(entry.Name(), ".sql")
-		var count int
-		if err := db.QueryRowContext(ctx,
-			"SELECT COUNT(*) FROM schema_migrations WHERE version = ?", version,
-		).Scan(&count); err != nil {
-			return fmt.Errorf("check migration %s: %w", version, err)
-		}
-		if count > 0 {
-			continue
-		}
-		content, err := fs.ReadFile(entry.Name())
-		if err != nil {
-			return fmt.Errorf("read %s: %w", entry.Name(), err)
-		}
-		if _, err := db.ExecContext(ctx, string(content)); err != nil {
-			return fmt.Errorf("exec %s: %w", entry.Name(), err)
-		}
-		if _, err := db.ExecContext(ctx,
-			"INSERT INTO schema_migrations (version) VALUES (?)", version,
-		); err != nil {
-			return fmt.Errorf("record %s: %w", version, err)
-		}
-	}
-	return nil
 }
 
 // sqliteNativeFactory builds a registry.Store using the Stage 2 native-sqlite

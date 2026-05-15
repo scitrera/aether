@@ -32,10 +32,8 @@ package acl_test
 import (
 	"context"
 	"database/sql"
-	"embed"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -46,10 +44,7 @@ import (
 	aclpg "github.com/scitrera/aether/internal/storage/acl/postgres"
 	aclsqlite "github.com/scitrera/aether/internal/storage/acl/sqlite"
 	"github.com/scitrera/aether/internal/testutil"
-	sqlitemigrations "github.com/scitrera/aether/migrations/sqlite"
 	"github.com/scitrera/aether/pkg/models"
-
-	_ "github.com/scitrera/aether/pkg/dbcompat" // registers "sqlite_compat" driver
 )
 
 // storeFactory builds a Store and returns flags describing backend
@@ -74,7 +69,6 @@ func TestStoreConformance(t *testing.T) {
 		factory storeFactory
 	}{
 		{name: "postgres", factory: postgresFactory},
-		{name: "sqlite", factory: sqliteFactory},
 		{name: "sqlite_native", factory: sqliteNativeFactory},
 	}
 
@@ -375,100 +369,6 @@ func postgresFactory(t *testing.T) (acl.Store, backendCaps, func()) {
 		supportsCleanupAudit:   true,
 		supportsFallbackUpsert: true,
 	}, cleanup
-}
-
-// sqliteFactory opens a fresh temp-dir SQLite database via the
-// sqlite_compat driver (so dbcompat handles the postgres-flavored SQL the
-// legacy ACL service still emits in Stage 1), runs the sqlite migration
-// set, and constructs a postgres-impl acl.Store on top of that handle.
-//
-// CleanupExpiredRules + QueryAuditLog + CleanupOldAuditLogs are
-// unsupported in this configuration because the legacy service calls
-// postgres stored functions / a view not present in the SQLite migration
-// set. Stage 2 closes those gaps.
-func sqliteFactory(t *testing.T) (acl.Store, backendCaps, func()) {
-	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "acl.db")
-	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_busy_timeout=5000", dbPath)
-	db, err := sql.Open("sqlite_compat", dsn)
-	if err != nil {
-		t.Fatalf("sql.Open sqlite_compat: %v", err)
-	}
-	// Single-writer pool to match aetherlite's aether.db semantics and
-	// avoid SQLITE_BUSY in WAL mode.
-	db.SetMaxOpenConns(1)
-
-	ctx := context.Background()
-	if err := applySQLiteMigrationsForTest(ctx, db, sqlitemigrations.MigrationFS); err != nil {
-		_ = db.Close()
-		t.Fatalf("apply sqlite migrations: %v", err)
-	}
-
-	gatewayID := fmt.Sprintf("conformance-gw-%d", time.Now().UnixNano())
-	cfg := legacyaudit.DefaultConfig()
-	cfg.BatchSize = 1
-	cfg.FlushPeriod = 50 * time.Millisecond
-	cfg.ChannelBuffer = 16
-	sharedAudit := legacyaudit.NewAuditLogger(db, gatewayID, cfg)
-	store := aclpg.NewWithSharedAudit(db, sharedAudit, db, gatewayID)
-
-	cleanup := func() {
-		_ = store.Close()
-		_ = sharedAudit.Close()
-		_ = db.Close()
-	}
-	return store, backendCaps{
-		supportsAuditQuery:     false,
-		supportsCleanupExpired: false,
-		supportsCleanupAudit:   false,
-	}, cleanup
-}
-
-// applySQLiteMigrationsForTest is a test-local copy of the
-// cmd/aetherlite/main.go helper. We duplicate it here (rather than
-// importing) because the conformance package shouldn't pull on cmd/* code
-// just for migration plumbing.
-func applySQLiteMigrationsForTest(ctx context.Context, db *sql.DB, fs embed.FS) error {
-	if _, err := db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version TEXT PRIMARY KEY,
-			applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)
-	`); err != nil {
-		return fmt.Errorf("create schema_migrations: %w", err)
-	}
-	entries, err := fs.ReadDir(".")
-	if err != nil {
-		return fmt.Errorf("read embed fs: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".sql" {
-			continue
-		}
-		version := strings.TrimSuffix(entry.Name(), ".sql")
-		var count int
-		if err := db.QueryRowContext(ctx,
-			"SELECT COUNT(*) FROM schema_migrations WHERE version = ?", version,
-		).Scan(&count); err != nil {
-			return fmt.Errorf("check migration %s: %w", version, err)
-		}
-		if count > 0 {
-			continue
-		}
-		content, err := fs.ReadFile(entry.Name())
-		if err != nil {
-			return fmt.Errorf("read %s: %w", entry.Name(), err)
-		}
-		if _, err := db.ExecContext(ctx, string(content)); err != nil {
-			return fmt.Errorf("exec %s: %w", entry.Name(), err)
-		}
-		if _, err := db.ExecContext(ctx,
-			"INSERT INTO schema_migrations (version) VALUES (?)", version,
-		); err != nil {
-			return fmt.Errorf("record %s: %w", version, err)
-		}
-	}
-	return nil
 }
 
 // sqliteNativeFactory opens a fresh temp-dir SQLite database via the bare

@@ -74,47 +74,21 @@ func (p *GatewayStateProvider) GetWorkspaces(ctx context.Context) ([]*admin.Work
 		})
 	}
 
-	// Get workspaces from database if available
-	if p.db != nil {
-		rows, err := p.db.QueryContext(ctx, `
-			SELECT DISTINCT workspace, MIN(created_at) as created_at
-			FROM tasks
-			WHERE workspace IS NOT NULL AND workspace != ''
-			GROUP BY workspace
-		`)
+	// Get workspaces from the tasks store (routes through the correct DB
+	// handle in both full mode / postgres and lite mode / sqlite).
+	if p.taskStore != nil {
+		summaries, err := p.taskStore.ListDistinctTaskWorkspaces(ctx)
 		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var ws string
-				var createdAt time.Time
-				if err := rows.Scan(&ws, &createdAt); err == nil {
-					if _, exists := workspaceMap[ws]; !exists {
-						workspaceMap[ws] = &admin.WorkspaceInfo{
-							WorkspaceID: ws,
-							DisplayName: ws,
-							CreatedAt:   createdAt,
-						}
+			for _, s := range summaries {
+				if _, exists := workspaceMap[s.Workspace]; !exists {
+					workspaceMap[s.Workspace] = &admin.WorkspaceInfo{
+						WorkspaceID: s.Workspace,
+						DisplayName: s.Workspace,
+						CreatedAt:   s.CreatedAt,
 					}
 				}
-			}
-		}
-
-		// Get task counts per workspace
-		rows, err = p.db.QueryContext(ctx, `
-			SELECT workspace, COUNT(*) as task_count
-			FROM tasks
-			WHERE workspace IS NOT NULL AND workspace != ''
-			GROUP BY workspace
-		`)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var ws string
-				var count int64
-				if err := rows.Scan(&ws, &count); err == nil {
-					if info, exists := workspaceMap[ws]; exists {
-						info.TotalMessages = count
-					}
+				if info, exists := workspaceMap[s.Workspace]; exists {
+					info.TotalMessages = s.TaskCount
 				}
 			}
 		}
@@ -174,19 +148,14 @@ func (p *GatewayStateProvider) GetWorkspaceByID(ctx context.Context, workspaceID
 		})
 	}
 
-	// Get task statistics from database
-	if p.db != nil {
-		var count int64
-		var createdAt time.Time
-		err := p.db.QueryRowContext(ctx, `
-			SELECT COUNT(*), MIN(created_at)
-			FROM tasks
-			WHERE workspace = $1
-		`, workspaceID).Scan(&count, &createdAt)
+	// Get task statistics from the tasks store (routes through the correct
+	// DB handle in both full mode / postgres and lite mode / sqlite).
+	if p.taskStore != nil {
+		stats, err := p.taskStore.GetWorkspaceTaskStats(ctx, workspaceID)
 		if err == nil {
-			wsInfo.TotalMessages = count
-			if !createdAt.IsZero() {
-				wsInfo.CreatedAt = createdAt
+			wsInfo.TotalMessages = stats.TaskCount
+			if !stats.CreatedAt.IsZero() {
+				wsInfo.CreatedAt = stats.CreatedAt
 			}
 		}
 	}

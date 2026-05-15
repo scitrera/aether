@@ -7,13 +7,13 @@ import (
 	"github.com/scitrera/aether/pkg/models"
 )
 
-// APIKeyAuthenticator validates API keys against the PostgreSQL token store
+// APIKeyAuthenticator validates API keys against an APITokenStore implementation.
 type APIKeyAuthenticator struct {
-	store *APITokenStore
+	store APITokenStore
 }
 
-// NewAPIKeyAuthenticator creates a new API key authenticator backed by the given token store
-func NewAPIKeyAuthenticator(store *APITokenStore) *APIKeyAuthenticator {
+// NewAPIKeyAuthenticator creates a new API key authenticator backed by the given token store.
+func NewAPIKeyAuthenticator(store APITokenStore) *APIKeyAuthenticator {
 	return &APIKeyAuthenticator{store: store}
 }
 
