@@ -22,6 +22,8 @@ from .client import (
     ServiceClient,
     # Audit submission response
     AuditSubmitResponse,
+    # WaitSpec convenience helper
+    make_wait_spec,
 )
 
 from .client_async import (
@@ -216,6 +218,9 @@ __all__ = (
 
     # Audit submission response
     'AuditSubmitResponse',
+
+    # WaitSpec convenience helper
+    'make_wait_spec',
 
     # Message type constants
     'MESSAGE_TYPE_UNSPECIFIED',

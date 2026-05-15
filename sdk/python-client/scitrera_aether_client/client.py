@@ -43,6 +43,58 @@ from .proto import aether_pb2
 from .proto import aether_pb2_grpc
 
 
+def make_wait_spec(reason: int,
+                   *,
+                   expected_principal: str = "",
+                   input_match: Optional[Dict[str, str]] = None,
+                   authority_request_id: str = "",
+                   depends_on: Optional[List[str]] = None,
+                   wake_on_any: bool = False,
+                   timeout_ms: int = 0,
+                   scheduled_wake_unix_ms: int = 0) -> aether_pb2.WaitSpec:
+    """
+    Build an ``aether_pb2.WaitSpec`` using field-name kwargs instead of
+    positional proto construction.
+
+    The ``reason`` enum value (one of ``aether_pb2.WAIT_REASON_INPUT``,
+    ``WAIT_REASON_AUTHORITY``, ``WAIT_REASON_DEPENDENCY``, or
+    ``WAIT_REASON_HIBERNATION``) selects which other fields are meaningful —
+    see the WaitSpec proto comments for the full field-reason matrix.
+
+    This helper is part of the public API.  Callers can import it directly::
+
+        from scitrera_aether_client.client import make_wait_spec
+
+    Args:
+        reason: ``aether_pb2.WaitReason`` enum value (required).
+        expected_principal: For INPUT waits — canonical principal string of
+            the actor whose message will satisfy the wait condition.
+        input_match: For INPUT waits — key/value pairs that must match the
+            incoming message metadata.
+        authority_request_id: For AUTHORITY waits — the id of the pending
+            authority request being tracked.
+        depends_on: For DEPENDENCY waits — list of task IDs to wait on.
+        wake_on_any: For DEPENDENCY waits — if True, wake when *any* listed
+            task terminates; if False (default), wait for *all*.
+        timeout_ms: Maximum wait duration in milliseconds (0 = no timeout).
+        scheduled_wake_unix_ms: Unix timestamp (ms) at which the task waker
+            will force-wake regardless of other conditions (0 = disabled).
+
+    Returns:
+        Populated ``aether_pb2.WaitSpec`` instance.
+    """
+    return aether_pb2.WaitSpec(
+        reason=reason,  # type: ignore[arg-type]
+        expected_principal=expected_principal,
+        input_match=input_match or {},
+        authority_request_id=authority_request_id,
+        depends_on=depends_on or [],
+        wake_on_any=wake_on_any,
+        timeout_ms=timeout_ms,
+        scheduled_wake_unix_ms=scheduled_wake_unix_ms,
+    )
+
+
 def _principal_ref(principal_type: str, principal_id: str) -> aether_pb2.PrincipalRef:
     return aether_pb2.PrincipalRef(
         principal_type=principal_type,
@@ -933,7 +985,8 @@ class BaseAetherClient:
                     launch_param_overrides: Optional[Dict[str, str]] = None,
                     metadata: Optional[Dict[str, str]] = None,
                     payload: Optional[bytes] = None,
-                    assignment_mode: int = SELF_ASSIGN) -> None:
+                    assignment_mode: int = SELF_ASSIGN,
+                    context_id: str = "") -> None:
         """
         Create a new task.
 
@@ -946,6 +999,8 @@ class BaseAetherClient:
             metadata: Optional task metadata
             payload: Optional binary payload for task input data (server-enforced size limit, default 512KB)
             assignment_mode: SELF_ASSIGN (0), TARGETED (1), or POOL (2) [automatically handled in most cases]
+            context_id: Optional client-minted session identifier (A2A contextId). Tasks
+                sharing a context_id are groupable via TaskFilter.context_id.
         """
         if target_agent_id and assignment_mode == SELF_ASSIGN:
             assignment_mode = TARGETED
@@ -959,7 +1014,8 @@ class BaseAetherClient:
             target_implementation=target_implementation,
             launch_param_overrides=launch_param_overrides or {},
             metadata=metadata or {},
-            payload=payload or b""
+            payload=payload or b"",
+            context_id=context_id,
         )
         self.request_queue.put(aether_pb2.UpstreamMessage(create_task=req))
 
@@ -971,6 +1027,7 @@ class BaseAetherClient:
                          payload: Optional[bytes] = None,
                          assignment_mode: int = SELF_ASSIGN,
                          authorization: Optional[aether_pb2.AuthorizationContext] = None,
+                         context_id: str = "",
                          timeout: float = 10.0) -> Optional[aether_pb2.CreateTaskResponse]:
         """
         Create a new task and wait for the server's response containing the task_id.
@@ -992,6 +1049,8 @@ class BaseAetherClient:
                 present, the created task is associated with the subject's
                 authority and the gateway ACL check is evaluated against the
                 delegated grant (instead of the raw caller identity).
+            context_id: Optional client-minted session identifier (A2A contextId). Tasks
+                sharing a context_id are groupable via TaskFilter.context_id.
             timeout: Timeout in seconds (default 10.0)
 
         Returns:
@@ -1012,6 +1071,7 @@ class BaseAetherClient:
             metadata=metadata or {},
             payload=payload or b"",
             authorization=authorization,
+            context_id=context_id,
             request_id=request_id,
         )
         return self._send_sync_op(
@@ -1406,6 +1466,153 @@ class BaseAetherClient:
         request_id = str(uuid.uuid4())
         op = aether_pb2.TaskOperation(
             op=aether_pb2.TaskOperation.FAIL,
+            task_id=task_id,
+            reason=reason,
+            request_id=request_id,
+        )
+        return self._send_sync_op(
+            aether_pb2.UpstreamMessage(task_op=op),
+            request_id, timeout,
+        )
+
+    def pause_task(self, task_id: str, wait_spec: aether_pb2.WaitSpec,
+                   reason: str = "",
+                   timeout: float = 10.0) -> Optional[aether_pb2.TaskOperationResponse]:
+        """
+        Pause a running task into a waiting state described by wait_spec.
+
+        ``wait_spec.reason`` determines the target status (INPUT, AUTHORITY,
+        DEPENDENCY, HIBERNATION). ``reason`` is a free-text narrative for the
+        audit trail.
+
+        Args:
+            task_id: The task ID to pause
+            wait_spec: Describes the wait condition. Must be non-None and
+                ``wait_spec.reason`` must be set (not WAIT_REASON_UNSPECIFIED).
+                Use :func:`make_wait_spec` to build this conveniently.
+            reason: Optional human-readable narrative for the audit trail
+            timeout: Timeout in seconds (default 10.0)
+
+        Returns:
+            TaskOperationResponse or None if timeout
+
+        Raises:
+            ValueError: If ``wait_spec`` is None or its reason is unspecified.
+        """
+        if wait_spec is None:
+            raise ValueError("pause_task: wait_spec must be provided")
+        if wait_spec.reason == aether_pb2.WAIT_REASON_UNSPECIFIED:
+            raise ValueError("pause_task: wait_spec.reason must not be WAIT_REASON_UNSPECIFIED")
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.TaskOperation(
+            op=aether_pb2.TaskOperation.PAUSE,
+            task_id=task_id,
+            reason=reason,
+            wait_spec=wait_spec,
+            request_id=request_id,
+        )
+        return self._send_sync_op(
+            aether_pb2.UpstreamMessage(task_op=op),
+            request_id, timeout,
+        )
+
+    def wait_for_task(self, task_id: str, depends_on: List[str],
+                      wake_on_any: bool = False, timeout_ms: int = 0,
+                      scheduled_wake_unix_ms: int = 0,
+                      reason: str = "",
+                      timeout: float = 10.0) -> Optional[aether_pb2.TaskOperationResponse]:
+        """
+        Specialization of pause_task for spontaneous task dependencies.
+
+        Forces ``wait_spec.reason = DEPENDENCY``. ``depends_on`` must be
+        non-empty. ``wake_on_any=False`` (default) waits for ALL listed tasks
+        to terminate; ``True`` wakes on the first.
+
+        Args:
+            task_id: The task ID to pause into a dependency wait
+            depends_on: Non-empty list of task IDs whose termination satisfies
+                the wait condition.
+            wake_on_any: If True, wake when any listed task terminates;
+                if False (default), wake only when all have terminated.
+            timeout_ms: Maximum wait duration in milliseconds (0 = no timeout).
+            scheduled_wake_unix_ms: Unix timestamp (ms) for a forced wake-up
+                regardless of dependency resolution (0 = disabled).
+            reason: Optional human-readable narrative for the audit trail
+            timeout: Timeout in seconds for the RPC call (default 10.0)
+
+        Returns:
+            TaskOperationResponse or None if timeout
+
+        Raises:
+            ValueError: If ``depends_on`` is empty.
+        """
+        if not depends_on:
+            raise ValueError("wait_for_task: depends_on must be non-empty")
+        wait_spec = aether_pb2.WaitSpec(
+            reason=aether_pb2.WAIT_REASON_DEPENDENCY,
+            depends_on=depends_on,
+            wake_on_any=wake_on_any,
+            timeout_ms=timeout_ms,
+            scheduled_wake_unix_ms=scheduled_wake_unix_ms,
+        )
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.TaskOperation(
+            op=aether_pb2.TaskOperation.WAIT_FOR,
+            task_id=task_id,
+            reason=reason,
+            wait_spec=wait_spec,
+            request_id=request_id,
+        )
+        return self._send_sync_op(
+            aether_pb2.UpstreamMessage(task_op=op),
+            request_id, timeout,
+        )
+
+    def resume_task(self, task_id: str,
+                    timeout: float = 10.0) -> Optional[aether_pb2.TaskOperationResponse]:
+        """
+        Force-resume a paused task back to running.
+
+        Normally the server's task_waker does this automatically when wake
+        conditions are satisfied; ``resume_task`` is for manual / admin paths.
+
+        Args:
+            task_id: The task ID to resume
+            timeout: Timeout in seconds (default 10.0)
+
+        Returns:
+            TaskOperationResponse or None if timeout
+        """
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.TaskOperation(
+            op=aether_pb2.TaskOperation.RESUME,
+            task_id=task_id,
+            request_id=request_id,
+        )
+        return self._send_sync_op(
+            aether_pb2.UpstreamMessage(task_op=op),
+            request_id, timeout,
+        )
+
+    def reject_task(self, task_id: str, reason: str = "",
+                    timeout: float = 10.0) -> Optional[aether_pb2.TaskOperationResponse]:
+        """
+        Reject a task (terminal). Used when an agent declines before processing.
+
+        Distinct from ``fail_task`` — REJECT means "I won't try this", not
+        "I tried and broke".
+
+        Args:
+            task_id: The task ID to reject
+            reason: Optional reason for rejection
+            timeout: Timeout in seconds (default 10.0)
+
+        Returns:
+            TaskOperationResponse or None if timeout
+        """
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.TaskOperation(
+            op=aether_pb2.TaskOperation.REJECT,
             task_id=task_id,
             reason=reason,
             request_id=request_id,

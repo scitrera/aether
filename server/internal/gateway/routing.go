@@ -1747,6 +1747,240 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 			s.notifyTaskStatusChangeFromTaskID(ctx, op.TaskId, "failed", errMsg)
 		}
 
+	case pb.TaskOperation_PAUSE:
+		// PAUSE: transition running -> WAITING_* with a typed wait reason.
+		// Validation: wait_spec required (it carries the WaitReason that
+		// determines the target waiting status).
+		if op.WaitSpec == nil {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   "wait_spec required for PAUSE",
+			}
+			break
+		}
+		pauseTask, err := s.taskStore.GetTask(ctx, op.TaskId)
+		if err != nil || pauseTask == nil {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   "task not found",
+			}
+			break
+		}
+		client.identityMu.RLock()
+		callerWorkspacePause := client.Identity.Workspace
+		client.identityMu.RUnlock()
+		if callerWorkspacePause != "" && pauseTask.Workspace != callerWorkspacePause {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   "not authorized: task belongs to a different workspace",
+			}
+			break
+		}
+		toStatus := waitReasonToStatus(op.WaitSpec.GetReason())
+		spec := protoWaitSpecToTasks(op.WaitSpec)
+		var pauseErr error
+		if s.orchestration != nil && s.orchestration.TaskService != nil {
+			pauseErr = s.orchestration.TaskService.PauseTask(ctx, op.TaskId, toStatus, spec)
+		} else {
+			pauseErr = s.taskStore.PauseTask(ctx, op.TaskId, toStatus, spec)
+		}
+		if pauseErr != nil {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   pauseErr.Error(),
+			}
+		} else {
+			updated, _ := s.taskStore.GetTask(ctx, op.TaskId)
+			response = &pb.TaskOperationResponse{
+				Success: true,
+				Message: "task paused",
+			}
+			if updated != nil {
+				response.Task = taskToProto(updated)
+			}
+			s.notifyTaskStatusChangeFromTaskID(ctx, op.TaskId, string(toStatus), "")
+		}
+
+	case pb.TaskOperation_WAIT_FOR:
+		// WAIT_FOR: specialization of PAUSE for spontaneous dependencies.
+		// Validation: WaitSpec.depends_on must be non-empty; reason defaults
+		// to DEPENDENCY (and is forced to DEPENDENCY for routing). All
+		// referenced dependency task ids must exist in the caller's
+		// workspace (info-hiding: missing/foreign tasks reported as
+		// "dependency not found").
+		if op.WaitSpec == nil || len(op.WaitSpec.GetDependsOn()) == 0 {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   "wait_spec.depends_on required for WAIT_FOR",
+			}
+			break
+		}
+		waitTask, err := s.taskStore.GetTask(ctx, op.TaskId)
+		if err != nil || waitTask == nil {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   "task not found",
+			}
+			break
+		}
+		client.identityMu.RLock()
+		callerWorkspaceWait := client.Identity.Workspace
+		client.identityMu.RUnlock()
+		if callerWorkspaceWait != "" && waitTask.Workspace != callerWorkspaceWait {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   "not authorized: task belongs to a different workspace",
+			}
+			break
+		}
+		// Validate every referenced dependency is in the same workspace.
+		depValid := true
+		var depErr string
+		for _, depID := range op.WaitSpec.GetDependsOn() {
+			if depID == "" {
+				continue
+			}
+			dep, err := s.taskStore.GetTask(ctx, depID)
+			if err != nil || dep == nil {
+				depValid = false
+				depErr = "dependency not found: " + depID
+				break
+			}
+			if dep.Workspace != waitTask.Workspace {
+				depValid = false
+				depErr = "dependency not found: " + depID
+				break
+			}
+		}
+		if !depValid {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   depErr,
+			}
+			break
+		}
+		spec := protoWaitSpecToTasks(op.WaitSpec)
+		// Force the reason to DEPENDENCY regardless of caller-supplied value;
+		// WAIT_FOR is the dependency op.
+		spec.Reason = tasks.WaitReasonDependency
+		toStatus := tasks.TaskStatusWaitingDependency
+		var waitErr error
+		if s.orchestration != nil && s.orchestration.TaskService != nil {
+			waitErr = s.orchestration.TaskService.PauseTask(ctx, op.TaskId, toStatus, spec)
+		} else {
+			waitErr = s.taskStore.PauseTask(ctx, op.TaskId, toStatus, spec)
+		}
+		if waitErr != nil {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   waitErr.Error(),
+			}
+		} else {
+			updated, _ := s.taskStore.GetTask(ctx, op.TaskId)
+			response = &pb.TaskOperationResponse{
+				Success: true,
+				Message: "task waiting on dependencies",
+			}
+			if updated != nil {
+				response.Task = taskToProto(updated)
+			}
+			s.notifyTaskStatusChangeFromTaskID(ctx, op.TaskId, string(toStatus), "")
+		}
+
+	case pb.TaskOperation_RESUME:
+		// RESUME: force-resume a paused task back to running. Normally the
+		// task_waker handles this; this op is the admin/manual override.
+		resumeTask, err := s.taskStore.GetTask(ctx, op.TaskId)
+		if err != nil || resumeTask == nil {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   "task not found",
+			}
+			break
+		}
+		client.identityMu.RLock()
+		callerWorkspaceResume := client.Identity.Workspace
+		client.identityMu.RUnlock()
+		if callerWorkspaceResume != "" && resumeTask.Workspace != callerWorkspaceResume {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   "not authorized: task belongs to a different workspace",
+			}
+			break
+		}
+		toStatus := tasks.TaskStatusRunning
+		var resumeErr error
+		if s.orchestration != nil && s.orchestration.TaskService != nil {
+			resumeErr = s.orchestration.TaskService.ResumeTask(ctx, op.TaskId, toStatus)
+		} else {
+			resumeErr = s.taskStore.ResumeTask(ctx, op.TaskId, toStatus)
+		}
+		if resumeErr != nil {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   resumeErr.Error(),
+			}
+		} else {
+			updated, _ := s.taskStore.GetTask(ctx, op.TaskId)
+			response = &pb.TaskOperationResponse{
+				Success: true,
+				Message: "task resumed",
+			}
+			if updated != nil {
+				response.Task = taskToProto(updated)
+			}
+			s.notifyTaskStatusChangeFromTaskID(ctx, op.TaskId, string(toStatus), "")
+		}
+
+	case pb.TaskOperation_REJECT:
+		// REJECT: terminal — agent declines before processing. Reuses the
+		// CancelTask cleanup pattern (revoke tokens + authority grant,
+		// retire orchestrated_task_queue row, fire dependency wake).
+		rejectTask, err := s.taskStore.GetTask(ctx, op.TaskId)
+		if err != nil || rejectTask == nil {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   "task not found",
+			}
+			break
+		}
+		client.identityMu.RLock()
+		callerWorkspaceReject := client.Identity.Workspace
+		client.identityMu.RUnlock()
+		if callerWorkspaceReject != "" && rejectTask.Workspace != callerWorkspaceReject {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   "not authorized: task belongs to a different workspace",
+			}
+			break
+		}
+		reason := op.Reason
+		if reason == "" {
+			reason = "rejected"
+		}
+		var rejectErr error
+		if s.orchestration != nil && s.orchestration.TaskService != nil {
+			rejectErr = s.orchestration.TaskService.RejectTask(ctx, op.TaskId, reason)
+		} else {
+			rejectErr = s.taskStore.RejectTask(ctx, op.TaskId, reason)
+		}
+		if rejectErr != nil {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   rejectErr.Error(),
+			}
+		} else {
+			updated, _ := s.taskStore.GetTask(ctx, op.TaskId)
+			response = &pb.TaskOperationResponse{
+				Success: true,
+				Message: "task rejected",
+			}
+			if updated != nil {
+				response.Task = taskToProto(updated)
+			}
+			s.notifyTaskStatusChangeFromTaskID(ctx, op.TaskId, string(tasks.TaskStatusRejected), reason)
+		}
+
 	default:
 		response = &pb.TaskOperationResponse{
 			Success: false,

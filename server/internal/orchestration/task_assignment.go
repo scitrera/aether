@@ -702,6 +702,7 @@ func (tas *TaskAssignmentService) CompleteTask(ctx context.Context, taskID strin
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task complete (non-fatal)")
 		}
 	}
+	tas.wakeDependents(ctx, taskID)
 	return nil
 }
 
@@ -725,6 +726,7 @@ func (tas *TaskAssignmentService) FailTask(ctx context.Context, taskID, errorMsg
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task fail (non-fatal)")
 		}
 	}
+	tas.wakeDependents(ctx, taskID)
 	return nil
 }
 
@@ -746,7 +748,168 @@ func (tas *TaskAssignmentService) CancelTask(ctx context.Context, taskID string)
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task cancel (non-fatal)")
 		}
 	}
+	tas.wakeDependents(ctx, taskID)
 	return nil
+}
+
+// PauseTask transitions a task from running to a waiting/hibernated state,
+// persisting the WaitSpec descriptor. Side effects: log only — tokens and
+// authority grants are intentionally preserved because the task is expected
+// to resume. Multi-gateway safe: ValidateTransition rejects illegal sources
+// inside the store, and concurrent paused-to-paused calls are idempotent.
+func (tas *TaskAssignmentService) PauseTask(ctx context.Context, taskID string, to tasks.TaskStatus, spec *tasks.WaitSpec) error {
+	if err := tas.taskStore.PauseTask(ctx, taskID, to, spec); err != nil {
+		return err
+	}
+	reason := ""
+	if spec != nil {
+		reason = string(spec.Reason)
+	}
+	logging.Logger.Info().
+		Str("task_id", taskID).
+		Str("to_status", string(to)).
+		Str("wait_reason", reason).
+		Msg("task paused")
+	return nil
+}
+
+// ResumeTask transitions a paused/hibernated task back to a running (or
+// pending) state, clearing the WaitSpec. Side effects: log only — tokens
+// and grants were retained across the pause.
+func (tas *TaskAssignmentService) ResumeTask(ctx context.Context, taskID string, to tasks.TaskStatus) error {
+	if err := tas.taskStore.ResumeTask(ctx, taskID, to); err != nil {
+		return err
+	}
+	logging.Logger.Info().
+		Str("task_id", taskID).
+		Str("to_status", string(to)).
+		Msg("task resumed")
+	return nil
+}
+
+// RejectTask transitions a task to the terminal REJECTED state. Side effects
+// mirror CancelTask/CompleteTask: token revoke, task-scoped authority grant
+// revoke, orchestrated_task_queue retirement, and dependency-wake fan-out.
+// Used when an agent declines a task before (or instead of) processing it.
+func (tas *TaskAssignmentService) RejectTask(ctx context.Context, taskID, reason string) error {
+	if tas.tokenStore != nil {
+		if err := tas.tokenStore.RevokeTokensForTask(ctx, taskID); err != nil {
+			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to revoke tokens for rejected task")
+		}
+	}
+
+	tas.revokeTaskAuthorityGrant(ctx, taskID)
+
+	if reason == "" {
+		reason = "rejected"
+	}
+	if err := tas.taskStore.RejectTask(ctx, taskID, reason); err != nil {
+		return err
+	}
+	if tas.dispatcher != nil {
+		if err := tas.dispatcher.FailTaskByTaskID(ctx, taskID, reason); err != nil {
+			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task reject (non-fatal)")
+		}
+	}
+	logging.Logger.Info().Str("task_id", taskID).Str("reason", reason).Msg("task rejected")
+	tas.wakeDependents(ctx, taskID)
+	return nil
+}
+
+// wakeDependencyLimit caps how many waiting parents wakeDependents will
+// inspect in a single fan-out, keeping the post-terminal hook bounded.
+const wakeDependencyLimit = 50
+
+// wakeDependents fans out a "dependency satisfied" check to every task that
+// is currently in waiting_dependency state on the given task. Honors the
+// WakeOnAny flag on each parent's WaitSpec: by default a parent only wakes
+// once ALL of its dependencies are terminal. Non-fatal — every error is
+// logged and the loop continues; never returns an error.
+func (tas *TaskAssignmentService) wakeDependents(ctx context.Context, taskID string) {
+	if tas.taskStore == nil {
+		return
+	}
+	parents, err := tas.taskStore.ListTasksWaitingOnDependency(ctx, taskID)
+	if err != nil {
+		logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("wakeDependents: failed to list waiting parents (non-fatal)")
+		return
+	}
+	if len(parents) == 0 {
+		return
+	}
+	if len(parents) > wakeDependencyLimit {
+		logging.Logger.Warn().
+			Str("task_id", taskID).
+			Int("parent_count", len(parents)).
+			Int("limit", wakeDependencyLimit).
+			Msg("wakeDependents: truncating dependency fan-out to bounded limit")
+		parents = parents[:wakeDependencyLimit]
+	}
+	for _, parent := range parents {
+		if parent == nil || parent.TaskID == "" {
+			continue
+		}
+		// Idempotency: parent may have already been woken by an earlier scan
+		// or a concurrent waker. Skip anything not currently waiting on a
+		// dependency.
+		if parent.Status != tasks.TaskStatusWaitingDependency {
+			continue
+		}
+		wake, err := tas.shouldWakeParent(ctx, parent)
+		if err != nil {
+			logging.Logger.Warn().Err(err).Str("parent_task_id", parent.TaskID).Str("dep_task_id", taskID).Msg("wakeDependents: error evaluating wake conditions (non-fatal)")
+			continue
+		}
+		if !wake {
+			continue
+		}
+		if err := tas.ResumeTask(ctx, parent.TaskID, tasks.TaskStatusRunning); err != nil {
+			logging.Logger.Warn().Err(err).Str("parent_task_id", parent.TaskID).Str("dep_task_id", taskID).Msg("wakeDependents: failed to resume parent (non-fatal)")
+		}
+	}
+}
+
+// shouldWakeParent inspects a waiting_dependency parent's WaitSpec and
+// decides whether all wake conditions are satisfied. WakeOnAny=true wakes
+// on the first terminal dependency; otherwise every dependency must be
+// terminal. Tasks with empty DependsOn always wake (defensive: there is
+// nothing to wait on).
+func (tas *TaskAssignmentService) shouldWakeParent(ctx context.Context, parent *tasks.Task) (bool, error) {
+	if parent == nil {
+		return false, nil
+	}
+	if parent.WaitSpec == nil || len(parent.WaitSpec.DependsOn) == 0 {
+		return true, nil
+	}
+	wakeOnAny := parent.WaitSpec.WakeOnAny
+	allTerminal := true
+	anyTerminal := false
+	for _, depID := range parent.WaitSpec.DependsOn {
+		if depID == "" {
+			continue
+		}
+		dep, err := tas.taskStore.GetTask(ctx, depID)
+		if err != nil {
+			// Treat lookup errors as not-yet-terminal so we err on the side
+			// of staying paused; the caller logs+continues.
+			return false, err
+		}
+		if dep == nil {
+			// Missing dependency — treat as terminal (cannot block forever
+			// on a dependency that no longer exists).
+			anyTerminal = true
+			continue
+		}
+		if tasks.IsTerminal(dep.Status) {
+			anyTerminal = true
+		} else {
+			allTerminal = false
+		}
+	}
+	if wakeOnAny {
+		return anyTerminal, nil
+	}
+	return allTerminal, nil
 }
 
 func (tas *TaskAssignmentService) revokeTaskAuthorityGrant(ctx context.Context, taskID string) {

@@ -200,6 +200,10 @@ func TestHandleTaskOp_NilTaskStore_SendsNotConfiguredError(t *testing.T) {
 		{"RETRY", pb.TaskOperation_RETRY},
 		{"COMPLETE", pb.TaskOperation_COMPLETE},
 		{"FAIL", pb.TaskOperation_FAIL},
+		{"PAUSE", pb.TaskOperation_PAUSE},
+		{"WAIT_FOR", pb.TaskOperation_WAIT_FOR},
+		{"RESUME", pb.TaskOperation_RESUME},
+		{"REJECT", pb.TaskOperation_REJECT},
 	}
 
 	for _, tt := range ops {
@@ -279,6 +283,10 @@ func TestHandleTaskOp_RequestIDAlwaysEchoed(t *testing.T) {
 		{"RETRY", pb.TaskOperation_RETRY, "retry-corr"},
 		{"COMPLETE", pb.TaskOperation_COMPLETE, "complete-corr"},
 		{"FAIL", pb.TaskOperation_FAIL, "fail-corr"},
+		{"PAUSE", pb.TaskOperation_PAUSE, "pause-corr"},
+		{"WAIT_FOR", pb.TaskOperation_WAIT_FOR, "wait-corr"},
+		{"RESUME", pb.TaskOperation_RESUME, "resume-corr"},
+		{"REJECT", pb.TaskOperation_REJECT, "reject-corr"},
 	}
 
 	for _, tt := range ops {
