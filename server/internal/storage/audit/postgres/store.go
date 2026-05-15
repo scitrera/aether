@@ -41,7 +41,10 @@ func New(db *sql.DB, gatewayID string, config *audit.Config) *Store {
 	return legacy.NewAuditLogger(db, gatewayID, config)
 }
 
-// Compile-time conformance assert. This is the load-bearing check that
-// audit.Store and *Store agree on the full method set. If a method is
-// added to audit.Store or its signature changes, the build breaks here.
-var _ audit.Store = (*Store)(nil)
+// Compile-time conformance asserts. These are load-bearing checks that
+// *Store agrees on the full method set with audit.Store, and on the
+// narrow write-only subset with audit.EventSink (used by the ACL layer).
+var (
+	_ audit.Store     = (*Store)(nil) // full interface
+	_ audit.EventSink = (*Store)(nil) // narrow write-only interface used by ACL layer
+)

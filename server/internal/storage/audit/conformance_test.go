@@ -23,6 +23,7 @@ import (
 
 	"github.com/scitrera/aether/internal/storage/audit"
 	auditpg "github.com/scitrera/aether/internal/storage/audit/postgres"
+	auditsqlite "github.com/scitrera/aether/internal/storage/audit/sqlite"
 	"github.com/scitrera/aether/internal/testutil"
 	sqliteauditmigrations "github.com/scitrera/aether/migrations/sqlite_audit"
 
@@ -41,6 +42,7 @@ func TestStoreConformance(t *testing.T) {
 	}{
 		{name: "postgres", factory: postgresFactory},
 		{name: "sqlite", factory: sqliteFactory},
+		{name: "sqlite_native", factory: sqliteNativeFactory},
 	}
 
 	for _, b := range backends {
@@ -255,6 +257,43 @@ func sqliteFactory(t *testing.T) (audit.Store, bool, func()) {
 		_ = db.Close()
 	}
 	return store, false, cleanup
+}
+
+// sqliteNativeFactory opens a fresh temp-dir SQLite database using the
+// native audit.sqlite.Store implementation (Stage 2). This uses the bare
+// "sqlite" driver (modernc.org/sqlite) directly — no dbcompat translation.
+// The native impl handles its own migrations, timestamp formatting, and
+// boolean-to-integer conversion.
+//
+// CleanupOldLogs IS supported — the native impl uses a parameterized
+// DELETE instead of the PG stored function.
+func sqliteNativeFactory(t *testing.T) (audit.Store, bool, func()) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "audit_native.db")
+	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000", dbPath)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+
+	cfg := audit.DefaultConfig()
+	cfg.BatchSize = 1                       // flush immediately so async tests don't wait
+	cfg.FlushPeriod = 50 * time.Millisecond // tight flush window
+	cfg.ChannelBuffer = 16
+
+	gatewayID := fmt.Sprintf("conformance-gw-%d", time.Now().UnixNano())
+	store, err := auditsqlite.New(db, gatewayID, cfg)
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("auditsqlite.New: %v", err)
+	}
+
+	cleanup := func() {
+		_ = store.Close()
+		_ = db.Close()
+	}
+	// supportsCleanup=true: native impl has parameterized DELETE.
+	return store, true, cleanup
 }
 
 // applySQLiteMigrationsForTest is a test-local copy of the

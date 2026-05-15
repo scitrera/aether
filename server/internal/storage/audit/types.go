@@ -26,6 +26,10 @@ type (
 	// event-type allowlist, verbosity, batch size, flush period, retention,
 	// channel buffer).
 	Config = legacy.Config
+	// EventSink is the narrow write-only interface for audit event
+	// producers that only need the async LogEvent path (e.g. the ACL
+	// layer). See legacy.EventSink for the full contract.
+	EventSink = legacy.EventSink
 )
 
 // Event types — values that land in comprehensive_audit_log.event_type.
@@ -114,6 +118,10 @@ var (
 	// strings (Agent → agent, etc.) so audit rows are case-consistent.
 	NormalizePrincipalTypeCase = legacy.NormalizePrincipalTypeCase
 )
+
+// SanitizeMetadata re-exported so native sqlite impl (and future callers)
+// can redact credential-shaped keys without reaching into internal/audit.
+var SanitizeMetadata = legacy.SanitizeMetadata
 
 // Event constructors — re-exported helpers for building common AuditEvent
 // shapes without depending on the legacy package directly.

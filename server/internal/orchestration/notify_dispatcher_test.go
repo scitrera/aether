@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
+	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	"github.com/scitrera/aether/internal/testutil"
 	"github.com/scitrera/aether/pkg/tasks"
 )
@@ -25,7 +26,7 @@ func TestUnclaimTaskRetryLimit(t *testing.T) {
 	ctx := context.Background()
 	// Use isolated metrics registry for tests to avoid conflicts
 	testMetrics := NewDispatcherMetricsWithRegistry(prometheus.NewRegistry())
-	dispatcher, err := NewNotifyTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
+	dispatcher, err := NewNotifyTaskDispatcher(taskpg.New(testDB.DB), "", 0, nil, testMetrics)
 	if err != nil {
 		t.Fatalf("Failed to create dispatcher: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestRetryBackoff(t *testing.T) {
 	ctx := context.Background()
 	// Use isolated metrics registry for tests to avoid conflicts
 	testMetrics := NewDispatcherMetricsWithRegistry(prometheus.NewRegistry())
-	dispatcher, err := NewNotifyTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
+	dispatcher, err := NewNotifyTaskDispatcher(taskpg.New(testDB.DB), "", 0, nil, testMetrics)
 	if err != nil {
 		t.Fatalf("Failed to create dispatcher: %v", err)
 	}
@@ -342,10 +343,10 @@ func TestRetryAuditEvents(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 	// Use isolated metrics registry for tests to avoid conflicts
 	testMetrics := NewDispatcherMetricsWithRegistry(prometheus.NewRegistry())
-	dispatcher, err := NewNotifyTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
+	dispatcher, err := NewNotifyTaskDispatcher(taskpg.New(testDB.DB), "", 0, nil, testMetrics)
 	if err != nil {
 		t.Fatalf("Failed to create dispatcher: %v", err)
 	}
@@ -505,7 +506,7 @@ func TestRecoverStaleClaims(t *testing.T) {
 
 	ctx := context.Background()
 	testMetrics := NewDispatcherMetricsWithRegistry(prometheus.NewRegistry())
-	dispatcher, err := NewNotifyTaskDispatcher(testDB.DB, "", 0, nil, testMetrics)
+	dispatcher, err := NewNotifyTaskDispatcher(taskpg.New(testDB.DB), "", 0, nil, testMetrics)
 	if err != nil {
 		t.Fatalf("Failed to create dispatcher: %v", err)
 	}

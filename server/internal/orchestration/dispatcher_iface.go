@@ -39,5 +39,6 @@ type TaskDispatcher interface {
 	RecoverStaleClaims(ctx context.Context, threshold time.Duration) (int, error)
 }
 
-// Compile-time check: *NotifyTaskDispatcher satisfies TaskDispatcher.
+// Compile-time checks: both dispatcher impls satisfy TaskDispatcher.
 var _ TaskDispatcher = (*NotifyTaskDispatcher)(nil)
+var _ TaskDispatcher = (*PollingTaskDispatcher)(nil)

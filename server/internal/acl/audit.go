@@ -19,19 +19,25 @@ import (
 // SQLite WAL writer lock (one here, one in internal/audit) caused
 // SQLITE_BUSY contention in lite mode. The writer goroutine has been
 // removed; this type is now a thin adapter that translates ACL decisions
-// into audit.AuditEvent values and hands them to the shared
-// audit.AuditLogger (which owns the single producer→writer goroutine).
+// into audit.AuditEvent values and hands them to the shared audit writer
+// (which owns the single producer→writer goroutine).
+//
+// The shared writer is accepted as audit.EventSink (the narrow
+// write-only interface) rather than the legacy *audit.AuditLogger
+// concrete. Both the legacy *audit.AuditLogger and the native-sqlite
+// *auditsqlite.Store satisfy EventSink, so Wave 3 can cut over audit
+// to the native impl without touching ACL constructors again.
 //
 // Reads (QueryAuditLog, CleanupOldLogs) still use a *sql.DB handle
 // directly — they don't contend with the writer.
 type AuditLogger struct {
-	shared    *audit.AuditLogger // shared writer for all comprehensive_audit_log INSERTs
-	db        *sql.DB            // read-side handle (audit.db in lite; aether.db in postgres)
+	shared    audit.EventSink // shared writer for all comprehensive_audit_log INSERTs
+	db        *sql.DB         // read-side handle (audit.db in lite; aether.db in postgres)
 	gatewayID string
 }
 
 // NewAuditLogger creates an ACL audit-log adapter that funnels writes
-// through the shared audit.AuditLogger. The `db` handle is used only for
+// through the shared audit writer. The `db` handle is used only for
 // read-side operations (QueryAuditLog, CleanupOldLogs) and must point at
 // the same physical file the shared writer is targeting — audit.db in
 // the lite split layout, aether.db otherwise.
@@ -39,13 +45,19 @@ type AuditLogger struct {
 // shared may be nil if audit logging is disabled at the platform level;
 // LogDecision becomes a no-op in that case.
 //
+// The shared parameter is typed as audit.EventSink (the narrow
+// write-only interface). Both the legacy *audit.AuditLogger and the
+// native-sqlite *auditsqlite.Store satisfy this interface, so the ACL
+// layer is decoupled from the concrete audit implementation chosen at
+// the construction site.
+//
 // The "authorization" event type (audit.EventTypeAuthorization) is the
 // canonical event_type for ACL decisions in comprehensive_audit_log
 // (per migrations 008–018 and the acl_audit_log view). It is included
 // in audit.DefaultConfig().EnabledEventTypes so ACL decisions are not
 // silently dropped by the shared writer's gating logic — no extra
 // configuration shim is needed here.
-func NewAuditLogger(shared *audit.AuditLogger, db *sql.DB, gatewayID string) *AuditLogger {
+func NewAuditLogger(shared audit.EventSink, db *sql.DB, gatewayID string) *AuditLogger {
 	return &AuditLogger{
 		shared:    shared,
 		db:        db,

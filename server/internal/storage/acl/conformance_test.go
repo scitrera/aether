@@ -44,6 +44,7 @@ import (
 	legacyaudit "github.com/scitrera/aether/internal/audit"
 	"github.com/scitrera/aether/internal/storage/acl"
 	aclpg "github.com/scitrera/aether/internal/storage/acl/postgres"
+	aclsqlite "github.com/scitrera/aether/internal/storage/acl/sqlite"
 	"github.com/scitrera/aether/internal/testutil"
 	sqlitemigrations "github.com/scitrera/aether/migrations/sqlite"
 	"github.com/scitrera/aether/pkg/models"
@@ -74,6 +75,7 @@ func TestStoreConformance(t *testing.T) {
 	}{
 		{name: "postgres", factory: postgresFactory},
 		{name: "sqlite", factory: sqliteFactory},
+		{name: "sqlite_native", factory: sqliteNativeFactory},
 	}
 
 	for _, b := range backends {
@@ -467,6 +469,102 @@ func applySQLiteMigrationsForTest(ctx context.Context, db *sql.DB, fs embed.FS) 
 		}
 	}
 	return nil
+}
+
+// sqliteNativeFactory opens a fresh temp-dir SQLite database via the bare
+// "sqlite" driver (modernc.org/sqlite) and constructs a native
+// internal/storage/acl/sqlite.Store. This backend handles all SQL natively
+// (no dbcompat translation) with inline time.Time parsing, Go-side UUID
+// generation for fallback policy upserts, parameterized DELETEs replacing
+// postgres stored functions, and a native acl_audit_log view.
+//
+// All caps are true: the native impl closes every Stage 1 gap.
+func sqliteNativeFactory(t *testing.T) (acl.Store, backendCaps, func()) {
+	t.Helper()
+
+	// ACL state DB.
+	aclDBPath := filepath.Join(t.TempDir(), "acl_native.db")
+	aclDSN := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000", aclDBPath)
+	aclDB, err := sql.Open("sqlite", aclDSN)
+	if err != nil {
+		t.Fatalf("sql.Open sqlite (acl): %v", err)
+	}
+	// Single-writer pool per section 14.3 of the storage-interfaces plan.
+	aclDB.SetMaxOpenConns(1)
+
+	// Audit DB (separate file, mirrors lite-mode audit.db split).
+	auditDBPath := filepath.Join(t.TempDir(), "audit_native.db")
+	auditDSN := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000", auditDBPath)
+	auditDB, err := sql.Open("sqlite", auditDSN)
+	if err != nil {
+		_ = aclDB.Close()
+		t.Fatalf("sql.Open sqlite (audit): %v", err)
+	}
+	auditDB.SetMaxOpenConns(1)
+
+	// Bootstrap the comprehensive_audit_log table in the audit DB so the
+	// shared audit writer has somewhere to INSERT and the acl_audit_log
+	// view (created by the Store constructor) has a base table.
+	ctx := context.Background()
+	if _, err := auditDB.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS comprehensive_audit_log (
+			audit_id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp                 TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			event_type                TEXT NOT NULL,
+			actor_type                TEXT NOT NULL,
+			actor_id                  TEXT NOT NULL,
+			subject_type              TEXT,
+			subject_id                TEXT,
+			root_subject_type         TEXT,
+			root_subject_id           TEXT,
+			authority_mode            TEXT NOT NULL DEFAULT 'direct',
+			root_authority_grant_id   TEXT,
+			authority_grant_id        TEXT,
+			parent_authority_grant_id TEXT,
+			resource_type             TEXT,
+			resource_id               TEXT,
+			operation                 TEXT NOT NULL,
+			workspace                 TEXT,
+			session_id                TEXT,
+			gateway_id                TEXT,
+			success                   INTEGER NOT NULL DEFAULT 1,
+			error_message             TEXT,
+			metadata                  TEXT,
+			source                    TEXT NOT NULL DEFAULT 'gateway'
+		)
+	`); err != nil {
+		_ = aclDB.Close()
+		_ = auditDB.Close()
+		t.Fatalf("create comprehensive_audit_log: %v", err)
+	}
+
+	gatewayID := fmt.Sprintf("conformance-gw-%d", time.Now().UnixNano())
+	cfg := legacyaudit.DefaultConfig()
+	cfg.BatchSize = 1
+	cfg.FlushPeriod = 50 * time.Millisecond
+	cfg.ChannelBuffer = 16
+	sharedAudit := legacyaudit.NewAuditLogger(auditDB, gatewayID, cfg)
+
+	store, err := aclsqlite.New(aclDB, sharedAudit, auditDB, gatewayID)
+	if err != nil {
+		_ = sharedAudit.Close()
+		_ = aclDB.Close()
+		_ = auditDB.Close()
+		t.Fatalf("aclsqlite.New: %v", err)
+	}
+
+	cleanup := func() {
+		_ = store.Close()
+		_ = sharedAudit.Close()
+		_ = aclDB.Close()
+		_ = auditDB.Close()
+	}
+	return store, backendCaps{
+		supportsAuditQuery:     true,
+		supportsCleanupExpired: true,
+		supportsCleanupAudit:   true,
+		supportsFallbackUpsert: true,
+	}, cleanup
 }
 
 // =============================================================================

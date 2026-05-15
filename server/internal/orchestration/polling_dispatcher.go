@@ -2,8 +2,6 @@ package orchestration
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -11,8 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/scitrera/aether/internal/logging"
 	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
-	"github.com/scitrera/aether/pkg/tasks"
 )
 
 // PollingTaskDispatcher is a polling-only implementation of TaskDispatcher.
@@ -22,8 +18,10 @@ import (
 // SQL (postgres or sqlite); the "polling" qualifier describes the wake-up
 // mechanism, not the storage backend. Used in lite mode and other contexts
 // where a NOTIFY connection is undesirable or unavailable.
+//
+// All orchestrated_task_queue reads and writes go through the tasks.Store
+// interface — the dispatcher no longer holds a raw *sql.DB.
 type PollingTaskDispatcher struct {
-	db *sql.DB
 	// taskStore is the tasks domain Store (internal/storage/tasks).
 	taskStore    taskstore.Store
 	pollInterval time.Duration
@@ -39,11 +37,11 @@ type PollingTaskDispatcher struct {
 }
 
 // NewPollingTaskDispatcher creates a new PollingTaskDispatcher.
-// db must be a valid *sql.DB (PostgreSQL or SQLite via sqlite_compat).
-func NewPollingTaskDispatcher(db *sql.DB) *PollingTaskDispatcher {
+// taskStore is the tasks domain Store used for all orchestrated_task_queue
+// reads and writes. The dispatcher no longer needs a raw *sql.DB handle.
+func NewPollingTaskDispatcher(taskStore taskstore.Store) *PollingTaskDispatcher {
 	return &PollingTaskDispatcher{
-		db:           db,
-		taskStore:    taskpg.New(db),
+		taskStore:    taskStore,
 		pollInterval: 2 * time.Second,
 		stopCh:       make(chan struct{}),
 		instanceID:   uuid.New().String()[:8],
@@ -116,28 +114,21 @@ func (d *PollingTaskDispatcher) pollPendingTasks(ctx context.Context) {
 		return
 	}
 
-	query := `
-		SELECT queue_id, task_id, profile, workspace, target_implementation
-		FROM orchestrated_task_queue
-		WHERE status = $1 AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-		ORDER BY created_at ASC
-		LIMIT 10
-	`
-
-	rows, err := d.db.QueryContext(ctx, query, string(QueueStatusPending))
+	entries, err := d.taskStore.PollPendingQueueEntries(ctx, 10)
 	if err != nil {
 		if ctx.Err() == nil {
 			logging.Logger.Error().Err(err).Msg("polling dispatcher failed to poll tasks")
 		}
 		return
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var task OrchestrationTaskNotification
-		if err := rows.Scan(&task.QueueID, &task.TaskID, &task.Profile, &task.Workspace, &task.TargetImplementation); err != nil {
-			logging.Logger.Error().Err(err).Msg("polling dispatcher failed to scan row")
-			continue
+	for _, entry := range entries {
+		task := &OrchestrationTaskNotification{
+			QueueID:              entry.QueueID,
+			TaskID:               entry.TaskID,
+			Profile:              entry.Profile,
+			Workspace:            entry.Workspace,
+			TargetImplementation: entry.TargetImplementation,
 		}
 
 		logging.Logger.Info().Str("task_id", task.TaskID).Str("profile", task.Profile).Msg("polling dispatcher polled pending task")
@@ -146,34 +137,20 @@ func (d *PollingTaskDispatcher) pollPendingTasks(ctx context.Context) {
 		callback := d.onTaskReceived
 		d.mu.RUnlock()
 		if callback != nil {
-			callback(&task)
+			callback(task)
 		}
-	}
-	if err := rows.Err(); err != nil {
-		logging.Logger.Error().Err(err).Msg("polling dispatcher error iterating pending tasks")
 	}
 }
 
 // ClaimTask attempts to claim a task for an orchestrator.
 // Returns ErrTaskAlreadyClaimed if another gateway already claimed it.
 func (d *PollingTaskDispatcher) ClaimTask(ctx context.Context, queueID, orchestratorID string) error {
-	query := `
-		UPDATE orchestrated_task_queue
-		SET status = $3, claimed_by = $2, claimed_at = NOW()
-		WHERE queue_id = $1 AND status = $4
-	`
-
-	result, err := d.db.ExecContext(ctx, query, queueID, orchestratorID, string(QueueStatusClaimed), string(QueueStatusPending))
+	claimed, err := d.taskStore.ClaimQueueEntry(ctx, queueID, orchestratorID)
 	if err != nil {
 		return err
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if rowsAffected == 0 {
+	if !claimed {
 		return ErrTaskAlreadyClaimed
 	}
 
@@ -183,20 +160,17 @@ func (d *PollingTaskDispatcher) ClaimTask(ctx context.Context, queueID, orchestr
 
 // UnclaimTask releases a claimed task back to pending status for retry.
 // Implements retry limiting with exponential backoff; moves to DLQ when retries are exhausted.
+//
+// All mutations go through tasks.Store transactional methods (Stage 2
+// StoreTx discipline) — no direct *sql.Tx usage.
 func (d *PollingTaskDispatcher) UnclaimTask(ctx context.Context, queueID string) error {
-	tx, err := d.db.BeginTx(ctx, nil)
+	tx, err := d.taskStore.BeginTx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
-	var taskID, workspace string
-	var retryCount, maxRetries int
-	err = tx.QueryRowContext(ctx, `
-		SELECT task_id, workspace, retry_count, max_retries
-		FROM orchestrated_task_queue
-		WHERE queue_id = $1 AND status = $2
-	`, queueID, string(QueueStatusClaimed)).Scan(&taskID, &workspace, &retryCount, &maxRetries)
+	taskID, workspace, retryCount, maxRetries, err := d.taskStore.QueryQueueEntryForUnclaimTx(ctx, tx, queueID)
 	if err != nil {
 		return fmt.Errorf("query task for unclaim: %w", err)
 	}
@@ -211,22 +185,13 @@ func (d *PollingTaskDispatcher) UnclaimTask(ctx context.Context, queueID string)
 	newRetryCount := retryCount + 1
 	backoffSeconds := 1 << newRetryCount // 2, 4, 8, 16, ...
 
-	_, err = tx.ExecContext(ctx, `
-		UPDATE orchestrated_task_queue
-		SET status = $4,
-		    claimed_by = NULL,
-		    claimed_at = NULL,
-		    retry_count = $2,
-		    next_retry_at = NOW() + ($3 || ' seconds')::interval
-		WHERE queue_id = $1
-	`, queueID, newRetryCount, fmt.Sprintf("%d", backoffSeconds), string(QueueStatusPending))
-	if err != nil {
+	if err := d.taskStore.UpdateQueueEntryForRetryTx(ctx, tx, queueID, newRetryCount, backoffSeconds); err != nil {
 		return fmt.Errorf("update task for retry: %w", err)
 	}
 
-	if err = d.taskStore.RecordAuditEventTx(ctx, tx, &tasks.TaskAuditEvent{
+	if err = d.taskStore.RecordAuditEventTx(ctx, tx, &taskstore.TaskAuditEvent{
 		TaskID:    taskID,
-		EventType: tasks.EventTypeRetryScheduled,
+		EventType: taskstore.EventTypeRetryScheduled,
 		EventData: map[string]interface{}{
 			"retry_count":   newRetryCount,
 			"max_retries":   maxRetries,
@@ -241,31 +206,22 @@ func (d *PollingTaskDispatcher) UnclaimTask(ctx context.Context, queueID string)
 	return tx.Commit()
 }
 
-// moveToDeadLetterTx moves a task to the DLQ within an existing transaction.
-func (d *PollingTaskDispatcher) moveToDeadLetterTx(ctx context.Context, tx *sql.Tx, queueID, taskID, workspace string, retryCount int) error {
+// moveToDeadLetterTx moves a task to the DLQ within an existing StoreTx.
+func (d *PollingTaskDispatcher) moveToDeadLetterTx(ctx context.Context, tx taskstore.StoreTx, queueID, taskID, workspace string, retryCount int) error {
 	reason := "Max retries exceeded - failed to deliver to orchestrator"
 	attemptCount := retryCount + 1
 
-	_, err := tx.ExecContext(ctx, `
-		UPDATE orchestrated_task_queue
-		SET status = $3, error_message = $2, completed_at = NOW()
-		WHERE queue_id = $1
-	`, queueID, reason, string(QueueStatusFailed))
-	if err != nil {
+	if err := d.taskStore.MarkQueueEntryFailedTx(ctx, tx, queueID, reason); err != nil {
 		return fmt.Errorf("mark task failed: %w", err)
 	}
 
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO dlq (original_task_id, category, workspace, failure_reason, attempt_count, last_attempt_at)
-		VALUES ($1, 'delivery_failure', $2, $3, $4, NOW())
-	`, taskID, workspace, reason, attemptCount)
-	if err != nil {
+	if err := d.taskStore.InsertDLQEntryTx(ctx, tx, taskID, workspace, reason, attemptCount); err != nil {
 		return fmt.Errorf("insert into dlq: %w", err)
 	}
 
-	if err = d.taskStore.RecordAuditEventTx(ctx, tx, &tasks.TaskAuditEvent{
+	if err := d.taskStore.RecordAuditEventTx(ctx, tx, &taskstore.TaskAuditEvent{
 		TaskID:    taskID,
-		EventType: tasks.EventTypeMovedToDLQ,
+		EventType: taskstore.EventTypeMovedToDLQ,
 		EventData: map[string]interface{}{
 			"category":      "delivery_failure",
 			"reason":        reason,
@@ -283,82 +239,40 @@ func (d *PollingTaskDispatcher) moveToDeadLetterTx(ctx context.Context, tx *sql.
 
 // CompleteTask marks a task as completed.
 func (d *PollingTaskDispatcher) CompleteTask(ctx context.Context, queueID string) error {
-	query := `
-		UPDATE orchestrated_task_queue
-		SET status = $2, completed_at = NOW()
-		WHERE queue_id = $1
-	`
-	_, err := d.db.ExecContext(ctx, query, queueID, string(QueueStatusCompleted))
-	return err
+	return d.taskStore.CompleteQueueEntry(ctx, queueID)
 }
 
 // FailTask marks a task as failed with an error message.
 func (d *PollingTaskDispatcher) FailTask(ctx context.Context, queueID, errorMsg string) error {
-	query := `
-		UPDATE orchestrated_task_queue
-		SET status = $3, error_message = $2, completed_at = NOW()
-		WHERE queue_id = $1
-	`
-	_, err := d.db.ExecContext(ctx, query, queueID, errorMsg, string(QueueStatusFailed))
-	return err
+	return d.taskStore.FailQueueEntry(ctx, queueID, errorMsg)
 }
 
 // GetTaskDetails retrieves full task details including launch params.
 func (d *PollingTaskDispatcher) GetTaskDetails(ctx context.Context, queueID string) (*OrchestratedTaskPayload, error) {
-	query := `
-		SELECT task_id, target_implementation, workspace, profile, launch_params
-		FROM orchestrated_task_queue
-		WHERE queue_id = $1
-	`
-
-	var task OrchestratedTaskPayload
-	var launchParamsJSON []byte
-
-	err := d.db.QueryRowContext(ctx, query, queueID).Scan(
-		&task.TaskID,
-		&task.TargetImplementation,
-		&task.Workspace,
-		&task.Profile,
-		&launchParamsJSON,
-	)
+	details, err := d.taskStore.GetQueueEntryDetails(ctx, queueID)
 	if err != nil {
 		return nil, err
 	}
 
-	if launchParamsJSON != nil {
-		if err := json.Unmarshal(launchParamsJSON, &task.LaunchParams); err != nil {
-			logging.Logger.Error().Err(err).Msg("polling dispatcher failed to unmarshal launch params")
-		}
-	}
-
-	return &task, nil
+	return &OrchestratedTaskPayload{
+		TaskID:               details.TaskID,
+		TargetImplementation: details.TargetImplementation,
+		Workspace:            details.Workspace,
+		Profile:              details.Profile,
+		LaunchParams:         details.LaunchParams,
+	}, nil
 }
 
 // RecoverStaleClaims finds tasks stuck in 'claimed' status longer than the given
 // threshold and unclaims them. Returns the number of tasks recovered.
 func (d *PollingTaskDispatcher) RecoverStaleClaims(ctx context.Context, threshold time.Duration) (int, error) {
-	query := `
-		SELECT queue_id
-		FROM orchestrated_task_queue
-		WHERE status = $2 AND claimed_at < NOW() - $1::interval
-		ORDER BY claimed_at ASC
-		LIMIT 50
-	`
-
-	rows, err := d.db.QueryContext(ctx, query, fmt.Sprintf("%d seconds", int(threshold.Seconds())), string(QueueStatusClaimed))
+	staleIDs, err := d.taskStore.ListStaleClaimedQueueEntries(ctx, threshold, 50)
 	if err != nil {
 		return 0, fmt.Errorf("query stale claims: %w", err)
 	}
-	defer rows.Close()
 
 	var recovered int
-	for rows.Next() {
-		var queueID string
-		if err := rows.Scan(&queueID); err != nil {
-			logging.Logger.Error().Err(err).Msg("polling dispatcher failed to scan stale claim")
-			continue
-		}
-
+	for _, queueID := range staleIDs {
 		if err := d.UnclaimTask(ctx, queueID); err != nil {
 			logging.Logger.Error().Err(err).Str("queue_id", queueID).Msg("polling dispatcher failed to recover stale claim")
 			continue
@@ -368,5 +282,17 @@ func (d *PollingTaskDispatcher) RecoverStaleClaims(ctx context.Context, threshol
 		recovered++
 	}
 
-	return recovered, rows.Err()
+	return recovered, nil
+}
+
+// CompleteTaskByTaskID marks orchestrated_task_queue row(s) for this taskID as
+// completed. Idempotent.
+func (d *PollingTaskDispatcher) CompleteTaskByTaskID(ctx context.Context, taskID string) error {
+	return d.taskStore.CompleteQueueEntryByTaskID(ctx, taskID)
+}
+
+// FailTaskByTaskID marks orchestrated_task_queue row(s) for this taskID as
+// failed. Idempotent.
+func (d *PollingTaskDispatcher) FailTaskByTaskID(ctx context.Context, taskID, errorMsg string) error {
+	return d.taskStore.FailQueueEntryByTaskID(ctx, taskID, errorMsg)
 }

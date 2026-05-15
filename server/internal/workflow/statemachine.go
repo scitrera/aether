@@ -34,11 +34,11 @@ type StateDefConfig struct {
 // =============================================================================
 
 type StateMachineEngine struct {
-	store    *Store
+	store    WorkflowStore
 	executor *Executor
 }
 
-func NewStateMachineEngine(store *Store, executor *Executor) *StateMachineEngine {
+func NewStateMachineEngine(store WorkflowStore, executor *Executor) *StateMachineEngine {
 	return &StateMachineEngine{
 		store:    store,
 		executor: executor,

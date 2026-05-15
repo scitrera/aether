@@ -10,6 +10,7 @@ import (
 	"github.com/scitrera/aether/internal/registry"
 	"github.com/scitrera/aether/internal/state"
 	regpg "github.com/scitrera/aether/internal/storage/registry/postgres"
+	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	"github.com/scitrera/aether/internal/testutil"
 	"github.com/scitrera/aether/pkg/models"
 	"github.com/scitrera/aether/pkg/tasks"
@@ -137,7 +138,7 @@ func TestTaskAssignmentServiceCancelTaskRevokesAuthorityGrant(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
 	grantService := &stubAuthorityGrantService{}
 	service.SetAuthorityGrantService(grantService)
@@ -181,7 +182,7 @@ func TestTaskAssignmentServiceCancelTaskDoesNotRevokeOnlyRoot(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
 	grantService := &stubAuthorityGrantService{}
 	service.SetAuthorityGrantService(grantService)
@@ -246,7 +247,7 @@ func newTestTaskService(t *testing.T) (*TaskAssignmentService, string, string) {
 	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	sessionRegistry := state.NewSessionRegistryFromClient(redisClient)
 
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 	service := NewTaskAssignmentService(testDB.DB, taskStore, registryStore, sessionRegistry, nil, nil)
 
 	workspace := "fixaa-test-ws"
@@ -615,7 +616,7 @@ func TestStartTaskWithAgent_RetiresQueueRow(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
 	stub := &stubDispatcher{}
 	service.SetOrchestratorDispatcher(stub)
@@ -660,7 +661,7 @@ func TestCompleteTask_RetiresQueueRow(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
 	stub := &stubDispatcher{}
 	service.SetOrchestratorDispatcher(stub)
@@ -702,7 +703,7 @@ func TestFailTask_RetiresQueueRow(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
 	stub := &stubDispatcher{}
 	service.SetOrchestratorDispatcher(stub)
@@ -751,7 +752,7 @@ func TestCancelTask_RetiresQueueRow(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
 	stub := &stubDispatcher{}
 	service.SetOrchestratorDispatcher(stub)
@@ -800,7 +801,7 @@ func TestStartTaskWithAgent_NoDispatcherIsSafe(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 	// Intentionally no SetOrchestratorDispatcher call.
 	service := NewTaskAssignmentService(testDB.DB, taskStore, nil, nil, nil, nil)
 

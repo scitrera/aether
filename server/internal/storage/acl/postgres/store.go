@@ -85,15 +85,13 @@ func NewWithAuditDB(db, auditDB *sql.DB, gatewayID string) *Store {
 // (the shared one) ever touches comprehensive_audit_log. Production
 // gateway/aetherlite use this constructor.
 //
-// The `sharedAudit` parameter is typed against the LEGACY
-// *internal/audit.AuditLogger rather than internal/storage/audit/postgres.Store
-// because, at Stage 1, the storage-audit postgres impl is a type alias to
-// the same legacy type — accepting the legacy concrete here keeps the
-// import graph flat (no double-aliasing) and avoids any risk of an import
-// cycle if a future refactor moves the storage/audit interface to depend
-// on storage/acl symbols. When Stage 2 lands and the storage-audit postgres
-// type diverges from the legacy type, this signature can be tightened.
-func NewWithSharedAudit(db *sql.DB, sharedAudit *legacyaudit.AuditLogger, auditDB *sql.DB, gatewayID string) *Store {
+// The sharedAudit parameter is typed as audit.EventSink (the narrow
+// write-only interface) rather than a concrete type. Both the legacy
+// *audit.AuditLogger and the native-sqlite *auditsqlite.Store satisfy
+// EventSink, so Wave 3 can cut over audit to the native impl by
+// changing only the construction site in cmd/aetherlite — this
+// constructor does not need to change.
+func NewWithSharedAudit(db *sql.DB, sharedAudit legacyaudit.EventSink, auditDB *sql.DB, gatewayID string) *Store {
 	return legacy.NewServiceWithSharedAudit(db, sharedAudit, auditDB, gatewayID)
 }
 

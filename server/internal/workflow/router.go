@@ -13,7 +13,7 @@ import (
 // Router matches incoming events against rules, evaluates conditions,
 // transforms payloads, and dispatches actions.
 type Router struct {
-	store    *Store
+	store    WorkflowStore
 	expr     *ExprEngine
 	tmpl     *TemplateEngine
 	executor *Executor
@@ -29,7 +29,7 @@ type cachedRules struct {
 	fetchedAt time.Time
 }
 
-func NewRouter(store *Store, expr *ExprEngine, tmpl *TemplateEngine, executor *Executor, cacheTTL time.Duration) *Router {
+func NewRouter(store WorkflowStore, expr *ExprEngine, tmpl *TemplateEngine, executor *Executor, cacheTTL time.Duration) *Router {
 	return &Router{
 		store:    store,
 		expr:     expr,

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	"github.com/scitrera/aether/internal/testutil"
 )
 
@@ -27,7 +28,7 @@ func TestStaleClaimDetection(t *testing.T) {
 
 	// Create dispatcher instance
 	dispatcher, err := NewNotifyTaskDispatcher(
-		testDB.DB,
+		taskpg.New(testDB.DB),
 		"",             // No listener needed for this test
 		30*time.Second, // Poll interval
 		nil,            // No callback needed

@@ -15,7 +15,7 @@ import (
 // AdminServer provides a REST API for managing workflow rules, definitions,
 // schedules, executions, and state machines.
 type AdminServer struct {
-	store      *Store
+	store      WorkflowStore
 	router     *Router
 	dagEng     *DAGEngine
 	scheduler  *Scheduler
@@ -24,7 +24,7 @@ type AdminServer struct {
 	apiKey     string
 }
 
-func NewAdminServer(port int, apiKey string, store *Store, router *Router, dagEng *DAGEngine, scheduler *Scheduler, stateMach *StateMachineEngine) *AdminServer {
+func NewAdminServer(port int, apiKey string, store WorkflowStore, router *Router, dagEng *DAGEngine, scheduler *Scheduler, stateMach *StateMachineEngine) *AdminServer {
 	s := &AdminServer{
 		store:     store,
 		router:    router,

@@ -35,7 +35,7 @@ type Server struct {
 	db        *sql.DB
 	redis     redis.UniversalClient
 	client    *aether.WorkflowEngineClient
-	store     *Store
+	store     WorkflowStore
 	router    *Router
 	dagEng    *DAGEngine
 	scheduler *Scheduler
@@ -43,36 +43,68 @@ type Server struct {
 	executor  *Executor
 	stateMach *StateMachineEngine
 	adminSrv  *AdminServer
+
+	// ownsDB is true when the Server opened the database itself (via
+	// NewServer / initDatabase). When false the caller injected a
+	// pre-built store via NewServerWithStore and retains DB ownership.
+	ownsDB bool
 }
 
 // NewServer creates a new workflow server from the given configuration.
+// The server opens its own database (postgres or sqlite depending on
+// cfg.Mode), runs migrations, and constructs a legacy Store internally.
+// This is the backward-compatible constructor used by existing callers.
 func NewServer(cfg *Config) (*Server, error) {
-	return &Server{cfg: cfg}, nil
+	return &Server{cfg: cfg, ownsDB: true}, nil
+}
+
+// NewServerWithStore creates a workflow server that uses a pre-built
+// workflow store instead of opening a database and running migrations
+// itself. The caller retains ownership of the store's underlying
+// resources (database handle, etc.).
+//
+// This constructor enables the Stage 2.5 / Wave 3 cut-over: the caller
+// (e.g. cmd/aetherlite) can open workflow.db with the bare "sqlite"
+// driver, construct a native wfsqlite.Store, and inject it here —
+// bypassing the legacy sqlite_compat + dbcompat translation path
+// entirely.
+//
+// When store is non-nil the server skips initDatabase and migration
+// steps in Run(). Redis, Aether client, leader election, and all other
+// subsystems are initialized normally.
+func NewServerWithStore(cfg *Config, store WorkflowStore) (*Server, error) {
+	if store == nil {
+		return nil, fmt.Errorf("NewServerWithStore requires a non-nil store (§14.1: nil Store is a class-A crash)")
+	}
+	return &Server{cfg: cfg, store: store, ownsDB: false}, nil
 }
 
 // Run initializes all components and starts the server. Blocks until ctx is cancelled.
 func (s *Server) Run(ctx context.Context) error {
-	// 1. Connect to database (PostgreSQL or SQLite depending on mode)
-	if err := s.initDatabase(ctx); err != nil {
-		return err
+	// 1. Connect to database and run migrations — skipped when a
+	//    pre-built store was injected via NewServerWithStore.
+	if s.ownsDB {
+		if err := s.initDatabase(ctx); err != nil {
+			return err
+		}
+		defer s.db.Close()
+
+		// 3. Run workflow migrations
+		if s.cfg.Mode == ModeLite {
+			if err := wfmigrationslite.Run(ctx, s.db); err != nil {
+				return err
+			}
+		} else {
+			if err := wfmigrations.Run(ctx, s.db); err != nil {
+				return err
+			}
+		}
 	}
-	defer s.db.Close()
 
 	// 2. Connect to Redis (skipped in lite mode)
 	if s.cfg.Mode != ModeLite {
 		s.initRedis()
 		defer s.redis.Close()
-	}
-
-	// 3. Run workflow migrations
-	if s.cfg.Mode == ModeLite {
-		if err := wfmigrationslite.Run(ctx, s.db); err != nil {
-			return err
-		}
-	} else {
-		if err := wfmigrations.Run(ctx, s.db); err != nil {
-			return err
-		}
 	}
 
 	// 4. Create Aether WorkflowEngineClient
@@ -354,7 +386,11 @@ func (s *Server) initComponents() {
 		impl = "aether-workflow"
 	}
 
-	s.store = NewStore(s.db, s.cfg.Mode == ModeLite)
+	// If a store was injected via NewServerWithStore, use it as-is.
+	// Otherwise construct the legacy store from the DB we opened.
+	if s.store == nil {
+		s.store = NewStore(s.db, s.cfg.Mode == ModeLite)
+	}
 	s.executor = NewExecutor(s.client, s.cfg.Aether.Workspace)
 	if s.cfg.Mode == ModeLite {
 		s.leader = NewSingleNodeLeaderElector()

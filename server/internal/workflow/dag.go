@@ -47,7 +47,7 @@ type RetryConfig struct {
 // =============================================================================
 
 type DAGEngine struct {
-	store            *Store
+	store            WorkflowStore
 	expr             *ExprEngine
 	tmpl             *TemplateEngine
 	executor         *Executor
@@ -56,7 +56,7 @@ type DAGEngine struct {
 	maxConcurrentExe int
 }
 
-func NewDAGEngine(store *Store, expr *ExprEngine, tmpl *TemplateEngine, executor *Executor, cfg *WorkflowConfig) *DAGEngine {
+func NewDAGEngine(store WorkflowStore, expr *ExprEngine, tmpl *TemplateEngine, executor *Executor, cfg *WorkflowConfig) *DAGEngine {
 	return &DAGEngine{
 		store:            store,
 		expr:             expr,

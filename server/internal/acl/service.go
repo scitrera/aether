@@ -82,16 +82,22 @@ func NewServiceWithAuditDB(db, auditDB *sql.DB, gatewayID string) *Service {
 // aether.db in postgres). Pass the same *sql.DB for db/auditDB in
 // single-file deployments.
 //
+// The sharedAudit parameter is typed as audit.EventSink (the narrow
+// write-only interface). Both the legacy *audit.AuditLogger and the
+// native-sqlite *auditsqlite.Store satisfy this interface, so Wave 3
+// can cut over audit to the native impl without touching this
+// constructor again.
+//
 // This is the contention-free path: only one batched writer goroutine
 // (the shared one) ever touches comprehensive_audit_log.
-func NewServiceWithSharedAudit(db *sql.DB, sharedAudit *audit.AuditLogger, auditDB *sql.DB, gatewayID string) *Service {
+func NewServiceWithSharedAudit(db *sql.DB, sharedAudit audit.EventSink, auditDB *sql.DB, gatewayID string) *Service {
 	return newServiceWithShared(db, sharedAudit, auditDB, gatewayID)
 }
 
 // newServiceWithShared is the shared body used by both ACL service
 // constructors. The enforcer is built from `db`; the audit adapter wraps
 // `sharedAudit` (writes) and `auditDB` (reads).
-func newServiceWithShared(db *sql.DB, sharedAudit *audit.AuditLogger, auditDB *sql.DB, gatewayID string) *Service {
+func newServiceWithShared(db *sql.DB, sharedAudit audit.EventSink, auditDB *sql.DB, gatewayID string) *Service {
 	enforcer, err := NewCasbinEnforcer(db)
 	if err != nil {
 		// If the enforcer fails to initialize (e.g., table doesn't exist
@@ -123,8 +129,15 @@ func newServiceWithShared(db *sql.DB, sharedAudit *audit.AuditLogger, auditDB *s
 // it and Close() does not stop the goroutine.
 func (s *Service) Close() error {
 	if s.ownsAudit && s.audit != nil && s.audit.shared != nil {
-		if err := s.audit.shared.Close(); err != nil {
-			return err
+		// The ownsAudit path only fires when this Service built a private
+		// *audit.AuditLogger via the compat constructors (NewService /
+		// NewServiceWithAuditDB). That concrete type implements io.Closer.
+		// The shared field is typed as audit.EventSink (narrow interface)
+		// so we type-assert to io.Closer for the shutdown path.
+		if closer, ok := s.audit.shared.(interface{ Close() error }); ok {
+			if err := closer.Close(); err != nil {
+				return err
+			}
 		}
 	}
 	if s.audit != nil {

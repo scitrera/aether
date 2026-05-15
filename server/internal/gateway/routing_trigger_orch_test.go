@@ -11,9 +11,10 @@ import (
 	"github.com/scitrera/aether/internal/registry"
 	"github.com/scitrera/aether/internal/state"
 	regpg "github.com/scitrera/aether/internal/storage/registry/postgres"
+	tasks "github.com/scitrera/aether/internal/storage/tasks"
+	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	"github.com/scitrera/aether/internal/testutil"
 	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
 )
 
 // TestTriggerOrchestrationPropagatesSenderToStartupTask is the gateway-side
@@ -55,7 +56,7 @@ func TestTriggerOrchestrationPropagatesSenderToStartupTask(t *testing.T) {
 	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	sessionRegistry := state.NewSessionRegistryFromClient(redisClient)
 
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 	taskService := orchestration.NewTaskAssignmentService(
 		testDB.DB,
 		taskStore,
@@ -151,7 +152,7 @@ func TestTriggerOrchestrationMintsGrantForStartupTask(t *testing.T) {
 	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	sessionRegistry := state.NewSessionRegistryFromClient(redisClient)
 
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 	aclSvc := acl.NewService(testDB.DB, "gateway-test-fixaaa-routing")
 	taskService := orchestration.NewTaskAssignmentService(
 		testDB.DB,
@@ -273,7 +274,7 @@ func TestTriggerOrchestration_PropagatesTriggerTimestampThroughGrantMint(t *test
 	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	sessionRegistry := state.NewSessionRegistryFromClient(redisClient)
 
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 	aclSvc := acl.NewService(testDB.DB, "gateway-test-trigger-ts")
 	taskService := orchestration.NewTaskAssignmentService(
 		testDB.DB, taskStore, agentRegistry, sessionRegistry, nil, nil,
@@ -367,7 +368,7 @@ func TestTriggerOrchestration_IncludesAppWorkspaceInGrantScope(t *testing.T) {
 	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	sessionRegistry := state.NewSessionRegistryFromClient(redisClient)
 
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 	aclSvc := acl.NewService(testDB.DB, "gateway-test-appws-scope")
 	taskService := orchestration.NewTaskAssignmentService(
 		testDB.DB, taskStore, agentRegistry, sessionRegistry, nil, nil,

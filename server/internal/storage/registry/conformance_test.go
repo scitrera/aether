@@ -24,8 +24,10 @@ import (
 	legacyregistry "github.com/scitrera/aether/internal/registry"
 	"github.com/scitrera/aether/internal/storage/registry"
 	registrypg "github.com/scitrera/aether/internal/storage/registry/postgres"
+	registrysqlite "github.com/scitrera/aether/internal/storage/registry/sqlite"
 	"github.com/scitrera/aether/internal/testutil"
 	sqlitemigrations "github.com/scitrera/aether/migrations/sqlite"
+	sqliteregistrymigrations "github.com/scitrera/aether/migrations/sqlite_registry"
 
 	_ "github.com/scitrera/aether/pkg/dbcompat" // registers "sqlite_compat" driver
 )
@@ -68,6 +70,7 @@ func TestStoreConformance(t *testing.T) {
 	}{
 		{name: "postgres", factory: postgresFactory},
 		{name: "sqlite", factory: sqliteFactory},
+		{name: "sqlite_native", factory: sqliteNativeFactory},
 	}
 
 	for _, b := range backends {
@@ -477,6 +480,49 @@ func applySQLiteMigrationsForTest(ctx context.Context, db *sql.DB, fs embed.FS) 
 		}
 	}
 	return nil
+}
+
+// sqliteNativeFactory builds a registry.Store using the Stage 2 native-sqlite
+// implementation (internal/storage/registry/sqlite). It uses the bare "sqlite"
+// driver (modernc.org/sqlite) with its own per-domain migration tree — no
+// dbcompat, no postgres SQL rewriting. This is the target state for AetherLite.
+//
+// All capabilities are supported because the native sqlite impl rewrites
+// every query that the dbcompat-wrapped postgres path couldn't handle:
+//
+//   - activeProfileFilter: staleness cutoff computed in Go, compared as TEXT
+//     (no INTERVAL literal needed).
+//   - staleCleanup: same — Go-computed cutoff, simple WHERE clause.
+//   - launchParamsLookup: uses three separate ? placeholders (no repeated-$N
+//     problem).
+func sqliteNativeFactory(t *testing.T) (registry.Store, caps, func()) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "registry_native.db")
+	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_busy_timeout=5000", dbPath)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+
+	stateDB, closeBadger := openTestBadger(t)
+	state := legacyregistry.NewBadgerProfileStateStore(stateDB)
+
+	store, err := registrysqlite.New(db, state, sqliteregistrymigrations.MigrationFS)
+	if err != nil {
+		closeBadger()
+		_ = db.Close()
+		t.Fatalf("registrysqlite.New: %v", err)
+	}
+
+	cleanup := func() {
+		closeBadger()
+		_ = db.Close()
+	}
+	return store, caps{
+		activeProfileFilter: true,
+		staleCleanup:        true,
+		launchParamsLookup:  true,
+	}, cleanup
 }
 
 // =============================================================================

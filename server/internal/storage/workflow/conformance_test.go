@@ -22,7 +22,9 @@ import (
 
 	wfstore "github.com/scitrera/aether/internal/storage/workflow"
 	wfpg "github.com/scitrera/aether/internal/storage/workflow/postgres"
+	wfsqlite "github.com/scitrera/aether/internal/storage/workflow/sqlite"
 	"github.com/scitrera/aether/internal/testutil"
+	"github.com/scitrera/aether/internal/workflow"
 	wfmigrations "github.com/scitrera/aether/internal/workflow/migrations"
 	wfsqlitemigrations "github.com/scitrera/aether/internal/workflow/migrations/sqlite"
 
@@ -32,17 +34,16 @@ import (
 // storeFactory builds a Store and returns a cleanup func. The factory may
 // call t.Skip if its prerequisites are unmet (e.g. postgres dev infra not
 // running) — the harness honors that and reports the subtest as skipped.
-// supportsOutOfOrderPlaceholders is false for the sqlite backend because
-// the legacy store emits some UPDATEs with non-sequential $N placeholders
-// (e.g. `... status = $2, error_message = $3 WHERE execution_id = $1`),
-// and pkg/dbcompat's rewriter strips the digit from `$N` → `?`, which
-// loses the postgres-style positional reordering. The result is a silent
-// WHERE-clause mismatch (zero rows affected). This is a known
-// Stage 1-vs-Stage 2 deviation: the postgres path is unaffected, and the
-// Stage 2 native-sqlite impl will use sequential or named binding that
-// avoids the dbcompat rewriter entirely. The two subtests gated on this
-// flag stay on the postgres path for now and gain sqlite coverage when
-// Stage 2 ships the native impl.
+// supportsOutOfOrderPlaceholders was historically false for the sqlite
+// backend because pkg/dbcompat's rewriter rewrote `$N` → bare `?` and
+// lost postgres's positional reordering for SQL like
+// `... status = $2, error_message = $3 WHERE execution_id = $1`. The
+// 2026-05-14 fix changed the rewriter to emit SQLite's `?N` numbered
+// binding syntax, which preserves identity-of-N across reuses and
+// out-of-order references. Both subtests gated on this flag now pass on
+// sqlite. The flag remains so that a future Stage 3 sqlite impl that uses
+// bare `sqlite` driver (no dbcompat rewriter at all) can advertise its
+// own placeholder support story without re-discovering this history.
 type storeFactory func(t *testing.T) (store wfstore.Store, supportsOutOfOrderPlaceholders bool, cleanup func())
 
 func TestStoreConformance(t *testing.T) {
@@ -52,6 +53,7 @@ func TestStoreConformance(t *testing.T) {
 	}{
 		{name: "postgres", factory: postgresFactory},
 		{name: "sqlite", factory: sqliteFactory},
+		{name: "sqlite_native", factory: sqliteNativeFactory},
 	}
 
 	for _, b := range backends {
@@ -398,8 +400,37 @@ func sqliteFactory(t *testing.T) (wfstore.Store, bool, func()) {
 	cleanup := func() {
 		_ = db.Close()
 	}
-	// supportsOutOfOrderPlaceholders=false — see storeFactory doc.
-	return store, false, cleanup
+	// supportsOutOfOrderPlaceholders=true — see storeFactory doc.
+	return store, true, cleanup
+}
+
+// sqliteNativeFactory opens a fresh temp-dir SQLite database using the
+// native sqlite impl (internal/storage/workflow/sqlite) with the bare
+// "sqlite" driver — NO dbcompat, NO postgres-flavored SQL. This is the
+// Stage 2 implementation under test: it owns all its own SQL, does inline
+// timestamp parsing, and uses native SQLite idioms throughout.
+func sqliteNativeFactory(t *testing.T) (wfstore.Store, bool, func()) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "workflow_native.db")
+	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", dbPath)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open sqlite (native): %v", err)
+	}
+
+	store, err := wfsqlite.New(db)
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("wfsqlite.New: %v", err)
+	}
+
+	cleanup := func() {
+		_ = db.Close()
+	}
+	// supportsOutOfOrderPlaceholders=true — the native impl writes its own
+	// SQL with bare ? placeholders in the correct positional order. No
+	// dbcompat rewriter involved.
+	return store, true, cleanup
 }
 
 // truncateWorkflowTables wipes every workflow_* table so each subtest sees
@@ -482,4 +513,144 @@ func containsSchedule(schedules []wfstore.Schedule, id string) bool {
 		}
 	}
 	return false
+}
+
+// =============================================================================
+// Stage 2.5 integration test — NewServerWithStore injection
+// =============================================================================
+
+// TestNewServerWithStore_NativeInjection verifies that the native sqlite
+// store can be injected into the workflow engine via NewServerWithStore.
+// This is the Stage 2.5 plumbing that unblocks the Wave 3 cut-over: the
+// caller constructs a wfsqlite.Store on a bare "sqlite" driver handle
+// and injects it, bypassing dbcompat entirely.
+//
+// The test lives here (in internal/storage/workflow/) rather than in
+// internal/workflow/ because importing wfsqlite from internal/workflow/
+// would create an import cycle (internal/storage/workflow/sqlite →
+// internal/storage/workflow → internal/workflow via types.go).
+func TestNewServerWithStore_NativeInjection(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "workflow_native_inject.db")
+	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", dbPath)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	store, err := wfsqlite.New(db)
+	if err != nil {
+		t.Fatalf("wfsqlite.New: %v", err)
+	}
+
+	cfg := &workflow.Config{
+		Mode: workflow.ModeLite,
+		SQLite: workflow.SQLiteConfig{
+			Path: dbPath,
+		},
+	}
+
+	srv, err := workflow.NewServerWithStore(cfg, store)
+	if err != nil {
+		t.Fatalf("NewServerWithStore: %v", err)
+	}
+	if srv == nil {
+		t.Fatal("NewServerWithStore returned nil Server")
+	}
+
+	// Verify the store works through a round-trip — create a rule via
+	// the injected store, then read it back.
+	ctx := context.Background()
+	tag := uniqueName(t, "inject")
+	r := &wfstore.Rule{
+		RuleName:            tag,
+		SourceAgent:         "agent-" + tag,
+		SourceEvent:         "evt-" + tag,
+		TriggerCondition:    "",
+		TransformationStyle: "template-yaml",
+		DestinationTemplate: "{}",
+		Workspace:           "ws-" + tag,
+		Priority:            1,
+		Active:              true,
+	}
+	if err := store.CreateRule(ctx, r); err != nil {
+		t.Fatalf("CreateRule via injected store: %v", err)
+	}
+	if r.ID == 0 {
+		t.Fatalf("CreateRule did not populate ID")
+	}
+
+	got, err := store.GetRule(ctx, r.ID)
+	if err != nil {
+		t.Fatalf("GetRule: %v", err)
+	}
+	if got == nil || got.RuleName != tag {
+		t.Fatalf("GetRule round-trip failed: got %+v want RuleName=%q", got, tag)
+	}
+}
+
+// TestNewServerWithStore_LegacyInjection verifies the injection path
+// also works with the legacy postgres-wrapped store (sqlite_compat
+// driver). This ensures backward compatibility for callers that
+// construct the store externally but still use the dbcompat translation
+// path during mixed-mode operation.
+func TestNewServerWithStore_LegacyInjection(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "workflow_legacy_inject.db")
+	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_busy_timeout=5000", dbPath)
+	db, err := sql.Open("sqlite_compat", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open sqlite_compat: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	ctx := context.Background()
+	if err := wfsqlitemigrations.Run(ctx, db); err != nil {
+		t.Fatalf("apply workflow sqlite migrations: %v", err)
+	}
+
+	store := wfpg.New(db, true)
+
+	cfg := &workflow.Config{
+		Mode: workflow.ModeLite,
+		SQLite: workflow.SQLiteConfig{
+			Path: dbPath,
+		},
+	}
+
+	srv, err := workflow.NewServerWithStore(cfg, store)
+	if err != nil {
+		t.Fatalf("NewServerWithStore: %v", err)
+	}
+	if srv == nil {
+		t.Fatal("NewServerWithStore returned nil Server")
+	}
+
+	// Round-trip a rule to verify the legacy store works through injection.
+	tag := uniqueName(t, "legacy-inject")
+	r := &wfstore.Rule{
+		RuleName:            tag,
+		SourceAgent:         "agent-" + tag,
+		SourceEvent:         "evt-" + tag,
+		TriggerCondition:    "",
+		TransformationStyle: "template-yaml",
+		DestinationTemplate: "{}",
+		Workspace:           "ws-" + tag,
+		Priority:            1,
+		Active:              true,
+	}
+	if err := store.CreateRule(ctx, r); err != nil {
+		t.Fatalf("CreateRule via legacy injected store: %v", err)
+	}
+	if r.ID == 0 {
+		t.Fatalf("CreateRule did not populate ID")
+	}
+
+	got, err := store.GetRule(ctx, r.ID)
+	if err != nil {
+		t.Fatalf("GetRule: %v", err)
+	}
+	if got == nil || got.RuleName != tag {
+		t.Fatalf("GetRule round-trip failed: got %+v want RuleName=%q", got, tag)
+	}
 }

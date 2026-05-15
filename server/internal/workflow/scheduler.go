@@ -11,7 +11,7 @@ import (
 
 // Scheduler handles recurring and one-time scheduled tasks.
 type Scheduler struct {
-	store    *Store
+	store    WorkflowStore
 	executor *Executor
 	dagEng   *DAGEngine
 	leader   LeaderElector
@@ -19,7 +19,7 @@ type Scheduler struct {
 	interval time.Duration
 }
 
-func NewScheduler(store *Store, executor *Executor, dagEng *DAGEngine, leader LeaderElector, pollInterval time.Duration) *Scheduler {
+func NewScheduler(store WorkflowStore, executor *Executor, dagEng *DAGEngine, leader LeaderElector, pollInterval time.Duration) *Scheduler {
 	return &Scheduler{
 		store:    store,
 		executor: executor,

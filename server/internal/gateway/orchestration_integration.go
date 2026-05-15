@@ -112,7 +112,7 @@ func InitializeOrchestrationServices(
 
 	// NotifyTaskDispatcher (callback set by gateway server later)
 	dispatcher, err := orchestration.NewNotifyTaskDispatcher(
-		db,
+		orchestrationTaskStore,
 		postgresConnStr,
 		10*time.Second, // Poll interval
 		nil,            // Callback set by gateway server

@@ -13,9 +13,10 @@ import (
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/internal/acl"
 	"github.com/scitrera/aether/internal/circuitbreaker"
+	tasks "github.com/scitrera/aether/internal/storage/tasks"
+	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	"github.com/scitrera/aether/internal/testutil"
 	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
 )
 
 // TestRouteMessage_AutoResolvesSessionTaskAuthority verifies that when an agent
@@ -35,7 +36,7 @@ func TestRouteMessage_AutoResolvesSessionTaskAuthority(t *testing.T) {
 
 	ctx := context.Background()
 	aclSvc := acl.NewService(testDB.DB, "gateway-test-route-auth")
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 
 	workspace := "route-auth-ws"
 	userID := "alice@example.com"
@@ -185,7 +186,7 @@ func TestRouteMessage_NoTaskID_UsesDirectDelegation(t *testing.T) {
 
 	ctx := context.Background()
 	aclSvc := acl.NewService(testDB.DB, "gateway-test-route-no-task")
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 
 	workspace := "route-no-task-ws"
 	userID := "bob@example.com"

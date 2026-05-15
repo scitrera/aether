@@ -7,9 +7,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/scitrera/aether/internal/acl"
+	tasks "github.com/scitrera/aether/internal/storage/tasks"
+	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	"github.com/scitrera/aether/internal/testutil"
 	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
 )
 
 // TestNestedCreateTaskDerivesAuthority covers the Phase 2 auto-derivation case:
@@ -27,7 +28,7 @@ func TestNestedCreateTaskDerivesAuthority(t *testing.T) {
 
 	ctx := context.Background()
 	aclSvc := acl.NewService(testDB.DB, "gateway-test")
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 
 	// Create a pre-existing parent task that will own the root grant.
 	parentTaskID := uuid.New().String()
@@ -172,7 +173,7 @@ func TestMintTaskGrantForSender_CreatesRootGrantAndUpdatesTask(t *testing.T) {
 
 	ctx := context.Background()
 	aclSvc := acl.NewService(testDB.DB, "gateway-test-fixaaa")
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 
 	// Pre-create a task for the grant to attach to.
 	taskID := uuid.New().String()
@@ -268,7 +269,7 @@ func TestLoadCallerMessageAuthority_ReturnsAuthority(t *testing.T) {
 
 	ctx := context.Background()
 	aclSvc := acl.NewService(testDB.DB, "gateway-test-msg-auth")
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 
 	taskID := uuid.New().String()
 	workspace := "msg-auth-ws"
@@ -393,7 +394,7 @@ func TestLoadCallerMessageAuthority_NoGrant(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 
 	taskID := uuid.New().String()
 	task := &tasks.Task{
@@ -434,7 +435,7 @@ func TestLoadCallerMessageAuthority_GrantUnusableByActor(t *testing.T) {
 
 	ctx := context.Background()
 	aclSvc := acl.NewService(testDB.DB, "gateway-test-wrong-actor")
-	taskStore := tasks.NewTaskStore(testDB.DB)
+	taskStore := taskpg.New(testDB.DB)
 
 	taskID := uuid.New().String()
 	workspace := "wrong-actor-ws"

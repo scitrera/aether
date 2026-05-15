@@ -502,21 +502,7 @@ func (tas *TaskAssignmentService) createOrchestratedStartupTask(
 		return "", fmt.Errorf("failed to marshal launch params: %w", err)
 	}
 
-	insertQuery := `
-		INSERT INTO orchestrated_task_queue
-		(queue_id, task_id, target_implementation, workspace, profile, launch_params, status)
-		VALUES ($1, $2, $3, $4, $5, $6, 'pending')
-	`
-
-	_, err = tas.db.ExecContext(ctx, insertQuery,
-		queueID,
-		startupTaskID,
-		targetIdentity.Implementation,
-		workspace,
-		profile,
-		launchParamsJSON,
-	)
-	if err != nil {
+	if err := tas.taskStore.InsertQueueEntry(ctx, queueID, startupTaskID, targetIdentity.Implementation, workspace, profile, launchParamsJSON); err != nil {
 		return "", fmt.Errorf("failed to insert orchestrated task into queue: %w", err)
 	}
 

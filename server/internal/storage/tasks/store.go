@@ -3,42 +3,47 @@
 // + dlq tables and the orchestrated_task_queue cross-domain transactional
 // surface).
 //
-// Stage 1 consumers (callers that depend on this interface today):
+// Consumers:
 //   - cmd/gateway/main.go              — constructs the postgres-backed impl
-//   - cmd/aetherlite/main.go           — constructs the postgres-backed impl
-//     behind the sqlite_compat translation
-//     layer (until Stage 2 introduces a
-//     native sqlite sibling)
-//   - internal/gateway/server.go       — holds the *tasks.TaskStore handle and
-//     threads it through to admin handlers,
+//   - cmd/aetherlite/main.go           — constructs the native-sqlite impl
+//   - internal/gateway/server.go       — holds the Store handle and threads it
+//     through to admin handlers,
 //     orchestration plumbing, and the task
 //     lifecycle reconcilers
-//   - internal/orchestration/dispatcher.go,
-//     internal/orchestration/memory_dispatcher.go
-//     — open a *sql.Tx against the shared db,
-//     mutate orchestrated_task_queue, and
-//     call RecordAuditEventTx with the same
-//     tx so the audit row commits atomically
+//   - internal/orchestration/notify_dispatcher.go,
+//     internal/orchestration/polling_dispatcher.go
+//     — use Store for ALL orchestrated_task_queue
+//     reads and writes (both transactional and
+//     non-transactional). The dispatchers no
+//     longer hold a raw *sql.DB handle.
 //
-// The interface intentionally mirrors the legacy *pkg/tasks.TaskStore method
-// set one-for-one. This is the mechanical-extraction phase of the storage
-// refactor described in `.slop/20260513_native-storage-interfaces.md` §2/§4/§5:
-// the postgres impl is byte-for-byte the same logic, just re-homed behind an
-// interface so a future sqlite-native sibling (Stage 2) can drop in.
+// The interface mirrors the legacy *pkg/tasks.TaskStore method set and extends
+// it with queue-operation methods (PollPendingQueueEntries, ClaimQueueEntry,
+// etc.) that were previously inlined as direct SQL in the orchestration
+// dispatchers. Moving them here unblocks Wave 3's per-domain database split.
 //
-// Per `.slop/20260514_storage_interfaces_stage0.md`, the StoreTx abstraction
-// (§6 of the master plan) is **deferred to Stage 2**. For Stage 1, the
-// transactional interface method RecordAuditEventTx keeps *sql.Tx directly so
-// the existing orchestration dispatcher call sites continue to compile without
-// a coordinated cross-domain rewrite. Stage 2 replaces the *sql.Tx parameter
-// with a backend-agnostic StoreTx handle obtained from Store.BeginTx.
+// Stage 2 introduced the StoreTx abstraction and transactional queue
+// operations. Stage 2.5 added the non-transactional queue operations,
+// removing the dispatchers' dependency on *sql.DB entirely.
 package tasks
 
 import (
 	"context"
-	"database/sql"
 	"time"
 )
+
+// StoreTx is a backend-agnostic transaction handle for the tasks domain.
+// Each implementation (postgres, sqlite) returns its own concrete type from
+// BeginTx; the concrete type wraps a *sql.Tx internally and is recovered via
+// type-assertion inside the impl's transactional methods.
+//
+// Callers use StoreTx exclusively through the Store methods that accept it
+// (RecordAuditEventTx, UpdateQueueEntryForRetryTx, etc.). They never need
+// to reach inside to the underlying *sql.Tx.
+type StoreTx interface {
+	Commit() error
+	Rollback() error
+}
 
 // Store is the task-lifecycle surface consumed by the gateway, aetherlite, and
 // the orchestration dispatchers. It covers task CRUD, lifecycle state
@@ -265,21 +270,106 @@ type Store interface {
 	RecordAuditEvent(ctx context.Context, event *TaskAuditEvent) error
 
 	// RecordAuditEventTx inserts a task_audit_events row inside an existing
-	// transaction. Used by the orchestration dispatchers when they mutate
-	// orchestrated_task_queue and need the audit row to commit atomically
-	// with the queue mutation.
-	//
-	// TODO(stage2): replace the *sql.Tx parameter with a backend-agnostic
-	// StoreTx handle obtained from Store.BeginTx, per
-	// `.slop/20260513_native-storage-interfaces.md` §6 and
-	// `.slop/20260514_storage_interfaces_stage0.md` §6. The current
-	// signature is preserved for Stage 1 so the existing dispatcher call
-	// sites compile without a coordinated cross-domain rewrite.
-	RecordAuditEventTx(ctx context.Context, tx *sql.Tx, event *TaskAuditEvent) error
+	// StoreTx transaction. Used by the orchestration dispatchers when they
+	// mutate orchestrated_task_queue and need the audit row to commit
+	// atomically with the queue mutation.
+	RecordAuditEventTx(ctx context.Context, tx StoreTx, event *TaskAuditEvent) error
 
 	// GetTaskAuditEvents returns every audit-event row for a task, ordered
 	// by created_at ASC.
 	GetTaskAuditEvents(ctx context.Context, taskID string) ([]*TaskAuditEvent, error)
+
+	// =========================================================================
+	// StoreTx lifecycle + transactional queue operations
+	// =========================================================================
+
+	// BeginTx starts a new transaction scoped to this store's database.
+	// The returned StoreTx must be committed or rolled back by the caller.
+	BeginTx(ctx context.Context) (StoreTx, error)
+
+	// QueryQueueEntryForUnclaimTx reads the task_id, workspace,
+	// retry_count, and max_retries of a claimed orchestrated_task_queue
+	// row inside a transaction. Returns sql.ErrNoRows-equivalent behavior
+	// when no matching row exists.
+	QueryQueueEntryForUnclaimTx(ctx context.Context, tx StoreTx, queueID string) (taskID, workspace string, retryCount, maxRetries int, err error)
+
+	// UpdateQueueEntryForRetryTx increments retry_count and sets an
+	// exponential-backoff next_retry_at on an orchestrated_task_queue row,
+	// returning it to pending status. Called inside a StoreTx alongside
+	// RecordAuditEventTx.
+	UpdateQueueEntryForRetryTx(ctx context.Context, tx StoreTx, queueID string, newRetryCount, backoffSeconds int) error
+
+	// MarkQueueEntryFailedTx marks an orchestrated_task_queue row as
+	// failed with the given error message inside a transaction.
+	MarkQueueEntryFailedTx(ctx context.Context, tx StoreTx, queueID, errorMsg string) error
+
+	// InsertDLQEntryTx inserts a dead-letter-queue row inside a
+	// transaction. Used when retry exhaustion moves a queue entry to the
+	// DLQ atomically with the queue-status update and audit-event write.
+	InsertDLQEntryTx(ctx context.Context, tx StoreTx, taskID, workspace, reason string, attemptCount int) error
+
+	// =========================================================================
+	// Non-transactional queue operations (orchestrated_task_queue)
+	//
+	// These methods replace the direct SQL that orchestration dispatchers
+	// previously executed against a raw *sql.DB. Moving them here lets the
+	// dispatchers depend on tasks.Store alone, which unblocks Wave 3's
+	// per-domain database split (tasks.db separate from aether.db).
+	// =========================================================================
+
+	// InsertQueueEntry inserts a new orchestrated_task_queue row in
+	// status='pending'. Used by TaskAssignmentService when an
+	// agent-targeted message hits an offline target and the gateway
+	// trampolines an agent_startup task via the orchestrator pool. On
+	// postgres, the row INSERT fires a LISTEN/NOTIFY trigger that wakes
+	// orchestrators immediately; on sqlite, the polling dispatcher picks
+	// the row up on its next scan.
+	InsertQueueEntry(ctx context.Context, queueID, taskID, targetImplementation, workspace, profile string, launchParamsJSON []byte) error
+
+	// PollPendingQueueEntries returns up to limit orchestrated_task_queue
+	// rows that are pending and eligible for dispatch (next_retry_at is
+	// NULL or in the past). Ordered by created_at ASC so oldest tasks
+	// dispatch first.
+	PollPendingQueueEntries(ctx context.Context, limit int) ([]*QueueEntryNotification, error)
+
+	// CountPendingQueueEntries returns the number of orchestrated_task_queue
+	// rows with status=pending. Used for Prometheus queue-depth metrics.
+	CountPendingQueueEntries(ctx context.Context) (int, error)
+
+	// ClaimQueueEntry atomically transitions a pending queue entry to
+	// claimed status, recording the claimer and claim timestamp. Returns
+	// (true, nil) on success. Returns (false, nil) if the entry is not in
+	// pending status (already claimed by another gateway). Returns
+	// (false, err) on database errors.
+	ClaimQueueEntry(ctx context.Context, queueID, claimedBy string) (bool, error)
+
+	// CompleteQueueEntry marks a queue entry as completed by queue_id.
+	CompleteQueueEntry(ctx context.Context, queueID string) error
+
+	// FailQueueEntry marks a queue entry as failed with an error message
+	// by queue_id.
+	FailQueueEntry(ctx context.Context, queueID, errorMsg string) error
+
+	// GetQueueEntryDetails retrieves the full task details (including
+	// launch parameters) for a queue entry. Returns sql.ErrNoRows-
+	// equivalent behavior when no matching row exists.
+	GetQueueEntryDetails(ctx context.Context, queueID string) (*QueueEntryDetails, error)
+
+	// ListStaleClaimedQueueEntries returns queue_ids of entries stuck in
+	// claimed status longer than the given threshold, ordered by
+	// claimed_at ASC, capped at limit rows.
+	ListStaleClaimedQueueEntries(ctx context.Context, threshold time.Duration, limit int) ([]string, error)
+
+	// CompleteQueueEntryByTaskID marks orchestrated_task_queue row(s) for
+	// the given taskID as completed. Only transitions pending/claimed rows.
+	// Idempotent — no-op if no matching row exists or rows are already
+	// terminal.
+	CompleteQueueEntryByTaskID(ctx context.Context, taskID string) error
+
+	// FailQueueEntryByTaskID marks orchestrated_task_queue row(s) for
+	// the given taskID as failed. Only transitions pending/claimed rows.
+	// Idempotent.
+	FailQueueEntryByTaskID(ctx context.Context, taskID, errorMsg string) error
 
 	// =========================================================================
 	// Disconnect tracking

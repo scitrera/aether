@@ -16,6 +16,31 @@ import (
 	legacy "github.com/scitrera/aether/pkg/tasks"
 )
 
+// QueueEntryNotification is the minimal projection of an
+// orchestrated_task_queue row returned by PollPendingQueueEntries. It
+// carries just enough data for the dispatcher to decide which
+// orchestrator should receive the task. The full task details (launch
+// params etc.) are fetched separately via GetQueueEntryDetails after
+// the claim succeeds.
+type QueueEntryNotification struct {
+	QueueID              string
+	TaskID               string
+	Profile              string
+	Workspace            string
+	TargetImplementation string
+}
+
+// QueueEntryDetails is the full projection of an orchestrated_task_queue
+// row, including launch parameters. Returned by GetQueueEntryDetails
+// after a dispatcher successfully claims the entry.
+type QueueEntryDetails struct {
+	TaskID               string
+	TargetImplementation string
+	Workspace            string
+	Profile              string
+	LaunchParams         map[string]interface{}
+}
+
 // Core types — aliased so a single import gets callers everything they need.
 type (
 	// Task is the unified task record (supports both messaging delivery and
