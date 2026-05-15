@@ -91,6 +91,12 @@ type (
 
 	// TaskAuthorityInfo is the on-behalf-of authority lineage bound to a task.
 	TaskAuthorityInfo = legacy.TaskAuthorityInfo
+
+	// WaitReason discriminates why a task entered a waiting/hibernated state.
+	WaitReason = legacy.WaitReason
+
+	// WaitSpec describes why a task was paused and what conditions will wake it.
+	WaitSpec = legacy.WaitSpec
 )
 
 // Task lifecycle statuses — values stored in tasks.status.
@@ -103,6 +109,28 @@ const (
 	TaskStatusFailed    = legacy.TaskStatusFailed
 	TaskStatusCancelled = legacy.TaskStatusCancelled
 	TaskStatusDLQ       = legacy.TaskStatusDLQ
+
+	// Phase 1: A2A-aligned paused states.
+	TaskStatusWaitingInput      = legacy.TaskStatusWaitingInput
+	TaskStatusWaitingAuthority  = legacy.TaskStatusWaitingAuthority
+	TaskStatusWaitingDependency = legacy.TaskStatusWaitingDependency
+	TaskStatusHibernated        = legacy.TaskStatusHibernated
+	TaskStatusRejected          = legacy.TaskStatusRejected
+)
+
+// Phase 1: WaitReason constants.
+const (
+	WaitReasonInput       = legacy.WaitReasonInput
+	WaitReasonAuthority   = legacy.WaitReasonAuthority
+	WaitReasonDependency  = legacy.WaitReasonDependency
+	WaitReasonHibernation = legacy.WaitReasonHibernation
+)
+
+// Phase 1: task lifecycle helpers — re-exported from legacy package.
+var (
+	IsTerminal         = legacy.IsTerminal
+	IsWaiting          = legacy.IsWaiting
+	ValidateTransition = legacy.ValidateTransition
 )
 
 // Task category values — stored in tasks.task_category.

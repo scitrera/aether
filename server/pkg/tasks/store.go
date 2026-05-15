@@ -39,7 +39,8 @@ const taskSelectColumns = `
 	authority_grant_id, root_authority_grant_id, parent_authority_grant_id,
 	authority_audience_type, authority_audience_id, authority_delegate_type, authority_delegate_id,
 	task_class,
-	disconnected_at, grace_window_ms
+	disconnected_at, grace_window_ms,
+	wait_spec, depends_on, context_id, paused_at
 `
 
 // =============================================================================
@@ -82,6 +83,20 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal heartbeat_details: %w", err)
 	}
+	var waitSpecJSON []byte
+	if task.WaitSpec != nil {
+		waitSpecJSON, err = json.Marshal(task.WaitSpec)
+		if err != nil {
+			return fmt.Errorf("failed to marshal wait_spec: %w", err)
+		}
+	}
+	var dependsOnJSON []byte
+	if len(task.DependsOn) > 0 {
+		dependsOnJSON, err = json.Marshal(task.DependsOn)
+		if err != nil {
+			return fmt.Errorf("failed to marshal depends_on: %w", err)
+		}
+	}
 
 	query := `
 		INSERT INTO tasks (
@@ -95,12 +110,14 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 			authority_mode, subject_type, subject_id, root_subject_type, root_subject_id,
 			authority_grant_id, root_authority_grant_id, parent_authority_grant_id,
 			authority_audience_type, authority_audience_id, authority_delegate_type, authority_delegate_id,
-			task_class, grace_window_ms
+			task_class, grace_window_ms,
+			wait_spec, depends_on, context_id, paused_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
 			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28,
 			$29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41,
-			$42, $43
+			$42, $43,
+			$44, $45, $46, $47
 		)
 	`
 
@@ -148,6 +165,10 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 		nullString(task.Authority.DelegateID),
 		task.TaskClass,
 		task.GraceWindowMs,
+		waitSpecJSON,
+		dependsOnJSON,
+		nullString(task.ContextID),
+		nullTime(task.PausedAt),
 	)
 
 	return err
@@ -815,6 +836,20 @@ func (s *TaskStore) ListTasks(ctx context.Context, filter *TaskFilter) ([]*Task,
 		}
 		query += " AND (task_class IS NULL OR task_class NOT IN (" + strings.Join(placeholders, ", ") + "))"
 	}
+	if filter.ContextID != "" {
+		query += fmt.Sprintf(" AND context_id = $%d", argNum)
+		args = append(args, filter.ContextID)
+		argNum++
+	}
+	if len(filter.ExcludeStatuses) > 0 {
+		placeholders := make([]string, len(filter.ExcludeStatuses))
+		for i, s := range filter.ExcludeStatuses {
+			placeholders[i] = fmt.Sprintf("$%d", argNum)
+			args = append(args, s)
+			argNum++
+		}
+		query += " AND status NOT IN (" + strings.Join(placeholders, ", ") + ")"
+	}
 
 	query += " ORDER BY created_at DESC"
 	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argNum, argNum+1)
@@ -1447,9 +1482,10 @@ func scanTaskInto(s taskScanner) (*Task, error) {
 	var authorityMode, subjectType, subjectID, rootSubjectType, rootSubjectID sql.NullString
 	var authorityGrantID, rootAuthorityGrantID, parentAuthorityGrantID sql.NullString
 	var authorityAudienceType, authorityAudienceID, authorityDelegateType, authorityDelegateID sql.NullString
-	var scheduledFor, startedAt, completedAt, failedAt, assignedAt, nextRetryAt, lastHeartbeat, disconnectedAt sql.NullTime
+	var contextID sql.NullString
+	var scheduledFor, startedAt, completedAt, failedAt, assignedAt, nextRetryAt, lastHeartbeat, disconnectedAt, pausedAt sql.NullTime
 	var scheduleToStart, startToClose, heartbeatTimeout, scheduleToClose sql.NullInt64
-	var launchParamsJSON, metadataJSON, checkpointJSON, heartbeatJSON []byte
+	var launchParamsJSON, metadataJSON, checkpointJSON, heartbeatJSON, waitSpecJSON, dependsOnJSON []byte
 
 	err := s.Scan(
 		&task.TaskID, &task.TaskType, &task.Workspace, &implementation, &specifier,
@@ -1469,6 +1505,7 @@ func scanTaskInto(s taskScanner) (*Task, error) {
 		&authorityAudienceType, &authorityAudienceID, &authorityDelegateType, &authorityDelegateID,
 		&task.TaskClass,
 		&disconnectedAt, &task.GraceWindowMs,
+		&waitSpecJSON, &dependsOnJSON, &contextID, &pausedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -1612,6 +1649,24 @@ func scanTaskInto(s taskScanner) (*Task, error) {
 			return nil, fmt.Errorf("failed to unmarshal heartbeat_details: %w", err)
 		}
 	}
+	if len(waitSpecJSON) > 0 {
+		var ws WaitSpec
+		if err := json.Unmarshal(waitSpecJSON, &ws); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal wait_spec: %w", err)
+		}
+		task.WaitSpec = &ws
+	}
+	if len(dependsOnJSON) > 0 {
+		if err := json.Unmarshal(dependsOnJSON, &task.DependsOn); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal depends_on: %w", err)
+		}
+	}
+	if contextID.Valid {
+		task.ContextID = contextID.String
+	}
+	if pausedAt.Valid {
+		task.PausedAt = &pausedAt.Time
+	}
 
 	return &task, nil
 }
@@ -1705,4 +1760,126 @@ func nullInt64(i int64) sql.NullInt64 {
 		return sql.NullInt64{Valid: false}
 	}
 	return sql.NullInt64{Int64: i, Valid: true}
+}
+
+// =============================================================================
+// Phase 1: Paused-state lifecycle operations
+// =============================================================================
+
+// PauseTask transitions taskID into a waiting/hibernated state.
+func (s *TaskStore) PauseTask(ctx context.Context, taskID string, to TaskStatus, spec *WaitSpec) error {
+	task, err := s.GetTask(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("PauseTask: get task: %w", err)
+	}
+	if err := ValidateTransition(task.Status, to); err != nil {
+		return fmt.Errorf("PauseTask: %w", err)
+	}
+	var waitSpecJSON, dependsOnJSON []byte
+	if spec != nil {
+		waitSpecJSON, err = json.Marshal(spec)
+		if err != nil {
+			return fmt.Errorf("PauseTask: marshal wait_spec: %w", err)
+		}
+		// Mirror wait_spec.depends_on into the top-level depends_on column so
+		// ListTasksWaitingOnDependency can do its reverse-lookup via the GIN
+		// index without parsing the wait_spec JSON.
+		if len(spec.DependsOn) > 0 {
+			dependsOnJSON, err = json.Marshal(spec.DependsOn)
+			if err != nil {
+				return fmt.Errorf("PauseTask: marshal depends_on: %w", err)
+			}
+		}
+	}
+	now := time.Now().UTC()
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE tasks SET status = $1, wait_spec = $2, depends_on = $3, paused_at = $4, updated_at = NOW()
+		WHERE task_id = $5
+	`, string(to), waitSpecJSON, dependsOnJSON, now, taskID)
+	return err
+}
+
+// ResumeTask transitions taskID out of a waiting/hibernated state.
+func (s *TaskStore) ResumeTask(ctx context.Context, taskID string, to TaskStatus) error {
+	task, err := s.GetTask(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("ResumeTask: get task: %w", err)
+	}
+	if err := ValidateTransition(task.Status, to); err != nil {
+		return fmt.Errorf("ResumeTask: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE tasks SET status = $1, wait_spec = NULL, depends_on = NULL, paused_at = NULL, updated_at = NOW()
+		WHERE task_id = $2
+	`, string(to), taskID)
+	return err
+}
+
+// RejectTask transitions taskID to the terminal rejected state.
+func (s *TaskStore) RejectTask(ctx context.Context, taskID string, reason string) error {
+	task, err := s.GetTask(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("RejectTask: get task: %w", err)
+	}
+	if err := ValidateTransition(task.Status, TaskStatusRejected); err != nil {
+		return fmt.Errorf("RejectTask: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE tasks SET status = $1, error_message = $2, wait_spec = NULL, depends_on = NULL, paused_at = NULL, updated_at = NOW()
+		WHERE task_id = $3
+	`, string(TaskStatusRejected), reason, taskID)
+	return err
+}
+
+// ListWaitingTasks returns tasks in any waiting/hibernated state.
+func (s *TaskStore) ListWaitingTasks(ctx context.Context, limit int) ([]*Task, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	query := `
+		SELECT ` + taskSelectColumns + `
+		FROM tasks
+		WHERE status IN ($1, $2, $3, $4)
+		ORDER BY paused_at ASC NULLS LAST
+		LIMIT $5
+	`
+	return s.queryTasks(ctx, query,
+		string(TaskStatusWaitingInput),
+		string(TaskStatusWaitingAuthority),
+		string(TaskStatusWaitingDependency),
+		string(TaskStatusHibernated),
+		limit,
+	)
+}
+
+// ListTasksWaitingOnDependency returns tasks in waiting_dependency state whose
+// depends_on JSONB array contains dependencyTaskID. The GIN(jsonb_path_ops)
+// index on depends_on (see migration 022) supports this @> containment lookup.
+func (s *TaskStore) ListTasksWaitingOnDependency(ctx context.Context, dependencyTaskID string) ([]*Task, error) {
+	query := `
+		SELECT ` + taskSelectColumns + `
+		FROM tasks
+		WHERE status = $1
+		  AND depends_on @> $2::jsonb
+	`
+	depJSON, err := json.Marshal([]string{dependencyTaskID})
+	if err != nil {
+		return nil, fmt.Errorf("ListTasksWaitingOnDependency: marshal: %w", err)
+	}
+	return s.queryTasks(ctx, query, string(TaskStatusWaitingDependency), string(depJSON))
+}
+
+// ListTasksByContext returns tasks whose context_id matches contextID.
+func (s *TaskStore) ListTasksByContext(ctx context.Context, contextID string, limit int) ([]*Task, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	query := `
+		SELECT ` + taskSelectColumns + `
+		FROM tasks
+		WHERE context_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`
+	return s.queryTasks(ctx, query, contextID, limit)
 }

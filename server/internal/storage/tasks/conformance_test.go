@@ -116,6 +116,16 @@ func TestStoreConformance(t *testing.T) {
 				defer cleanup()
 				runAdminWorkspaceQueries(t, store)
 			})
+			t.Run("PausedStates", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runPausedStates(t, store)
+			})
+			t.Run("ContextAndDependencies", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runContextAndDependencies(t, store)
+			})
 		})
 	}
 }
@@ -833,6 +843,171 @@ func sqliteNativeFactory(t *testing.T) (tasks.Store, *sql.DB, func()) {
 // newTestTask builds a minimal valid Task. The TaskID is fresh per call so
 // rows do not collide with prior runs or other concurrent tests sharing the
 // dev database.
+// runPausedStates: PauseTask transitions running -> waiting_* with WaitSpec,
+// ResumeTask returns it to running, RejectTask is terminal, ListWaitingTasks
+// finds paused tasks.
+func runPausedStates(t *testing.T, store tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	// Build a running task to pause.
+	task := newTestTask(t, "paused")
+	if err := store.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := store.AssignTask(ctx, task.TaskID, "worker-1"); err != nil {
+		t.Fatalf("AssignTask: %v", err)
+	}
+	if err := store.StartTask(ctx, task.TaskID); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+	assertStatus(t, store, task.TaskID, tasks.TaskStatusRunning)
+
+	// PAUSE -> waiting_input with a typed WaitSpec.
+	spec := &tasks.WaitSpec{
+		Reason:            tasks.WaitReasonInput,
+		ExpectedPrincipal: "user::alice",
+		InputMatch:        map[string]string{"kind": "approval"},
+		TimeoutMs:         60_000,
+	}
+	if err := store.PauseTask(ctx, task.TaskID, tasks.TaskStatusWaitingInput, spec); err != nil {
+		t.Fatalf("PauseTask: %v", err)
+	}
+	assertStatus(t, store, task.TaskID, tasks.TaskStatusWaitingInput)
+
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask after pause: %v", err)
+	}
+	if got.WaitSpec == nil {
+		t.Fatalf("expected WaitSpec to be persisted, got nil")
+	}
+	if got.WaitSpec.Reason != tasks.WaitReasonInput {
+		t.Errorf("WaitSpec.Reason = %q, want %q", got.WaitSpec.Reason, tasks.WaitReasonInput)
+	}
+	if got.WaitSpec.ExpectedPrincipal != "user::alice" {
+		t.Errorf("WaitSpec.ExpectedPrincipal = %q, want user::alice", got.WaitSpec.ExpectedPrincipal)
+	}
+	if got.WaitSpec.InputMatch["kind"] != "approval" {
+		t.Errorf("WaitSpec.InputMatch[kind] = %q, want approval", got.WaitSpec.InputMatch["kind"])
+	}
+	if got.PausedAt == nil || got.PausedAt.IsZero() {
+		t.Errorf("PausedAt should be set on pause, got %v", got.PausedAt)
+	}
+
+	// ListWaitingTasks must include the paused task.
+	waiting, err := store.ListWaitingTasks(ctx, 100)
+	if err != nil {
+		t.Fatalf("ListWaitingTasks: %v", err)
+	}
+	if !containsTask(waiting, task.TaskID) {
+		t.Errorf("ListWaitingTasks did not include paused task %s", task.TaskID)
+	}
+
+	// RESUME -> running, WaitSpec cleared.
+	if err := store.ResumeTask(ctx, task.TaskID, tasks.TaskStatusRunning); err != nil {
+		t.Fatalf("ResumeTask: %v", err)
+	}
+	assertStatus(t, store, task.TaskID, tasks.TaskStatusRunning)
+	got, err = store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask after resume: %v", err)
+	}
+	if got.WaitSpec != nil {
+		t.Errorf("WaitSpec should be cleared after resume, got %+v", got.WaitSpec)
+	}
+
+	// Reject path: a fresh pending task can be rejected directly.
+	rejTask := newTestTask(t, "reject")
+	if err := store.CreateTask(ctx, rejTask); err != nil {
+		t.Fatalf("CreateTask reject: %v", err)
+	}
+	if err := store.RejectTask(ctx, rejTask.TaskID, "policy violation"); err != nil {
+		t.Fatalf("RejectTask: %v", err)
+	}
+	assertStatus(t, store, rejTask.TaskID, tasks.TaskStatusRejected)
+
+	// Illegal: pausing a rejected (terminal) task must fail.
+	if err := store.PauseTask(ctx, rejTask.TaskID, tasks.TaskStatusWaitingInput, &tasks.WaitSpec{Reason: tasks.WaitReasonInput}); err == nil {
+		t.Errorf("PauseTask on rejected task should fail")
+	}
+}
+
+// runContextAndDependencies: ContextID round-trip, ListTasksByContext filter,
+// and dependency-reverse-lookup via ListTasksWaitingOnDependency.
+func runContextAndDependencies(t *testing.T, store tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	const sess = "session-conf-42"
+
+	// Three tasks in the same context.
+	parent := newTestTask(t, "ctx-parent")
+	parent.ContextID = sess
+	if err := store.CreateTask(ctx, parent); err != nil {
+		t.Fatalf("CreateTask parent: %v", err)
+	}
+
+	childA := newTestTask(t, "ctx-childA")
+	childA.ContextID = sess
+	if err := store.CreateTask(ctx, childA); err != nil {
+		t.Fatalf("CreateTask childA: %v", err)
+	}
+
+	childB := newTestTask(t, "ctx-childB")
+	childB.ContextID = sess
+	if err := store.CreateTask(ctx, childB); err != nil {
+		t.Fatalf("CreateTask childB: %v", err)
+	}
+
+	// Context-scoped listing.
+	listed, err := store.ListTasksByContext(ctx, sess, 100)
+	if err != nil {
+		t.Fatalf("ListTasksByContext: %v", err)
+	}
+	if len(listed) < 3 {
+		t.Fatalf("ListTasksByContext(%s): got %d tasks, want >=3", sess, len(listed))
+	}
+	for _, want := range []string{parent.TaskID, childA.TaskID, childB.TaskID} {
+		if !containsTask(listed, want) {
+			t.Errorf("ListTasksByContext missing %s", want)
+		}
+	}
+
+	// Make parent wait on the two children.
+	if err := store.AssignTask(ctx, parent.TaskID, "worker-p"); err != nil {
+		t.Fatalf("AssignTask parent: %v", err)
+	}
+	if err := store.StartTask(ctx, parent.TaskID); err != nil {
+		t.Fatalf("StartTask parent: %v", err)
+	}
+	depSpec := &tasks.WaitSpec{
+		Reason:    tasks.WaitReasonDependency,
+		DependsOn: []string{childA.TaskID, childB.TaskID},
+	}
+	if err := store.PauseTask(ctx, parent.TaskID, tasks.TaskStatusWaitingDependency, depSpec); err != nil {
+		t.Fatalf("PauseTask parent: %v", err)
+	}
+
+	// Reverse-lookup: tasks waiting on childA must include parent.
+	depTasks, err := store.ListTasksWaitingOnDependency(ctx, childA.TaskID)
+	if err != nil {
+		t.Fatalf("ListTasksWaitingOnDependency: %v", err)
+	}
+	if !containsTask(depTasks, parent.TaskID) {
+		t.Errorf("ListTasksWaitingOnDependency(%s) did not include parent %s", childA.TaskID, parent.TaskID)
+	}
+}
+
+func containsTask(list []*tasks.Task, id string) bool {
+	for _, x := range list {
+		if x != nil && x.TaskID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func newTestTask(t *testing.T, hint string) *tasks.Task {
 	t.Helper()
 	return &tasks.Task{

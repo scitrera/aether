@@ -1,6 +1,9 @@
 package tasks
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // TaskStatus represents the lifecycle state of a task
 type TaskStatus string
@@ -14,7 +17,37 @@ const (
 	TaskStatusFailed    TaskStatus = "failed"    // Failed (may be retried)
 	TaskStatusCancelled TaskStatus = "cancelled" // Cancelled by user/system
 	TaskStatusDLQ       TaskStatus = "dlq"       // Moved to dead letter queue
+
+	// Phase 1: A2A-aligned paused states
+	TaskStatusWaitingInput      TaskStatus = "waiting_input"      // Paused awaiting user/caller input (A2A INPUT_REQUIRED)
+	TaskStatusWaitingAuthority  TaskStatus = "waiting_authority"  // Paused awaiting authority grant (A2A AUTH_REQUIRED)
+	TaskStatusWaitingDependency TaskStatus = "waiting_dependency" // Paused awaiting upstream task(s)
+	TaskStatusHibernated        TaskStatus = "hibernated"         // Voluntarily sleeping until a scheduled wake time
+	TaskStatusRejected          TaskStatus = "rejected"           // Permanently rejected (A2A REJECTED); terminal
 )
+
+// WaitReason discriminates why a task entered a waiting/hibernated state.
+type WaitReason string
+
+const (
+	WaitReasonInput       WaitReason = "input"       // Waiting for user/caller input
+	WaitReasonAuthority   WaitReason = "authority"   // Waiting for authority grant
+	WaitReasonDependency  WaitReason = "dependency"  // Waiting for upstream task(s)
+	WaitReasonHibernation WaitReason = "hibernation" // Scheduled hibernation / wake
+)
+
+// WaitSpec describes why a task was paused and what conditions will wake it.
+// Stored as JSONB (postgres) or TEXT JSON (sqlite) in the wait_spec column.
+type WaitSpec struct {
+	Reason              WaitReason        `json:"reason,omitempty"`
+	ExpectedPrincipal   string            `json:"expected_principal,omitempty"`     // For INPUT: principal expected to send the input message; empty = any
+	InputMatch          map[string]string `json:"input_match,omitempty"`            // For INPUT: metadata key/value the inbound message must match
+	AuthorityRequestID  string            `json:"authority_request_id,omitempty"`   // For AUTHORITY: correlation id for the authority request being awaited
+	DependsOn           []string          `json:"depends_on,omitempty"`             // For DEPENDENCY: task IDs this task depends on
+	WakeOnAny           bool              `json:"wake_on_any,omitempty"`            // True = wake when any dependency completes (default: all)
+	TimeoutMs           int64             `json:"timeout_ms,omitempty"`             // Max wait duration in ms; 0 = no timeout
+	ScheduledWakeUnixMs int64             `json:"scheduled_wake_unix_ms,omitempty"` // Unix-ms absolute wake time (independent of TimeoutMs)
+}
 
 // TaskCategory categorizes the purpose of a task
 type TaskCategory string
@@ -137,6 +170,16 @@ type Task struct {
 	// Set at task creation; not modified after.
 	GraceWindowMs int64 `json:"grace_window_ms,omitempty"`
 
+	// Phase 1: A2A-aligned paused-state fields.
+	// WaitSpec describes why the task is paused and what will wake it.
+	WaitSpec *WaitSpec `json:"wait_spec,omitempty"`
+	// DependsOn lists task IDs that must complete before this task can resume.
+	DependsOn []string `json:"depends_on,omitempty"`
+	// ContextID is the client-minted A2A contextId that groups related tasks.
+	ContextID string `json:"context_id,omitempty"`
+	// PausedAt records when the task entered a waiting/hibernated state.
+	PausedAt *time.Time `json:"paused_at,omitempty"`
+
 	// Messaging support (for delivery tasks)
 	TargetTopic string `json:"target_topic,omitempty"`
 	SourceTopic string `json:"source_topic,omitempty"`
@@ -255,8 +298,120 @@ type TaskFilter struct {
 	ParentTaskID         string
 	TaskClass            int32   // 0 = no positive filter
 	ExcludeTaskClasses   []int32 // any task whose TaskClass is in this list is omitted
-	Limit                int
-	Offset               int
+	// Phase 1: A2A-aligned filter fields.
+	ContextID       string       // Filter by client-minted session identifier; empty = no filter
+	ExcludeStatuses []TaskStatus // Omit tasks whose status is in this list
+	Limit           int
+	Offset          int
+}
+
+// =============================================================================
+// Phase 1: Task lifecycle helpers
+// =============================================================================
+
+// terminalStatuses is the set of states from which a task cannot transition.
+var terminalStatuses = map[TaskStatus]bool{
+	TaskStatusCompleted: true,
+	TaskStatusFailed:    true,
+	TaskStatusCancelled: true,
+	TaskStatusDLQ:       true,
+	TaskStatusRejected:  true,
+}
+
+// waitingStatuses is the set of paused states.
+var waitingStatuses = map[TaskStatus]bool{
+	TaskStatusWaitingInput:      true,
+	TaskStatusWaitingAuthority:  true,
+	TaskStatusWaitingDependency: true,
+	TaskStatusHibernated:        true,
+}
+
+// IsTerminal reports whether status is a terminal (no further transitions) state.
+func IsTerminal(status TaskStatus) bool {
+	return terminalStatuses[status]
+}
+
+// IsWaiting reports whether status is a paused/waiting state.
+func IsWaiting(status TaskStatus) bool {
+	return waitingStatuses[status]
+}
+
+// validTransitions defines the allowed from→to status transitions.
+// Any transition not listed is rejected by ValidateTransition.
+var validTransitions = map[TaskStatus]map[TaskStatus]bool{
+	TaskStatusPending: {
+		TaskStatusAssigned:          true,
+		TaskStatusStarting:          true, // direct-to-starting paths (e.g. self-assigned tasks)
+		TaskStatusCancelled:         true,
+		TaskStatusRejected:          true, // REJECT op: declined before processing
+		TaskStatusWaitingDependency: true,
+	},
+	TaskStatusAssigned: {
+		TaskStatusStarting:  true,
+		TaskStatusRunning:   true,
+		TaskStatusFailed:    true,
+		TaskStatusCancelled: true,
+		TaskStatusRejected:  true, // REJECT op: declined after assignment but before run
+		TaskStatusPending:   true, // unassign / retry
+	},
+	TaskStatusStarting: {
+		TaskStatusRunning:   true,
+		TaskStatusFailed:    true,
+		TaskStatusCancelled: true,
+	},
+	TaskStatusRunning: {
+		TaskStatusCompleted:         true,
+		TaskStatusFailed:            true,
+		TaskStatusCancelled:         true,
+		TaskStatusWaitingInput:      true,
+		TaskStatusWaitingAuthority:  true,
+		TaskStatusWaitingDependency: true,
+		TaskStatusHibernated:        true,
+	},
+	TaskStatusWaitingInput: {
+		TaskStatusRunning:   true,
+		TaskStatusFailed:    true,
+		TaskStatusCancelled: true,
+		TaskStatusRejected:  true,
+	},
+	TaskStatusWaitingAuthority: {
+		TaskStatusRunning:   true,
+		TaskStatusFailed:    true,
+		TaskStatusCancelled: true,
+		TaskStatusRejected:  true,
+	},
+	TaskStatusWaitingDependency: {
+		TaskStatusRunning:   true,
+		TaskStatusPending:   true, // dependency cancelled / failed
+		TaskStatusFailed:    true,
+		TaskStatusCancelled: true,
+	},
+	TaskStatusHibernated: {
+		TaskStatusRunning:   true,
+		TaskStatusPending:   true,
+		TaskStatusFailed:    true,
+		TaskStatusCancelled: true,
+	},
+	TaskStatusFailed: {
+		TaskStatusPending: true, // retry
+	},
+	TaskStatusCancelled: {
+		TaskStatusPending: true, // retry
+	},
+	// TaskStatusCompleted, TaskStatusDLQ, TaskStatusRejected: no outgoing transitions
+}
+
+// ValidateTransition returns nil if transitioning from → to is permitted,
+// or a descriptive error if it is not.
+func ValidateTransition(from, to TaskStatus) error {
+	if from == to {
+		return nil // idempotent; callers may allow this
+	}
+	allowed, ok := validTransitions[from]
+	if !ok || !allowed[to] {
+		return fmt.Errorf("invalid task state transition: %s → %s", from, to)
+	}
+	return nil
 }
 
 // =============================================================================

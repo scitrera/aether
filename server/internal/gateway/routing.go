@@ -1307,6 +1307,17 @@ func taskStatusToProto(s tasks.TaskStatus) pb.TaskStatus {
 		return pb.TaskStatus_TASK_STATUS_FAILED
 	case tasks.TaskStatusCancelled:
 		return pb.TaskStatus_TASK_STATUS_CANCELLED
+	// Phase 1: A2A-aligned paused states.
+	case tasks.TaskStatusWaitingInput:
+		return pb.TaskStatus_TASK_STATUS_WAITING_INPUT
+	case tasks.TaskStatusWaitingAuthority:
+		return pb.TaskStatus_TASK_STATUS_WAITING_AUTHORITY
+	case tasks.TaskStatusWaitingDependency:
+		return pb.TaskStatus_TASK_STATUS_WAITING_DEPENDENCY
+	case tasks.TaskStatusHibernated:
+		return pb.TaskStatus_TASK_STATUS_HIBERNATED
+	case tasks.TaskStatusRejected:
+		return pb.TaskStatus_TASK_STATUS_REJECTED
 	default:
 		return pb.TaskStatus_TASK_STATUS_UNSPECIFIED
 	}
@@ -1325,6 +1336,17 @@ func protoTaskStatusToTasks(s pb.TaskStatus) tasks.TaskStatus {
 		return tasks.TaskStatusFailed
 	case pb.TaskStatus_TASK_STATUS_CANCELLED:
 		return tasks.TaskStatusCancelled
+	// Phase 1: A2A-aligned paused states.
+	case pb.TaskStatus_TASK_STATUS_WAITING_INPUT:
+		return tasks.TaskStatusWaitingInput
+	case pb.TaskStatus_TASK_STATUS_WAITING_AUTHORITY:
+		return tasks.TaskStatusWaitingAuthority
+	case pb.TaskStatus_TASK_STATUS_WAITING_DEPENDENCY:
+		return tasks.TaskStatusWaitingDependency
+	case pb.TaskStatus_TASK_STATUS_HIBERNATED:
+		return tasks.TaskStatusHibernated
+	case pb.TaskStatus_TASK_STATUS_REJECTED:
+		return tasks.TaskStatusRejected
 	default:
 		return tasks.TaskStatusPending
 	}
@@ -1380,6 +1402,34 @@ func taskToProto(t *tasks.Task) *pb.TaskInfo {
 			}
 		}
 	}
+	// Phase 1: A2A paused-state fields.
+	if t.WaitSpec != nil {
+		ws := &pb.WaitSpec{
+			ExpectedPrincipal:   t.WaitSpec.ExpectedPrincipal,
+			InputMatch:          t.WaitSpec.InputMatch,
+			AuthorityRequestId:  t.WaitSpec.AuthorityRequestID,
+			DependsOn:           t.WaitSpec.DependsOn,
+			WakeOnAny:           t.WaitSpec.WakeOnAny,
+			TimeoutMs:           t.WaitSpec.TimeoutMs,
+			ScheduledWakeUnixMs: t.WaitSpec.ScheduledWakeUnixMs,
+		}
+		switch t.WaitSpec.Reason {
+		case tasks.WaitReasonInput:
+			ws.Reason = pb.WaitReason_WAIT_REASON_INPUT
+		case tasks.WaitReasonAuthority:
+			ws.Reason = pb.WaitReason_WAIT_REASON_AUTHORITY
+		case tasks.WaitReasonDependency:
+			ws.Reason = pb.WaitReason_WAIT_REASON_DEPENDENCY
+		case tasks.WaitReasonHibernation:
+			ws.Reason = pb.WaitReason_WAIT_REASON_HIBERNATION
+		}
+		info.WaitSpec = ws
+	}
+	if len(t.DependsOn) > 0 {
+		info.DependsOn = t.DependsOn
+	}
+	info.ContextId = t.ContextID
+	info.PausedAt = unixOrZero(t.PausedAt)
 	return info
 }
 
@@ -1452,6 +1502,14 @@ func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSessi
 			filter.AuthorityGrantID = query.Filter.AuthorityGrantId
 			filter.RootAuthorityGrantID = query.Filter.RootAuthorityGrantId
 			filter.ParentTaskID = query.Filter.ParentTaskId
+			// Phase 1: A2A filter fields.
+			filter.ContextID = query.Filter.ContextId
+			if len(query.Filter.ExcludeStatuses) > 0 {
+				filter.ExcludeStatuses = make([]tasks.TaskStatus, 0, len(query.Filter.ExcludeStatuses))
+				for _, s := range query.Filter.ExcludeStatuses {
+					filter.ExcludeStatuses = append(filter.ExcludeStatuses, protoTaskStatusToTasks(s))
+				}
+			}
 			if query.Filter.Limit > 0 {
 				filter.Limit = int(query.Filter.Limit)
 				if filter.Limit > 1000 {

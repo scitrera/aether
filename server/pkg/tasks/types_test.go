@@ -387,3 +387,236 @@ func TestDLQRecord(t *testing.T) {
 		t.Errorf("ResolvedBy = %q, want %q", dlq.ResolvedBy, "admin")
 	}
 }
+
+// =============================================================================
+// Phase 1: paused-state helpers
+// =============================================================================
+
+func TestTaskStatus_Phase1Strings(t *testing.T) {
+	tests := []struct {
+		status TaskStatus
+		want   string
+	}{
+		{TaskStatusWaitingInput, "waiting_input"},
+		{TaskStatusWaitingAuthority, "waiting_authority"},
+		{TaskStatusWaitingDependency, "waiting_dependency"},
+		{TaskStatusHibernated, "hibernated"},
+		{TaskStatusRejected, "rejected"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.status), func(t *testing.T) {
+			if string(tt.status) != tt.want {
+				t.Errorf("TaskStatus = %q, want %q", tt.status, tt.want)
+			}
+		})
+	}
+}
+
+func TestWaitReason_Strings(t *testing.T) {
+	tests := []struct {
+		reason WaitReason
+		want   string
+	}{
+		{WaitReasonInput, "input"},
+		{WaitReasonAuthority, "authority"},
+		{WaitReasonDependency, "dependency"},
+		{WaitReasonHibernation, "hibernation"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.reason), func(t *testing.T) {
+			if string(tt.reason) != tt.want {
+				t.Errorf("WaitReason = %q, want %q", tt.reason, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsTerminal(t *testing.T) {
+	terminal := []TaskStatus{
+		TaskStatusCompleted,
+		TaskStatusFailed,
+		TaskStatusCancelled,
+		TaskStatusDLQ,
+		TaskStatusRejected,
+	}
+	for _, s := range terminal {
+		t.Run("terminal/"+string(s), func(t *testing.T) {
+			if !IsTerminal(s) {
+				t.Errorf("IsTerminal(%q) = false, want true", s)
+			}
+		})
+	}
+
+	nonTerminal := []TaskStatus{
+		TaskStatusPending,
+		TaskStatusAssigned,
+		TaskStatusStarting,
+		TaskStatusRunning,
+		TaskStatusWaitingInput,
+		TaskStatusWaitingAuthority,
+		TaskStatusWaitingDependency,
+		TaskStatusHibernated,
+	}
+	for _, s := range nonTerminal {
+		t.Run("nonterminal/"+string(s), func(t *testing.T) {
+			if IsTerminal(s) {
+				t.Errorf("IsTerminal(%q) = true, want false", s)
+			}
+		})
+	}
+}
+
+func TestIsWaiting(t *testing.T) {
+	waiting := []TaskStatus{
+		TaskStatusWaitingInput,
+		TaskStatusWaitingAuthority,
+		TaskStatusWaitingDependency,
+		TaskStatusHibernated,
+	}
+	for _, s := range waiting {
+		t.Run("waiting/"+string(s), func(t *testing.T) {
+			if !IsWaiting(s) {
+				t.Errorf("IsWaiting(%q) = false, want true", s)
+			}
+		})
+	}
+
+	notWaiting := []TaskStatus{
+		TaskStatusPending,
+		TaskStatusRunning,
+		TaskStatusCompleted,
+		TaskStatusFailed,
+		TaskStatusRejected,
+	}
+	for _, s := range notWaiting {
+		t.Run("notwaiting/"+string(s), func(t *testing.T) {
+			if IsWaiting(s) {
+				t.Errorf("IsWaiting(%q) = true, want false", s)
+			}
+		})
+	}
+}
+
+func TestValidateTransition_Legal(t *testing.T) {
+	legal := [][2]TaskStatus{
+		// idempotent self-transitions
+		{TaskStatusPending, TaskStatusPending},
+		{TaskStatusRunning, TaskStatusRunning},
+		// happy path
+		{TaskStatusPending, TaskStatusAssigned},
+		{TaskStatusAssigned, TaskStatusStarting},
+		{TaskStatusStarting, TaskStatusRunning},
+		{TaskStatusRunning, TaskStatusCompleted},
+		// pause + resume
+		{TaskStatusRunning, TaskStatusWaitingInput},
+		{TaskStatusRunning, TaskStatusWaitingAuthority},
+		{TaskStatusRunning, TaskStatusWaitingDependency},
+		{TaskStatusRunning, TaskStatusHibernated},
+		{TaskStatusWaitingInput, TaskStatusRunning},
+		{TaskStatusWaitingAuthority, TaskStatusRunning},
+		{TaskStatusWaitingDependency, TaskStatusRunning},
+		{TaskStatusHibernated, TaskStatusRunning},
+		// reject path
+		{TaskStatusPending, TaskStatusRejected},
+		{TaskStatusAssigned, TaskStatusRejected},
+		{TaskStatusWaitingInput, TaskStatusRejected},
+		// retry path
+		{TaskStatusFailed, TaskStatusPending},
+		{TaskStatusCancelled, TaskStatusPending},
+		// cancel paths
+		{TaskStatusRunning, TaskStatusCancelled},
+		{TaskStatusWaitingDependency, TaskStatusCancelled},
+		{TaskStatusHibernated, TaskStatusCancelled},
+	}
+	for _, p := range legal {
+		from, to := p[0], p[1]
+		t.Run(string(from)+"->"+string(to), func(t *testing.T) {
+			if err := ValidateTransition(from, to); err != nil {
+				t.Errorf("ValidateTransition(%q, %q) = %v, want nil", from, to, err)
+			}
+		})
+	}
+}
+
+func TestValidateTransition_Illegal(t *testing.T) {
+	illegal := [][2]TaskStatus{
+		// terminal states cannot transition out
+		{TaskStatusCompleted, TaskStatusRunning},
+		{TaskStatusCompleted, TaskStatusFailed},
+		{TaskStatusDLQ, TaskStatusPending},
+		{TaskStatusRejected, TaskStatusRunning},
+		{TaskStatusRejected, TaskStatusPending},
+		// invalid jumps
+		{TaskStatusPending, TaskStatusCompleted},
+		{TaskStatusPending, TaskStatusRunning},
+		{TaskStatusAssigned, TaskStatusCompleted},
+		// can't go from waiting straight to completed
+		{TaskStatusWaitingInput, TaskStatusCompleted},
+		{TaskStatusHibernated, TaskStatusCompleted},
+		// can't reject a running task (use fail)
+		{TaskStatusRunning, TaskStatusRejected},
+	}
+	for _, p := range illegal {
+		from, to := p[0], p[1]
+		t.Run(string(from)+"->"+string(to), func(t *testing.T) {
+			if err := ValidateTransition(from, to); err == nil {
+				t.Errorf("ValidateTransition(%q, %q) = nil, want error", from, to)
+			}
+		})
+	}
+}
+
+func TestWaitSpec_AllReasons(t *testing.T) {
+	// Sanity: a WaitSpec can carry payload appropriate to each reason.
+	specs := []WaitSpec{
+		{Reason: WaitReasonInput, ExpectedPrincipal: "user::alice", InputMatch: map[string]string{"kind": "approval"}, TimeoutMs: 60_000},
+		{Reason: WaitReasonAuthority, AuthorityRequestID: "ar-123", TimeoutMs: 30_000},
+		{Reason: WaitReasonDependency, DependsOn: []string{"t-1", "t-2"}, WakeOnAny: true},
+		{Reason: WaitReasonHibernation, ScheduledWakeUnixMs: time.Now().Add(time.Hour).UnixMilli()},
+	}
+	for _, s := range specs {
+		t.Run(string(s.Reason), func(t *testing.T) {
+			if s.Reason == "" {
+				t.Fatal("WaitSpec.Reason should be set")
+			}
+		})
+	}
+}
+
+func TestTaskFilter_Phase1Fields(t *testing.T) {
+	f := TaskFilter{
+		ContextID:       "session-42",
+		ExcludeStatuses: []TaskStatus{TaskStatusCompleted, TaskStatusFailed, TaskStatusRejected},
+	}
+	if f.ContextID != "session-42" {
+		t.Errorf("ContextID = %q, want %q", f.ContextID, "session-42")
+	}
+	if len(f.ExcludeStatuses) != 3 {
+		t.Fatalf("len(ExcludeStatuses) = %d, want 3", len(f.ExcludeStatuses))
+	}
+}
+
+func TestTask_Phase1Fields(t *testing.T) {
+	now := time.Now()
+	spec := &WaitSpec{Reason: WaitReasonDependency, DependsOn: []string{"t-1"}}
+	task := Task{
+		TaskID:    "t-42",
+		Status:    TaskStatusWaitingDependency,
+		WaitSpec:  spec,
+		DependsOn: []string{"t-1"},
+		ContextID: "ctx-7",
+		PausedAt:  &now,
+	}
+	if task.ContextID != "ctx-7" {
+		t.Errorf("ContextID = %q, want ctx-7", task.ContextID)
+	}
+	if task.WaitSpec == nil || task.WaitSpec.Reason != WaitReasonDependency {
+		t.Errorf("WaitSpec not round-tripped, got %+v", task.WaitSpec)
+	}
+	if len(task.DependsOn) != 1 || task.DependsOn[0] != "t-1" {
+		t.Errorf("DependsOn = %v, want [t-1]", task.DependsOn)
+	}
+	if task.PausedAt == nil || !task.PausedAt.Equal(now) {
+		t.Errorf("PausedAt = %v, want %v", task.PausedAt, now)
+	}
+}

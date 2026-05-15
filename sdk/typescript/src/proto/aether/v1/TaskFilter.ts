@@ -67,6 +67,17 @@ export interface TaskFilter {
    * include) but the typical use is one or the other.
    */
   'excludeTaskClasses'?: (_aether_v1_TaskClass)[];
+  /**
+   * Filter by client-minted session identifier (Phase 1). Mirrors the
+   * context_id added to CreateTaskRequest / TaskInfo. Empty = no filter.
+   */
+  'contextId'?: (string);
+  /**
+   * Inverted status filter (Phase 1). Any task whose status is in this list
+   * is omitted. Combine with status/statuses to express "all non-terminal"
+   * or similar queries without enumerating the affirmative set.
+   */
+  'excludeStatuses'?: (_aether_v1_TaskStatus)[];
 }
 
 /**
@@ -133,4 +144,15 @@ export interface TaskFilter__Output {
    * include) but the typical use is one or the other.
    */
   'excludeTaskClasses': (_aether_v1_TaskClass__Output)[];
+  /**
+   * Filter by client-minted session identifier (Phase 1). Mirrors the
+   * context_id added to CreateTaskRequest / TaskInfo. Empty = no filter.
+   */
+  'contextId': (string);
+  /**
+   * Inverted status filter (Phase 1). Any task whose status is in this list
+   * is omitted. Combine with status/statuses to express "all non-terminal"
+   * or similar queries without enumerating the affirmative set.
+   */
+  'excludeStatuses': (_aether_v1_TaskStatus__Output)[];
 }

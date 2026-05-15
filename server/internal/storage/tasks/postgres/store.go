@@ -380,6 +380,16 @@ func (s *Store) GetWorkspaceTaskStats(ctx context.Context, workspaceID string) (
 }
 
 // =========================================================================
+// Phase 1: Paused-state lifecycle — delegate to legacy TaskStore
+// =========================================================================
+
+// PauseTask, ResumeTask, RejectTask, ListWaitingTasks,
+// ListTasksWaitingOnDependency, and ListTasksByContext are implemented on
+// the embedded *legacy.TaskStore and promoted here automatically via
+// Go embedding. No override is needed; the legacy methods use the same
+// *sql.DB handle.
+
+// =========================================================================
 // Overrides for methods using NOW() — ensure time functions work
 // =========================================================================
 

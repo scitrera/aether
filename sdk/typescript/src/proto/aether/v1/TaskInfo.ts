@@ -2,6 +2,7 @@
 
 import type { TaskStatus as _aether_v1_TaskStatus, TaskStatus__Output as _aether_v1_TaskStatus__Output } from '../../aether/v1/TaskStatus';
 import type { TaskClass as _aether_v1_TaskClass, TaskClass__Output as _aether_v1_TaskClass__Output } from '../../aether/v1/TaskClass';
+import type { WaitSpec as _aether_v1_WaitSpec, WaitSpec__Output as _aether_v1_WaitSpec__Output } from '../../aether/v1/WaitSpec';
 import type { Long } from '@grpc/proto-loader';
 
 /**
@@ -115,6 +116,28 @@ export interface TaskInfo {
    */
   'disconnectedAt'?: (number | string | Long);
   'graceWindowMs'?: (number | string | Long);
+  /**
+   * Paused-state metadata (Phase 1). Populated when status is one of the
+   * WAITING_* states or HIBERNATED. Cleared on resume.
+   */
+  'waitSpec'?: (_aether_v1_WaitSpec | null);
+  /**
+   * Shortcut mirror of wait_spec.depends_on so simple "what is this task
+   * blocked on?" queries don't have to unpack the WaitSpec. Populated only
+   * for WAITING_DEPENDENCY tasks; safe to ignore otherwise.
+   */
+  'dependsOn'?: (string)[];
+  /**
+   * Client-minted opaque session/conversation identifier (A2A contextId).
+   * Groups tasks within a multi-turn interaction. Persisted on the task
+   * record and queryable via TaskFilter.context_id.
+   */
+  'contextId'?: (string);
+  /**
+   * Unix seconds when the task entered a WAITING_* / HIBERNATED state.
+   * 0 means the task has never been paused.
+   */
+  'pausedAt'?: (number | string | Long);
 }
 
 /**
@@ -228,4 +251,26 @@ export interface TaskInfo__Output {
    */
   'disconnectedAt': (string);
   'graceWindowMs': (string);
+  /**
+   * Paused-state metadata (Phase 1). Populated when status is one of the
+   * WAITING_* states or HIBERNATED. Cleared on resume.
+   */
+  'waitSpec': (_aether_v1_WaitSpec__Output | null);
+  /**
+   * Shortcut mirror of wait_spec.depends_on so simple "what is this task
+   * blocked on?" queries don't have to unpack the WaitSpec. Populated only
+   * for WAITING_DEPENDENCY tasks; safe to ignore otherwise.
+   */
+  'dependsOn': (string)[];
+  /**
+   * Client-minted opaque session/conversation identifier (A2A contextId).
+   * Groups tasks within a multi-turn interaction. Persisted on the task
+   * record and queryable via TaskFilter.context_id.
+   */
+  'contextId': (string);
+  /**
+   * Unix seconds when the task entered a WAITING_* / HIBERNATED state.
+   * 0 means the task has never been paused.
+   */
+  'pausedAt': (string);
 }

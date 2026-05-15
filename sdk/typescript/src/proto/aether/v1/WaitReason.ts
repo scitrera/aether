@@ -1,0 +1,68 @@
+// Original file: aether.proto
+
+/**
+ * WaitReason enumerates why a task is in a WAITING_* state. Each value pairs
+ * with a specific TaskStatus: WAIT_REASON_INPUT <-> TASK_STATUS_WAITING_INPUT,
+ * WAIT_REASON_AUTHORITY <-> TASK_STATUS_WAITING_AUTHORITY,
+ * WAIT_REASON_DEPENDENCY <-> TASK_STATUS_WAITING_DEPENDENCY,
+ * WAIT_REASON_HIBERNATION <-> TASK_STATUS_HIBERNATED.
+ */
+export const WaitReason = {
+  WAIT_REASON_UNSPECIFIED: 'WAIT_REASON_UNSPECIFIED',
+  /**
+   * paired with TASK_STATUS_WAITING_INPUT
+   */
+  WAIT_REASON_INPUT: 'WAIT_REASON_INPUT',
+  /**
+   * paired with TASK_STATUS_WAITING_AUTHORITY
+   */
+  WAIT_REASON_AUTHORITY: 'WAIT_REASON_AUTHORITY',
+  /**
+   * paired with TASK_STATUS_WAITING_DEPENDENCY
+   */
+  WAIT_REASON_DEPENDENCY: 'WAIT_REASON_DEPENDENCY',
+  /**
+   * paired with TASK_STATUS_HIBERNATED
+   */
+  WAIT_REASON_HIBERNATION: 'WAIT_REASON_HIBERNATION',
+} as const;
+
+/**
+ * WaitReason enumerates why a task is in a WAITING_* state. Each value pairs
+ * with a specific TaskStatus: WAIT_REASON_INPUT <-> TASK_STATUS_WAITING_INPUT,
+ * WAIT_REASON_AUTHORITY <-> TASK_STATUS_WAITING_AUTHORITY,
+ * WAIT_REASON_DEPENDENCY <-> TASK_STATUS_WAITING_DEPENDENCY,
+ * WAIT_REASON_HIBERNATION <-> TASK_STATUS_HIBERNATED.
+ */
+export type WaitReason =
+  | 'WAIT_REASON_UNSPECIFIED'
+  | 0
+  /**
+   * paired with TASK_STATUS_WAITING_INPUT
+   */
+  | 'WAIT_REASON_INPUT'
+  | 1
+  /**
+   * paired with TASK_STATUS_WAITING_AUTHORITY
+   */
+  | 'WAIT_REASON_AUTHORITY'
+  | 2
+  /**
+   * paired with TASK_STATUS_WAITING_DEPENDENCY
+   */
+  | 'WAIT_REASON_DEPENDENCY'
+  | 3
+  /**
+   * paired with TASK_STATUS_HIBERNATED
+   */
+  | 'WAIT_REASON_HIBERNATION'
+  | 4
+
+/**
+ * WaitReason enumerates why a task is in a WAITING_* state. Each value pairs
+ * with a specific TaskStatus: WAIT_REASON_INPUT <-> TASK_STATUS_WAITING_INPUT,
+ * WAIT_REASON_AUTHORITY <-> TASK_STATUS_WAITING_AUTHORITY,
+ * WAIT_REASON_DEPENDENCY <-> TASK_STATUS_WAITING_DEPENDENCY,
+ * WAIT_REASON_HIBERNATION <-> TASK_STATUS_HIBERNATED.
+ */
+export type WaitReason__Output = typeof WaitReason[keyof typeof WaitReason]

@@ -128,6 +128,8 @@ export interface ProtoGrpcType {
       TunnelOpen: MessageTypeDefinition
       UpstreamMessage: MessageTypeDefinition
       UserIdentity: MessageTypeDefinition
+      WaitReason: EnumTypeDefinition
+      WaitSpec: MessageTypeDefinition
       WorkflowEngineIdentity: MessageTypeDefinition
       WorkflowOperation: MessageTypeDefinition
       WorkflowResponse: MessageTypeDefinition

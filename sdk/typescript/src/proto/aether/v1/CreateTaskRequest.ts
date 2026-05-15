@@ -49,6 +49,12 @@ export interface CreateTaskRequest {
    * Optional UI hint; defaults to UNSPECIFIED ⇒ INTERACTIVE.
    */
   'taskClass'?: (_aether_v1_TaskClass);
+  /**
+   * Client-minted opaque session identifier (A2A contextId, Phase 1).
+   * Persisted on Task.context_id and queryable via TaskFilter.context_id.
+   * Empty = no session grouping.
+   */
+  'contextId'?: (string);
 }
 
 export interface CreateTaskRequest__Output {
@@ -96,4 +102,10 @@ export interface CreateTaskRequest__Output {
    * Optional UI hint; defaults to UNSPECIFIED ⇒ INTERACTIVE.
    */
   'taskClass': (_aether_v1_TaskClass__Output);
+  /**
+   * Client-minted opaque session identifier (A2A contextId, Phase 1).
+   * Persisted on Task.context_id and queryable via TaskFilter.context_id.
+   * Empty = no session grouping.
+   */
+  'contextId': (string);
 }

@@ -390,6 +390,40 @@ type Store interface {
 	ListDisconnectedTasks(ctx context.Context, limit int) ([]*Task, error)
 
 	// =========================================================================
+	// Phase 1: Paused-state lifecycle operations
+	// =========================================================================
+
+	// PauseTask transitions a task into a waiting/hibernated state, recording
+	// the WaitSpec descriptor and stamping paused_at. Calls ValidateTransition
+	// to ensure the from→to transition is legal. Returns an error if the
+	// transition is not permitted.
+	PauseTask(ctx context.Context, taskID string, to TaskStatus, spec *WaitSpec) error
+
+	// ResumeTask transitions a task out of a waiting/hibernated state back to
+	// running (or pending for dependency-wait). Clears wait_spec and paused_at.
+	// Calls ValidateTransition internally. Returns an error if the task is not
+	// currently in a waiting state.
+	ResumeTask(ctx context.Context, taskID string, to TaskStatus) error
+
+	// RejectTask transitions a task to rejected (terminal). The legal set of
+	// source states is determined by ValidateTransition (pending, assigned,
+	// and the waiting_* states). Used when an agent declines a task before
+	// (or instead of) running it.
+	RejectTask(ctx context.Context, taskID string, reason string) error
+
+	// ListWaitingTasks returns tasks currently in any waiting/hibernated state,
+	// ordered by paused_at ASC, capped at limit rows.
+	ListWaitingTasks(ctx context.Context, limit int) ([]*Task, error)
+
+	// ListTasksWaitingOnDependency returns tasks in waiting_dependency state
+	// whose depends_on column contains dependencyTaskID.
+	ListTasksWaitingOnDependency(ctx context.Context, dependencyTaskID string) ([]*Task, error)
+
+	// ListTasksByContext returns tasks whose context_id matches the given
+	// contextID, ordered by created_at DESC, capped at limit rows.
+	ListTasksByContext(ctx context.Context, contextID string, limit int) ([]*Task, error)
+
+	// =========================================================================
 	// Dead letter queue (DLQ)
 	// =========================================================================
 

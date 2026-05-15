@@ -37,6 +37,11 @@ class TaskStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     TASK_STATUS_COMPLETED: _ClassVar[TaskStatus]
     TASK_STATUS_FAILED: _ClassVar[TaskStatus]
     TASK_STATUS_CANCELLED: _ClassVar[TaskStatus]
+    TASK_STATUS_WAITING_INPUT: _ClassVar[TaskStatus]
+    TASK_STATUS_WAITING_AUTHORITY: _ClassVar[TaskStatus]
+    TASK_STATUS_WAITING_DEPENDENCY: _ClassVar[TaskStatus]
+    TASK_STATUS_HIBERNATED: _ClassVar[TaskStatus]
+    TASK_STATUS_REJECTED: _ClassVar[TaskStatus]
 
 class HealthStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -74,6 +79,14 @@ class TaskClass(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     TASK_CLASS_BACKGROUND: _ClassVar[TaskClass]
     TASK_CLASS_BATCH: _ClassVar[TaskClass]
 
+class WaitReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    WAIT_REASON_UNSPECIFIED: _ClassVar[WaitReason]
+    WAIT_REASON_INPUT: _ClassVar[WaitReason]
+    WAIT_REASON_AUTHORITY: _ClassVar[WaitReason]
+    WAIT_REASON_DEPENDENCY: _ClassVar[WaitReason]
+    WAIT_REASON_HIBERNATION: _ClassVar[WaitReason]
+
 class ProgressKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     PROGRESS_KIND_UNSPECIFIED: _ClassVar[ProgressKind]
@@ -102,6 +115,11 @@ TASK_STATUS_RUNNING: TaskStatus
 TASK_STATUS_COMPLETED: TaskStatus
 TASK_STATUS_FAILED: TaskStatus
 TASK_STATUS_CANCELLED: TaskStatus
+TASK_STATUS_WAITING_INPUT: TaskStatus
+TASK_STATUS_WAITING_AUTHORITY: TaskStatus
+TASK_STATUS_WAITING_DEPENDENCY: TaskStatus
+TASK_STATUS_HIBERNATED: TaskStatus
+TASK_STATUS_REJECTED: TaskStatus
 HEALTH_STATUS_UNSPECIFIED: HealthStatus
 HEALTH_STATUS_HEALTHY: HealthStatus
 HEALTH_STATUS_DEGRADED: HealthStatus
@@ -123,6 +141,11 @@ TASK_CLASS_UNSPECIFIED: TaskClass
 TASK_CLASS_INTERACTIVE: TaskClass
 TASK_CLASS_BACKGROUND: TaskClass
 TASK_CLASS_BATCH: TaskClass
+WAIT_REASON_UNSPECIFIED: WaitReason
+WAIT_REASON_INPUT: WaitReason
+WAIT_REASON_AUTHORITY: WaitReason
+WAIT_REASON_DEPENDENCY: WaitReason
+WAIT_REASON_HIBERNATION: WaitReason
 PROGRESS_KIND_UNSPECIFIED: ProgressKind
 PROGRESS_KIND_CHAT: ProgressKind
 PROGRESS_KIND_APP: ProgressKind
@@ -629,7 +652,7 @@ class ErrorResponse(_message.Message):
     def __init__(self, code: _Optional[str] = ..., message: _Optional[str] = ..., retryable: bool = ..., retry_after_ms: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class CreateTaskRequest(_message.Message):
-    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class")
+    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id")
     class LaunchParamOverridesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -656,6 +679,7 @@ class CreateTaskRequest(_message.Message):
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
     TARGET_IDENTITY_FIELD_NUMBER: _ClassVar[int]
     TASK_CLASS_FIELD_NUMBER: _ClassVar[int]
+    CONTEXT_ID_FIELD_NUMBER: _ClassVar[int]
     task_type: str
     workspace: str
     assignment_mode: TaskAssignmentMode
@@ -668,7 +692,8 @@ class CreateTaskRequest(_message.Message):
     request_id: str
     target_identity: str
     task_class: TaskClass
-    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ...) -> None: ...
+    context_id: str
+    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ...) -> None: ...
 
 class CreateTaskResponse(_message.Message):
     __slots__ = ("success", "task_id", "status", "error_code", "error_message", "request_id", "assigned_to", "task_token", "authority_grant_id")
@@ -1000,7 +1025,7 @@ class TaskQuery(_message.Message):
     def __init__(self, op: _Optional[_Union[TaskQuery.OpType, str]] = ..., task_id: _Optional[str] = ..., filter: _Optional[_Union[TaskFilter, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class TaskFilter(_message.Message):
-    __slots__ = ("status", "workspace", "task_type", "limit", "offset", "statuses", "subject_type", "subject_id", "authority_mode", "authority_grant_id", "root_authority_grant_id", "parent_task_id", "task_class", "exclude_task_classes")
+    __slots__ = ("status", "workspace", "task_type", "limit", "offset", "statuses", "subject_type", "subject_id", "authority_mode", "authority_grant_id", "root_authority_grant_id", "parent_task_id", "task_class", "exclude_task_classes", "context_id", "exclude_statuses")
     STATUS_FIELD_NUMBER: _ClassVar[int]
     WORKSPACE_FIELD_NUMBER: _ClassVar[int]
     TASK_TYPE_FIELD_NUMBER: _ClassVar[int]
@@ -1015,6 +1040,8 @@ class TaskFilter(_message.Message):
     PARENT_TASK_ID_FIELD_NUMBER: _ClassVar[int]
     TASK_CLASS_FIELD_NUMBER: _ClassVar[int]
     EXCLUDE_TASK_CLASSES_FIELD_NUMBER: _ClassVar[int]
+    CONTEXT_ID_FIELD_NUMBER: _ClassVar[int]
+    EXCLUDE_STATUSES_FIELD_NUMBER: _ClassVar[int]
     status: TaskStatus
     workspace: str
     task_type: str
@@ -1029,10 +1056,12 @@ class TaskFilter(_message.Message):
     parent_task_id: str
     task_class: TaskClass
     exclude_task_classes: _containers.RepeatedScalarFieldContainer[TaskClass]
-    def __init__(self, status: _Optional[_Union[TaskStatus, str]] = ..., workspace: _Optional[str] = ..., task_type: _Optional[str] = ..., limit: _Optional[int] = ..., offset: _Optional[int] = ..., statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., authority_mode: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., parent_task_id: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., exclude_task_classes: _Optional[_Iterable[_Union[TaskClass, str]]] = ...) -> None: ...
+    context_id: str
+    exclude_statuses: _containers.RepeatedScalarFieldContainer[TaskStatus]
+    def __init__(self, status: _Optional[_Union[TaskStatus, str]] = ..., workspace: _Optional[str] = ..., task_type: _Optional[str] = ..., limit: _Optional[int] = ..., offset: _Optional[int] = ..., statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., authority_mode: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., parent_task_id: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., exclude_task_classes: _Optional[_Iterable[_Union[TaskClass, str]]] = ..., context_id: _Optional[str] = ..., exclude_statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ...) -> None: ...
 
 class TaskInfo(_message.Message):
-    __slots__ = ("task_id", "task_type", "status", "workspace", "target_topic", "assigned_to", "created_at", "started_at", "completed_at", "attempt", "max_attempts", "error", "metadata", "authority_mode", "subject_type", "subject_id", "root_subject_type", "root_subject_id", "authority_grant_id", "root_authority_grant_id", "parent_authority_grant_id", "creator_actor_id", "parent_task_id", "task_class", "disconnected_at", "grace_window_ms")
+    __slots__ = ("task_id", "task_type", "status", "workspace", "target_topic", "assigned_to", "created_at", "started_at", "completed_at", "attempt", "max_attempts", "error", "metadata", "authority_mode", "subject_type", "subject_id", "root_subject_type", "root_subject_id", "authority_grant_id", "root_authority_grant_id", "parent_authority_grant_id", "creator_actor_id", "parent_task_id", "task_class", "disconnected_at", "grace_window_ms", "wait_spec", "depends_on", "context_id", "paused_at")
     class MetadataEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -1066,6 +1095,10 @@ class TaskInfo(_message.Message):
     TASK_CLASS_FIELD_NUMBER: _ClassVar[int]
     DISCONNECTED_AT_FIELD_NUMBER: _ClassVar[int]
     GRACE_WINDOW_MS_FIELD_NUMBER: _ClassVar[int]
+    WAIT_SPEC_FIELD_NUMBER: _ClassVar[int]
+    DEPENDS_ON_FIELD_NUMBER: _ClassVar[int]
+    CONTEXT_ID_FIELD_NUMBER: _ClassVar[int]
+    PAUSED_AT_FIELD_NUMBER: _ClassVar[int]
     task_id: str
     task_type: str
     status: TaskStatus
@@ -1092,7 +1125,11 @@ class TaskInfo(_message.Message):
     task_class: TaskClass
     disconnected_at: int
     grace_window_ms: int
-    def __init__(self, task_id: _Optional[str] = ..., task_type: _Optional[str] = ..., status: _Optional[_Union[TaskStatus, str]] = ..., workspace: _Optional[str] = ..., target_topic: _Optional[str] = ..., assigned_to: _Optional[str] = ..., created_at: _Optional[int] = ..., started_at: _Optional[int] = ..., completed_at: _Optional[int] = ..., attempt: _Optional[int] = ..., max_attempts: _Optional[int] = ..., error: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., authority_mode: _Optional[str] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., root_subject_type: _Optional[str] = ..., root_subject_id: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., parent_authority_grant_id: _Optional[str] = ..., creator_actor_id: _Optional[str] = ..., parent_task_id: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., disconnected_at: _Optional[int] = ..., grace_window_ms: _Optional[int] = ...) -> None: ...
+    wait_spec: WaitSpec
+    depends_on: _containers.RepeatedScalarFieldContainer[str]
+    context_id: str
+    paused_at: int
+    def __init__(self, task_id: _Optional[str] = ..., task_type: _Optional[str] = ..., status: _Optional[_Union[TaskStatus, str]] = ..., workspace: _Optional[str] = ..., target_topic: _Optional[str] = ..., assigned_to: _Optional[str] = ..., created_at: _Optional[int] = ..., started_at: _Optional[int] = ..., completed_at: _Optional[int] = ..., attempt: _Optional[int] = ..., max_attempts: _Optional[int] = ..., error: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., authority_mode: _Optional[str] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., root_subject_type: _Optional[str] = ..., root_subject_id: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., parent_authority_grant_id: _Optional[str] = ..., creator_actor_id: _Optional[str] = ..., parent_task_id: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., disconnected_at: _Optional[int] = ..., grace_window_ms: _Optional[int] = ..., wait_spec: _Optional[_Union[WaitSpec, _Mapping]] = ..., depends_on: _Optional[_Iterable[str]] = ..., context_id: _Optional[str] = ..., paused_at: _Optional[int] = ...) -> None: ...
 
 class TaskQueryResponse(_message.Message):
     __slots__ = ("success", "error", "task", "tasks", "total_count", "request_id")
@@ -1111,26 +1148,63 @@ class TaskQueryResponse(_message.Message):
     def __init__(self, success: bool = ..., error: _Optional[str] = ..., task: _Optional[_Union[TaskInfo, _Mapping]] = ..., tasks: _Optional[_Iterable[_Union[TaskInfo, _Mapping]]] = ..., total_count: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class TaskOperation(_message.Message):
-    __slots__ = ("op", "task_id", "reason", "request_id")
+    __slots__ = ("op", "task_id", "reason", "request_id", "wait_spec")
     class OpType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         RETRY: _ClassVar[TaskOperation.OpType]
         CANCEL: _ClassVar[TaskOperation.OpType]
         COMPLETE: _ClassVar[TaskOperation.OpType]
         FAIL: _ClassVar[TaskOperation.OpType]
+        PAUSE: _ClassVar[TaskOperation.OpType]
+        WAIT_FOR: _ClassVar[TaskOperation.OpType]
+        RESUME: _ClassVar[TaskOperation.OpType]
+        REJECT: _ClassVar[TaskOperation.OpType]
     RETRY: TaskOperation.OpType
     CANCEL: TaskOperation.OpType
     COMPLETE: TaskOperation.OpType
     FAIL: TaskOperation.OpType
+    PAUSE: TaskOperation.OpType
+    WAIT_FOR: TaskOperation.OpType
+    RESUME: TaskOperation.OpType
+    REJECT: TaskOperation.OpType
     OP_FIELD_NUMBER: _ClassVar[int]
     TASK_ID_FIELD_NUMBER: _ClassVar[int]
     REASON_FIELD_NUMBER: _ClassVar[int]
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    WAIT_SPEC_FIELD_NUMBER: _ClassVar[int]
     op: TaskOperation.OpType
     task_id: str
     reason: str
     request_id: str
-    def __init__(self, op: _Optional[_Union[TaskOperation.OpType, str]] = ..., task_id: _Optional[str] = ..., reason: _Optional[str] = ..., request_id: _Optional[str] = ...) -> None: ...
+    wait_spec: WaitSpec
+    def __init__(self, op: _Optional[_Union[TaskOperation.OpType, str]] = ..., task_id: _Optional[str] = ..., reason: _Optional[str] = ..., request_id: _Optional[str] = ..., wait_spec: _Optional[_Union[WaitSpec, _Mapping]] = ...) -> None: ...
+
+class WaitSpec(_message.Message):
+    __slots__ = ("reason", "expected_principal", "input_match", "authority_request_id", "depends_on", "wake_on_any", "timeout_ms", "scheduled_wake_unix_ms")
+    class InputMatchEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_PRINCIPAL_FIELD_NUMBER: _ClassVar[int]
+    INPUT_MATCH_FIELD_NUMBER: _ClassVar[int]
+    AUTHORITY_REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    DEPENDS_ON_FIELD_NUMBER: _ClassVar[int]
+    WAKE_ON_ANY_FIELD_NUMBER: _ClassVar[int]
+    TIMEOUT_MS_FIELD_NUMBER: _ClassVar[int]
+    SCHEDULED_WAKE_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    reason: WaitReason
+    expected_principal: str
+    input_match: _containers.ScalarMap[str, str]
+    authority_request_id: str
+    depends_on: _containers.RepeatedScalarFieldContainer[str]
+    wake_on_any: bool
+    timeout_ms: int
+    scheduled_wake_unix_ms: int
+    def __init__(self, reason: _Optional[_Union[WaitReason, str]] = ..., expected_principal: _Optional[str] = ..., input_match: _Optional[_Mapping[str, str]] = ..., authority_request_id: _Optional[str] = ..., depends_on: _Optional[_Iterable[str]] = ..., wake_on_any: bool = ..., timeout_ms: _Optional[int] = ..., scheduled_wake_unix_ms: _Optional[int] = ...) -> None: ...
 
 class TaskOperationResponse(_message.Message):
     __slots__ = ("success", "message", "error", "task", "request_id")
