@@ -19,9 +19,10 @@ import (
 	"github.com/scitrera/aether/internal/quota"
 	routerpkg "github.com/scitrera/aether/internal/router"
 	"github.com/scitrera/aether/internal/state"
+	taskiface "github.com/scitrera/aether/internal/storage/tasks"
+	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	sqlitemigrations "github.com/scitrera/aether/migrations/sqlite"
 	_ "github.com/scitrera/aether/pkg/dbcompat" // registers "sqlite_compat" driver
-	"github.com/scitrera/aether/pkg/tasks"
 )
 
 // liteBackends holds all the lite-mode backend instances for lifecycle management.
@@ -33,7 +34,7 @@ type liteBackends struct {
 	checkpoints  gateway.CheckpointManager
 	tokenStore   state.TokenStore
 	router       gateway.MessageRouter
-	taskStore    *tasks.TaskStore
+	taskStore    taskiface.Store
 	quotaManager gateway.QuotaChecker
 	gatewayOpts  []gateway.GatewayOption
 }
@@ -106,7 +107,7 @@ func initLiteBackends(ctx context.Context, cfg *config.Config) (*liteBackends, e
 	msgRouter := routerpkg.NewBadgerRouter(badgerDB)
 
 	// 5. Task store (SQLite-backed)
-	taskStore := tasks.NewTaskStore(db)
+	taskStore := taskpg.New(db)
 
 	// 6. Quota manager (in-memory)
 	defaults := quota.DefaultQuotas{
@@ -128,7 +129,7 @@ func initLiteBackends(ctx context.Context, cfg *config.Config) (*liteBackends, e
 	gatewayOpts = append(gatewayOpts, gateway.WithQuotaManager(quotaManager))
 
 	// 8. Orchestration services (lite mode — polling dispatcher, no AMQP, no pq.Listener)
-	dispatcher := orchestration.NewPollingTaskDispatcher(db)
+	dispatcher := orchestration.NewPollingTaskDispatcher(taskStore)
 	orchServices := &gateway.OrchestrationServices{
 		Dispatcher:  dispatcher,
 		QueueCloser: orchestration.NewNoopQueueCloser(),

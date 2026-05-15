@@ -35,14 +35,16 @@ import (
 	routerpkg "github.com/scitrera/aether/internal/router"
 	"github.com/scitrera/aether/internal/secrets"
 	"github.com/scitrera/aether/internal/state"
-	aclpg "github.com/scitrera/aether/internal/storage/acl/postgres"
-	regpg "github.com/scitrera/aether/internal/storage/registry/postgres"
-	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
+	aclsqlite "github.com/scitrera/aether/internal/storage/acl/sqlite"
+	auditsqlite "github.com/scitrera/aether/internal/storage/audit/sqlite"
+	regsqlite "github.com/scitrera/aether/internal/storage/registry/sqlite"
+	tasksqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
+	wfsqlite "github.com/scitrera/aether/internal/storage/workflow/sqlite"
 	"github.com/scitrera/aether/internal/tracing"
 	versionpkg "github.com/scitrera/aether/internal/version"
 	"github.com/scitrera/aether/internal/workflow"
 	sqlitemigrations "github.com/scitrera/aether/migrations/sqlite"
-	sqliteauditmigrations "github.com/scitrera/aether/migrations/sqlite_audit"
+	sqliteregistrymigrations "github.com/scitrera/aether/migrations/sqlite_registry"
 	pb_health "google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/scitrera/aether/pkg/crypto"
@@ -209,21 +211,55 @@ func main() {
 		logging.Logger.Fatal().Err(err).Msg("failed to run SQLite migrations")
 	}
 
-	// Open dedicated audit SQLite handle. The comprehensive_audit_log writer
-	// is an async batcher (audit.AuditLogger + acl.AuditLogger); isolating it
-	// onto its own WAL writer lock keeps it from blocking the synchronous
-	// task-read hot path that runs against the main aether.db handle.
+	// Open dedicated audit SQLite handle (Stage 2 native impl). audit.db
+	// is isolated onto its own WAL writer lock — the comprehensive_audit_log
+	// writer is an async batcher (auditsqlite.Store + acl.AuditLogger
+	// adapter forwarding via audit.EventSink) so the writer goroutine doesn't
+	// block the synchronous task-read hot path. Bare "sqlite" driver: the
+	// native impl owns all its own SQL and runs its own migrations from
+	// migrations/sqlite_audit_native/ on construction.
 	auditSQLitePath := filepath.Join(*dataDir, "audit.db")
-	auditDB, err := openSQLite(ctx, auditSQLitePath)
+	auditDB, err := openSQLiteNative(ctx, auditSQLitePath)
 	if err != nil {
 		logging.Logger.Fatal().Err(err).Str("path", auditSQLitePath).Msg("failed to open audit SQLite database")
 	}
 	defer auditDB.Close()
 
-	// Run audit SQLite migrations (separate embed.FS).
-	if err := runAuditSQLiteMigrations(ctx, auditDB); err != nil {
-		logging.Logger.Fatal().Err(err).Msg("failed to run audit SQLite migrations")
+	// Open dedicated ACL state SQLite handle (Stage 2 native impl). acl.db
+	// holds acl_rules, acl_fallback_policies, acl_authority_grants. The
+	// native impl runs migrations/sqlite_acl/ on construction (seeds all
+	// 11 fallback policies — §15.1 parity gap closed).
+	aclSQLitePath := filepath.Join(*dataDir, "acl.db")
+	aclDB, err := openSQLiteNative(ctx, aclSQLitePath)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Str("path", aclSQLitePath).Msg("failed to open acl SQLite database")
 	}
+	defer aclDB.Close()
+
+	// Open dedicated registry SQLite handle (Stage 2 native impl). registry.db
+	// holds agent_registry + orchestrator_profiles tables. The native sqlite
+	// impl uses the bare "sqlite" driver and runs its own per-domain migration
+	// set; vestigial registry tables in aether.db from the dbcompat-translated
+	// path are left untouched for transition safety.
+	registrySQLitePath := filepath.Join(*dataDir, "registry.db")
+	registryDB, err := openSQLiteNative(ctx, registrySQLitePath)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Str("path", registrySQLitePath).Msg("failed to open registry SQLite database")
+	}
+	defer registryDB.Close()
+
+	// Open dedicated tasks SQLite handle (Stage 2 native impl). tasks.db
+	// holds the tasks domain tables (tasks, task_audit_events, task_timers,
+	// task_checkpoints, task_assignments, task_dlq, orchestrated_task_queue).
+	// The native sqlite impl uses the bare "sqlite" driver and runs its own
+	// per-domain migration set; vestigial tasks tables in aether.db from the
+	// dbcompat-translated path are left untouched for transition safety.
+	tasksSQLitePath := filepath.Join(*dataDir, "tasks.db")
+	tasksDB, err := openSQLiteNative(ctx, tasksSQLitePath)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Str("path", tasksSQLitePath).Msg("failed to open tasks SQLite database")
+	}
+	defer tasksDB.Close()
 
 	// Build lite-mode subsystems.
 	sessions := state.NewBadgerSessionRegistry(badgerDB)
@@ -231,7 +267,10 @@ func main() {
 	checkpointStore := checkpoint.NewBadgerCheckpointStore(badgerDB)
 	tokenStore := state.NewBadgerTokenStore(badgerDB)
 	msgRouter := routerpkg.NewBadgerRouter(badgerDB)
-	taskStore := taskpg.New(db)
+	taskStore, err := tasksqlite.New(tasksDB)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite tasks store")
+	}
 
 	quotaDefaults := quota.DefaultQuotas{
 		MaxConnectionsPerWorkspace: 1000,
@@ -242,7 +281,7 @@ func main() {
 	quotaManager := quota.NewMemoryQuotaManager(quotaDefaults)
 
 	// Orchestration (polling dispatcher — no AMQP, no pq.Listener).
-	dispatcher := orchestration.NewPollingTaskDispatcher(db)
+	dispatcher := orchestration.NewPollingTaskDispatcher(taskStore)
 	// Badger-backed profile state store gives lite mode round-robin
 	// orchestrator selection without needing Redis. Wires up the first-ever
 	// Registry in aetherlite; previously the legacy ProfileManager was nil
@@ -254,7 +293,10 @@ func main() {
 	// (`Exists`, `RegisterProfiles`, etc.) are unchanged so call sites do not
 	// require additional updates beyond the field rename.
 	profileStateStore := registry.NewBadgerProfileStateStore(badgerDB)
-	registryStore := regpg.New(db, profileStateStore)
+	registryStore, err := regsqlite.New(registryDB, profileStateStore, sqliteregistrymigrations.MigrationFS)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite registry store")
+	}
 	orchServices := &gateway.OrchestrationServices{
 		Registry:    registryStore,
 		Dispatcher:  dispatcher,
@@ -288,18 +330,25 @@ func main() {
 
 	// Audit logger (constructed before the ACL service so we can share
 	// the single batched writer goroutine — see acl/audit.go for the
-	// contention rationale).
+	// contention rationale). Native sqlite impl satisfies both audit.Store
+	// (consumed by gateway server) and audit.EventSink (consumed by ACL
+	// via the legacy adapter).
 	auditCfg := audit.DefaultConfig()
 	auditCfg.Enabled = cfg.Audit.Enabled
-	auditLogger := audit.NewAuditLogger(auditDB, cfg.Gateway.GatewayID, auditCfg)
+	auditLogger, err := auditsqlite.New(auditDB, cfg.Gateway.GatewayID, auditCfg)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite audit store")
+	}
 	defer auditLogger.Close()
 
-	// ACL service (SQLite-backed). ACL rules live in aether.db; audit
-	// writes funnel through the shared auditLogger above (single writer
-	// goroutine), and audit READS use auditDB directly. This eliminates
-	// the WAL writer-vs-writer SQLITE_BUSY contention we previously hit
-	// in lite mode under load.
-	sharedACLService := aclpg.NewWithSharedAudit(db, auditLogger, auditDB, cfg.Gateway.GatewayID)
+	// ACL service (SQLite-backed, Stage 2 native). ACL rules live in acl.db;
+	// audit writes funnel through the shared auditLogger above (single writer
+	// goroutine), and audit READS use auditDB directly. Per-domain WAL
+	// isolation keeps writers from contending across domains.
+	sharedACLService, err := aclsqlite.New(aclDB, auditLogger, auditDB, cfg.Gateway.GatewayID)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite acl store")
+	}
 	gatewayOpts = append(gatewayOpts, gateway.WithACLService(sharedACLService))
 
 	// Cleanup service.
@@ -502,7 +551,21 @@ func main() {
 		// bufconn in-process listener — no TLS, no localhost dial, no
 		// reconnect-loop trap.
 		wfCfg := buildWorkflowConfig(inProcConn)
-		wfSrv, err := workflow.NewServer(wfCfg)
+		// Open workflow.db with the bare "sqlite" driver and construct the
+		// native sqlite store (Stage 2). wfsqlite.New runs migrations from
+		// migrations/sqlite_workflow/ internally. We then inject the store
+		// into the workflow server via NewServerWithStore so the engine
+		// skips its legacy sqlite_compat path entirely (§15.4).
+		wfDB, err := openSQLiteNative(ctx, wfCfg.SQLite.Path)
+		if err != nil {
+			logging.Logger.Fatal().Err(err).Str("path", wfCfg.SQLite.Path).Msg("failed to open workflow SQLite database")
+		}
+		defer wfDB.Close()
+		wfStore, err := wfsqlite.New(wfDB)
+		if err != nil {
+			logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite workflow store")
+		}
+		wfSrv, err := workflow.NewServerWithStore(wfCfg, wfStore)
 		if err != nil {
 			logging.Logger.Fatal().Err(err).Msg("failed to create workflow server")
 		}
@@ -713,11 +776,25 @@ func buildMsgbridgeConfig() *msgbridge.Config {
 	return cfg
 }
 
-// openSQLite opens a SQLite database with pragmas tuned for WAL mode.
+// openSQLite opens a SQLite database via the sqlite_compat driver (dbcompat
+// translation layer). Used for handles that still emit postgres-flavored SQL
+// — i.e. domains not yet cut over to native sqlite impls. See openSQLiteNative
+// for handles backing internal/storage/<domain>/sqlite/ stores.
 func openSQLite(ctx context.Context, path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite_compat", path)
+	return openSQLiteWithDriver(ctx, path, "sqlite_compat")
+}
+
+// openSQLiteNative opens a SQLite database via the bare "sqlite" driver
+// (modernc.org/sqlite). For per-domain handles backing native sqlite store
+// impls — they own their own SQL and don't need dbcompat translation.
+func openSQLiteNative(ctx context.Context, path string) (*sql.DB, error) {
+	return openSQLiteWithDriver(ctx, path, "sqlite")
+}
+
+func openSQLiteWithDriver(ctx context.Context, path, driver string) (*sql.DB, error) {
+	db, err := sql.Open(driver, path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open SQLite database %s: %w", path, err)
+		return nil, fmt.Errorf("failed to open SQLite database %s (driver=%s): %w", path, driver, err)
 	}
 	for _, pragma := range []string{
 		"PRAGMA journal_mode=WAL",
@@ -735,14 +812,6 @@ func openSQLite(ctx context.Context, path string) (*sql.DB, error) {
 // runSQLiteMigrations applies gateway SQLite migrations (aether.db) from the embedded filesystem.
 func runSQLiteMigrations(ctx context.Context, db *sql.DB) error {
 	return applySQLiteMigrations(ctx, db, sqlitemigrations.MigrationFS, "aether.db")
-}
-
-// runAuditSQLiteMigrations applies the dedicated audit-DB migrations to
-// the audit.db handle. The audit migrations live in a separate embed.FS
-// (migrations/sqlite_audit/) so we can ship them on their own writer
-// lock without touching the main aether.db schema set.
-func runAuditSQLiteMigrations(ctx context.Context, db *sql.DB) error {
-	return applySQLiteMigrations(ctx, db, sqliteauditmigrations.MigrationFS, "audit.db")
 }
 
 // applySQLiteMigrations is the shared body used by both migration runners.

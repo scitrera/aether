@@ -18,8 +18,8 @@ import (
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/internal/orchestration"
 	"github.com/scitrera/aether/internal/state"
+	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	versionpkg "github.com/scitrera/aether/internal/version"
-	"github.com/scitrera/aether/pkg/tasks"
 )
 
 var (
@@ -129,9 +129,9 @@ func main() {
 	logging.Logger.Info().Strs("addrs", cfg.Redis.Cluster).Str("mode", cfg.Redis.GetMode()).Msg("session registry initialized")
 
 	// Initialize task store
-	var taskStore *tasks.TaskStore
+	var taskStore *taskpg.Store
 	if db != nil {
-		taskStore = tasks.NewTaskStore(db)
+		taskStore = taskpg.New(db)
 	}
 
 	// Initialize task service for reconciliation
@@ -155,9 +155,9 @@ func main() {
 	// Create cleanup service
 	cleanupSvc := cleanup.NewService(taskStore, taskService, sessions, cleanupConfig)
 
-	// Initialize dispatcher for stale claim recovery if DB is available
-	if db != nil {
-		dispatcher, err := orchestration.NewNotifyTaskDispatcher(db, "", 0, nil)
+	// Initialize dispatcher for stale claim recovery if task store is available
+	if taskStore != nil {
+		dispatcher, err := orchestration.NewNotifyTaskDispatcher(taskStore, "", 0, nil)
 		if err != nil {
 			logging.Logger.Warn().Err(err).Msg("failed to create dispatcher for stale claim recovery")
 		} else {

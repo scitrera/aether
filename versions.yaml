@@ -9,7 +9,7 @@
 # directives in each go.mod handle local builds; the `require` pins handle downstream
 # `go get` from pkg.go.dev. The gomod_require rules below keep those pins in sync.
 
-aether-gateway: 0.1.60
+aether-gateway: 0.1.61
 
 aether-sdk-go: 0.1.60        # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
 aether-sdk-python: 0.1.60    # scitrera-aether-client
