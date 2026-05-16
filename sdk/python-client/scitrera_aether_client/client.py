@@ -3779,7 +3779,7 @@ class ServiceClient(BaseAetherClient):
     backends that authenticate as themselves and perform privileged work on
     behalf of users via ``AuthorizationContext`` (on-behalf-of mode).
 
-    Canonical identity string: ``sv.{implementation}.{specifier}``.
+    Canonical identity string: ``sv::{implementation}::{specifier}``.
 
     Typical usage::
 

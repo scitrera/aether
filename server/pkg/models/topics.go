@@ -121,7 +121,7 @@ func ProgressTopic(workspace string) (string, error) {
 }
 
 // TaskEventsTopic returns the topic used for a task's per-task event stream.
-// Format: tk.{workspace}.{task_id}.events
+// Format: tk::{workspace}::{task_id}::events
 //
 // This topic carries TaskEvent protos (status transitions, progress projection,
 // child-task lifecycle, authority-request relay) for a single task_id. Clients

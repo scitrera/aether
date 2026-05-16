@@ -147,14 +147,14 @@ func (c *UserClient) Workspace() string {
 
 // Topic returns this user's topic address.
 //
-// Format: us.{user_id}.{window_id}
+// Format: us::{user_id}::{window_id}
 func (c *UserClient) Topic() string {
 	return UserTopic(c.userID, c.windowID)
 }
 
 // WorkspaceTopic returns this user's workspace-scoped topic address.
 //
-// Format: uw.{user_id}.{workspace}
+// Format: uw::{user_id}::{workspace}
 //
 // Returns an empty string if no workspace is set.
 func (c *UserClient) WorkspaceTopic() string {
@@ -231,10 +231,10 @@ func (c *UserClient) SendToAgentWithType(workspace, implementation, specifier st
 // SendToTask sends a message to a specific task.
 //
 // For unique tasks (with specifier):
-//   - Uses tu.{workspace}.{implementation}.{specifier} topic
+//   - Uses tu::{workspace}::{implementation}::{specifier} topic
 //
 // For non-unique tasks (empty specifier):
-//   - Uses tb.{workspace}.{implementation} broadcast topic for load balancing
+//   - Uses tb::{workspace}::{implementation} broadcast topic for load balancing
 //
 // Parameters:
 //   - workspace: Target task's workspace

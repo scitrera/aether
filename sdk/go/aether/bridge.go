@@ -129,7 +129,7 @@ func (c *BridgeClient) Specifier() string {
 
 // Topic returns this bridge's topic address.
 //
-// Format: br.{implementation}.{specifier}
+// Format: br::{implementation}::{specifier}
 func (c *BridgeClient) Topic() string {
 	return BridgeTopic(c.implementation, c.specifier)
 }
@@ -160,10 +160,10 @@ func (c *BridgeClient) SendToAgentWithType(workspace, implementation, specifier 
 // SendToTask sends a message to a specific task.
 //
 // For unique tasks (with specifier):
-//   - Uses tu.{workspace}.{implementation}.{specifier} topic
+//   - Uses tu::{workspace}::{implementation}::{specifier} topic
 //
 // For non-unique tasks (empty specifier):
-//   - Uses tb.{workspace}.{implementation} broadcast topic for load balancing
+//   - Uses tb::{workspace}::{implementation} broadcast topic for load balancing
 //
 // Parameters:
 //   - workspace: Target task's workspace

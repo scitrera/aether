@@ -154,7 +154,7 @@ func (c *AgentClient) Specifier() string {
 
 // Topic returns this agent's topic address.
 //
-// Format: ag.{workspace}.{implementation}.{specifier}
+// Format: ag::{workspace}::{implementation}::{specifier}
 func (c *AgentClient) Topic() string {
 	c.workspaceMu.RLock()
 	defer c.workspaceMu.RUnlock()
@@ -223,10 +223,10 @@ func (c *AgentClient) SendToAgentWithType(workspace, implementation, specifier s
 // SendToTask sends a message to a specific task.
 //
 // For unique tasks (with specifier):
-//   - Uses tu.{workspace}.{implementation}.{specifier} topic
+//   - Uses tu::{workspace}::{implementation}::{specifier} topic
 //
 // For non-unique tasks (empty specifier):
-//   - Uses tb.{workspace}.{implementation} broadcast topic for load balancing
+//   - Uses tb::{workspace}::{implementation} broadcast topic for load balancing
 //
 // Parameters:
 //   - workspace: Target task's workspace

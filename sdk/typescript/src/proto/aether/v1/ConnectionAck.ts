@@ -14,7 +14,7 @@ export interface ConnectionAck {
   'resumed'?: (boolean);
   /**
    * For non-unique tasks, the server-assigned task instance ID used to construct
-   * the task's topic address (ta.{workspace}.{impl}.{assigned_id}).
+   * the task's topic address (ta::{workspace}::{impl}::{assigned_id}).
    * Empty for all other principal types.
    */
   'assignedId'?: (string);
@@ -47,7 +47,7 @@ export interface ConnectionAck__Output {
   'resumed': (boolean);
   /**
    * For non-unique tasks, the server-assigned task instance ID used to construct
-   * the task's topic address (ta.{workspace}.{impl}.{assigned_id}).
+   * the task's topic address (ta::{workspace}::{impl}::{assigned_id}).
    * Empty for all other principal types.
    */
   'assignedId': (string);

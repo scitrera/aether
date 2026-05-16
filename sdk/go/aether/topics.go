@@ -5,14 +5,14 @@
 // format that identifies the principal type and location.
 //
 // Topic Schema:
-//   - ag.{workspace}.{impl}.{spec} - Specific agent instance
-//   - tu.{workspace}.{impl}.{spec} - Unique task (named)
-//   - ta.{workspace}.{impl}.{id} - Non-unique task instance (server-assigned ID)
-//   - tb.{workspace}.{impl} - Task broadcast (load-balancing for non-unique tasks)
-//   - us.{user_id}.{window_id} - User window-specific messages
-//   - uw.{user_id}.{workspace} - User workspace-scoped messages
-//   - ga.{workspace} - Global agent broadcast in workspace
-//   - gu.{workspace} - Global user broadcast in workspace
+//   - ag::{workspace}::{impl}::{spec} - Specific agent instance
+//   - tu::{workspace}::{impl}::{spec} - Unique task (named)
+//   - ta::{workspace}::{impl}::{id} - Non-unique task instance (server-assigned ID)
+//   - tb::{workspace}::{impl} - Task broadcast (load-balancing for non-unique tasks)
+//   - us::{user_id}::{window_id} - User window-specific messages
+//   - uw::{user_id}::{workspace} - User workspace-scoped messages
+//   - ga::{workspace} - Global agent broadcast in workspace
+//   - gu::{workspace} - Global user broadcast in workspace
 //   - event.* - Workflow Engine only (broadcast events)
 //   - metric.* - Metrics Bridge only (telemetry ingestion)
 
@@ -69,14 +69,14 @@ const (
 
 // BridgeTopic creates a topic string for a specific bridge instance.
 //
-// Format: br.{implementation}.{specifier}
+// Format: br::{implementation}::{specifier}
 //
 // Example:
 //
 //	topic := aether.BridgeTopic("aether-msgbridge", "instance-1")
-//	// Returns: "br.aether-msgbridge.instance-1"
+//	// Returns: "br::aether-msgbridge::instance-1"
 func BridgeTopic(implementation, specifier string) string {
-	return fmt.Sprintf("%s.%s.%s", TopicPrefixBridge, implementation, specifier)
+	return fmt.Sprintf("%s::%s::%s", TopicPrefixBridge, implementation, specifier)
 }
 
 // =============================================================================
@@ -85,28 +85,28 @@ func BridgeTopic(implementation, specifier string) string {
 
 // AgentTopic creates a topic string for a specific agent.
 //
-// Format: ag.{workspace}.{implementation}.{specifier}
+// Format: ag::{workspace}::{implementation}::{specifier}
 //
 // Example:
 //
 //	topic := aether.AgentTopic("prod", "data-processor", "instance-1")
-//	// Returns: "ag.prod.data-processor.instance-1"
+//	// Returns: "ag::prod::data-processor::instance-1"
 func AgentTopic(workspace, implementation, specifier string) string {
-	return fmt.Sprintf("%s.%s.%s.%s", TopicPrefixAgent, workspace, implementation, specifier)
+	return fmt.Sprintf("%s::%s::%s::%s", TopicPrefixAgent, workspace, implementation, specifier)
 }
 
 // GlobalAgentsTopic creates a broadcast topic for all agents in a workspace.
 //
-// Format: ga.{workspace}
+// Format: ga::{workspace}
 //
 // Messages sent to this topic are delivered to all agents in the workspace.
 //
 // Example:
 //
 //	topic := aether.GlobalAgentsTopic("prod")
-//	// Returns: "ga.prod"
+//	// Returns: "ga::prod"
 func GlobalAgentsTopic(workspace string) string {
-	return fmt.Sprintf("%s.%s", TopicPrefixGlobalAgents, workspace)
+	return fmt.Sprintf("%s::%s", TopicPrefixGlobalAgents, workspace)
 }
 
 // =============================================================================
@@ -115,7 +115,7 @@ func GlobalAgentsTopic(workspace string) string {
 
 // UniqueTaskTopic creates a topic string for a unique (named) task.
 //
-// Format: tu.{workspace}.{implementation}.{specifier}
+// Format: tu::{workspace}::{implementation}::{specifier}
 //
 // Unique tasks have a persistent identity like agents and can only have
 // one active connection at a time.
@@ -123,14 +123,14 @@ func GlobalAgentsTopic(workspace string) string {
 // Example:
 //
 //	topic := aether.UniqueTaskTopic("prod", "report-generator", "daily-report")
-//	// Returns: "tu.prod.report-generator.daily-report"
+//	// Returns: "tu::prod::report-generator::daily-report"
 func UniqueTaskTopic(workspace, implementation, specifier string) string {
-	return fmt.Sprintf("%s.%s.%s.%s", TopicPrefixUniqueTask, workspace, implementation, specifier)
+	return fmt.Sprintf("%s::%s::%s::%s", TopicPrefixUniqueTask, workspace, implementation, specifier)
 }
 
 // TaskTopic creates a topic string for a non-unique task instance.
 //
-// Format: ta.{workspace}.{implementation}.{id}
+// Format: ta::{workspace}::{implementation}::{id}
 //
 // Non-unique tasks receive a server-assigned ID. They also subscribe to the
 // broadcast topic for work claiming via TaskBroadcastTopic.
@@ -138,14 +138,14 @@ func UniqueTaskTopic(workspace, implementation, specifier string) string {
 // Example:
 //
 //	topic := aether.TaskTopic("prod", "data-processor", "abc123")
-//	// Returns: "ta.prod.data-processor.abc123"
+//	// Returns: "ta::prod::data-processor::abc123"
 func TaskTopic(workspace, implementation, id string) string {
-	return fmt.Sprintf("%s.%s.%s.%s", TopicPrefixTask, workspace, implementation, id)
+	return fmt.Sprintf("%s::%s::%s::%s", TopicPrefixTask, workspace, implementation, id)
 }
 
 // TaskBroadcastTopic creates a broadcast topic for task load balancing.
 //
-// Format: tb.{workspace}.{implementation}
+// Format: tb::{workspace}::{implementation}
 //
 // Non-unique tasks subscribe to this topic to receive work items that can be
 // claimed by any available worker of that implementation type.
@@ -153,9 +153,9 @@ func TaskTopic(workspace, implementation, id string) string {
 // Example:
 //
 //	topic := aether.TaskBroadcastTopic("prod", "data-processor")
-//	// Returns: "tb.prod.data-processor"
+//	// Returns: "tb::prod::data-processor"
 func TaskBroadcastTopic(workspace, implementation string) string {
-	return fmt.Sprintf("%s.%s.%s", TopicPrefixTaskBroadcast, workspace, implementation)
+	return fmt.Sprintf("%s::%s::%s", TopicPrefixTaskBroadcast, workspace, implementation)
 }
 
 // =============================================================================
@@ -164,7 +164,7 @@ func TaskBroadcastTopic(workspace, implementation string) string {
 
 // UserTopic creates a topic string for a user session.
 //
-// Format: us.{user_id}.{window_id}
+// Format: us::{user_id}::{window_id}
 //
 // Users are identified by user_id and window_id, allowing multiple browser
 // tabs or sessions per user.
@@ -172,14 +172,14 @@ func TaskBroadcastTopic(workspace, implementation string) string {
 // Example:
 //
 //	topic := aether.UserTopic("alice", "tab-1")
-//	// Returns: "us.alice.tab-1"
+//	// Returns: "us::alice::tab-1"
 func UserTopic(userID, windowID string) string {
-	return fmt.Sprintf("%s.%s.%s", TopicPrefixUser, userID, windowID)
+	return fmt.Sprintf("%s::%s::%s", TopicPrefixUser, userID, windowID)
 }
 
 // UserWorkspaceTopic creates a topic string for user workspace messages.
 //
-// Format: uw.{user_id}.{workspace}
+// Format: uw::{user_id}::{workspace}
 //
 // Messages sent to this topic reach a specific user's workspace scope,
 // regardless of which window/tab they're using.
@@ -187,23 +187,23 @@ func UserTopic(userID, windowID string) string {
 // Example:
 //
 //	topic := aether.UserWorkspaceTopic("alice", "prod")
-//	// Returns: "uw.alice.prod"
+//	// Returns: "uw::alice::prod"
 func UserWorkspaceTopic(userID, workspace string) string {
-	return fmt.Sprintf("%s.%s.%s", TopicPrefixUserWorkspace, userID, workspace)
+	return fmt.Sprintf("%s::%s::%s", TopicPrefixUserWorkspace, userID, workspace)
 }
 
 // GlobalUsersTopic creates a broadcast topic for all users in a workspace.
 //
-// Format: gu.{workspace}
+// Format: gu::{workspace}
 //
 // Messages sent to this topic are delivered to all users in the workspace.
 //
 // Example:
 //
 //	topic := aether.GlobalUsersTopic("prod")
-//	// Returns: "gu.prod"
+//	// Returns: "gu::prod"
 func GlobalUsersTopic(workspace string) string {
-	return fmt.Sprintf("%s.%s", TopicPrefixGlobalUsers, workspace)
+	return fmt.Sprintf("%s::%s", TopicPrefixGlobalUsers, workspace)
 }
 
 // =============================================================================
@@ -260,12 +260,12 @@ func MetricWildcardTopic() string {
 
 // ProgressTopic creates a topic string for workspace progress updates.
 //
-// Format: pg.{workspace}
+// Format: pg::{workspace}
 //
 // Progress updates from agents and tasks in a workspace are published to this
 // topic. Users and agents subscribe to it with server-side recipient filtering.
 func ProgressTopic(workspace string) string {
-	return fmt.Sprintf("%s.%s", TopicPrefixProgress, workspace)
+	return fmt.Sprintf("%s::%s", TopicPrefixProgress, workspace)
 }
 
 // =============================================================================
@@ -282,17 +282,17 @@ func CreateTopicAgent(workspace, implementation, specifier string) string {
 }
 
 // CreateTopicTask creates a topic string for a task.
-// If specifier is provided, creates a unique task topic (tu.*).
-// If specifier is empty, returns a partial topic ending in "." for server ID assignment.
+// If specifier is provided, creates a unique task topic (tu::*).
+// If specifier is empty, returns a partial topic ending in "::" for server ID assignment.
 //
 // This matches the Python client behavior for create_topic_task.
 func CreateTopicTask(workspace, implementation, specifier string) string {
 	if specifier != "" {
 		return UniqueTaskTopic(workspace, implementation, specifier)
 	}
-	// Non-unique task: return partial topic with trailing dot
-	// The server will append the assigned ID
-	return fmt.Sprintf("%s.%s.%s.", TopicPrefixTask, workspace, implementation)
+	// Non-unique task: return partial topic with trailing "::" separator.
+	// The server will append the assigned ID.
+	return fmt.Sprintf("%s::%s::%s::", TopicPrefixTask, workspace, implementation)
 }
 
 // CreateTopicTaskBroadcast is an alias for TaskBroadcastTopic.

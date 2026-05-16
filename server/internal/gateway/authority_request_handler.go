@@ -674,7 +674,7 @@ func sendAuthorityRequestResponse(client *ClientSession, clientRequestID, messag
 
 // emitAuthorityRequestEvent pushes an AuthorityRequestEvent to the originating
 // session and, when the request is bound to a task, also relays the event
-// onto that task's per-task event topic (tk.{workspace}.{task_id}.events) so
+// onto that task's per-task event topic (tk::{workspace}::{task_id}::events) so
 // task subscribers learn about authority transitions.
 //
 // Stage B addition (Phase 4): the task relay is best-effort and only fires
@@ -696,7 +696,7 @@ func (s *GatewayServer) emitAuthorityRequestEvent(client *ClientSession, req *ac
 	})
 
 	// Per-task relay: when the request has a task_id, also publish a
-	// TaskAuthorityRequestEventRelay on tk.{workspace}.{task_id}.events so
+	// TaskAuthorityRequestEventRelay on tk::{workspace}::{task_id}::events so
 	// task subscribers see authority decisions affecting their task. The
 	// workspace is resolved from the bound task row when present; if the
 	// task is gone (e.g. rejected request after task termination) we skip.

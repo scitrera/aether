@@ -230,7 +230,7 @@ func handleClientCert(clientType, tlsDir string, validity time.Duration, workspa
 		if workspace == "" || impl == "" || spec == "" {
 			return fmt.Errorf("--client-cert agent requires --workspace, --impl, and --spec")
 		}
-		cn := fmt.Sprintf("ag.%s.%s.%s", workspace, impl, spec)
+		cn := fmt.Sprintf("ag::%s::%s::%s", workspace, impl, spec)
 		bundle, genErr := ca.GenerateClientCert(certgen.ClientCertOptions{
 			CommonName: cn,
 			OrgUnit:    "Agent",
@@ -250,9 +250,9 @@ func handleClientCert(clientType, tlsDir string, validity time.Duration, workspa
 		if workspace == "" || impl == "" {
 			return fmt.Errorf("--client-cert task requires --workspace and --impl")
 		}
-		cn := fmt.Sprintf("ta.%s.%s", workspace, impl)
+		cn := fmt.Sprintf("ta::%s::%s", workspace, impl)
 		if spec != "" {
-			cn = fmt.Sprintf("tu.%s.%s.%s", workspace, impl, spec)
+			cn = fmt.Sprintf("tu::%s::%s::%s", workspace, impl, spec)
 		}
 		bundle, genErr := ca.GenerateClientCert(certgen.ClientCertOptions{
 			CommonName: cn,
@@ -273,7 +273,7 @@ func handleClientCert(clientType, tlsDir string, validity time.Duration, workspa
 		if userID == "" || windowID == "" {
 			return fmt.Errorf("--client-cert user requires --user-id and --window-id")
 		}
-		cn := fmt.Sprintf("us.%s.%s", userID, windowID)
+		cn := fmt.Sprintf("us::%s::%s", userID, windowID)
 		bundle, genErr := ca.GenerateClientCert(certgen.ClientCertOptions{
 			CommonName: cn,
 			OrgUnit:    "User",
@@ -293,9 +293,9 @@ func handleClientCert(clientType, tlsDir string, validity time.Duration, workspa
 		if impl == "" {
 			return fmt.Errorf("--client-cert orchestrator requires --impl")
 		}
-		cn := fmt.Sprintf("or.%s", impl)
+		cn := fmt.Sprintf("orc::%s", impl)
 		if spec != "" {
-			cn = fmt.Sprintf("or.%s.%s", impl, spec)
+			cn = fmt.Sprintf("orc::%s::%s", impl, spec)
 		}
 		bundle, genErr := ca.GenerateClientCert(certgen.ClientCertOptions{
 			CommonName: cn,
@@ -313,7 +313,7 @@ func handleClientCert(clientType, tlsDir string, validity time.Duration, workspa
 		log.Printf("Orchestrator client certificate generated: %s (CN=%s)", certPath, cn)
 
 	case "workflow-engine":
-		cn := "wf"
+		cn := "wfe::shard0"
 		bundle, genErr := ca.GenerateClientCert(certgen.ClientCertOptions{
 			CommonName: cn,
 			OrgUnit:    "WorkflowEngine",
@@ -322,15 +322,15 @@ func handleClientCert(clientType, tlsDir string, validity time.Duration, workspa
 		if genErr != nil {
 			return fmt.Errorf("generating workflow-engine client cert: %w", genErr)
 		}
-		certPath := filepath.Join(clientsDir, "wf-cert.pem")
-		keyPath := filepath.Join(clientsDir, "wf-key.pem")
+		certPath := filepath.Join(clientsDir, "wfe-cert.pem")
+		keyPath := filepath.Join(clientsDir, "wfe-key.pem")
 		if err := bundle.SaveToFiles(certPath, keyPath); err != nil {
 			return err
 		}
 		log.Printf("Workflow engine client certificate generated: %s (CN=%s)", certPath, cn)
 
 	case "metrics-bridge":
-		cn := "mb"
+		cn := "metrics::shard0"
 		bundle, genErr := ca.GenerateClientCert(certgen.ClientCertOptions{
 			CommonName: cn,
 			OrgUnit:    "MetricsBridge",
@@ -339,8 +339,8 @@ func handleClientCert(clientType, tlsDir string, validity time.Duration, workspa
 		if genErr != nil {
 			return fmt.Errorf("generating metrics-bridge client cert: %w", genErr)
 		}
-		certPath := filepath.Join(clientsDir, "mb-cert.pem")
-		keyPath := filepath.Join(clientsDir, "mb-key.pem")
+		certPath := filepath.Join(clientsDir, "metrics-cert.pem")
+		keyPath := filepath.Join(clientsDir, "metrics-key.pem")
 		if err := bundle.SaveToFiles(certPath, keyPath); err != nil {
 			return err
 		}
@@ -350,7 +350,7 @@ func handleClientCert(clientType, tlsDir string, validity time.Duration, workspa
 		if impl == "" || spec == "" {
 			return fmt.Errorf("--client-cert service requires --impl and --spec")
 		}
-		cn := fmt.Sprintf("sv.%s.%s", impl, spec)
+		cn := fmt.Sprintf("sv::%s::%s", impl, spec)
 		bundle, genErr := ca.GenerateClientCert(certgen.ClientCertOptions{
 			CommonName: cn,
 			OrgUnit:    "Service",

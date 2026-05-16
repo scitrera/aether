@@ -1009,7 +1009,7 @@ limits, audit events, and failure modes, see
 
 Agents and tasks can report fine-grained progress to the gateway. Progress is
 supplemental to the task lifecycle — connection liveness handles death detection
-separately. The gateway fans progress out to the `pg.{workspace}` stream for
+separately. The gateway fans progress out to the `pg::{workspace}` stream for
 subscribers (users, orchestrators, other agents).
 
 ```go
@@ -1079,14 +1079,14 @@ semantics:
 
 | Type | Constructor | Topic format | Notes |
 |---|---|---|---|
-| **Agent** | `NewAgentClient` | `ag.{ws}.{impl}.{spec}` | Persistent singleton; globally unique per identity |
-| **Task** | `NewTaskClient` | `tu.{ws}.{impl}.{spec}` or `ta.{ws}.{impl}.{id}` | Unique task (`tu`) or server-assigned non-unique (`ta`/`tb`) |
-| **User** | `NewUserClient` | `us.{user}.{window}` | Unique per window; call `SwitchWorkspace` after connect |
+| **Agent** | `NewAgentClient` | `ag::{ws}::{impl}::{spec}` | Persistent singleton; globally unique per identity |
+| **Task** | `NewTaskClient` | `tu::{ws}::{impl}::{spec}` or `ta::{ws}::{impl}::{id}` | Unique task (`tu`) or server-assigned non-unique (`ta`/`tb`) |
+| **User** | `NewUserClient` | `us::{user}::{window}` | Unique per window; call `SwitchWorkspace` after connect |
 | **Orchestrator** | `NewOrchestratorClient` | — | Receives `TaskAssignment` for offline agents/tasks; launches compute |
 | **WorkflowEngine** | `NewWorkflowEngineClient` | — | Can send to all topic types; receives `event.*` stream |
 | **MetricsBridge** | `NewMetricsBridgeClient` | — | Receive-only; collects `metric.*` stream for telemetry |
-| **Service** | `NewServiceClient` | `sv.{impl}.{spec}` | Sidecar/utility principals exposing HTTP-over-Aether proxy endpoints; workspace-scoped |
-| **Bridge** | `NewBridgeClient` | `br.{impl}.{spec}` | Cross-workspace integration (Discord, Teams, Email, etc.); not workspace-scoped, checks ACL per message against target workspace |
+| **Service** | `NewServiceClient` | `sv::{impl}::{spec}` | Sidecar/utility principals exposing HTTP-over-Aether proxy endpoints; workspace-scoped |
+| **Bridge** | `NewBridgeClient` | `br::{impl}::{spec}` | Cross-workspace integration (Discord, Teams, Email, etc.); not workspace-scoped, checks ACL per message against target workspace |
 
 **Service vs Bridge:** A `Service` principal lives within a single workspace
 and is addressable via the proxy HTTP transport (`AetherRoundTripper`). A
@@ -1094,19 +1094,9 @@ and is addressable via the proxy HTTP transport (`AetherRoundTripper`). A
 across any workspace — it performs per-message ACL checks against the target
 workspace rather than a single upfront check at connect time.
 
-## Key Architectural Principle
-
-**Connection = Lock = Heartbeat**: The connection itself IS the distributed lock AND the heartbeat. When the gRPC stream closes, the identity lock is immediately released. No separate heartbeat API exists.
-
-## Requirements
-
-- Go 1.21+
-- gRPC 1.78.0+
-- Protobuf 1.36.0+
-
 ## License
 
-Copyright 2024-2025 Scitrera. Licensed under the Apache License, Version 2.0.
+Copyright 2025+ scitrera.ai. Licensed under the Apache License, Version 2.0.
 
 ## Links
 

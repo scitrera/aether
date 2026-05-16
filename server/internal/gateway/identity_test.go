@@ -96,7 +96,7 @@ func TestParseIdentityFromCN(t *testing.T) {
 		},
 		{
 			name: "valid workflow engine CN",
-			cn:   "wf",
+			cn:   "wfe::shard0",
 			expected: models.Identity{
 				Type: models.PrincipalWorkflowEngine,
 			},
@@ -104,7 +104,7 @@ func TestParseIdentityFromCN(t *testing.T) {
 		},
 		{
 			name: "valid metrics bridge CN",
-			cn:   "mb",
+			cn:   "metrics::shard0",
 			expected: models.Identity{
 				Type: models.PrincipalMetricsBridge,
 			},
@@ -112,10 +112,20 @@ func TestParseIdentityFromCN(t *testing.T) {
 		},
 		{
 			name: "valid orchestrator CN",
-			cn:   "or::agent-orchestrator",
+			cn:   "orc::agent-orchestrator",
 			expected: models.Identity{
 				Type:           models.PrincipalOrchestrator,
 				Implementation: "agent-orchestrator",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid orchestrator CN with specifier",
+			cn:   "orc::kubernetes::cluster-1",
+			expected: models.Identity{
+				Type:           models.PrincipalOrchestrator,
+				Implementation: "kubernetes",
+				Specifier:      "cluster-1",
 			},
 			wantErr: false,
 		},
@@ -257,7 +267,7 @@ func TestGenerateTestCertificate(t *testing.T) {
 	}
 
 	if cert.Subject.CommonName != "ag::test::workspace::agent-1" {
-		t.Errorf("certificate CN = %s, want ag.test.workspace.agent-1", cert.Subject.CommonName)
+		t.Errorf("certificate CN = %s, want ag::test::workspace::agent-1", cert.Subject.CommonName)
 	}
 
 	if key == nil {

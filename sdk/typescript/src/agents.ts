@@ -154,7 +154,7 @@ export class AgentClient extends AetherClient {
   /**
    * Returns this agent's topic address.
    *
-   * Format: ag.{workspace}.{implementation}.{specifier}
+   * Format: ag::{workspace}::{implementation}::{specifier}
    */
   get topic(): string {
     return agentTopic(this._workspace, this._implementation, this._specifier);
@@ -231,8 +231,8 @@ export class AgentClient extends AetherClient {
   /**
    * Sends a message to a specific task.
    *
-   * For unique tasks (with specifier), uses tu.{workspace}.{impl}.{spec} topic.
-   * For non-unique tasks (empty specifier), uses tb.{workspace}.{impl} broadcast topic.
+   * For unique tasks (with specifier), uses tu::{workspace}::{impl}::{spec} topic.
+   * For non-unique tasks (empty specifier), uses tb::{workspace}::{impl} broadcast topic.
    *
    * @param workspace - Target task's workspace
    * @param implementation - Target task's implementation type

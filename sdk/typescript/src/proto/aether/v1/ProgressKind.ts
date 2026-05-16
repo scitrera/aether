@@ -24,7 +24,7 @@ export const ProgressKind = {
   PROGRESS_KIND_APP: 'PROGRESS_KIND_APP',
   /**
    * Task lifecycle progress (started, running, finished, failed). Consumed
-   * primarily by parent agents and orchestrators via the pg.{workspace}
+   * primarily by parent agents and orchestrators via the pg::{workspace}
    * broadcast stream — not typically routed to a user surface.
    */
   PROGRESS_KIND_TASK: 'PROGRESS_KIND_TASK',
@@ -57,7 +57,7 @@ export type ProgressKind =
   | 2
   /**
    * Task lifecycle progress (started, running, finished, failed). Consumed
-   * primarily by parent agents and orchestrators via the pg.{workspace}
+   * primarily by parent agents and orchestrators via the pg::{workspace}
    * broadcast stream — not typically routed to a user surface.
    */
   | 'PROGRESS_KIND_TASK'

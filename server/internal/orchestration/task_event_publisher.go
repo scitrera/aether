@@ -2,7 +2,7 @@
 //
 // TaskEventPublisher is the narrow surface the TaskAssignmentService needs to
 // fan task lifecycle transitions onto the per-task event topic
-// (tk.{workspace}.{task_id}.events). The publisher implementation lives in
+// (tk::{workspace}::{task_id}::events). The publisher implementation lives in
 // internal/gateway alongside the router; orchestration depends only on the
 // proto type and the interface here. A nil publisher is treated as "no-op" so
 // existing callers (tests, lite mode without a gateway) keep working unchanged.

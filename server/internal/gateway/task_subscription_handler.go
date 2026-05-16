@@ -2,7 +2,7 @@
 //
 // This file handles UpstreamMessage.task_subscription_op (wire tag 31). Clients
 // SUBSCRIBE to a per-task event stream and the gateway forwards TaskEvent
-// messages from the tk.{workspace}.{task_id}.events topic. UNSUBSCRIBE tears
+// messages from the tk::{workspace}::{task_id}::events topic. UNSUBSCRIBE tears
 // down the per-task router subscription.
 //
 // Decisions (recorded in commit message + Stage B report):
@@ -278,7 +278,7 @@ func (s *GatewayServer) createTaskEventHandler(client *ClientSession, subscripti
 }
 
 // publishTaskEventBytes serializes evt and forwards to the router for the
-// canonical tk.{workspace}.{task_id}.events topic. Best-effort: any failure
+// canonical tk::{workspace}::{task_id}::events topic. Best-effort: any failure
 // is logged and swallowed so the originating lifecycle / progress / authority
 // transition never blocks on publish failure.
 func (s *GatewayServer) publishTaskEventBytes(ctx context.Context, workspace, taskID string, evt *pb.TaskEvent) error {

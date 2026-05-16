@@ -610,7 +610,7 @@ export class AetherClient {
   /**
    * Registers a handler for progress updates from agents/tasks.
    *
-   * Progress updates are delivered via the pg.{workspace} stream with
+   * Progress updates are delivered via the pg::{workspace} stream with
    * server-side recipient filtering.
    *
    * @param handler - Function called when a progress update is received
@@ -1674,7 +1674,7 @@ export class AetherClient {
   /**
    * Reports progress for a task through the Aether gateway.
    *
-   * Progress updates are routed through RabbitMQ Streams via the pg.{workspace}
+   * Progress updates are routed through RabbitMQ Streams via the pg::{workspace}
    * topic with server-side recipient filtering.
    *
    * @param opts - Progress report options

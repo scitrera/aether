@@ -678,7 +678,7 @@ type CheckpointResponseHandler func(ctx context.Context, resp *CheckpointRespons
 
 // ProgressHandler is called when a progress update is received from an agent or task.
 //
-// Progress updates are delivered via the pg.{workspace} stream with
+// Progress updates are delivered via the pg::{workspace} stream with
 // server-side recipient filtering.
 //
 // Example:

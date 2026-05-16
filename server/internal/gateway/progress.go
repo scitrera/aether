@@ -58,7 +58,7 @@ func isBareUserRecipientMatch(recipient, myTopic string) bool {
 }
 
 // handleProgressReport processes an upstream progress report from an agent or task.
-// It validates the sender, builds a ProgressUpdate, publishes it to the pg.{workspace}
+// It validates the sender, builds a ProgressUpdate, publishes it to the pg::{workspace}
 // RabbitMQ stream, and updates the task heartbeat in the database as a side-effect.
 func (s *GatewayServer) handleProgressReport(ctx context.Context, client *ClientSession, report *pb.ProgressReport) {
 	ctx, span := tracing.Tracer.Start(ctx, "gateway.HandleProgressReport")
@@ -109,7 +109,7 @@ func (s *GatewayServer) handleProgressReport(ctx context.Context, client *Client
 	now := time.Now()
 
 	// Recipient-aware topic routing. When report.Recipient is a user identity
-	// topic, publish to the per-user progress topic pg.us.<user> so the update
+	// topic, publish to the per-user progress topic pg::us::<user> so the update
 	// can cross workspaces and reach the user even when the sender is hosted
 	// in a different workspace (e.g. an `_apps` agent reporting chat progress
 	// to a user chatting in `default`).
@@ -118,9 +118,9 @@ func (s *GatewayServer) handleProgressReport(ctx context.Context, client *Client
 	//   - us::{user}::{window}  → window-specific, filter delivers to that window only
 	//   - us::{user}            → bare user, filter delivers to ALL of the user's windows
 	//
-	// Both forms publish to the same pg.us.{user} stream; per-window
+	// Both forms publish to the same pg::us::{user} stream; per-window
 	// fan-out and matching happens in the gateway-side filter handler.
-	// For empty or non-user recipients, fall back to pg.{sender.Workspace}
+	// For empty or non-user recipients, fall back to pg::{sender.Workspace}
 	// broadcast — preserving orchestrator/parent-agent consumption patterns
 	// for task-kind progress.
 	progressTopic, err := models.ProgressTopic(sender.Workspace)
@@ -174,7 +174,7 @@ func (s *GatewayServer) handleProgressReport(ctx context.Context, client *Client
 		return
 	}
 
-	// Publish to pg.{workspace} stream via circuit breaker
+	// Publish to pg::{workspace} stream via circuit breaker
 	err = s.publishBreaker.Execute(func() error {
 		return s.router.Publish(ctx, progressTopic, updateBytes)
 	})
@@ -225,7 +225,7 @@ func (s *GatewayServer) handleProgressReport(ctx context.Context, client *Client
 		}
 
 		// Phase 4 Stage B: fan the progress report onto the per-task event
-		// topic (tk.{workspace}.{task_id}.events). Workspace comes from the
+		// topic (tk::{workspace}::{task_id}::events). Workspace comes from the
 		// stored task row so a sender publishing into a different workspace
 		// (e.g. an `_apps` agent reporting on a `default`-scoped task) still
 		// routes to the correct task-events topic. Best-effort.
@@ -236,7 +236,7 @@ func (s *GatewayServer) handleProgressReport(ctx context.Context, client *Client
 }
 
 // createProgressFilterHandler creates a per-client handler for progress updates
-// received from the pg.{workspace} RabbitMQ stream. It deserializes the
+// received from the pg::{workspace} RabbitMQ stream. It deserializes the
 // ProgressUpdate, applies server-side recipient filtering, suppresses self-echo,
 // and delivers matching updates to the client.
 func (s *GatewayServer) createProgressFilterHandler(client *ClientSession) func([]byte) {
@@ -281,7 +281,7 @@ func (s *GatewayServer) createProgressFilterHandler(client *ClientSession) func(
 	}
 }
 
-// notifyTaskStatusChange publishes a synthetic ProgressUpdate to pg.{workspace}
+// notifyTaskStatusChange publishes a synthetic ProgressUpdate to pg::{workspace}
 // when a task transitions state (running, completed, failed, cancelled). The
 // update's recipient field is set to the parent agent's topic so that only the
 // spawning agent receives the notification via server-side filtering.
@@ -344,7 +344,7 @@ func (s *GatewayServer) notifyTaskStatusChangeFromTaskID(ctx context.Context, ta
 	s.notifyTaskStatusChange(ctx, taskID, newStatus, task.Workspace, task.ParentAgentID, errorMsg)
 }
 
-// subscribeClientToProgress subscribes a client to the pg.{workspace} progress
+// subscribeClientToProgress subscribes a client to the pg::{workspace} progress
 // stream using a shared consumer with a per-client filtering handler.
 func (s *GatewayServer) subscribeClientToProgress(client *ClientSession, workspace string) error {
 	pgTopic, err := models.ProgressTopic(workspace)
@@ -369,7 +369,7 @@ func (s *GatewayServer) subscribeClientToProgress(client *ClientSession, workspa
 }
 
 // subscribeClientToUserProgress subscribes a user client to a per-user
-// progress topic (pg.us.{user}.{window}). The topic is self-scoped to a
+// progress topic (pg::us::{user}::{window}). The topic is self-scoped to a
 // single user-window, so no additional server-side recipient filtering is
 // required — the filter handler still applies self-echo suppression.
 func (s *GatewayServer) subscribeClientToUserProgress(client *ClientSession, topic string) error {

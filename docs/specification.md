@@ -185,19 +185,19 @@ Authentication methods are configured via `auth.modes` in the YAML config. Multi
 
 | Prefix | Target | Format | Description |
 |---|---|---|---|
-| `ag` | Agent | `ag.{workspace}.{impl}.{spec}` | Specific long-running agent instance |
-| `tu` | Unique Task | `tu.{workspace}.{impl}.{unique_spec}` | Named task instance |
-| `ta` | Assigned Task | `ta.{workspace}.{impl}.{task_id}` | Server-assigned non-unique task instance |
-| `tb` | Task Broadcast | `tb.{workspace}.{impl}` | Load-balancing topic; workers compete/round-robin |
-| `us` | User (Window) | `us.{user_id}.{window_id}` | Specific browser window |
-| `uw` | User (Workspace) | `uw.{user_id}.{workspace}` | User scoped to a workspace |
-| `ga` | Global Agents | `ga.{workspace}` | Broadcast to all agents in a workspace |
-| `gu` | Global Users | `gu.{workspace}` | Broadcast to all users in a workspace |
-| `pg` | Progress | `pg.{workspace}` | Progress updates with server-side recipient filtering |
+| `ag` | Agent | `ag::{workspace}::{impl}::{spec}` | Specific long-running agent instance |
+| `tu` | Unique Task | `tu::{workspace}::{impl}::{unique_spec}` | Named task instance |
+| `ta` | Assigned Task | `ta::{workspace}::{impl}::{task_id}` | Server-assigned non-unique task instance |
+| `tb` | Task Broadcast | `tb::{workspace}::{impl}` | Load-balancing topic; workers compete/round-robin |
+| `us` | User (Window) | `us::{user_id}::{window_id}` | Specific browser window |
+| `uw` | User (Workspace) | `uw::{user_id}::{workspace}` | User scoped to a workspace |
+| `ga` | Global Agents | `ga::{workspace}` | Broadcast to all agents in a workspace |
+| `gu` | Global Users | `gu::{workspace}` | Broadcast to all users in a workspace |
+| `pg` | Progress | `pg::{workspace}` | Progress updates with server-side recipient filtering |
 | `event.*` | Workflow Engine | **Write (senders):** `event.{workspace}` or `event::*` — gateway rewrites to `event::receiver{shard}`. **Subscribe (WE):** `event::receiver{shard}` (today: always `event::receiver0`). Workspace attribution surfaced via `IncomingMessage.workspace`. | Fan-in event routing; Workflow Engine is the sole subscriber per shard. |
 | `metric.*` | Metrics Bridge | **Write (senders):** `metric.{workspace}` or `metric::*` — gateway rewrites to `metric::receiver{shard}`. **Subscribe (MB):** `metric::receiver{shard}` (today: always `metric::receiver0`). Workspace attribution surfaced via `IncomingMessage.workspace`. | Fan-in metric routing; Metrics Bridge is the sole subscriber per shard. |
-| `sv` | Service | `sv.{impl}.{spec}` | Cross-workspace service proxy endpoint (no workspace component) |
-| `br` | Bridge | `br.{impl}.{spec}` | Cross-workspace messaging bridge endpoint (no workspace component) |
+| `sv` | Service | `sv::{impl}::{spec}` | Cross-workspace service proxy endpoint (no workspace component) |
+| `br` | Bridge | `br::{impl}::{spec}` | Cross-workspace messaging bridge endpoint (no workspace component) |
 
 Topic names are validated against allowed prefixes and must be 1-256 characters.
 
@@ -207,10 +207,10 @@ Each principal type automatically subscribes to specific topics on connection:
 
 | Principal | Exclusive (offset-tracked) | Shared (no offset) |
 |---|---|---|
-| **Agent** | `ag.{ws}.{impl}.{spec}` | `ga.{ws}`, `pg.{ws}` |
-| **Task (Unique)** | `tu.{ws}.{impl}.{spec}` | — |
-| **Task (Non-Unique)** | `ta.{ws}.{impl}.{id}` | `tb.{ws}.{impl}` |
-| **User** | `us.{uid}.{wid}` | `gu.{ws}`, `uw.{uid}.{ws}`, `pg.{ws}` |
+| **Agent** | `ag::{ws}::{impl}::{spec}` | `ga::{ws}`, `pg::{ws}` |
+| **Task (Unique)** | `tu::{ws}::{impl}::{spec}` | — |
+| **Task (Non-Unique)** | `ta::{ws}::{impl}::{id}` | `tb::{ws}::{impl}` |
+| **User** | `us::{uid}::{wid}` | `gu::{ws}`, `uw::{uid}::{ws}`, `pg::{ws}` |
 | **Workflow Engine** | `event::receiver{shard}` (today: `event::receiver0`) | — |
 | **Metrics Bridge** | `metric::receiver{shard}` (today: `metric::receiver0`) | — |
 | **Orchestrator** | — | — (receives tasks via direct gRPC stream) |
@@ -241,7 +241,7 @@ Each principal type automatically subscribes to specific topics on connection:
 Agents and tasks can send `ProgressReport` messages upstream. The gateway:
 
 1. Validates the sender (only agents/tasks can report progress).
-2. Publishes a `ProgressUpdate` to `pg.{workspace}` via RabbitMQ Streams.
+2. Publishes a `ProgressUpdate` to `pg::{workspace}` via RabbitMQ Streams.
 3. Updates the associated task heartbeat in PostgreSQL (side-effect).
 
 Subscribers receive progress updates through a per-client filtering handler that:
@@ -371,7 +371,7 @@ Background cleanup jobs purge old tasks based on configurable retention policies
 
 ### 5.5 Task Status Notifications
 
-When a task transitions state (running, completed, failed, cancelled, pending via retry), the gateway publishes a synthetic `ProgressUpdate` to `pg.{workspace}` with the `recipient` field set to the parent agent's topic (the `ParentAgentID` stored on the task). This ensures:
+When a task transitions state (running, completed, failed, cancelled, pending via retry), the gateway publishes a synthetic `ProgressUpdate` to `pg::{workspace}` with the `recipient` field set to the parent agent's topic (the `ParentAgentID` stored on the task). This ensures:
 
 - Only the spawning agent receives the notification (server-side recipient filtering).
 - The notification uses existing progress infrastructure — no additional proto types needed.

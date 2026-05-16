@@ -7,7 +7,7 @@ import type { ProgressKind as _aether_v1_ProgressKind, ProgressKind__Output as _
  * ProgressReport is sent upstream by agents/tasks to report progress on work.
  * Progress is supplemental information while a task is running — connection
  * liveness (heartbeat/lock) handles death detection separately.
- * The gateway publishes progress to the pg.{workspace} stream and fans it
+ * The gateway publishes progress to the pg::{workspace} stream and fans it
  * out to subscribers (users, agents, orchestrators) with server-side filtering.
  */
 export interface ProgressReport {
@@ -67,7 +67,7 @@ export interface ProgressReport {
  * ProgressReport is sent upstream by agents/tasks to report progress on work.
  * Progress is supplemental information while a task is running — connection
  * liveness (heartbeat/lock) handles death detection separately.
- * The gateway publishes progress to the pg.{workspace} stream and fans it
+ * The gateway publishes progress to the pg::{workspace} stream and fans it
  * out to subscribers (users, agents, orchestrators) with server-side filtering.
  */
 export interface ProgressReport__Output {

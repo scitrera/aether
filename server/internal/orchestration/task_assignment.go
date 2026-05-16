@@ -55,7 +55,7 @@ type TaskAssignmentService struct {
 	grantService    authorityGrantService
 	dispatcher      queueRetirementDispatcher
 	// eventPub publishes per-task lifecycle events to the per-task event topic
-	// (tk.{workspace}.{task_id}.events). Phase 4 Stage B. Nil = disabled, every
+	// (tk::{workspace}::{task_id}::events). Phase 4 Stage B. Nil = disabled, every
 	// publish call becomes a no-op. Injected via SetEventPublisher.
 	eventPub TaskEventPublisher
 }

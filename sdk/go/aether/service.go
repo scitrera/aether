@@ -2,7 +2,7 @@
 //
 // This file provides the ServiceClient type for connecting to the Aether
 // gateway as a Service principal. Services are HTTP/RPC endpoints addressed
-// at sv.{implementation}.{specifier} that receive proxied HTTP requests
+// at sv::{implementation}::{specifier} that receive proxied HTTP requests
 // (and, in later phases, tunnel envelopes) routed through the gateway.
 
 package aether

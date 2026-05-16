@@ -8,7 +8,7 @@ import type { Long } from '@grpc/proto-loader';
 
 /**
  * TaskEvent is the typed payload published on the task-scoped topic
- * `tk.{workspace}.{task_id}.events` and delivered downstream to subscribers.
+ * `tk::{workspace}::{task_id}::events` and delivered downstream to subscribers.
  */
 export interface TaskEvent {
   'taskId'?: (string);
@@ -31,7 +31,7 @@ export interface TaskEvent {
 
 /**
  * TaskEvent is the typed payload published on the task-scoped topic
- * `tk.{workspace}.{task_id}.events` and delivered downstream to subscribers.
+ * `tk::{workspace}::{task_id}::events` and delivered downstream to subscribers.
  */
 export interface TaskEvent__Output {
   'taskId': (string);

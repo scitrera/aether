@@ -643,7 +643,7 @@ const (
 	// App-dashboard progress for a user-visible long-running app or job.
 	ProgressKind_PROGRESS_KIND_APP ProgressKind = 2
 	// Task lifecycle progress (started, running, finished, failed). Consumed
-	// primarily by parent agents and orchestrators via the pg.{workspace}
+	// primarily by parent agents and orchestrators via the pg::{workspace}
 	// broadcast stream — not typically routed to a user surface.
 	ProgressKind_PROGRESS_KIND_TASK ProgressKind = 3
 )
@@ -3238,7 +3238,7 @@ type ConnectionAck struct {
 	// Indicates if this was a resumed session (client provided matching resume_session_id)
 	Resumed bool `protobuf:"varint,2,opt,name=resumed,proto3" json:"resumed,omitempty"`
 	// For non-unique tasks, the server-assigned task instance ID used to construct
-	// the task's topic address (ta.{workspace}.{impl}.{assigned_id}).
+	// the task's topic address (ta::{workspace}::{impl}::{assigned_id}).
 	// Empty for all other principal types.
 	AssignedId string `protobuf:"bytes,3,opt,name=assigned_id,json=assignedId,proto3" json:"assigned_id,omitempty"`
 	// Phase 6: negotiation result for each extension the client declared
@@ -13314,7 +13314,7 @@ func (x *TokenResponse) GetRequestId() string {
 // ProgressReport is sent upstream by agents/tasks to report progress on work.
 // Progress is supplemental information while a task is running — connection
 // liveness (heartbeat/lock) handles death detection separately.
-// The gateway publishes progress to the pg.{workspace} stream and fans it
+// The gateway publishes progress to the pg::{workspace} stream and fans it
 // out to subscribers (users, agents, orchestrators) with server-side filtering.
 type ProgressReport struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -13531,7 +13531,7 @@ func (x *ProgressStep) GetStepType() string {
 
 // ProgressUpdate is sent downstream to subscribers with progress from agents/tasks.
 // Contains the original report plus server-added metadata. Routed through
-// the pg.{workspace} RabbitMQ stream with server-side recipient filtering.
+// the pg::{workspace} RabbitMQ stream with server-side recipient filtering.
 type ProgressUpdate struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The identity of the agent/task reporting progress (topic format).
@@ -16055,7 +16055,7 @@ func (x *TaskSubscriptionOperationResponse) GetSubscriptionId() string {
 }
 
 // TaskEvent is the typed payload published on the task-scoped topic
-// `tk.{workspace}.{task_id}.events` and delivered downstream to subscribers.
+// `tk::{workspace}::{task_id}::events` and delivered downstream to subscribers.
 type TaskEvent struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	TaskId          string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`

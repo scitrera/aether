@@ -131,7 +131,7 @@ export class UserClient extends AetherClient {
   /**
    * Returns this user's topic address.
    *
-   * Format: us.{userId}.{windowId}
+   * Format: us::{userId}::{windowId}
    */
   get topic(): string {
     return userTopic(this._userId, this._windowId);
@@ -140,7 +140,7 @@ export class UserClient extends AetherClient {
   /**
    * Returns this user's workspace-scoped topic address.
    *
-   * Format: uw.{userId}.{workspace}
+   * Format: uw::{userId}::{workspace}
    *
    * Returns empty string if no workspace is set.
    */
@@ -228,8 +228,8 @@ export class UserClient extends AetherClient {
   /**
    * Sends a message to a specific task.
    *
-   * For unique tasks (with specifier), uses tu.{workspace}.{impl}.{spec} topic.
-   * For non-unique tasks (empty specifier), uses tb.{workspace}.{impl} broadcast topic.
+   * For unique tasks (with specifier), uses tu::{workspace}::{impl}::{spec} topic.
+   * For non-unique tasks (empty specifier), uses tb::{workspace}::{impl} broadcast topic.
    *
    * @param workspace - Target task's workspace
    * @param implementation - Target task's implementation type

@@ -57,7 +57,7 @@ export interface BridgeClientOptions extends AetherClientOptions {
  * - Identity management (implementation, specifier)
  * - Messaging helpers to any workspace (sendToAgent, sendToUser, sendToTask, broadcast)
  *
- * Topic format: br.{implementation}.{specifier}
+ * Topic format: br::{implementation}::{specifier}
  *
  * @example
  * ```typescript
@@ -122,7 +122,7 @@ export class BridgeClient extends AetherClient {
   /**
    * Returns this bridge's topic address.
    *
-   * Format: br.{implementation}.{specifier}
+   * Format: br::{implementation}::{specifier}
    */
   get topic(): string {
     return bridgeTopic(this._implementation, this._specifier);
@@ -170,8 +170,8 @@ export class BridgeClient extends AetherClient {
   /**
    * Sends a message to a specific task in any workspace.
    *
-   * For unique tasks (with specifier), uses tu.{workspace}.{impl}.{spec} topic.
-   * For non-unique tasks (empty specifier), uses tb.{workspace}.{impl} broadcast topic.
+   * For unique tasks (with specifier), uses tu::{workspace}::{impl}::{spec} topic.
+   * For non-unique tasks (empty specifier), uses tb::{workspace}::{impl} broadcast topic.
    *
    * @param workspace - Target task's workspace
    * @param implementation - Target task's implementation type

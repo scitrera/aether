@@ -120,7 +120,7 @@ message ConnectionAck {
   // Indicates if this was a resumed session (client provided matching resume_session_id)
   bool resumed = 2;
   // For non-unique tasks, the server-assigned task instance ID used to construct
-  // the task's topic address (ta.{workspace}.{impl}.{assigned_id}).
+  // the task's topic address (ta::{workspace}::{impl}::{assigned_id}).
   // Empty for all other principal types.
   string assigned_id = 3;
   // Phase 6: negotiation result for each extension the client declared
@@ -2285,7 +2285,7 @@ enum ProgressKind {
   // App-dashboard progress for a user-visible long-running app or job.
   PROGRESS_KIND_APP = 2;
   // Task lifecycle progress (started, running, finished, failed). Consumed
-  // primarily by parent agents and orchestrators via the pg.{workspace}
+  // primarily by parent agents and orchestrators via the pg::{workspace}
   // broadcast stream — not typically routed to a user surface.
   PROGRESS_KIND_TASK = 3;
 }
@@ -2293,7 +2293,7 @@ enum ProgressKind {
 // ProgressReport is sent upstream by agents/tasks to report progress on work.
 // Progress is supplemental information while a task is running — connection
 // liveness (heartbeat/lock) handles death detection separately.
-// The gateway publishes progress to the pg.{workspace} stream and fans it
+// The gateway publishes progress to the pg::{workspace} stream and fans it
 // out to subscribers (users, agents, orchestrators) with server-side filtering.
 message ProgressReport {
   // Task or request identifier this progress relates to.
@@ -2358,7 +2358,7 @@ message ProgressStep {
 
 // ProgressUpdate is sent downstream to subscribers with progress from agents/tasks.
 // Contains the original report plus server-added metadata. Routed through
-// the pg.{workspace} RabbitMQ stream with server-side recipient filtering.
+// the pg::{workspace} RabbitMQ stream with server-side recipient filtering.
 message ProgressUpdate {
   // The identity of the agent/task reporting progress (topic format).
   string source = 1;
@@ -2874,7 +2874,7 @@ message TaskSubscriptionOperationResponse {
 }
 
 // TaskEvent is the typed payload published on the task-scoped topic
-// `tk.{workspace}.{task_id}.events` and delivered downstream to subscribers.
+// `tk::{workspace}::{task_id}::events` and delivered downstream to subscribers.
 message TaskEvent {
   string task_id = 1;
   int64 emitted_at_unix_ms = 2;

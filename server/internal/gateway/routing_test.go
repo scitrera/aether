@@ -899,7 +899,7 @@ func TestSetupClientSubscriptions_DuplicateSubscriptionIgnored(t *testing.T) {
 		t.Errorf("expected 1 exclusive subscription after duplicate call, got %d", exclusiveCount)
 	}
 	// The shared Subscribe call may be deduplicated at the ClientSession level
-	// (HasSubscription guard). Agents get ga.{workspace} + pg.{workspace} = 2 shared.
+	// (HasSubscription guard). Agents get ga::{workspace} + pg::{workspace} = 2 shared.
 	if sharedCount != 2 {
 		t.Errorf("expected 2 shared subscriptions after duplicate call, got %d", sharedCount)
 	}

@@ -493,15 +493,14 @@ func parseStoredSessionIdentity(identityStr string) (models.Identity, error) {
 		}
 		return identity, nil
 	case "wfe":
-		return models.Identity{
-			Type:           models.PrincipalWorkflowEngine,
-			Implementation: strings.Join(parts[1:], "."),
-		}, nil
+		// Singleton invariant: WFE identity always collapses regardless of
+		// the trailing tokens (e.g. legacy "wfe::{impl}" forms in old
+		// stored sessions).
+		return models.Identity{Type: models.PrincipalWorkflowEngine}, nil
 	case "metrics":
-		return models.Identity{
-			Type:           models.PrincipalMetricsBridge,
-			Implementation: strings.Join(parts[1:], "."),
-		}, nil
+		// Singleton invariant: MetricsBridge mirrors WFE — Implementation
+		// is ignored, identity always collapses to the singleton.
+		return models.Identity{Type: models.PrincipalMetricsBridge}, nil
 	default:
 		return models.Identity{}, fmt.Errorf("unsupported stored identity %q", identityStr)
 	}

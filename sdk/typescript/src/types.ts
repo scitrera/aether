@@ -349,7 +349,7 @@ export interface KVDecrementIfOptions {
 
 /**
  * A progress update received from an agent or task.
- * Delivered via the pg.{workspace} RabbitMQ stream with server-side filtering.
+ * Delivered via the pg::{workspace} RabbitMQ stream with server-side filtering.
  */
 export interface ProgressUpdate {
   /** The identity of the reporting agent/task (topic format). */

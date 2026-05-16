@@ -237,19 +237,19 @@ func TestIdentity_String(t *testing.T) {
 			want: "wfe::shard0",
 		},
 		{
-			name: "metrics bridge with implementation",
+			name: "metrics bridge with implementation collapses to shard0 singleton",
 			identity: Identity{
 				Type:           PrincipalMetricsBridge,
 				Implementation: "prometheus",
 			},
-			want: "metrics::prometheus",
+			want: "metrics::shard0",
 		},
 		{
-			name: "metrics bridge without implementation",
+			name: "metrics bridge without implementation collapses to shard0 singleton",
 			identity: Identity{
 				Type: PrincipalMetricsBridge,
 			},
-			want: "metrics::default",
+			want: "metrics::shard0",
 		},
 	}
 

@@ -731,8 +731,8 @@ func (s *GatewayServer) triggerOrchestration(ctx context.Context, sender models.
 	}
 
 	// Parse identity from topic
-	// ag.{workspace}.{impl}.{spec}
-	// tu.{workspace}.{impl}.{unique_spec}
+	// ag::{workspace}::{impl}::{spec}
+	// tu::{workspace}::{impl}::{unique_spec}
 	identity, err := models.ParseIdentity(targetTopic)
 	if err != nil {
 		span.RecordError(err)

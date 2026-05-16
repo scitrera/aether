@@ -110,11 +110,10 @@ func (i Identity) String() string {
 		// sharding.TotalShards() > 1.
 		return "wfe" + IdentitySep + "shard0"
 	case PrincipalMetricsBridge:
-		// Metrics bridges use Implementation to distinguish instances
-		if i.Implementation != "" {
-			return "metrics" + IdentitySep + i.Implementation
-		}
-		return "metrics" + IdentitySep + "default"
+		// Single-MB invariant: matches the WFE sharding model. The
+		// Implementation field is ignored for now; future multi-shard support
+		// can include the shard index here once sharding.TotalShards() > 1.
+		return "metrics" + IdentitySep + "shard0"
 	case PrincipalBridge:
 		// Bridges use their topic format for uniqueness
 		return i.ToTopic()
@@ -243,20 +242,17 @@ func ParseIdentity(identityStr string) (Identity, error) {
 		if len(parts) != 2 {
 			return identity, fmt.Errorf("invalid workflow engine identity format: expected 2 parts, got %d", len(parts))
 		}
-		identity = Identity{
-			Type:           PrincipalWorkflowEngine,
-			Implementation: parts[1],
-		}
+		identity = Identity{Type: PrincipalWorkflowEngine}
 
 	case "metrics":
-		// metrics::impl — matches Identity.String() for PrincipalMetricsBridge
+		// metrics::shard0 — canonical singleton form. Any metrics::{anything}
+		// is accepted for backward compat (legacy stored grants used
+		// metrics::{implementation}) but always collapses to the singleton
+		// identity at runtime.
 		if len(parts) != 2 {
 			return identity, fmt.Errorf("invalid metrics bridge identity format: expected 2 parts, got %d", len(parts))
 		}
-		identity = Identity{
-			Type:           PrincipalMetricsBridge,
-			Implementation: parts[1],
-		}
+		identity = Identity{Type: PrincipalMetricsBridge}
 
 	default:
 		return identity, fmt.Errorf("unknown identity prefix: %s", prefix)

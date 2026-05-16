@@ -282,7 +282,7 @@ await kv.putSync({
 
 ## Progress Reporting
 
-Agents and tasks report progress through the `pg.{workspace}` stream. Users subscribed to the workspace receive filtered updates:
+Agents and tasks report progress through the `pg::{workspace}` stream. Users subscribed to the workspace receive filtered updates:
 
 ```typescript
 agent.reportProgress({
@@ -467,15 +467,15 @@ Aether supports 8 principal types. The TypeScript SDK provides dedicated client 
 
 | Type | Client Class | Description | Topic Format |
 |------|-------------|-------------|-------------|
-| Agent | `AgentClient` | Persistent entity | `ag.{workspace}.{impl}.{spec}` |
-| UniqueTask | `TaskClient` (with specifier) | Named task | `tu.{workspace}.{impl}.{spec}` |
-| NonUniqueTask | `TaskClient` (no specifier) | Ephemeral task | `ta.{workspace}.{impl}.{id}` |
-| User | `UserClient` | Browser session | `us.{userId}.{windowId}` |
+| Agent | `AgentClient` | Persistent entity | `ag::{workspace}::{impl}::{spec}` |
+| UniqueTask | `TaskClient` (with specifier) | Named task | `tu::{workspace}::{impl}::{spec}` |
+| NonUniqueTask | `TaskClient` (no specifier) | Ephemeral task | `ta::{workspace}::{impl}::{id}` |
+| User | `UserClient` | Browser session | `us::{userId}::{windowId}` |
 | Orchestrator | `OrchestratorClient` | Compute provisioner | receives `TaskAssignment` |
 | WorkflowEngine | `WorkflowEngineClient` | Event processor (singleton) | subscribes to `event.*` |
 | MetricsBridge | `MetricsBridgeClient` | Telemetry collector (singleton) | subscribes to `metric.*` |
-| Bridge | `BridgeClient` | Cross-workspace relay | `br.{impl}.{spec}` |
-| Service | _(no dedicated client)_ | Sidecar service proxy | `sv.{impl}.{spec}` |
+| Bridge | `BridgeClient` | Cross-workspace relay | `br::{impl}::{spec}` |
+| Service | _(no dedicated client)_ | Sidecar service proxy | `sv::{impl}::{spec}` |
 
 > **Known gap:** The TypeScript SDK does not currently have a dedicated `ServiceClient`. The `Service` principal type represents sidecar services addressable via the HTTP proxy feature. If you need to connect as a service principal, use `BridgeClient` (cross-workspace) or `AgentClient` (workspace-scoped) as a workaround and set your identity fields to match the service's `impl`/`spec`. A dedicated `ServiceClient` is planned for a future release.
 
@@ -642,7 +642,7 @@ agent.switchWorkspace("staging");
 // agent.workspace === "staging"
 
 // UserClient — declares the user's active app workspace to the gateway.
-// Users do not encode a workspace in their identity (topic: us.{userId}.{windowId}),
+// Users do not encode a workspace in their identity (topic: us::{userId}::{windowId}),
 // so calling switchWorkspace right after connect() is recommended to ensure
 // server-side session state has the correct workspace for task-authority scoping.
 await user.connect();
@@ -674,6 +674,14 @@ The connection itself IS the distributed lock AND the heartbeat. When the gRPC s
 
 See the [Go SDK documentation](../go/aether/doc.go) and [Python SDK](../python-client/) for additional API patterns. This TypeScript SDK follows the same conventions.
 
+
 ## License
 
-Apache License, Version 2.0
+Copyright 2025+ scitrera.ai. Licensed under the Apache License, Version 2.0.
+
+## Links
+
+- [GitHub Repository](https://github.com/scitrera/aether)
+- [Documentation](https://github.com/scitrera/aether#readme)
+- [Issue Tracker](https://github.com/scitrera/aether/issues)
+

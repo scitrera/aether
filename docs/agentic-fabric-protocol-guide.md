@@ -462,7 +462,7 @@ await client.wait_for_task(
 3. `taskStore.PauseTask` performs the validated transition
    `running → waiting_dependency`, persists `WaitSpec`, stamps `PausedAt`.
 4. `publishStatusChange` emits a `TaskStatusChangedEvent` on the
-   `tk.{workspace}.{task_id}.events` topic for any Phase 4 subscribers.
+   `tk::{workspace}::{task_id}::events` topic for any Phase 4 subscribers.
 5. When `child` reaches a terminal status, `TaskAssignmentService.wakeDependents`
    (`task_assignment.go:980-1022`) scans `ListTasksWaitingOnDependency(child.task_id)`,
    evaluates `shouldWakeParent` (`task_assignment.go:1029-1065`), and on
@@ -920,15 +920,15 @@ subscriptions can demultiplex.
 
 ### Topic taxonomy
 
-The per-task event topic is `tk.{workspace}.{task_id}.events`. The
+The per-task event topic is `tk::{workspace}::{task_id}::events`. The
 gateway publishes via the `TaskEventPublisher` interface
 (`server/internal/orchestration/task_event_publisher.go:21-26`); a
 nil publisher is treated as no-op so test harnesses and aetherlite
 single-binary mode work unchanged.
 
 This is **distinct from** the legacy workspace-wide progress topic
-`pg.{workspace}`, which fans out `ProgressUpdate`s. The new
-`tk.{workspace}.{task_id}.events` is per-task and carries the full
+`pg::{workspace}`, which fans out `ProgressUpdate`s. The new
+`tk::{workspace}::{task_id}::events` is per-task and carries the full
 lifecycle / progress / child / authority axis.
 
 ### SDK helpers
@@ -1600,16 +1600,16 @@ the supported set for that agent's sessions.
 useful for tooling and future AgentCard. `negotiated_extensions` is
 this-session-only.
 
-### 10.13 `tk.{workspace}.{task_id}.events` vs `pg.{workspace}` topic
+### 10.13 `tk::{workspace}::{task_id}::events` vs `pg::{workspace}` topic
 
-| | `pg.{workspace}` (old) | `tk.{workspace}.{task_id}.events` (Phase 4) |
+| | `pg::{workspace}` (old) | `tk::{workspace}::{task_id}::events` (Phase 4) |
 |---|---|---|
 | Scope | Workspace-wide firehose | Per-task |
 | Carries | `ProgressUpdate` only | `TaskStatusChangedEvent`, `TaskProgressEvent`, `TaskChildLifecycleEvent`, `TaskAuthorityRequestEventRelay` |
 | Filtering | Server-side recipient filter | Topic itself is per-task; subscribers pick which tasks |
 
-**Rule of thumb**: `pg.{workspace}` is for "show me all progress in
-this workspace". `tk.{workspace}.{task_id}.events` is for "show me
+**Rule of thumb**: `pg::{workspace}` is for "show me all progress in
+this workspace". `tk::{workspace}::{task_id}::events` is for "show me
 everything happening to this specific task".
 
 ### 10.14 ACL `CheckAccess` (existing) vs `PrefixIndex` (Phase 5)

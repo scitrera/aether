@@ -100,7 +100,7 @@ Proposed identity shape:
 
 Proposed canonical identity string:
 
-- `sv.{implementation}.{specifier}`
+- `sv::{implementation}::{specifier}`
 
 Proposed behavior:
 

@@ -25,12 +25,12 @@ import (
 // a unique specifier. Tasks can be:
 //
 //   - Unique tasks: Have a specifier, can only have one active connection
-//     at a time (similar to agents). Topic format: tu.{workspace}.{impl}.{spec}
+//     at a time (similar to agents). Topic format: tu::{workspace}::{impl}::{spec}
 //
 //   - Non-unique tasks: No specifier, receive server-assigned IDs, multiple
 //     instances can run simultaneously. They subscribe to both their specific
-//     topic (ta.{workspace}.{impl}.{id}) and a broadcast topic
-//     (tb.{workspace}.{impl}) for work claiming.
+//     topic (ta::{workspace}::{impl}::{id}) and a broadcast topic
+//     (tb::{workspace}::{impl}) for work claiming.
 //
 // TaskClient embeds BaseClient and adds task-specific functionality:
 //   - Identity management (workspace, implementation, specifier)
@@ -203,11 +203,11 @@ func (c *TaskClient) setAssignedID(id string) {
 //
 // For unique tasks:
 //
-//	Format: tu.{workspace}.{implementation}.{specifier}
+//	Format: tu::{workspace}::{implementation}::{specifier}
 //
 // For non-unique tasks:
 //
-//	Format: ta.{workspace}.{implementation}.{assignedID}
+//	Format: ta::{workspace}::{implementation}::{assignedID}
 //
 // Note: For non-unique tasks, this returns an empty string until the
 // server assigns an ID upon connection.
@@ -235,7 +235,7 @@ func (c *TaskClient) Topic() string {
 
 // BroadcastTopic returns the broadcast topic for this task's implementation.
 //
-// Format: tb.{workspace}.{implementation}
+// Format: tb::{workspace}::{implementation}
 //
 // This topic is used for work claiming by non-unique tasks. Messages sent
 // to this topic are load-balanced across all available workers of this
@@ -309,10 +309,10 @@ func (c *TaskClient) SendToAgentWithType(workspace, implementation, specifier st
 // SendToTask sends a message to a specific task.
 //
 // For unique tasks (with specifier):
-//   - Uses tu.{workspace}.{implementation}.{specifier} topic
+//   - Uses tu::{workspace}::{implementation}::{specifier} topic
 //
 // For non-unique tasks (empty specifier):
-//   - Uses tb.{workspace}.{implementation} broadcast topic for load balancing
+//   - Uses tb::{workspace}::{implementation} broadcast topic for load balancing
 //
 // Parameters:
 //   - workspace: Target task's workspace

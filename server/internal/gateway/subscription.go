@@ -300,7 +300,7 @@ func (s *GatewayServer) setupClientSubscriptions(client *ClientSession) error {
 		// Subscribe to the per-user progress topic for targeted (cross-workspace)
 		// progress delivery. Agents publishing chat/app-kind progress set
 		// ProgressReport.recipient to either us::{user}::{window} (window-
-		// specific) or us::{user} (all windows); both publish to pg.us.{user}.
+		// specific) or us::{user} (all windows); both publish to pg::us::{user}.
 		// Each window's filter handler decides whether to deliver based on the
 		// recipient form. Shared subscription within the gateway — local
 		// fan-out dispatches each Rabbit message to every subscribed window
@@ -316,7 +316,7 @@ func (s *GatewayServer) setupClientSubscriptions(client *ClientSession) error {
 			}
 		}
 		// Subscribe to workspace-scoped topics if workspace is set (shared, no offset tracking)
-		// This includes gu.{workspace}, uw.{user}.{workspace}, and pg.{workspace}
+		// This includes gu::{workspace}, uw::{user}::{workspace}, and pg::{workspace}
 		if identity.Workspace != "" {
 			if err := s.subscribeUserToWorkspaceTopics(client, identity.Workspace); err != nil {
 				logging.Logger.Warn().Err(err).Msg("failed to subscribe to workspace topics")

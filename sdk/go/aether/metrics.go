@@ -188,10 +188,10 @@ func (c *MetricsBridgeClient) SendResponseToAgent(workspace, implementation, spe
 // Use this when you need to acknowledge receipt of metrics from a specific task.
 //
 // For unique tasks (with specifier):
-//   - Uses tu.{workspace}.{implementation}.{specifier} topic
+//   - Uses tu::{workspace}::{implementation}::{specifier} topic
 //
 // For non-unique tasks (empty specifier):
-//   - Uses tb.{workspace}.{implementation} broadcast topic
+//   - Uses tb::{workspace}::{implementation} broadcast topic
 //
 // Parameters:
 //   - workspace: Target task's workspace

@@ -48,10 +48,10 @@ export interface TaskClientOptions extends AetherClientOptions {
  *
  * Tasks come in two flavors:
  * - **Unique tasks** (with specifier): Persistent identity like agents,
- *   only one connection at a time. Topic: tu.{workspace}.{impl}.{spec}
+ *   only one connection at a time. Topic: tu::{workspace}::{impl}::{spec}
  * - **Non-unique tasks** (empty specifier): Server-assigned ID, multiple
- *   instances allowed. Subscribe to both ta.{workspace}.{impl}.{id} and
- *   the shared tb.{workspace}.{impl} broadcast for work claiming.
+ *   instances allowed. Subscribe to both ta::{workspace}::{impl}::{id} and
+ *   the shared tb::{workspace}::{impl} broadcast for work claiming.
  *
  * @example
  * ```typescript
@@ -114,8 +114,8 @@ export class TaskClient extends AetherClient {
 
   /**
    * Returns this task's topic address.
-   * For unique tasks: tu.{workspace}.{impl}.{spec}
-   * For non-unique tasks: returns the broadcast topic tb.{workspace}.{impl}
+   * For unique tasks: tu::{workspace}::{impl}::{spec}
+   * For non-unique tasks: returns the broadcast topic tb::{workspace}::{impl}
    * (the actual instance topic is assigned by the server).
    */
   get topic(): string {

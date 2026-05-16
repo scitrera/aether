@@ -118,18 +118,18 @@ cd server
 
 | Prefix | Format | Description |
 |---|---|---|
-| `ag` | `ag.{workspace}.{impl}.{spec}` | Specific agent instance |
-| `tu` | `tu.{workspace}.{impl}.{spec}` | Unique task (named) |
-| `ta` | `ta.{workspace}.{impl}.{id}` | Non-unique task instance (server-assigned ID) |
-| `tb` | `tb.{workspace}.{impl}` | Task broadcast (load-balancing) |
-| `us` | `us.{user_id}.{window_id}` | User window-specific |
-| `uw` | `uw.{user_id}.{workspace}` | User workspace-scoped |
-| `ga` | `ga.{workspace}` | Global agent broadcast |
-| `gu` | `gu.{workspace}` | Global user broadcast |
-| `pg` | `pg.{workspace}` | Progress updates (server-side recipient filtering) |
+| `ag` | `ag::{workspace}::{impl}::{spec}` | Specific agent instance |
+| `tu` | `tu::{workspace}::{impl}::{spec}` | Unique task (named) |
+| `ta` | `ta::{workspace}::{impl}::{id}` | Non-unique task instance (server-assigned ID) |
+| `tb` | `tb::{workspace}::{impl}` | Task broadcast (load-balancing) |
+| `us` | `us::{user_id}::{window_id}` | User window-specific |
+| `uw` | `uw::{user_id}::{workspace}` | User workspace-scoped |
+| `ga` | `ga::{workspace}` | Global agent broadcast |
+| `gu` | `gu::{workspace}` | Global user broadcast |
+| `pg` | `pg::{workspace}` | Progress updates (server-side recipient filtering) |
 | `event.*` | Write: `event.{workspace}` (gateway rewrites to `event::receiver{shard}`); Subscribe (WE): `event::receiver0` | Workflow Engine fan-in; today 1 shard (`event::receiver0`) |
 | `metric.*` | Write: `metric.{workspace}` (gateway rewrites to `metric::receiver{shard}`); Subscribe (MB): `metric::receiver0` | Metrics Bridge fan-in; today 1 shard (`metric::receiver0`) |
-| `br` | `br.{impl}.{spec}` | Bridge (cross-workspace messaging integration) |
+| `br` | `br::{impl}::{spec}` | Bridge (cross-workspace messaging integration) |
 
 ### Connection Flow
 
@@ -172,7 +172,7 @@ An active gRPC stream connection represents both the distributed lock for that i
 ### Identity Uniqueness
 - **Agents and Unique Tasks:** Globally unique. Two clients cannot connect with the same identity.
 - **Non-unique Tasks:** Multiple connections allowed. Each gets a server-generated ID and subscribes to both `ta.*` (direct) and `tb.*` (broadcast) topics.
-- **Users:** Unique per window (`us.{user_id}.{window_id}`), allowing multiple browser tabs.
+- **Users:** Unique per window (`us::{user_id}::{window_id}`), allowing multiple browser tabs.
 
 ### Message Routing Permissions
 | Sender | Can Send To | Cannot Send To |

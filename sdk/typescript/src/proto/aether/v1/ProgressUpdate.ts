@@ -7,7 +7,7 @@ import type { Long } from '@grpc/proto-loader';
 /**
  * ProgressUpdate is sent downstream to subscribers with progress from agents/tasks.
  * Contains the original report plus server-added metadata. Routed through
- * the pg.{workspace} RabbitMQ stream with server-side recipient filtering.
+ * the pg::{workspace} RabbitMQ stream with server-side recipient filtering.
  */
 export interface ProgressUpdate {
   /**
@@ -67,7 +67,7 @@ export interface ProgressUpdate {
 /**
  * ProgressUpdate is sent downstream to subscribers with progress from agents/tasks.
  * Contains the original report plus server-added metadata. Routed through
- * the pg.{workspace} RabbitMQ stream with server-side recipient filtering.
+ * the pg::{workspace} RabbitMQ stream with server-side recipient filtering.
  */
 export interface ProgressUpdate__Output {
   /**

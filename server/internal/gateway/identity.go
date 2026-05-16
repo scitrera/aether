@@ -53,13 +53,13 @@ func (m MTLSMode) String() string {
 	return string(m)
 }
 
-// ExtractIdentityFromCertificate extracts identity from client certificate CN
-// Expected CN format: {type}.{workspace}.{impl}.{spec}
+// ExtractIdentityFromCertificate extracts identity from client certificate CN.
+// Expected CN format: {type}::{...} using the canonical identity separator ("::").
 // Examples:
-//   - ag.production.python-worker.instance-1
-//   - ta.default.data-processor.job-123
-//   - us.alice.window-1
-//   - sv.frontend-api.pod-1
+//   - ag::production::python-worker::instance-1
+//   - ta::default::data-processor::job-123
+//   - us::alice::window-1
+//   - sv::frontend-api::pod-1
 func ExtractIdentityFromCertificate(ctx context.Context) (models.Identity, error) {
 	p, ok := peer.FromContext(ctx)
 	if !ok {
@@ -85,8 +85,8 @@ func ExtractIdentityFromCertificate(ctx context.Context) (models.Identity, error
 	return ParseIdentityFromCN(cert.Subject.CommonName)
 }
 
-// ParseIdentityFromCN parses a certificate CN into an Identity
-// CN format: {type}.{workspace}.{impl}.{spec}
+// ParseIdentityFromCN parses a certificate CN into an Identity.
+// CN format: {type}::{...}
 // Examples:
 //   - ag::production::python-worker::instance-1
 //   - ta::default::data-processor::job-123
@@ -94,6 +94,9 @@ func ExtractIdentityFromCertificate(ctx context.Context) (models.Identity, error
 //   - sv::frontend-api::pod-1
 //   - ga::default
 //   - tb::default::worker
+//   - orc::agent-orchestrator[::cluster-1]
+//   - wfe::shard0
+//   - metrics::shard0
 //
 // Uses the identity-string separator ("::") so certificate CNs align with
 // Aether topic names and the underlying Identity representation. Field values
@@ -101,16 +104,6 @@ func ExtractIdentityFromCertificate(ctx context.Context) (models.Identity, error
 // is the boundary.
 func ParseIdentityFromCN(cn string) (models.Identity, error) {
 	identity := models.Identity{}
-
-	// Single-token CNs (wf, mb) don't use the separator at all.
-	if cn == "wf" {
-		identity.Type = models.PrincipalWorkflowEngine
-		return identity, nil
-	}
-	if cn == "mb" {
-		identity.Type = models.PrincipalMetricsBridge
-		return identity, nil
-	}
 
 	parts := strings.Split(cn, models.IdentitySep)
 	if len(parts) < 2 {
@@ -181,15 +174,34 @@ func ParseIdentityFromCN(cn string) (models.Identity, error) {
 		identity.Implementation = parts[2]
 		identity.Specifier = "*"
 
-	case "or": // Orchestrator
+	case "orc": // Orchestrator
+		// orc::impl[::spec] — matches Identity.String() for PrincipalOrchestrator.
 		if len(parts) < 2 || len(parts) > 3 {
-			return models.Identity{}, fmt.Errorf("invalid orchestrator CN format: %s", cn)
+			return models.Identity{}, fmt.Errorf("invalid orchestrator CN format: %s (expected: orc::impl[::spec])", cn)
 		}
 		identity.Type = models.PrincipalOrchestrator
 		identity.Implementation = parts[1]
 		if len(parts) == 3 {
 			identity.Specifier = parts[2]
 		}
+
+	case "wfe": // Workflow engine
+		// wfe::shard0 — canonical singleton form. Any wfe::{anything} is
+		// accepted but always collapses to the singleton identity at
+		// runtime, matching Identity.String() for PrincipalWorkflowEngine.
+		if len(parts) != 2 {
+			return models.Identity{}, fmt.Errorf("invalid workflow engine CN format: %s (expected: wfe::shard0)", cn)
+		}
+		identity.Type = models.PrincipalWorkflowEngine
+
+	case "metrics": // Metrics bridge
+		// metrics::shard0 — canonical singleton form, matches WFE sharding
+		// model. Any metrics::{anything} collapses to the singleton
+		// identity at runtime.
+		if len(parts) != 2 {
+			return models.Identity{}, fmt.Errorf("invalid metrics bridge CN format: %s (expected: metrics::shard0)", cn)
+		}
+		identity.Type = models.PrincipalMetricsBridge
 
 	case "br": // Bridge
 		if len(parts) != 3 {
@@ -208,7 +220,7 @@ func ParseIdentityFromCN(cn string) (models.Identity, error) {
 		identity.Specifier = parts[2]
 
 	default:
-		return models.Identity{}, fmt.Errorf("unknown principal type: %s (expected: ag, ta, tu, us, ga, gu, tb, wf, mb, or, br, sv)", parts[0])
+		return models.Identity{}, fmt.Errorf("unknown principal type: %s (expected: ag, ta, tu, us, ga, gu, tb, wfe, metrics, orc, br, sv)", parts[0])
 	}
 
 	return identity, nil
@@ -291,12 +303,13 @@ func IsAnonymousCert(ctx context.Context) bool {
 // The specific identity details (workspace, impl, specifier, etc.) are provided in InitConnection.
 //
 // Expected CN formats:
-//   - ag.*, ta.*, tu.*, tb.*, ga.* -> PrincipalTask or PrincipalAgent
-//   - us.*, gu.* -> PrincipalUser
-//   - wf -> PrincipalWorkflowEngine
-//   - mb -> PrincipalMetricsBridge
-//   - or.* -> PrincipalOrchestrator
-//   - sv.* -> PrincipalService
+//   - ag::*, ta::*, tu::*, tb::*, ga::*  -> PrincipalTask or PrincipalAgent
+//   - us::*, gu::*                       -> PrincipalUser
+//   - wfe::*                             -> PrincipalWorkflowEngine
+//   - metrics::*                         -> PrincipalMetricsBridge
+//   - orc::*                             -> PrincipalOrchestrator
+//   - br::*                              -> PrincipalBridge
+//   - sv::*                              -> PrincipalService
 //
 // The CN may be partial (e.g., "ag" or "ta::development") - only the principal type prefix is validated.
 func ExtractPrincipalTypeFromCertificate(ctx context.Context) (models.PrincipalType, error) {
@@ -326,8 +339,9 @@ func ExtractPrincipalTypeFromCertificate(ctx context.Context) (models.PrincipalT
 
 // parsePrincipalTypeFromCN extracts only the principal type from a CN prefix.
 // It handles partial CNs that only specify the type prefix (e.g., "ag", "ta::development").
+// Splits on the canonical identity separator ("::"), matching ParseIdentityFromCN.
 func parsePrincipalTypeFromCN(cn string) (models.PrincipalType, error) {
-	parts := strings.Split(cn, ".")
+	parts := strings.Split(cn, models.IdentitySep)
 
 	if len(parts) == 0 {
 		return "", fmt.Errorf("empty CN")
@@ -340,18 +354,18 @@ func parsePrincipalTypeFromCN(cn string) (models.PrincipalType, error) {
 		return models.PrincipalTask, nil
 	case "us", "gu": // User or Global User broadcast
 		return models.PrincipalUser, nil
-	case "wf": // Workflow engine
+	case "wfe": // Workflow engine
 		return models.PrincipalWorkflowEngine, nil
-	case "mb": // Metrics bridge
+	case "metrics": // Metrics bridge
 		return models.PrincipalMetricsBridge, nil
-	case "or": // Orchestrator
+	case "orc": // Orchestrator
 		return models.PrincipalOrchestrator, nil
 	case "br": // Bridge
 		return models.PrincipalBridge, nil
 	case "sv": // Service
 		return models.PrincipalService, nil
 	default:
-		return "", fmt.Errorf("unknown principal type prefix: %s (expected: ag, ta, tu, tb, us, wf, mb, or, br, sv)", parts[0])
+		return "", fmt.Errorf("unknown principal type prefix: %s (expected: ag, ta, tu, tb, us, gu, ga, wfe, metrics, orc, br, sv)", parts[0])
 	}
 }
 

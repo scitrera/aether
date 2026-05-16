@@ -45,28 +45,28 @@ func TestAgentTopic(t *testing.T) {
 			workspace:      "prod",
 			implementation: "worker",
 			specifier:      "inst-1",
-			want:           "ag.prod.worker.inst-1",
+			want:           "ag::prod::worker::inst-1",
 		},
 		{
 			name:           "agent with dots in implementation",
 			workspace:      "prod",
 			implementation: "claude.code",
 			specifier:      "inst-1",
-			want:           "ag.prod.claude.code.inst-1",
+			want:           "ag::prod::claude.code::inst-1",
 		},
 		{
 			name:           "agent with dashes",
 			workspace:      "staging-env",
 			implementation: "data-processor",
 			specifier:      "instance-42",
-			want:           "ag.staging-env.data-processor.instance-42",
+			want:           "ag::staging-env::data-processor::instance-42",
 		},
 		{
 			name:           "agent with underscores",
 			workspace:      "dev_test",
 			implementation: "batch_worker",
 			specifier:      "worker_1",
-			want:           "ag.dev_test.batch_worker.worker_1",
+			want:           "ag::dev_test::batch_worker::worker_1",
 		},
 	}
 
@@ -89,12 +89,12 @@ func TestGlobalAgentsTopic(t *testing.T) {
 		{
 			name:      "simple workspace",
 			workspace: "prod",
-			want:      "ga.prod",
+			want:      "ga::prod",
 		},
 		{
 			name:      "workspace with dash",
 			workspace: "staging-env",
-			want:      "ga.staging-env",
+			want:      "ga::staging-env",
 		},
 	}
 
@@ -121,14 +121,14 @@ func TestUniqueTaskTopic(t *testing.T) {
 			workspace:      "prod",
 			implementation: "report-generator",
 			specifier:      "daily-report",
-			want:           "tu.prod.report-generator.daily-report",
+			want:           "tu::prod::report-generator::daily-report",
 		},
 		{
 			name:           "unique task with dots",
 			workspace:      "staging",
 			implementation: "my.complex.impl",
 			specifier:      "task-id",
-			want:           "tu.staging.my.complex.impl.task-id",
+			want:           "tu::staging::my.complex.impl::task-id",
 		},
 	}
 
@@ -155,14 +155,14 @@ func TestTaskTopic(t *testing.T) {
 			workspace:      "prod",
 			implementation: "data-processor",
 			id:             "abc123",
-			want:           "ta.prod.data-processor.abc123",
+			want:           "ta::prod::data-processor::abc123",
 		},
 		{
 			name:           "non-unique task with uuid",
 			workspace:      "dev",
 			implementation: "batch-job",
 			id:             "uuid-123-456",
-			want:           "ta.dev.batch-job.uuid-123-456",
+			want:           "ta::dev::batch-job::uuid-123-456",
 		},
 	}
 
@@ -187,13 +187,13 @@ func TestTaskBroadcastTopic(t *testing.T) {
 			name:           "simple broadcast topic",
 			workspace:      "prod",
 			implementation: "data-processor",
-			want:           "tb.prod.data-processor",
+			want:           "tb::prod::data-processor",
 		},
 		{
 			name:           "broadcast with dashes",
 			workspace:      "staging-env",
 			implementation: "batch-worker",
-			want:           "tb.staging-env.batch-worker",
+			want:           "tb::staging-env::batch-worker",
 		},
 	}
 
@@ -218,13 +218,13 @@ func TestUserTopic(t *testing.T) {
 			name:     "simple user topic",
 			userID:   "alice",
 			windowID: "tab-1",
-			want:     "us.alice.tab-1",
+			want:     "us::alice::tab-1",
 		},
 		{
 			name:     "user with uuid",
 			userID:   "user-456",
 			windowID: "window-1",
-			want:     "us.user-456.window-1",
+			want:     "us::user-456::window-1",
 		},
 	}
 
@@ -249,13 +249,13 @@ func TestUserWorkspaceTopic(t *testing.T) {
 			name:      "simple user workspace topic",
 			userID:    "alice",
 			workspace: "prod",
-			want:      "uw.alice.prod",
+			want:      "uw::alice::prod",
 		},
 		{
 			name:      "user workspace with dashes",
 			userID:    "user-123",
 			workspace: "staging-env",
-			want:      "uw.user-123.staging-env",
+			want:      "uw::user-123::staging-env",
 		},
 	}
 
@@ -278,12 +278,12 @@ func TestGlobalUsersTopic(t *testing.T) {
 		{
 			name:      "simple workspace",
 			workspace: "prod",
-			want:      "gu.prod",
+			want:      "gu::prod",
 		},
 		{
 			name:      "workspace with dash",
 			workspace: "staging-env",
-			want:      "gu.staging-env",
+			want:      "gu::staging-env",
 		},
 	}
 
@@ -391,14 +391,14 @@ func TestCreateTopicTask(t *testing.T) {
 			workspace:      "prod",
 			implementation: "processor",
 			specifier:      "unique-1",
-			want:           "tu.prod.processor.unique-1",
+			want:           "tu::prod::processor::unique-1",
 		},
 		{
 			name:           "non-unique task without specifier",
 			workspace:      "prod",
 			implementation: "processor",
 			specifier:      "",
-			want:           "ta.prod.processor.",
+			want:           "ta::prod::processor::",
 		},
 	}
 

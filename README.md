@@ -198,7 +198,7 @@ Every connection authenticates as exactly one of eight principal types.
 | **Workflow Engine** | One active connection       | N/A (Future: sharding)                              | Sole subscriber to `event.*` topics                                          |
 | **Metrics Bridge**  | One active connection       | N/A (Future: sharding)                              | Sole subscriber to `metric.*` topics; receive-only                           |
 | **Orchestrator**    | One per specifier           | `implementation` + `specifier`                      | Receives `TaskAssignment` messages to spin up compute                        |
-| **Service**         | One per specifier           | `implementation` + `specifier`                      | Cross-workspace HTTP-over-Aether proxy; addressable via `sv.{impl}.{spec}`   |
+| **Service**         | One per specifier           | `implementation` + `specifier`                      | Cross-workspace HTTP-over-Aether proxy; addressable via `sv::{impl}::{spec}`   |
 | **Bridge**          | One per specifier           | `implementation` + `specifier`                      | Cross-workspace messaging integration; sends to any workspace subject to ACL |
 
 ## Topic Schema
@@ -207,19 +207,19 @@ Messages are routed by a structured topic prefix.
 
 | Prefix     | Target           | Format                                | Description                                           |
 |------------|------------------|---------------------------------------|-------------------------------------------------------|
-| `ag`       | Agent            | `ag.{workspace}.{impl}.{spec}`        | Specific agent instance                               |
-| `tu`       | Unique Task      | `tu.{workspace}.{impl}.{unique_spec}` | Named task instance                                   |
-| `ta`       | Assigned Task    | `ta.{workspace}.{impl}.{task_id}`     | Server-assigned non-unique task instance              |
-| `tb`       | Task Broadcast   | `tb.{workspace}.{impl}`               | Load-balancing topic; all workers of a type compete   |
-| `us`       | User (Window)    | `us.{user_id}.{window_id}`            | Specific browser window                               |
-| `uw`       | User (Workspace) | `uw.{user_id}.{workspace}`            | User scoped to a workspace                            |
-| `ga`       | Global Agents    | `ga.{workspace}`                      | Broadcast to all agents in a workspace                |
-| `gu`       | Global Users     | `gu.{workspace}`                      | Broadcast to all users in a workspace                 |
-| `pg`       | Progress         | `pg.{workspace}`                      | Progress updates with server-side recipient filtering |
+| `ag`       | Agent            | `ag::{workspace}::{impl}::{spec}`        | Specific agent instance                               |
+| `tu`       | Unique Task      | `tu::{workspace}::{impl}::{unique_spec}` | Named task instance                                   |
+| `ta`       | Assigned Task    | `ta::{workspace}::{impl}::{task_id}`     | Server-assigned non-unique task instance              |
+| `tb`       | Task Broadcast   | `tb::{workspace}::{impl}`               | Load-balancing topic; all workers of a type compete   |
+| `us`       | User (Window)    | `us::{user_id}::{window_id}`            | Specific browser window                               |
+| `uw`       | User (Workspace) | `uw::{user_id}::{workspace}`            | User scoped to a workspace                            |
+| `ga`       | Global Agents    | `ga::{workspace}`                      | Broadcast to all agents in a workspace                |
+| `gu`       | Global Users     | `gu::{workspace}`                      | Broadcast to all users in a workspace                 |
+| `pg`       | Progress         | `pg::{workspace}`                      | Progress updates with server-side recipient filtering |
 | `event.*`  | Workflow Engine  | `event.{workspace}`                   | Workflow Engine is the sole subscriber                |
 | `metric.*` | Metrics Bridge   | `metric.{workspace}`                  | Metrics Bridge is the sole subscriber                 |
-| `sv`       | Service          | `sv.{impl}.{spec}`                    | Cross-workspace service proxy endpoint                |
-| `br`       | Bridge           | `br.{impl}.{spec}`                    | Cross-workspace messaging bridge endpoint             |
+| `sv`       | Service          | `sv::{impl}::{spec}`                    | Cross-workspace service proxy endpoint                |
+| `br`       | Bridge           | `br::{impl}::{spec}`                    | Cross-workspace messaging bridge endpoint             |
 
 ### Permission Matrix
 

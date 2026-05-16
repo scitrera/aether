@@ -572,7 +572,7 @@ func (s *GatewayServer) SetOrchestrationServices(orchestration *OrchestrationSer
 	}
 
 	// Phase 4 Stage B: wire the gateway as the task-event publisher so
-	// lifecycle transitions fan onto tk.{workspace}.{task_id}.events.
+	// lifecycle transitions fan onto tk::{workspace}::{task_id}::events.
 	if orchestration.TaskService != nil {
 		orchestration.TaskService.SetEventPublisher(s)
 	}

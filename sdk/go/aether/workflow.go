@@ -204,10 +204,10 @@ func (c *WorkflowEngineClient) SendCommandToAgentWithType(workspace, implementat
 // SendCommandToTask sends a control/command message to a specific task.
 //
 // For unique tasks (with specifier):
-//   - Uses tu.{workspace}.{implementation}.{specifier} topic
+//   - Uses tu::{workspace}::{implementation}::{specifier} topic
 //
 // For non-unique tasks (empty specifier):
-//   - Uses tb.{workspace}.{implementation} broadcast topic for load balancing
+//   - Uses tb::{workspace}::{implementation} broadcast topic for load balancing
 //
 // Parameters:
 //   - workspace: Target task's workspace
