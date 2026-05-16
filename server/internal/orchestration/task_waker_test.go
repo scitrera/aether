@@ -282,7 +282,16 @@ func TestTaskWaker_TimeoutWakeToFail(t *testing.T) {
 }
 
 // TestTaskWaker_ScheduledWake: HIBERNATED with ScheduledWakeUnixMs in the
-// past — scan resumes.
+// past — scan transitions the task to pending.
+//
+// Phase 3 Stage B note: HIBERNATED scheduled wakes route through
+// WakeHibernatedTask which targets `pending`, not `running`, so the fresh
+// worker can be spawned by the orchestrator with the prior checkpoint
+// rehydrated. Other waiting states (INPUT/AUTHORITY/DEPENDENCY) still
+// resume directly to `running` because they retain their worker. The
+// task here is non-orchestrated (no TargetImplementation / profile), so
+// it lands in WakeHibernatedTask's "left pending without re-queue"
+// branch — the status flip still happens but no queue entry is inserted.
 func TestTaskWaker_ScheduledWake(t *testing.T) {
 	store, cleanup := newWakerStore(t)
 	defer cleanup()
@@ -307,8 +316,8 @@ func TestTaskWaker_ScheduledWake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if got.Status != tasks.TaskStatusRunning {
-		t.Errorf("scheduled wake: status got %q want running", got.Status)
+	if got.Status != tasks.TaskStatusPending {
+		t.Errorf("scheduled wake: status got %q want pending (Stage B: hibernated wakes -> pending for orchestrator re-spawn)", got.Status)
 	}
 }
 
@@ -544,5 +553,339 @@ func TestTaskWaker_SweepCalledOnce(t *testing.T) {
 	waker.scan(ctx)
 	if got := fake.sweepCalls(); got != 2 {
 		t.Errorf("after second scan: sweep call count=%d want 2", got)
+	}
+}
+
+// =============================================================================
+// Phase 3 Stage B: Hibernation wake (re-queue + handoff metadata)
+// =============================================================================
+
+// buildHibernatedOrchestratedTask seeds an orchestrated task that has been
+// paused into HIBERNATED with the supplied hibernation descriptor. The task is
+// stamped with TargetImplementation + LaunchParams.profile so
+// WakeHibernatedTask considers it orchestrator-spawnable and re-queues it.
+func buildHibernatedOrchestratedTask(t *testing.T, ctx context.Context, store taskstore.Store, hint string, hib *tasks.HibernationDescriptor, scheduledWakeMs int64, timeoutMs int64) *tasks.Task {
+	t.Helper()
+	task := &tasks.Task{
+		TaskID:               fmt.Sprintf("hib-%s-%s", hint, uuid.New().String()),
+		TaskType:             "agent_startup",
+		Workspace:            "_test",
+		AssignmentMode:       tasks.AssignmentModePool,
+		TaskCategory:         tasks.TaskCategoryOrchestrated,
+		TargetImplementation: "test-worker",
+		LaunchParams: map[string]interface{}{
+			"profile": "kubernetes",
+		},
+	}
+	if err := store.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask(%s): %v", hint, err)
+	}
+	if err := store.AssignTask(ctx, task.TaskID, "worker-"+hint); err != nil {
+		t.Fatalf("AssignTask(%s): %v", hint, err)
+	}
+	if err := store.StartTask(ctx, task.TaskID); err != nil {
+		t.Fatalf("StartTask(%s): %v", hint, err)
+	}
+	spec := &tasks.WaitSpec{
+		Reason:              tasks.WaitReasonHibernation,
+		Hibernation:         hib,
+		ScheduledWakeUnixMs: scheduledWakeMs,
+		TimeoutMs:           timeoutMs,
+	}
+	if err := store.PauseTask(ctx, task.TaskID, tasks.TaskStatusHibernated, spec); err != nil {
+		t.Fatalf("PauseTask(%s) -> HIBERNATED: %v", hint, err)
+	}
+	return task
+}
+
+// TestWakeHibernatedTask_HappyPath: a HIBERNATED orchestrated task with a
+// valid descriptor wakes back to pending, captures the descriptor into
+// reserved metadata keys, clears its WaitSpec, and gets a fresh
+// orchestrated_task_queue entry.
+func TestWakeHibernatedTask_HappyPath(t *testing.T) {
+	store, cleanup := newWakerStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	hib := &tasks.HibernationDescriptor{
+		CheckpointKey:   "ckpt-happy",
+		ResumeSessionID: "sess-happy",
+	}
+	wakeAt := time.Now().Add(-1 * time.Second).UnixMilli()
+	task := buildHibernatedOrchestratedTask(t, ctx, store, "happy", hib, wakeAt, 0)
+
+	svc := newWakerService(store)
+	if err := svc.WakeHibernatedTask(ctx, task.TaskID); err != nil {
+		t.Fatalf("WakeHibernatedTask: %v", err)
+	}
+
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask after wake: %v", err)
+	}
+	if got.Status != tasks.TaskStatusPending {
+		t.Errorf("status after wake: got %q want %q", got.Status, tasks.TaskStatusPending)
+	}
+	if got.WaitSpec != nil {
+		t.Errorf("WaitSpec should be cleared after wake; got %+v", got.WaitSpec)
+	}
+	if v, _ := got.Metadata[tasks.MetadataKeyHibernationCheckpointKey].(string); v != "ckpt-happy" {
+		t.Errorf("metadata[%q] = %q want %q", tasks.MetadataKeyHibernationCheckpointKey, v, "ckpt-happy")
+	}
+	if v, _ := got.Metadata[tasks.MetadataKeyHibernationResumeSessionID].(string); v != "sess-happy" {
+		t.Errorf("metadata[%q] = %q want %q", tasks.MetadataKeyHibernationResumeSessionID, v, "sess-happy")
+	}
+
+	// Verify queue re-insertion: PollPendingQueueEntries should yield a row
+	// pointing at our task.
+	entries, err := store.PollPendingQueueEntries(ctx, 10)
+	if err != nil {
+		t.Fatalf("PollPendingQueueEntries: %v", err)
+	}
+	var found bool
+	for _, e := range entries {
+		if e.TaskID == task.TaskID {
+			found = true
+			if e.Profile != "kubernetes" {
+				t.Errorf("queue entry profile = %q want %q", e.Profile, "kubernetes")
+			}
+			if e.TargetImplementation != "test-worker" {
+				t.Errorf("queue entry impl = %q want %q", e.TargetImplementation, "test-worker")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected new orchestrated_task_queue entry for %s, got %d entries", task.TaskID, len(entries))
+	}
+}
+
+// TestWakeHibernatedTask_RejectsNonHibernated: a running (non-hibernated)
+// task is a silent no-op for WakeHibernatedTask. Tests the idempotency
+// guard against concurrent waker/admin races.
+func TestWakeHibernatedTask_RejectsNonHibernated(t *testing.T) {
+	store, cleanup := newWakerStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	task := buildRunningTask(t, ctx, store, "running")
+	svc := newWakerService(store)
+
+	if err := svc.WakeHibernatedTask(ctx, task.TaskID); err != nil {
+		t.Fatalf("WakeHibernatedTask on running task should be a no-op, got err: %v", err)
+	}
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != tasks.TaskStatusRunning {
+		t.Errorf("non-hibernated guard: status got %q want running", got.Status)
+	}
+}
+
+// TestWakeHibernatedTask_NonOrchestrated_LeftPending: a hibernated task with
+// no TargetImplementation / profile cannot be re-queued for the orchestrator.
+// WakeHibernatedTask should flip it to pending and log a warning but not
+// insert a queue entry.
+func TestWakeHibernatedTask_NonOrchestrated_LeftPending(t *testing.T) {
+	store, cleanup := newWakerStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Build a task without LaunchParams / TargetImplementation, then put it
+	// into HIBERNATED via the legal running->hibernated transition.
+	task := buildRunningTask(t, ctx, store, "self-hib")
+	spec := &tasks.WaitSpec{
+		Reason: tasks.WaitReasonHibernation,
+		Hibernation: &tasks.HibernationDescriptor{
+			CheckpointKey: "ckpt-self",
+		},
+	}
+	if err := store.PauseTask(ctx, task.TaskID, tasks.TaskStatusHibernated, spec); err != nil {
+		t.Fatalf("PauseTask -> HIBERNATED: %v", err)
+	}
+
+	svc := newWakerService(store)
+	if err := svc.WakeHibernatedTask(ctx, task.TaskID); err != nil {
+		t.Fatalf("WakeHibernatedTask should warn-but-not-error for non-orchestrated, got: %v", err)
+	}
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != tasks.TaskStatusPending {
+		t.Errorf("status after wake: got %q want %q", got.Status, tasks.TaskStatusPending)
+	}
+	// Metadata still captures the descriptor for audit/debug visibility.
+	if v, _ := got.Metadata[tasks.MetadataKeyHibernationCheckpointKey].(string); v != "ckpt-self" {
+		t.Errorf("metadata[%q] = %q want %q", tasks.MetadataKeyHibernationCheckpointKey, v, "ckpt-self")
+	}
+	// No queue entries should have been inserted.
+	entries, err := store.PollPendingQueueEntries(ctx, 10)
+	if err != nil {
+		t.Fatalf("PollPendingQueueEntries: %v", err)
+	}
+	for _, e := range entries {
+		if e.TaskID == task.TaskID {
+			t.Errorf("non-orchestrated task should not have a queue entry; found %+v", e)
+		}
+	}
+}
+
+// TestTaskWaker_HibernatedScheduledWake_RoutesToPending exercises the waker's
+// scheduled-wake branch for HIBERNATED rows: it must call WakeHibernatedTask
+// (i.e. flip to pending + capture handoff metadata + re-queue) rather than
+// the plain ResumeTask used for other waiting states.
+func TestTaskWaker_HibernatedScheduledWake_RoutesToPending(t *testing.T) {
+	store, cleanup := newWakerStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	hib := &tasks.HibernationDescriptor{
+		CheckpointKey:   "ckpt-sched",
+		ResumeSessionID: "sess-sched",
+	}
+	wakeAt := time.Now().Add(-1 * time.Second).UnixMilli()
+	task := buildHibernatedOrchestratedTask(t, ctx, store, "sched", hib, wakeAt, 0)
+
+	svc := newWakerService(store)
+	waker := NewTaskWaker(store, svc, nil)
+	waker.scan(ctx)
+
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != tasks.TaskStatusPending {
+		t.Errorf("status after scan: got %q want %q (hibernated wake routes through pending, not running)",
+			got.Status, tasks.TaskStatusPending)
+	}
+	if got.WaitSpec != nil {
+		t.Errorf("WaitSpec should be cleared after wake; got %+v", got.WaitSpec)
+	}
+	if v, _ := got.Metadata[tasks.MetadataKeyHibernationCheckpointKey].(string); v != "ckpt-sched" {
+		t.Errorf("metadata[%q] = %q want ckpt-sched", tasks.MetadataKeyHibernationCheckpointKey, v)
+	}
+	// And the row should be back on the orchestrated_task_queue.
+	entries, err := store.PollPendingQueueEntries(ctx, 10)
+	if err != nil {
+		t.Fatalf("PollPendingQueueEntries: %v", err)
+	}
+	var found bool
+	for _, e := range entries {
+		if e.TaskID == task.TaskID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected new orchestrated_task_queue entry after scheduled wake, got none")
+	}
+}
+
+// TestTaskWaker_HibernatedTimeout_FailsByDefault: a HIBERNATED row whose
+// PausedAt + TimeoutMs has elapsed and no EscalationPolicy (or "fail") set
+// must transition to FAILED via the default branch.
+func TestTaskWaker_HibernatedTimeout_FailsByDefault(t *testing.T) {
+	store, cleanup := newWakerStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	hib := &tasks.HibernationDescriptor{
+		CheckpointKey:    "ckpt-to-fail",
+		EscalationPolicy: "", // default = fail
+	}
+	// TimeoutMs=1, no scheduled wake — let timeout fire.
+	task := buildHibernatedOrchestratedTask(t, ctx, store, "tofail", hib, 0, 1)
+	time.Sleep(10 * time.Millisecond)
+
+	svc := newWakerService(store)
+	waker := NewTaskWaker(store, svc, nil)
+	waker.scan(ctx)
+
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != tasks.TaskStatusFailed {
+		t.Errorf("default hibernation-timeout policy: got %q want failed", got.Status)
+	}
+	if got.ErrorMessage == "" {
+		t.Errorf("expected non-empty error_message on hibernation timeout fail")
+	}
+}
+
+// TestTaskWaker_HibernatedTimeout_RetryEscalation: a HIBERNATED row whose
+// TimeoutMs has elapsed AND EscalationPolicy="retry" must be routed through
+// WakeHibernatedTask (re-queue) instead of FailTask.
+func TestTaskWaker_HibernatedTimeout_RetryEscalation(t *testing.T) {
+	store, cleanup := newWakerStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	hib := &tasks.HibernationDescriptor{
+		CheckpointKey:    "ckpt-retry",
+		ResumeSessionID:  "sess-retry",
+		EscalationPolicy: "retry",
+	}
+	task := buildHibernatedOrchestratedTask(t, ctx, store, "retry", hib, 0, 1)
+	time.Sleep(10 * time.Millisecond)
+
+	svc := newWakerService(store)
+	waker := NewTaskWaker(store, svc, nil)
+	waker.scan(ctx)
+
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != tasks.TaskStatusPending {
+		t.Errorf("retry policy: status got %q want pending (re-queued)", got.Status)
+	}
+	if v, _ := got.Metadata[tasks.MetadataKeyHibernationCheckpointKey].(string); v != "ckpt-retry" {
+		t.Errorf("retry policy: metadata[%q] = %q want ckpt-retry",
+			tasks.MetadataKeyHibernationCheckpointKey, v)
+	}
+	entries, err := store.PollPendingQueueEntries(ctx, 10)
+	if err != nil {
+		t.Fatalf("PollPendingQueueEntries: %v", err)
+	}
+	var found bool
+	for _, e := range entries {
+		if e.TaskID == task.TaskID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("retry policy: expected new orchestrated_task_queue entry, got none")
+	}
+}
+
+// TestTaskWaker_HibernatedTimeout_AlertEscalation: a HIBERNATED row whose
+// TimeoutMs has elapsed AND EscalationPolicy="alert" must remain hibernated
+// (Stage B logs only; no external alerting integration yet).
+func TestTaskWaker_HibernatedTimeout_AlertEscalation(t *testing.T) {
+	store, cleanup := newWakerStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	hib := &tasks.HibernationDescriptor{
+		CheckpointKey:    "ckpt-alert",
+		EscalationPolicy: "alert",
+	}
+	task := buildHibernatedOrchestratedTask(t, ctx, store, "alert", hib, 0, 1)
+	time.Sleep(10 * time.Millisecond)
+
+	svc := newWakerService(store)
+	waker := NewTaskWaker(store, svc, nil)
+	waker.scan(ctx)
+
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != tasks.TaskStatusHibernated {
+		t.Errorf("alert policy: status got %q want hibernated (no state change)", got.Status)
 	}
 }

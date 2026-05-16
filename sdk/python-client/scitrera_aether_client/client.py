@@ -115,6 +115,39 @@ def _authority_resource_scope_entries(resource_scope: Optional[Dict[str, List[st
     ]
 
 
+def make_hibernation_descriptor(*,
+                               checkpoint_key: str,
+                               resume_session_id: str = "",
+                               wake_event_types: Optional[List[str]] = None,
+                               escalation_policy: str = "") -> aether_pb2.HibernationDescriptor:
+    """
+    Build an ``aether_pb2.HibernationDescriptor``.
+
+    Args:
+        checkpoint_key: Required. The checkpoint key the worker SAVE'd before
+            hibernating; the gateway validates its existence.
+        resume_session_id: Optional. Session id to resume on wake; empty = fresh.
+        wake_event_types: Optional. Reserved for future use.
+        escalation_policy: ``""`` / ``"fail"`` (default) — fail the task on
+            timeout. ``"retry"`` — re-queue for fresh worker spawn.
+            ``"alert"`` — stay hibernated, log warning.
+
+    Returns:
+        Populated ``aether_pb2.HibernationDescriptor`` instance.
+
+    Raises:
+        ValueError: if ``checkpoint_key`` is empty.
+    """
+    if not checkpoint_key:
+        raise ValueError("make_hibernation_descriptor: checkpoint_key is required")
+    return aether_pb2.HibernationDescriptor(
+        checkpoint_key=checkpoint_key,
+        resume_session_id=resume_session_id,
+        wake_event_types=wake_event_types or [],
+        escalation_policy=escalation_policy,
+    )
+
+
 def make_authority_request_routing(*,
                                    principal: Optional[aether_pb2.PrincipalRef] = None,
                                    capability: str = "") -> aether_pb2.AuthorityRequestRoutingTarget:
@@ -1911,6 +1944,82 @@ class BaseAetherClient:
         return self._send_sync_op(
             aether_pb2.UpstreamMessage(authority_request_op=op),
             client_request_id, timeout,
+        )
+
+    # =========================================================================
+    # Phase 3 Stage C: Hibernation lifecycle
+    # =========================================================================
+
+    def hibernate_until(self, task_id: str,
+                        checkpoint_key: str,
+                        scheduled_wake_unix_ms: int = 0,
+                        timeout_ms: int = 0,
+                        resume_session_id: str = "",
+                        wake_event_types: Optional[List[str]] = None,
+                        escalation_policy: str = "",
+                        reason: str = "",
+                        timeout: float = 10.0) -> Optional[aether_pb2.TaskOperationResponse]:
+        """
+        Park a task into TASK_STATUS_HIBERNATED so its worker can be released
+        and compute reclaimed. The task wakes when ``scheduled_wake_unix_ms``
+        is reached (set to 0 for "wait indefinitely until external wake"), or
+        fails if ``timeout_ms`` elapses (subject to ``escalation_policy``).
+
+        Precondition: a checkpoint with key ``checkpoint_key`` MUST already be
+        SAVE'd for this worker's identity — the gateway validates checkpoint
+        existence before allowing the transition.
+
+        Args:
+            task_id: The task ID to hibernate.
+            checkpoint_key: The checkpoint key the worker SAVE'd before this
+                call.
+            scheduled_wake_unix_ms: Absolute wake time (unix ms). 0 = no
+                scheduled wake.
+            timeout_ms: Max duration in hibernation before
+                ``escalation_policy`` fires. 0 = no timeout.
+            resume_session_id: Optional session id to resume; empty = fresh
+                session.
+            wake_event_types: Reserved for future use; current waker only
+                honors ``scheduled_wake_unix_ms``.
+            escalation_policy: ``""`` / ``"fail"`` (default) — fail the task
+                on timeout. ``"retry"`` — re-queue for fresh worker spawn.
+                ``"alert"`` — stay hibernated, log warning.
+            reason: Free-text narrative for audit.
+            timeout: Gateway RPC timeout in seconds.
+
+        Returns:
+            ``TaskOperationResponse`` on success.
+
+        Raises:
+            ValueError: if ``checkpoint_key`` is empty (required
+                precondition).
+        """
+        if not checkpoint_key:
+            raise ValueError("hibernate_until: checkpoint_key is required")
+
+        hibernation = make_hibernation_descriptor(
+            checkpoint_key=checkpoint_key,
+            resume_session_id=resume_session_id,
+            wake_event_types=wake_event_types,
+            escalation_policy=escalation_policy,
+        )
+        wait_spec = aether_pb2.WaitSpec(
+            reason=aether_pb2.WAIT_REASON_HIBERNATION,
+            scheduled_wake_unix_ms=scheduled_wake_unix_ms,
+            timeout_ms=timeout_ms,
+            hibernation=hibernation,
+        )
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.TaskOperation(
+            op=aether_pb2.TaskOperation.PAUSE,
+            task_id=task_id,
+            reason=reason,
+            wait_spec=wait_spec,
+            request_id=request_id,
+        )
+        return self._send_sync_op(
+            aether_pb2.UpstreamMessage(task_op=op),
+            request_id, timeout,
         )
 
     def _send_lockable_op(self, lock: threading.Lock, response_queue: queue.Queue,

@@ -27,6 +27,8 @@ from .client import (
     # Authority-request helpers (Phase 2 Stage C)
     make_authority_request_routing,
     make_authority_request_resource_scope_entry,
+    # Hibernation helper (Phase 3 Stage C)
+    make_hibernation_descriptor,
 )
 
 from .client_async import (
@@ -228,6 +230,9 @@ __all__ = (
     # Authority-request helpers (Phase 2 Stage C)
     'make_authority_request_routing',
     'make_authority_request_resource_scope_entry',
+
+    # Hibernation helper (Phase 3 Stage C)
+    'make_hibernation_descriptor',
 
     # Message type constants
     'MESSAGE_TYPE_UNSPECIFIED',

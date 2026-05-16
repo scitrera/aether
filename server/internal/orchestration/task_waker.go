@@ -134,9 +134,46 @@ func (w *TaskWaker) scan(ctx context.Context) {
 		// 1) Timeout wake-to-fail. TimeoutMs is the maximum a task may sit
 		// in any waiting state before the waker forcibly fails it. We need
 		// a non-nil paused_at to measure against.
+		//
+		// Stage B: HIBERNATED timeouts honor HibernationDescriptor.EscalationPolicy:
+		//   "" / "fail"  -> FailTask (default)
+		//   "retry"      -> route through WakeHibernatedTask so the task is
+		//                   re-queued and a fresh worker can retry.
+		//   "alert"      -> log a warning; the task remains hibernated.
+		//                   (No external alerting integration in Stage B —
+		//                   the entry-point is the log line.)
 		if t.WaitSpec != nil && t.WaitSpec.TimeoutMs > 0 && t.PausedAt != nil {
 			elapsed := now.Sub(*t.PausedAt)
 			if elapsed >= time.Duration(t.WaitSpec.TimeoutMs)*time.Millisecond {
+				if t.Status == tasks.TaskStatusHibernated && t.WaitSpec.Hibernation != nil {
+					policy := t.WaitSpec.Hibernation.EscalationPolicy
+					switch policy {
+					case "retry":
+						if err := w.taskService.WakeHibernatedTask(ctx, t.TaskID); err != nil {
+							logging.Logger.Warn().Err(err).
+								Str("task_id", t.TaskID).
+								Msg("task waker: hibernation timeout retry-wake failed (non-fatal)")
+							continue
+						}
+						logging.Logger.Info().
+							Str("task_id", t.TaskID).
+							Dur("waited_for", elapsed).
+							Int64("timeout_ms", t.WaitSpec.TimeoutMs).
+							Msg("task waker: hibernation timeout, retry policy -> re-queued for fresh worker")
+						continue
+					case "alert":
+						// Best-effort surface for operators. Stage B does not
+						// integrate an alerting backend; the warning log is
+						// the entry-point. Leave the task hibernated.
+						logging.Logger.Warn().
+							Str("task_id", t.TaskID).
+							Dur("waited_for", elapsed).
+							Int64("timeout_ms", t.WaitSpec.TimeoutMs).
+							Msg("task waker: hibernation timeout, alert policy -> task remains hibernated")
+						continue
+					}
+					// Default / "fail": fall through to FailTask below.
+				}
 				reason := "wait timeout"
 				if err := w.taskService.FailTask(ctx, t.TaskID, reason); err != nil {
 					logging.Logger.Warn().Err(err).Str("task_id", t.TaskID).Msg("task waker: fail-task on timeout failed (non-fatal)")
@@ -153,9 +190,27 @@ func (w *TaskWaker) scan(ctx context.Context) {
 
 		// 2) Scheduled wake (hibernation timer). Independent of TimeoutMs;
 		// fires whenever the wall-clock has passed the scheduled instant.
+		//
+		// Stage B: HIBERNATED rows route through WakeHibernatedTask which
+		// flips status to pending, captures the hibernation handoff into
+		// reserved metadata keys, and re-queues the task for a fresh
+		// worker spawn. Non-hibernation rows (e.g. WAITING_INPUT with a
+		// scheduled wake) still resume directly to running because they
+		// retain their worker.
 		if t.WaitSpec != nil && t.WaitSpec.ScheduledWakeUnixMs > 0 {
 			wakeAt := time.UnixMilli(t.WaitSpec.ScheduledWakeUnixMs)
 			if !now.Before(wakeAt) {
+				if t.Status == tasks.TaskStatusHibernated {
+					if err := w.taskService.WakeHibernatedTask(ctx, t.TaskID); err != nil {
+						logging.Logger.Warn().Err(err).Str("task_id", t.TaskID).Msg("task waker: hibernation scheduled-wake failed (non-fatal)")
+						continue
+					}
+					logging.Logger.Info().
+						Str("task_id", t.TaskID).
+						Time("wake_at", wakeAt).
+						Msg("task waker: woke hibernated task on scheduled wake (re-queued for fresh worker)")
+					continue
+				}
 				if err := w.taskService.ResumeTask(ctx, t.TaskID, tasks.TaskStatusRunning); err != nil {
 					logging.Logger.Warn().Err(err).Str("task_id", t.TaskID).Msg("task waker: scheduled-wake resume failed (non-fatal)")
 					continue

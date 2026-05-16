@@ -36,18 +36,50 @@ const (
 	WaitReasonHibernation WaitReason = "hibernation" // Scheduled hibernation / wake
 )
 
+// HibernationDescriptor captures the parameters needed to release a worker on
+// hibernation and re-spawn it with full state on wake. Mirrors the proto
+// HibernationDescriptor message; serialized inline inside WaitSpec.
+type HibernationDescriptor struct {
+	CheckpointKey    string   `json:"checkpoint_key,omitempty"`    // Required: checkpoint to LOAD on wake
+	ResumeSessionID  string   `json:"resume_session_id,omitempty"` // Optional: session id to resume; empty = fresh session
+	WakeEventTypes   []string `json:"wake_event_types,omitempty"`  // Optional: future wake-event triggers
+	EscalationPolicy string   `json:"escalation_policy,omitempty"` // Optional: "fail" (default), "retry", "alert"
+}
+
 // WaitSpec describes why a task was paused and what conditions will wake it.
 // Stored as JSONB (postgres) or TEXT JSON (sqlite) in the wait_spec column.
+//
+// Adding a new optional nested struct (Hibernation) is round-trip safe: rows
+// persisted before this field existed deserialize with Hibernation = nil, and
+// the JSONB column tolerates the new key without a migration.
+//
+// Reserved task metadata keys for hibernation handoff: when the waker triggers
+// a hibernation wake (Stage B), it copies the descriptor's CheckpointKey and
+// ResumeSessionID into Task.Metadata under the keys defined below BEFORE
+// clearing the WaitSpec. The orchestration delivery path then reads these keys
+// to populate TaskAssignment.checkpoint_key / resume_session_id on the fresh
+// worker's assignment. The "_" prefix denotes server-managed metadata; entries
+// are left in place after delivery as audit history.
 type WaitSpec struct {
-	Reason              WaitReason        `json:"reason,omitempty"`
-	ExpectedPrincipal   string            `json:"expected_principal,omitempty"`     // For INPUT: principal expected to send the input message; empty = any
-	InputMatch          map[string]string `json:"input_match,omitempty"`            // For INPUT: metadata key/value the inbound message must match
-	AuthorityRequestID  string            `json:"authority_request_id,omitempty"`   // For AUTHORITY: correlation id for the authority request being awaited
-	DependsOn           []string          `json:"depends_on,omitempty"`             // For DEPENDENCY: task IDs this task depends on
-	WakeOnAny           bool              `json:"wake_on_any,omitempty"`            // True = wake when any dependency completes (default: all)
-	TimeoutMs           int64             `json:"timeout_ms,omitempty"`             // Max wait duration in ms; 0 = no timeout
-	ScheduledWakeUnixMs int64             `json:"scheduled_wake_unix_ms,omitempty"` // Unix-ms absolute wake time (independent of TimeoutMs)
+	Reason              WaitReason             `json:"reason,omitempty"`
+	ExpectedPrincipal   string                 `json:"expected_principal,omitempty"`     // For INPUT: principal expected to send the input message; empty = any
+	InputMatch          map[string]string      `json:"input_match,omitempty"`            // For INPUT: metadata key/value the inbound message must match
+	AuthorityRequestID  string                 `json:"authority_request_id,omitempty"`   // For AUTHORITY: correlation id for the authority request being awaited
+	DependsOn           []string               `json:"depends_on,omitempty"`             // For DEPENDENCY: task IDs this task depends on
+	WakeOnAny           bool                   `json:"wake_on_any,omitempty"`            // True = wake when any dependency completes (default: all)
+	TimeoutMs           int64                  `json:"timeout_ms,omitempty"`             // Max wait duration in ms; 0 = no timeout
+	ScheduledWakeUnixMs int64                  `json:"scheduled_wake_unix_ms,omitempty"` // Unix-ms absolute wake time (independent of TimeoutMs)
+	Hibernation         *HibernationDescriptor `json:"hibernation,omitempty"`            // For HIBERNATION: checkpoint key + wake/escalation params
 }
+
+// Reserved task metadata keys for hibernation handoff. The Stage B waker /
+// orchestration delivery path uses these keys to propagate hibernation
+// rehydration context from the parked WaitSpec onto the fresh worker's
+// TaskAssignment.
+const (
+	MetadataKeyHibernationCheckpointKey   = "_hibernation_checkpoint_key"
+	MetadataKeyHibernationResumeSessionID = "_hibernation_resume_session_id"
+)
 
 // TaskCategory categorizes the purpose of a task
 type TaskCategory string

@@ -40,6 +40,8 @@ from ._common import (
 # so we re-import them here for the async surface. Avoid duplicating the
 # proto-fiddling logic across both files.
 from .client import make_authority_request_routing
+# Phase 3 Stage C: hibernation helper — same re-import pattern.
+from .client import make_hibernation_descriptor
 from .exceptions import (
     AetherError,
     ConnectionError,
@@ -2211,6 +2213,51 @@ class BaseAsyncAetherClient:
         return await self._send_sync_op(
             aether_pb2.UpstreamMessage(authority_request_op=op),
             client_request_id, timeout,
+        )
+
+    # =========================================================================
+    # Phase 3 Stage C: Hibernation lifecycle (async)
+    # =========================================================================
+
+    async def hibernate_until(self, task_id: str,
+                              checkpoint_key: str,
+                              scheduled_wake_unix_ms: int = 0,
+                              timeout_ms: int = 0,
+                              resume_session_id: str = "",
+                              wake_event_types: Optional[List[str]] = None,
+                              escalation_policy: str = "",
+                              reason: str = "",
+                              timeout: float = 10.0) -> Optional[aether_pb2.TaskOperationResponse]:
+        """
+        Async counterpart to :meth:`BaseAetherClient.hibernate_until`. See
+        the sync docstring for the full parameter contract.
+        """
+        if not checkpoint_key:
+            raise ValueError("hibernate_until: checkpoint_key is required")
+
+        hibernation = make_hibernation_descriptor(
+            checkpoint_key=checkpoint_key,
+            resume_session_id=resume_session_id,
+            wake_event_types=wake_event_types,
+            escalation_policy=escalation_policy,
+        )
+        wait_spec = aether_pb2.WaitSpec(
+            reason=aether_pb2.WAIT_REASON_HIBERNATION,
+            scheduled_wake_unix_ms=scheduled_wake_unix_ms,
+            timeout_ms=timeout_ms,
+            hibernation=hibernation,
+        )
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.TaskOperation(
+            op=aether_pb2.TaskOperation.PAUSE,
+            task_id=task_id,
+            reason=reason,
+            wait_spec=wait_spec,
+            request_id=request_id,
+        )
+        return await self._send_sync_op(
+            aether_pb2.UpstreamMessage(task_op=op),
+            request_id, timeout,
         )
 
     async def workspace_op(self, op: aether_pb2.WorkspaceOperation,

@@ -1423,6 +1423,14 @@ func taskToProto(t *tasks.Task) *pb.TaskInfo {
 		case tasks.WaitReasonHibernation:
 			ws.Reason = pb.WaitReason_WAIT_REASON_HIBERNATION
 		}
+		if hib := t.WaitSpec.Hibernation; hib != nil {
+			ws.Hibernation = &pb.HibernationDescriptor{
+				CheckpointKey:    hib.CheckpointKey,
+				ResumeSessionId:  hib.ResumeSessionID,
+				WakeEventTypes:   hib.WakeEventTypes,
+				EscalationPolicy: hib.EscalationPolicy,
+			}
+		}
 		info.WaitSpec = ws
 	}
 	if len(t.DependsOn) > 0 {
@@ -1778,6 +1786,21 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		}
 		toStatus := waitReasonToStatus(op.WaitSpec.GetReason())
 		spec := protoWaitSpecToTasks(op.WaitSpec)
+		// Phase 3: HIBERNATE precondition. Workers must SAVE a checkpoint
+		// before requesting hibernation (so the rehydrated worker on wake can
+		// LOAD their prior state). Reject the transition without state change
+		// if the descriptor is missing or the named checkpoint does not exist
+		// for the task's assignee identity. Checkpoints are scoped per identity
+		// in the checkpoint store.
+		if op.WaitSpec.GetReason() == pb.WaitReason_WAIT_REASON_HIBERNATION {
+			if precondErr := s.validateHibernationPrecondition(ctx, pauseTask, spec); precondErr != nil {
+				response = &pb.TaskOperationResponse{
+					Success: false,
+					Error:   precondErr.Error(),
+				}
+				break
+			}
+		}
 		var pauseErr error
 		if s.orchestration != nil && s.orchestration.TaskService != nil {
 			pauseErr = s.orchestration.TaskService.PauseTask(ctx, op.TaskId, toStatus, spec)
@@ -1799,6 +1822,18 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 				response.Task = taskToProto(updated)
 			}
 			s.notifyTaskStatusChangeFromTaskID(ctx, op.TaskId, string(toStatus), "")
+			// Stage B: signal the worker assigned to a hibernating task that
+			// it should disconnect cleanly. The disconnect_reaper skips
+			// HIBERNATED tasks, so an unanswered TaskHibernated is safe —
+			// workers that don't disconnect themselves are reaped via
+			// normal session-expiry semantics.
+			if op.WaitSpec.GetReason() == pb.WaitReason_WAIT_REASON_HIBERNATION {
+				notifyTask := updated
+				if notifyTask == nil {
+					notifyTask = pauseTask
+				}
+				s.notifyTaskHibernated(ctx, notifyTask, spec)
+			}
 		}
 
 	case pb.TaskOperation_WAIT_FOR:

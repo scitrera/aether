@@ -7,6 +7,7 @@ import (
 
 	"github.com/scitrera/aether/internal/logging"
 	taskstore "github.com/scitrera/aether/internal/storage/tasks"
+	"github.com/scitrera/aether/pkg/tasks"
 )
 
 // DisconnectReaper periodically scans tasks whose worker has been disconnected
@@ -72,6 +73,14 @@ func (r *DisconnectReaper) scan(ctx context.Context) {
 	now := time.Now()
 	for _, t := range rows {
 		if t.DisconnectedAt == nil || t.GraceWindowMs <= 0 {
+			continue
+		}
+		// Phase 3: skip tasks that are intentionally disconnected. Any
+		// waiting/hibernated task may have had its worker released as part of
+		// the pause/hibernation protocol; the disconnect is a feature, not a
+		// failure mode. Only running/assigned/starting tasks are subject to
+		// disconnect-failure semantics.
+		if tasks.IsWaiting(t.Status) {
 			continue
 		}
 		elapsed := now.Sub(*t.DisconnectedAt)

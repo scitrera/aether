@@ -34,6 +34,7 @@ import type { AuthorityGrantRevocation as _aether_v1_AuthorityGrantRevocation, A
 import type { SubmitAuditEventResponse as _aether_v1_SubmitAuditEventResponse, SubmitAuditEventResponse__Output as _aether_v1_SubmitAuditEventResponse__Output } from '../../aether/v1/SubmitAuditEventResponse';
 import type { AuthorityRequestOperationResponse as _aether_v1_AuthorityRequestOperationResponse, AuthorityRequestOperationResponse__Output as _aether_v1_AuthorityRequestOperationResponse__Output } from '../../aether/v1/AuthorityRequestOperationResponse';
 import type { AuthorityRequestEvent as _aether_v1_AuthorityRequestEvent, AuthorityRequestEvent__Output as _aether_v1_AuthorityRequestEvent__Output } from '../../aether/v1/AuthorityRequestEvent';
+import type { TaskHibernated as _aether_v1_TaskHibernated, TaskHibernated__Output as _aether_v1_TaskHibernated__Output } from '../../aether/v1/TaskHibernated';
 
 export interface DownstreamMessage {
   'msg'?: (_aether_v1_IncomingMessage | null);
@@ -70,7 +71,8 @@ export interface DownstreamMessage {
   'submitAuditEventResponse'?: (_aether_v1_SubmitAuditEventResponse | null);
   'authorityRequestResponse'?: (_aether_v1_AuthorityRequestOperationResponse | null);
   'authorityRequestEvent'?: (_aether_v1_AuthorityRequestEvent | null);
-  'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse"|"authorityRequestResponse"|"authorityRequestEvent";
+  'taskHibernated'?: (_aether_v1_TaskHibernated | null);
+  'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse"|"authorityRequestResponse"|"authorityRequestEvent"|"taskHibernated";
 }
 
 export interface DownstreamMessage__Output {
@@ -108,5 +110,6 @@ export interface DownstreamMessage__Output {
   'submitAuditEventResponse'?: (_aether_v1_SubmitAuditEventResponse__Output | null);
   'authorityRequestResponse'?: (_aether_v1_AuthorityRequestOperationResponse__Output | null);
   'authorityRequestEvent'?: (_aether_v1_AuthorityRequestEvent__Output | null);
-  'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse"|"authorityRequestResponse"|"authorityRequestEvent";
+  'taskHibernated'?: (_aether_v1_TaskHibernated__Output | null);
+  'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse"|"authorityRequestResponse"|"authorityRequestEvent"|"taskHibernated";
 }

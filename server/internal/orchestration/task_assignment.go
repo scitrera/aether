@@ -787,6 +787,135 @@ func (tas *TaskAssignmentService) ResumeTask(ctx context.Context, taskID string,
 	return nil
 }
 
+// WakeHibernatedTask transitions a HIBERNATED task back to pending and
+// reinserts it into the orchestrated_task_queue so the orchestrator can spawn
+// a fresh worker for it. Before clearing the WaitSpec, the task's
+// HibernationDescriptor {CheckpointKey, ResumeSessionID} is copied into
+// Task.Metadata under the reserved keys defined in pkg/tasks. The
+// orchestration delivery path (DeliverQueuedTasks / DeliverPoolTasks /
+// deliverPoolTaskToWorker) reads those keys when populating the resulting
+// TaskAssignment so the fresh worker can LOAD the prior checkpoint and
+// optionally resume its session.
+//
+// Routing rules:
+//   - Orchestrated tasks (TaskCategory=Orchestrated, or LaunchParams populated
+//     with a "profile") are re-inserted into orchestrated_task_queue exactly
+//     like createOrchestratedStartupTask does. The orchestrator picks them
+//     up via the existing NOTIFY/poll path.
+//   - Non-orchestrated tasks (e.g. SELF_ASSIGN created without a launch
+//     profile) cannot be re-queued; they remain pending and the caller is
+//     responsible for re-claiming. Hibernation of these tasks is a misuse
+//     in practice — only tasks with a known orchestrator profile should be
+//     hibernated since they need a fresh worker spawn on wake. We log a
+//     warning and return nil so the waker doesn't loop on the row.
+//
+// Used by task_waker when a HIBERNATED task's wake conditions are satisfied.
+func (tas *TaskAssignmentService) WakeHibernatedTask(ctx context.Context, taskID string) error {
+	if tas.taskStore == nil {
+		return fmt.Errorf("WakeHibernatedTask: task store not configured")
+	}
+
+	task, err := tas.taskStore.GetTask(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("WakeHibernatedTask: load task %s: %w", taskID, err)
+	}
+	if task == nil {
+		return fmt.Errorf("WakeHibernatedTask: task %s not found", taskID)
+	}
+	if task.Status != tasks.TaskStatusHibernated {
+		// Not an error: a concurrent waker / admin op may have already
+		// transitioned this task. Log + no-op so the caller's scan loop
+		// doesn't retry.
+		logging.Logger.Debug().
+			Str("task_id", taskID).
+			Str("status", string(task.Status)).
+			Msg("WakeHibernatedTask: task not in hibernated state, skipping")
+		return nil
+	}
+
+	// 1. Merge hibernation handoff descriptor into metadata BEFORE clearing
+	// WaitSpec. ResumeTask drops the WaitSpec, so the descriptor must be
+	// captured first or it is lost.
+	if task.WaitSpec != nil && task.WaitSpec.Hibernation != nil {
+		hib := task.WaitSpec.Hibernation
+		mergedMetadata := make(map[string]interface{}, len(task.Metadata)+2)
+		for k, v := range task.Metadata {
+			mergedMetadata[k] = v
+		}
+		if hib.CheckpointKey != "" {
+			mergedMetadata[tasks.MetadataKeyHibernationCheckpointKey] = hib.CheckpointKey
+		}
+		if hib.ResumeSessionID != "" {
+			mergedMetadata[tasks.MetadataKeyHibernationResumeSessionID] = hib.ResumeSessionID
+		}
+		if err := tas.taskStore.UpdateTaskMetadata(ctx, taskID, mergedMetadata); err != nil {
+			return fmt.Errorf("WakeHibernatedTask: merge hibernation metadata for %s: %w", taskID, err)
+		}
+		// Reflect the merge on the in-memory copy so subsequent decisions
+		// (e.g. queue reinsertion) see the updated map.
+		task.Metadata = mergedMetadata
+	}
+
+	// 2. Flip status hibernated -> pending and clear WaitSpec.
+	if err := tas.ResumeTask(ctx, taskID, tasks.TaskStatusPending); err != nil {
+		return fmt.Errorf("WakeHibernatedTask: resume %s to pending: %w", taskID, err)
+	}
+
+	// 3. Re-insert into orchestrated_task_queue. Only orchestrated tasks
+	// with a known target implementation + profile can be re-queued for the
+	// orchestrator. SELF_ASSIGN / non-orchestrated rows lack the data needed
+	// for a queue entry and would not be picked up by any orchestrator —
+	// these stay pending and require the original creator to handle wake.
+	profile := launchProfile(task)
+	if task.TargetImplementation == "" || profile == "" {
+		logging.Logger.Warn().
+			Str("task_id", taskID).
+			Str("assignment_mode", string(task.AssignmentMode)).
+			Str("target_implementation", task.TargetImplementation).
+			Msg("WakeHibernatedTask: task is not orchestrator-spawnable; left pending without re-queue")
+		return nil
+	}
+
+	queueID := uuid.NewString()
+	launchParamsJSON, err := json.Marshal(task.LaunchParams)
+	if err != nil {
+		return fmt.Errorf("WakeHibernatedTask: marshal launch params for %s: %w", taskID, err)
+	}
+	if err := tas.taskStore.InsertQueueEntry(ctx, queueID, taskID, task.TargetImplementation, task.Workspace, profile, launchParamsJSON); err != nil {
+		return fmt.Errorf("WakeHibernatedTask: insert queue entry for %s: %w", taskID, err)
+	}
+
+	logging.Logger.Info().
+		Str("task_id", taskID).
+		Str("queue_id", queueID).
+		Str("implementation", task.TargetImplementation).
+		Str("workspace", task.Workspace).
+		Str("profile", profile).
+		Msg("WakeHibernatedTask: re-queued hibernated task for fresh worker spawn")
+	return nil
+}
+
+// launchProfile extracts the orchestrator profile from a task's launch params
+// or metadata. Mirrors the lookup order used by createOrchestratedStartupTask:
+// LaunchParams["profile"] is canonical, with Metadata["profile"] as a
+// secondary lookup for tasks that stamped it there instead.
+func launchProfile(task *tasks.ExtendedTask) string {
+	if task == nil {
+		return ""
+	}
+	if task.LaunchParams != nil {
+		if v, ok := task.LaunchParams["profile"].(string); ok && v != "" {
+			return v
+		}
+	}
+	if task.Metadata != nil {
+		if v, ok := task.Metadata["profile"].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // RejectTask transitions a task to the terminal REJECTED state. Side effects
 // mirror CancelTask/CompleteTask: token revoke, task-scoped authority grant
 // revoke, orchestrated_task_queue retirement, and dependency-wake fan-out.

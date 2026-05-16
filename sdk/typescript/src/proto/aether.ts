@@ -81,6 +81,7 @@ export interface ProtoGrpcType {
       HealthCheckStatus: EnumTypeDefinition
       HealthInfo: MessageTypeDefinition
       HealthStatus: EnumTypeDefinition
+      HibernationDescriptor: MessageTypeDefinition
       IncomingMessage: MessageTypeDefinition
       InitConnection: MessageTypeDefinition
       KVOperation: MessageTypeDefinition
@@ -120,6 +121,7 @@ export interface ProtoGrpcType {
       TaskAssignmentMode: EnumTypeDefinition
       TaskClass: EnumTypeDefinition
       TaskFilter: MessageTypeDefinition
+      TaskHibernated: MessageTypeDefinition
       TaskIdentity: MessageTypeDefinition
       TaskInfo: MessageTypeDefinition
       TaskOperation: MessageTypeDefinition

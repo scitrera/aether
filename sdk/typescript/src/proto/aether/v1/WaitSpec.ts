@@ -1,6 +1,7 @@
 // Original file: aether.proto
 
 import type { WaitReason as _aether_v1_WaitReason, WaitReason__Output as _aether_v1_WaitReason__Output } from '../../aether/v1/WaitReason';
+import type { HibernationDescriptor as _aether_v1_HibernationDescriptor, HibernationDescriptor__Output as _aether_v1_HibernationDescriptor__Output } from '../../aether/v1/HibernationDescriptor';
 import type { Long } from '@grpc/proto-loader';
 
 /**
@@ -9,7 +10,7 @@ import type { Long } from '@grpc/proto-loader';
  * - WAIT_REASON_INPUT       -> expected_principal, input_match
  * - WAIT_REASON_AUTHORITY   -> authority_request_id
  * - WAIT_REASON_DEPENDENCY  -> depends_on, wake_on_any
- * - WAIT_REASON_HIBERNATION -> (none required; checkpoint key carried out-of-band)
+ * - WAIT_REASON_HIBERNATION -> hibernation (checkpoint key, escalation, etc.)
  * timeout_ms / scheduled_wake_unix_ms apply across all reasons.
  */
 export interface WaitSpec {
@@ -49,6 +50,11 @@ export interface WaitSpec {
    * task wakes at this absolute time if still paused.
    */
   'scheduledWakeUnixMs'?: (number | string | Long);
+  /**
+   * For WAIT_REASON_HIBERNATION: parameters for the hibernation/wake handshake.
+   * Ignored when reason != HIBERNATION.
+   */
+  'hibernation'?: (_aether_v1_HibernationDescriptor | null);
 }
 
 /**
@@ -57,7 +63,7 @@ export interface WaitSpec {
  * - WAIT_REASON_INPUT       -> expected_principal, input_match
  * - WAIT_REASON_AUTHORITY   -> authority_request_id
  * - WAIT_REASON_DEPENDENCY  -> depends_on, wake_on_any
- * - WAIT_REASON_HIBERNATION -> (none required; checkpoint key carried out-of-band)
+ * - WAIT_REASON_HIBERNATION -> hibernation (checkpoint key, escalation, etc.)
  * timeout_ms / scheduled_wake_unix_ms apply across all reasons.
  */
 export interface WaitSpec__Output {
@@ -97,4 +103,9 @@ export interface WaitSpec__Output {
    * task wakes at this absolute time if still paused.
    */
   'scheduledWakeUnixMs': (string);
+  /**
+   * For WAIT_REASON_HIBERNATION: parameters for the hibernation/wake handshake.
+   * Ignored when reason != HIBERNATION.
+   */
+  'hibernation': (_aether_v1_HibernationDescriptor__Output | null);
 }

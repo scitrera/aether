@@ -232,6 +232,7 @@ func (s *GatewayServer) deliverQueuedTasksToAgent(
 				AssignedAt: task.CreatedAt.Unix(),
 				Payload:    task.Payload,
 			}
+			applyHibernationHandoffToAssignment(assignment, task.Metadata)
 
 			err := client.SafeSend(&pb.DownstreamMessage{
 				Payload: &pb.DownstreamMessage_TaskAssignment{
@@ -273,6 +274,7 @@ func (s *GatewayServer) deliverQueuedTasksToAgent(
 				AssignedAt: task.CreatedAt.Unix(),
 				Payload:    task.Payload,
 			}
+			applyHibernationHandoffToAssignment(assignment, task.Metadata)
 
 			if sendErr := client.SafeSend(&pb.DownstreamMessage{
 				Payload: &pb.DownstreamMessage_TaskAssignment{
@@ -569,6 +571,7 @@ func (s *GatewayServer) handleCreateTask(
 				AssignedAt: time.Now().Unix(),
 				Payload:    req.Payload,
 			}
+			applyHibernationHandoffToAssignment(assignment, taskReq.Metadata)
 
 			err := targetClient.SafeSend(&pb.DownstreamMessage{
 				Payload: &pb.DownstreamMessage_TaskAssignment{
@@ -834,6 +837,32 @@ func convertMetadataToString(metadata map[string]interface{}) map[string]string 
 		}
 	}
 	return result
+}
+
+// applyHibernationHandoffToAssignment populates TaskAssignment.checkpoint_key
+// and TaskAssignment.resume_session_id from the reserved metadata keys minted
+// by TaskAssignmentService.WakeHibernatedTask on the wake path. The keys
+// (tasks.MetadataKeyHibernationCheckpointKey,
+// tasks.MetadataKeyHibernationResumeSessionID) are server-managed
+// (underscore-prefixed) and are intentionally preserved in the materialized
+// assignment metadata for audit / operator visibility — the worker SDK is
+// expected to treat underscore-prefixed metadata as server-managed and the
+// dedicated fields are the canonical hand-off surface. No-op for non-wake
+// assignments (the keys are simply absent).
+func applyHibernationHandoffToAssignment(assignment *pb.TaskAssignment, metadata map[string]interface{}) {
+	if assignment == nil || metadata == nil {
+		return
+	}
+	if v, ok := metadata[tasks.MetadataKeyHibernationCheckpointKey]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			assignment.CheckpointKey = s
+		}
+	}
+	if v, ok := metadata[tasks.MetadataKeyHibernationResumeSessionID]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			assignment.ResumeSessionId = s
+		}
+	}
 }
 
 // configureOrchestratorDispatcher sets up the callback for the orchestrator task dispatcher
@@ -1223,6 +1252,7 @@ func (s *GatewayServer) deliverPoolTaskToWorker(ctx context.Context, taskID, tar
 		AssignedAt: time.Now().Unix(),
 		Payload:    payload,
 	}
+	applyHibernationHandoffToAssignment(assignment, task.Metadata)
 
 	err = worker.SafeSend(&pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_TaskAssignment{

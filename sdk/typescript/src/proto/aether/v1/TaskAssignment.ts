@@ -43,6 +43,16 @@ export interface TaskAssignment {
    * Optional UI hint; defaults to UNSPECIFIED ⇒ INTERACTIVE.
    */
   'taskClass'?: (_aether_v1_TaskClass);
+  /**
+   * Hibernation rehydration: populated when this assignment is the wake of a
+   * previously hibernated task. The worker should LOAD this checkpoint before
+   * processing the assignment. Empty for fresh task assignments.
+   */
+  'checkpointKey'?: (string);
+  /**
+   * Hibernation rehydration: session id to resume. Empty = fresh session.
+   */
+  'resumeSessionId'?: (string);
 }
 
 export interface TaskAssignment__Output {
@@ -85,4 +95,14 @@ export interface TaskAssignment__Output {
    * Optional UI hint; defaults to UNSPECIFIED ⇒ INTERACTIVE.
    */
   'taskClass': (_aether_v1_TaskClass__Output);
+  /**
+   * Hibernation rehydration: populated when this assignment is the wake of a
+   * previously hibernated task. The worker should LOAD this checkpoint before
+   * processing the assignment. Empty for fresh task assignments.
+   */
+  'checkpointKey': (string);
+  /**
+   * Hibernation rehydration: session id to resume. Empty = fresh session.
+   */
+  'resumeSessionId': (string);
 }

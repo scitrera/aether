@@ -82,7 +82,19 @@ message DownstreamMessage {
     SubmitAuditEventResponse submit_audit_event_response = 32;
     AuthorityRequestOperationResponse authority_request_response = 33;
     AuthorityRequestEvent authority_request_event = 34;
+    TaskHibernated task_hibernated = 35;
   }
+}
+
+// TaskHibernated is sent to the worker assigned to a task immediately after it
+// transitions to HIBERNATED. Workers SHOULD close their gRPC stream cleanly
+// after receiving this; the gateway will tolerate the disconnect and the
+// disconnect_reaper skips HIBERNATED tasks.
+message TaskHibernated {
+  string task_id = 1;
+  // Echo of the descriptor so the worker can verify it's hibernating with the
+  // expected checkpoint key.
+  HibernationDescriptor descriptor = 2;
 }
 
 // ConnectionAck is sent immediately after successful connection.
@@ -581,6 +593,14 @@ message TaskAssignment {
 
   // Optional UI hint; defaults to UNSPECIFIED ⇒ INTERACTIVE.
   TaskClass task_class = 12;
+
+  // Hibernation rehydration: populated when this assignment is the wake of a
+  // previously hibernated task. The worker should LOAD this checkpoint before
+  // processing the assignment. Empty for fresh task assignments.
+  string checkpoint_key = 13;
+
+  // Hibernation rehydration: session id to resume. Empty = fresh session.
+  string resume_session_id = 14;
 }
 
 // ============================================================================
@@ -1022,7 +1042,7 @@ enum WaitReason {
 //   - WAIT_REASON_INPUT       -> expected_principal, input_match
 //   - WAIT_REASON_AUTHORITY   -> authority_request_id
 //   - WAIT_REASON_DEPENDENCY  -> depends_on, wake_on_any
-//   - WAIT_REASON_HIBERNATION -> (none required; checkpoint key carried out-of-band)
+//   - WAIT_REASON_HIBERNATION -> hibernation (checkpoint key, escalation, etc.)
 // timeout_ms / scheduled_wake_unix_ms apply across all reasons.
 message WaitSpec {
   WaitReason reason = 1;
@@ -1052,6 +1072,31 @@ message WaitSpec {
   // Optional scheduled-wake timestamp (unix ms). Independent of timeout_ms —
   // task wakes at this absolute time if still paused.
   int64 scheduled_wake_unix_ms = 8;
+
+  // For WAIT_REASON_HIBERNATION: parameters for the hibernation/wake handshake.
+  // Ignored when reason != HIBERNATION.
+  HibernationDescriptor hibernation = 9;
+}
+
+// HibernationDescriptor captures the parameters needed to release a worker on
+// hibernation and re-spawn it with full state on wake.
+message HibernationDescriptor {
+  // Required: the checkpoint key the worker SAVE'd before requesting
+  // hibernation. The gateway validates this checkpoint exists before allowing
+  // the HIBERNATE transition. On wake, the next TaskAssignment carries this
+  // key so the spawned worker can LOAD it.
+  string checkpoint_key = 1;
+  // Optional: session id the worker held when hibernating. If set, the new
+  // worker should resume that session rather than create a fresh one.
+  string resume_session_id = 2;
+  // Optional: additional wake-event triggers (beyond timer / scheduled wake).
+  // Reserved for future use; the Phase 1 waker honors scheduled_wake_unix_ms
+  // and timeout_ms on the parent WaitSpec already.
+  repeated string wake_event_types = 3;
+  // Optional escalation policy when max duration is hit and no wake event has
+  // fired. Default: "fail" (transition task to FAILED with reason "hibernation timeout").
+  // Other allowed values: "retry" (reset to pending), "alert" (status stays but emit event).
+  string escalation_policy = 4;
 }
 
 // TaskOperationResponse is sent in response to TaskOperation.
