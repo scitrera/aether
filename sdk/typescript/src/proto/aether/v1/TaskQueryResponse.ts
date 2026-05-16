@@ -28,6 +28,12 @@ export interface TaskQueryResponse {
    * Echoed from the originating TaskQuery for correlation
    */
   'requestId'?: (string);
+  /**
+   * Phase 4: cursor-based pagination. Populated when LIST results were
+   * returned at the requested page size and more rows may exist. Empty when
+   * the last page has been served. Pass back as TaskFilter.page_token.
+   */
+  'nextPageToken'?: (string);
 }
 
 /**
@@ -56,4 +62,10 @@ export interface TaskQueryResponse__Output {
    * Echoed from the originating TaskQuery for correlation
    */
   'requestId': (string);
+  /**
+   * Phase 4: cursor-based pagination. Populated when LIST results were
+   * returned at the requested page size and more rows may exist. Empty when
+   * the last page has been served. Pass back as TaskFilter.page_token.
+   */
+  'nextPageToken': (string);
 }

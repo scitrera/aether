@@ -720,26 +720,14 @@ func (s *TaskStore) PurgeOldTasks(ctx context.Context, completedRetention, faile
 // Task Query Operations
 // =============================================================================
 
-// ListTasks returns tasks with optional filtering
-func (s *TaskStore) ListTasks(ctx context.Context, filter *TaskFilter) ([]*Task, error) {
-	if filter == nil {
-		filter = &TaskFilter{}
-	}
-	if filter.Limit == 0 {
-		filter.Limit = 100
-	}
-
-	query := `
-		SELECT ` + taskSelectColumns + `
-		FROM tasks
-		WHERE 1=1
-	`
-
-	args := []interface{}{}
-	argNum := 1
-
+// buildTaskFilterClauses builds the shared WHERE clause used by ListTasks /
+// ListTasksPage. It excludes the ParentTaskID predicate when
+// includeDescendantsPlaceholder != "" so callers can splice that field into
+// a recursive CTE join instead. Returns the WHERE fragment, the new argNum,
+// and accumulated args.
+func buildTaskFilterClauses(filter *TaskFilter, argNum int, args []interface{}, skipParentTaskID bool) (string, int, []interface{}) {
+	var query string
 	if len(filter.Statuses) > 0 {
-		// Multiple statuses: IN clause
 		placeholders := make([]string, len(filter.Statuses))
 		for i, s := range filter.Statuses {
 			placeholders[i] = fmt.Sprintf("$%d", argNum)
@@ -817,7 +805,7 @@ func (s *TaskStore) ListTasks(ctx context.Context, filter *TaskFilter) ([]*Task,
 		args = append(args, filter.RootAuthorityGrantID)
 		argNum++
 	}
-	if filter.ParentTaskID != "" {
+	if filter.ParentTaskID != "" && !skipParentTaskID {
 		query += fmt.Sprintf(" AND parent_task_id = $%d", argNum)
 		args = append(args, filter.ParentTaskID)
 		argNum++
@@ -850,12 +838,140 @@ func (s *TaskStore) ListTasks(ctx context.Context, filter *TaskFilter) ([]*Task,
 		}
 		query += " AND status NOT IN (" + strings.Join(placeholders, ", ") + ")"
 	}
+	// Phase 4 filters. CreatorActorID matches the parent_agent_id column,
+	// which is the storage backing for the proto's creator_actor_id /
+	// TaskInfo.CreatorActorId projection. CreatorActorType is informational
+	// only — the column is a single canonical identity string.
+	if filter.CreatorActorID != "" {
+		query += fmt.Sprintf(" AND parent_agent_id = $%d", argNum)
+		args = append(args, filter.CreatorActorID)
+		argNum++
+	}
+	if filter.StatusTimestampAfterUnixMs > 0 {
+		query += fmt.Sprintf(" AND updated_at >= to_timestamp($%d / 1000.0)", argNum)
+		args = append(args, filter.StatusTimestampAfterUnixMs)
+		argNum++
+	}
+	return query, argNum, args
+}
+
+// ListTasks returns tasks with optional filtering. Stable callers should
+// migrate to ListTasksPage for cursor-based pagination.
+func (s *TaskStore) ListTasks(ctx context.Context, filter *TaskFilter) ([]*Task, error) {
+	if filter == nil {
+		filter = &TaskFilter{}
+	}
+	if filter.Limit == 0 {
+		filter.Limit = 100
+	}
+
+	query := `
+		SELECT ` + taskSelectColumns + `
+		FROM tasks
+		WHERE 1=1
+	`
+
+	args := []interface{}{}
+	argNum := 1
+	clauses, argNum, args := buildTaskFilterClauses(filter, argNum, args, false)
+	query += clauses
 
 	query += " ORDER BY created_at DESC"
 	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argNum, argNum+1)
 	args = append(args, filter.Limit, filter.Offset)
 
 	return s.queryTasks(ctx, query, args...)
+}
+
+// ListTasksPage is the cursor-aware Phase 4 variant. See the Store interface
+// docstring for semantics. When filter.IncludeDescendants is true with
+// filter.ParentTaskID set, the walk is recursive (capped at 10000 rows) via
+// a postgres recursive CTE.
+func (s *TaskStore) ListTasksPage(ctx context.Context, filter *TaskFilter) ([]*Task, string, error) {
+	if filter == nil {
+		filter = &TaskFilter{}
+	}
+	if filter.Limit == 0 {
+		filter.Limit = 100
+	}
+	limit := filter.Limit
+
+	// Decode cursor if present. Cursor format: base64url("<unix_micros>|<task_id>").
+	var cursorMicros int64
+	var cursorTaskID string
+	useCursor := false
+	if filter.PageToken != "" {
+		m, id, decErr := DecodePageToken(filter.PageToken)
+		if decErr != nil {
+			return nil, "", fmt.Errorf("invalid page_token: %w", decErr)
+		}
+		cursorMicros = m
+		cursorTaskID = id
+		useCursor = true
+	}
+
+	recursive := filter.IncludeDescendants && filter.ParentTaskID != ""
+
+	args := []interface{}{}
+	argNum := 1
+
+	var query string
+	if recursive {
+		// Recursive CTE walks descendants of filter.ParentTaskID up to a
+		// row cap. Anchor selects children of the named parent; the
+		// recursive arm selects children of any task already in the CTE.
+		// We cap total rows at 10000 to prevent runaway walks.
+		query = `
+			WITH RECURSIVE descendants AS (
+				SELECT t.* FROM tasks t WHERE t.parent_task_id = $1
+				UNION ALL
+				SELECT t.* FROM tasks t
+				INNER JOIN descendants d ON t.parent_task_id = d.task_id
+			)
+			SELECT ` + taskSelectColumns + ` FROM descendants WHERE 1=1`
+		args = append(args, filter.ParentTaskID)
+		argNum = 2
+	} else {
+		query = `
+			SELECT ` + taskSelectColumns + `
+			FROM tasks
+			WHERE 1=1`
+	}
+
+	clauses, argNum, args := buildTaskFilterClauses(filter, argNum, args, recursive)
+	query += clauses
+
+	// Cursor predicate. Order is (updated_at DESC, task_id DESC); the
+	// cursor encodes the LAST row of the previous page, so the next page
+	// starts strictly before it.
+	if useCursor {
+		query += fmt.Sprintf(" AND (updated_at, task_id) < (to_timestamp($%d / 1000000.0), $%d)", argNum, argNum+1)
+		args = append(args, cursorMicros, cursorTaskID)
+		argNum += 2
+	}
+
+	query += " ORDER BY updated_at DESC, task_id DESC"
+	// Cap row count to prevent runaway walks on deep recursive trees.
+	if recursive && limit > 10000 {
+		limit = 10000
+	}
+	query += fmt.Sprintf(" LIMIT $%d", argNum)
+	args = append(args, limit)
+	argNum++
+
+	rows, err := s.queryTasks(ctx, query, args...)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Emit a cursor only when the page filled exactly. The cursor points at
+	// the last row so the next call resumes strictly after.
+	var nextToken string
+	if len(rows) == limit && len(rows) > 0 {
+		last := rows[len(rows)-1]
+		nextToken = EncodePageToken(last.UpdatedAt.UnixMicro(), last.TaskID)
+	}
+	return rows, nextToken, nil
 }
 
 // GetTasksByStatus returns tasks with a specific status

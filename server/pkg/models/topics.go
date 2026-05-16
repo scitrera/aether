@@ -120,6 +120,31 @@ func ProgressTopic(workspace string) (string, error) {
 	return "pg" + IdentitySep + workspace, nil
 }
 
+// TaskEventsTopic returns the topic used for a task's per-task event stream.
+// Format: tk.{workspace}.{task_id}.events
+//
+// This topic carries TaskEvent protos (status transitions, progress projection,
+// child-task lifecycle, authority-request relay) for a single task_id. Clients
+// subscribe via TaskSubscriptionOperation; the gateway publishes from the
+// TaskAssignmentService lifecycle hooks and from progress / authority-request
+// handlers when the originating message carries a matching task id.
+func TaskEventsTopic(workspace, taskID string) (string, error) {
+	if err := validateSegments("workspace", workspace, "task_id", taskID); err != nil {
+		return "", err
+	}
+	return "tk" + IdentitySep + workspace + IdentitySep + taskID + IdentitySep + "events", nil
+}
+
+// MustTaskEventsTopic builds a task-events topic and panics on invalid input.
+// Use only for trusted segments.
+func MustTaskEventsTopic(workspace, taskID string) string {
+	t, err := TaskEventsTopic(workspace, taskID)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
 // UserProgressTopic returns a per-user progress stream topic used for
 // targeted progress delivery across all of a user's open windows. Agents
 // that send chat-kind progress set ProgressReport.recipient to the user's

@@ -1441,6 +1441,71 @@ func taskToProto(t *tasks.Task) *pb.TaskInfo {
 	return info
 }
 
+// ErrTaskNotFoundOrUnauthorized is the canonical error string returned for
+// any task lookup or task-op invocation where either (a) the task does not
+// exist, or (b) the caller is not authorized to act on it. Collapsing both
+// failure modes prevents resource enumeration via permission-denied probes
+// (A2A info-hiding principle: auth-fail equivalent to not-found).
+const ErrTaskNotFoundOrUnauthorized = "task not found"
+
+// authorizeTaskOp returns true when the caller is permitted to act on the
+// given task. The check is structured as a cheap-first chain so workspace
+// admin grants only get hit when neither cheaper match holds:
+//
+//  1. Creator match: task.ParentAgentID == caller.Identity (Phase 4 implicit
+//     creator-manage ACL).
+//  2. Assignee match: task.AssignedTo == caller.Identity (the assigned
+//     worker can always complete/fail/cancel its own work).
+//  3. Workspace-admin: caller holds AccessManage on the task's workspace
+//     via the ACL store (CanManageWorkspace).
+//
+// Workspace mismatch is treated as unauthorized — the caller's workspace
+// must match the task's. The function never returns an error; ACL lookup
+// failures are converted to "deny" since fail-closed is the correct
+// semantic for a missing ACL surface.
+func (s *GatewayServer) authorizeTaskOp(ctx context.Context, client *ClientSession, task *tasks.Task) bool {
+	if task == nil {
+		return false
+	}
+	client.identityMu.RLock()
+	callerIdentity := client.Identity
+	callerTopic := callerIdentity.ToTopic()
+	callerWorkspace := callerIdentity.Workspace
+	sessionUUID := client.SessionUUID
+	client.identityMu.RUnlock()
+
+	// Workspace mismatch is an immediate deny — even a creator/assignee
+	// match across workspaces should not be honored, since workspace is
+	// the strong tenancy boundary.
+	if callerWorkspace != "" && task.Workspace != callerWorkspace {
+		return false
+	}
+
+	// Creator-match (cheapest): task.ParentAgentID is the storage column
+	// that backs the proto creator_actor_id field.
+	if task.ParentAgentID != "" && task.ParentAgentID == callerTopic {
+		return true
+	}
+
+	// Assignee-match: the worker assigned to the task may always act on it.
+	if task.AssignedTo != "" && task.AssignedTo == callerTopic {
+		return true
+	}
+
+	// Workspace-admin: requires the ACL store. If no ACL is configured,
+	// fail open on workspace match (the current Phase 1-3 behavior).
+	if s.acl == nil {
+		// No ACL service — fall back to the workspace-only check that
+		// existed before Phase 4. Workspace already matched above.
+		return true
+	}
+	decision, err := s.acl.CanManageWorkspace(ctx, callerIdentity, task.Workspace, sessionUUID)
+	if err != nil || decision == nil {
+		return false
+	}
+	return decision.Allowed
+}
+
 func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSession, query *pb.TaskQuery) {
 	requestID := query.GetRequestId()
 
@@ -1464,15 +1529,19 @@ func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSessi
 	switch query.Op {
 	case pb.TaskQuery_GET:
 		task, err := s.taskStore.GetTask(ctx, query.TaskId)
-		if err != nil {
+		if err != nil || task == nil {
+			// Collapse db errors and "not found" into the same response to
+			// preserve info-hiding (A2A principle).
 			response = &pb.TaskQueryResponse{
 				Success: false,
-				Error:   err.Error(),
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
-		} else if task == nil {
+		} else if !s.authorizeTaskOp(ctx, client, task) {
+			// Unauthorized — return identical "not found" to prevent
+			// resource enumeration.
 			response = &pb.TaskQueryResponse{
 				Success: false,
-				Error:   "task not found",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 		} else {
 			response = &pb.TaskQueryResponse{
@@ -1518,6 +1587,14 @@ func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSessi
 					filter.ExcludeStatuses = append(filter.ExcludeStatuses, protoTaskStatusToTasks(s))
 				}
 			}
+			// Phase 4 management-surface filters.
+			if creator := query.Filter.CreatorActor; creator != nil {
+				filter.CreatorActorType = creator.PrincipalType
+				filter.CreatorActorID = creator.PrincipalId
+			}
+			filter.StatusTimestampAfterUnixMs = query.Filter.StatusTimestampAfterUnixMs
+			filter.PageToken = query.Filter.PageToken
+			filter.IncludeDescendants = query.Filter.IncludeDescendants
 			if query.Filter.Limit > 0 {
 				filter.Limit = int(query.Filter.Limit)
 				if filter.Limit > 1000 {
@@ -1527,11 +1604,25 @@ func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSessi
 			filter.Offset = int(query.Filter.Offset)
 		}
 
-		taskList, err := s.taskStore.ListTasks(ctx, filter)
+		// Phase 4: callers are implicitly scoped to their own workspace.
+		// If the caller did not supply a workspace filter, fall back to the
+		// caller's identity workspace so LIST never crosses tenant
+		// boundaries even when ACL is misconfigured.
+		client.identityMu.RLock()
+		callerWorkspaceList := client.Identity.Workspace
+		client.identityMu.RUnlock()
+		if filter.Workspace == "" && callerWorkspaceList != "" {
+			filter.Workspace = callerWorkspaceList
+		}
+
+		taskList, nextToken, err := s.taskStore.ListTasksPage(ctx, filter)
 		if err != nil {
+			// Surface invalid page_token as a distinct error so callers can
+			// distinguish bad-request from server-side failures.
+			errStr := err.Error()
 			response = &pb.TaskQueryResponse{
 				Success: false,
-				Error:   err.Error(),
+				Error:   errStr,
 			}
 		} else {
 			protoTasks := make([]*pb.TaskInfo, len(taskList))
@@ -1539,9 +1630,10 @@ func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSessi
 				protoTasks[i] = taskToProto(t)
 			}
 			response = &pb.TaskQueryResponse{
-				Success:    true,
-				Tasks:      protoTasks,
-				TotalCount: int32(len(protoTasks)),
+				Success:       true,
+				Tasks:         protoTasks,
+				TotalCount:    int32(len(protoTasks)),
+				NextPageToken: nextToken,
 			}
 		}
 
@@ -1589,22 +1681,19 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 
 	switch op.Op {
 	case pb.TaskOperation_CANCEL:
-		// Authorization: verify caller's workspace matches the task's workspace
+		// Authorization: creator / assignee / workspace-admin (info-hiding).
 		cancelTask, err := s.taskStore.GetTask(ctx, op.TaskId)
 		if err != nil || cancelTask == nil {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "task not found",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
-		client.identityMu.RLock()
-		callerWorkspaceCancel := client.Identity.Workspace
-		client.identityMu.RUnlock()
-		if callerWorkspaceCancel != "" && cancelTask.Workspace != callerWorkspaceCancel {
+		if !s.authorizeTaskOp(ctx, client, cancelTask) {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "not authorized: task belongs to a different workspace",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
@@ -1631,22 +1720,19 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		}
 
 	case pb.TaskOperation_RETRY:
-		// Authorization: verify caller's workspace matches the task's workspace
+		// Authorization: creator / assignee / workspace-admin (info-hiding).
 		retryTask, err := s.taskStore.GetTask(ctx, op.TaskId)
 		if err != nil || retryTask == nil {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "task not found",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
-		client.identityMu.RLock()
-		callerWorkspaceRetry := client.Identity.Workspace
-		client.identityMu.RUnlock()
-		if callerWorkspaceRetry != "" && retryTask.Workspace != callerWorkspaceRetry {
+		if !s.authorizeTaskOp(ctx, client, retryTask) {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "not authorized: task belongs to a different workspace",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
@@ -1669,22 +1755,19 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		}
 
 	case pb.TaskOperation_COMPLETE:
-		// Authorization: only the assigned agent may complete a task
+		// Authorization: creator / assignee / workspace-admin (info-hiding).
 		task, err := s.taskStore.GetTask(ctx, op.TaskId)
 		if err != nil || task == nil {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "task not found",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
-		client.identityMu.RLock()
-		callerTopic := client.Identity.ToTopic()
-		client.identityMu.RUnlock()
-		if task.AssignedTo != "" && task.AssignedTo != callerTopic {
+		if !s.authorizeTaskOp(ctx, client, task) {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "not authorized: task is assigned to a different agent",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
@@ -1715,22 +1798,19 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		if errMsg == "" {
 			errMsg = "task failed"
 		}
-		// Authorization: only the assigned agent may fail a task
+		// Authorization: creator / assignee / workspace-admin (info-hiding).
 		task, err := s.taskStore.GetTask(ctx, op.TaskId)
 		if err != nil || task == nil {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "task not found",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
-		client.identityMu.RLock()
-		callerTopic := client.Identity.ToTopic()
-		client.identityMu.RUnlock()
-		if task.AssignedTo != "" && task.AssignedTo != callerTopic {
+		if !s.authorizeTaskOp(ctx, client, task) {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "not authorized: task is assigned to a different agent",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
@@ -1762,7 +1842,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		if op.WaitSpec == nil {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "wait_spec required for PAUSE",
+				Error:   "invalid request: wait_spec required for PAUSE",
 			}
 			break
 		}
@@ -1770,17 +1850,14 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		if err != nil || pauseTask == nil {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "task not found",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
-		client.identityMu.RLock()
-		callerWorkspacePause := client.Identity.Workspace
-		client.identityMu.RUnlock()
-		if callerWorkspacePause != "" && pauseTask.Workspace != callerWorkspacePause {
+		if !s.authorizeTaskOp(ctx, client, pauseTask) {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "not authorized: task belongs to a different workspace",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
@@ -1846,7 +1923,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		if op.WaitSpec == nil || len(op.WaitSpec.GetDependsOn()) == 0 {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "wait_spec.depends_on required for WAIT_FOR",
+				Error:   "invalid request: wait_spec.depends_on required for WAIT_FOR",
 			}
 			break
 		}
@@ -1854,17 +1931,14 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		if err != nil || waitTask == nil {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "task not found",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
-		client.identityMu.RLock()
-		callerWorkspaceWait := client.Identity.Workspace
-		client.identityMu.RUnlock()
-		if callerWorkspaceWait != "" && waitTask.Workspace != callerWorkspaceWait {
+		if !s.authorizeTaskOp(ctx, client, waitTask) {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "not authorized: task belongs to a different workspace",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
@@ -1929,17 +2003,14 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		if err != nil || resumeTask == nil {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "task not found",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
-		client.identityMu.RLock()
-		callerWorkspaceResume := client.Identity.Workspace
-		client.identityMu.RUnlock()
-		if callerWorkspaceResume != "" && resumeTask.Workspace != callerWorkspaceResume {
+		if !s.authorizeTaskOp(ctx, client, resumeTask) {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "not authorized: task belongs to a different workspace",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
@@ -1975,17 +2046,14 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		if err != nil || rejectTask == nil {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "task not found",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}
-		client.identityMu.RLock()
-		callerWorkspaceReject := client.Identity.Workspace
-		client.identityMu.RUnlock()
-		if callerWorkspaceReject != "" && rejectTask.Workspace != callerWorkspaceReject {
+		if !s.authorizeTaskOp(ctx, client, rejectTask) {
 			response = &pb.TaskOperationResponse{
 				Success: false,
-				Error:   "not authorized: task belongs to a different workspace",
+				Error:   ErrTaskNotFoundOrUnauthorized,
 			}
 			break
 		}

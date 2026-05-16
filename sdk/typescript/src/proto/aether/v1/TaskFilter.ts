@@ -2,6 +2,8 @@
 
 import type { TaskStatus as _aether_v1_TaskStatus, TaskStatus__Output as _aether_v1_TaskStatus__Output } from '../../aether/v1/TaskStatus';
 import type { TaskClass as _aether_v1_TaskClass, TaskClass__Output as _aether_v1_TaskClass__Output } from '../../aether/v1/TaskClass';
+import type { PrincipalRef as _aether_v1_PrincipalRef, PrincipalRef__Output as _aether_v1_PrincipalRef__Output } from '../../aether/v1/PrincipalRef';
+import type { Long } from '@grpc/proto-loader';
 
 /**
  * TaskFilter specifies filtering parameters for listing tasks.
@@ -78,6 +80,35 @@ export interface TaskFilter {
    * or similar queries without enumerating the affirmative set.
    */
   'excludeStatuses'?: (_aether_v1_TaskStatus)[];
+  /**
+   * Phase 4: management-surface filter extensions. Mirrors A2A's ListTasks
+   * semantics over Aether's bidi-stream surface.
+   * 
+   * Filter by the actor that created the task (lineage). The principal_id
+   * field is matched against the task's stored creator identity column;
+   * principal_type is informational only since the storage column is a single
+   * canonical identity string. Empty = no filter.
+   */
+  'creatorActor'?: (_aether_v1_PrincipalRef | null);
+  /**
+   * Filter by status-changed time. Returns tasks whose most recent status
+   * transition occurred at or after this unix-ms timestamp. 0 = no filter.
+   */
+  'statusTimestampAfterUnixMs'?: (number | string | Long);
+  /**
+   * Cursor-based pagination. Empty = start from the beginning. The server
+   * returns a `next_page_token` on TaskQueryResponse when more results exist;
+   * pass it back to fetch the next page. The cursor encodes the last
+   * (updated_at, task_id) tuple seen and is opaque to clients. Cursor
+   * pagination takes priority over Limit/Offset when both are supplied.
+   */
+  'pageToken'?: (string);
+  /**
+   * When true and parent_task_id is set, list ALL descendants (recursive),
+   * not just direct children. Default false: direct children only, preserving
+   * the existing parent_task_id behavior.
+   */
+  'includeDescendants'?: (boolean);
 }
 
 /**
@@ -155,4 +186,33 @@ export interface TaskFilter__Output {
    * or similar queries without enumerating the affirmative set.
    */
   'excludeStatuses': (_aether_v1_TaskStatus__Output)[];
+  /**
+   * Phase 4: management-surface filter extensions. Mirrors A2A's ListTasks
+   * semantics over Aether's bidi-stream surface.
+   * 
+   * Filter by the actor that created the task (lineage). The principal_id
+   * field is matched against the task's stored creator identity column;
+   * principal_type is informational only since the storage column is a single
+   * canonical identity string. Empty = no filter.
+   */
+  'creatorActor': (_aether_v1_PrincipalRef__Output | null);
+  /**
+   * Filter by status-changed time. Returns tasks whose most recent status
+   * transition occurred at or after this unix-ms timestamp. 0 = no filter.
+   */
+  'statusTimestampAfterUnixMs': (string);
+  /**
+   * Cursor-based pagination. Empty = start from the beginning. The server
+   * returns a `next_page_token` on TaskQueryResponse when more results exist;
+   * pass it back to fetch the next page. The cursor encodes the last
+   * (updated_at, task_id) tuple seen and is opaque to clients. Cursor
+   * pagination takes priority over Limit/Offset when both are supplied.
+   */
+  'pageToken': (string);
+  /**
+   * When true and parent_task_id is set, list ALL descendants (recursive),
+   * not just direct children. Default false: direct children only, preserving
+   * the existing parent_task_id behavior.
+   */
+  'includeDescendants': (boolean);
 }

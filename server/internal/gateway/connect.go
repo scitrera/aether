@@ -358,6 +358,12 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 			// handler routes per OpType and pushes downstream responses +
 			// AuthorityRequestEvent notifications directly to this session.
 			go s.handleAuthorityRequestOp(sessionCtx, client, p.AuthorityRequestOp)
+		case *pb.UpstreamMessage_TaskSubscriptionOp:
+			// Phase 4 Stage B: per-task event subscription primitive. Handler
+			// pushes a TaskSubscriptionOperationResponse and (for SUBSCRIBE)
+			// keeps streaming TaskEvent deliveries until UNSUBSCRIBE or
+			// disconnect.
+			go s.handleTaskSubscriptionOp(sessionCtx, client, p.TaskSubscriptionOp)
 		case *pb.UpstreamMessage_WorkflowOp:
 			s.handleWorkflowOp(sessionCtx, client, p.WorkflowOp)
 		case *pb.UpstreamMessage_WorkflowResponse:

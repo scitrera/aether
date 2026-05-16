@@ -232,6 +232,9 @@ class BaseAsyncAetherClient:
         self.on_progress: Optional[ProgressCallback] = None
         self.on_connect: Optional[ConnectCallback] = None
         self.on_disconnect: Optional[DisconnectCallback] = None
+        # Phase 4 (Stage C): task subscription event handler.
+        # Set directly or via register_task_event_handler().
+        self.on_task_event: Optional[Callable] = None
 
         # Typed message callbacks (SDK routes by message_type)
         self.on_chat_message: Optional[MessageCallback] = None
@@ -644,6 +647,17 @@ class BaseAsyncAetherClient:
                 elif payload_type == "progress_update":
                     if self.on_progress:
                         await _maybe_await(self.on_progress, response.progress_update)
+                elif payload_type == "task_subscription_response":
+                    # Phase 4 (Stage C): correlated response to subscribe/unsubscribe ops.
+                    resp = response.task_subscription_response
+                    req_id = resp.client_request_id
+                    pending = self._pending_requests.pop(req_id, None) if req_id else None
+                    if pending and not pending.done():
+                        pending.set_result(resp)
+                elif payload_type == "task_event":
+                    # Phase 4 (Stage C): push event from a task subscription stream.
+                    if self.on_task_event:
+                        asyncio.create_task(_safe_callback(self.on_task_event, response.task_event))
                 elif payload_type == "proxy_http_request":
                     # Dispatch directly here rather than relying on the
                     # ``proxy_terminator``/``proxy`` modules' stream-filter
@@ -1748,6 +1762,10 @@ class BaseAsyncAetherClient:
                           task_type: str = "", limit: int = 0, offset: int = 0,
                           task_class: int = 0,
                           exclude_task_classes: Optional[List[int]] = None,
+                          creator_actor: Optional[aether_pb2.PrincipalRef] = None,
+                          status_timestamp_after_unix_ms: int = 0,
+                          page_token: str = "",
+                          include_descendants: bool = False,
                           timeout: float = 10.0) -> Optional[aether_pb2.TaskQueryResponse]:
         """
         List tasks with optional filters.
@@ -1759,10 +1777,23 @@ class BaseAsyncAetherClient:
             task_type: Filter by task type
             limit: Maximum number of results (0 = server default)
             offset: Offset for pagination
+            task_class: Filter by task class integer value
+            exclude_task_classes: Exclude tasks of these class values
+            creator_actor: Phase 4 (Stage A) — filter by the principal that
+                created the task (lineage).
+            status_timestamp_after_unix_ms: Phase 4 (Stage A) — only return
+                tasks whose last status change occurred at or after this
+                unix-ms timestamp.
+            page_token: Phase 4 (Stage A) — cursor for pagination; pass the
+                value of TaskQueryResponse.next_page_token from a prior call.
+            include_descendants: Phase 4 (Stage A) — when True and
+                parent_task_id is set in the filter, return all descendants
+                recursively (not just direct children).
             timeout: Timeout in seconds
 
         Returns:
-            TaskQueryResponse or None if timeout
+            TaskQueryResponse or None if timeout. When page_token is set in
+            the response, pass it back as page_token to retrieve the next page.
         """
         request_id = str(uuid.uuid4())
 
@@ -1787,6 +1818,10 @@ class BaseAsyncAetherClient:
             exclude_task_classes=exclude_task_classes or [],  # type: ignore[arg-type]
             limit=limit,
             offset=offset,
+            creator_actor=creator_actor,
+            status_timestamp_after_unix_ms=status_timestamp_after_unix_ms,
+            page_token=page_token,
+            include_descendants=include_descendants,
         )
         query = aether_pb2.TaskQuery(
             op=aether_pb2.TaskQuery.LIST,
@@ -1796,6 +1831,97 @@ class BaseAsyncAetherClient:
         return await self._send_sync_op(
             aether_pb2.UpstreamMessage(task_query=query),
             request_id, timeout,
+        )
+
+    def register_task_event_handler(self, handler: Callable) -> None:
+        """
+        Register a callback invoked for each TaskEvent received via
+        subscribe_to_task().
+
+        The handler replaces any previously registered handler (mirrors the
+        single-handler convention used by on_progress, on_task_assignment,
+        etc.). To fan-out to multiple consumers, wrap them in one callable.
+
+        The handler may be a plain callable or a coroutine function — the
+        listen loop dispatches it via asyncio.create_task(_safe_callback(...))
+        so it runs concurrently without blocking event delivery.
+
+        Args:
+            handler: Callable (sync or async) that accepts a TaskEvent proto.
+        """
+        self.on_task_event = handler
+
+    async def subscribe_to_task(
+            self, task_id: str, recursive: bool = False,
+            start_timestamp_unix_ms: int = 0,
+            timeout: float = 10.0) -> Optional[aether_pb2.TaskSubscriptionOperationResponse]:
+        """
+        Subscribe to the per-task event stream for ``task_id``.
+
+        Events arrive on the downstream channel as TaskEvent messages. Register
+        a handler with :meth:`register_task_event_handler` (or set
+        ``on_task_event`` directly) before subscribing to consume them.
+
+        Args:
+            task_id: The task to subscribe to.
+            recursive: If True, also stream events for descendant tasks.
+                Snapshot taken at subscribe-time; tasks born after the
+                subscription are picked up via child-lifecycle events on the
+                parent stream.
+            start_timestamp_unix_ms: Cold-start cursor. 0 = live-only (no
+                replay of historical events).
+            timeout: Gateway RPC timeout in seconds.
+
+        Returns:
+            TaskSubscriptionOperationResponse carrying the server-issued
+            subscription_id. Pass that id to :meth:`unsubscribe_from_task`.
+            Returns None on timeout.
+
+        Raises:
+            ValueError: if task_id is empty.
+        """
+        if not task_id:
+            raise ValueError("task_id must not be empty")
+        client_request_id = str(uuid.uuid4())
+        op = aether_pb2.TaskSubscriptionOperation(
+            op=aether_pb2.TaskSubscriptionOperation.SUBSCRIBE,
+            task_id=task_id,
+            recursive=recursive,
+            start_timestamp_unix_ms=start_timestamp_unix_ms,
+            client_request_id=client_request_id,
+        )
+        return await self._send_sync_op(
+            aether_pb2.UpstreamMessage(task_subscription_op=op),
+            client_request_id, timeout,
+        )
+
+    async def unsubscribe_from_task(
+            self, subscription_id: str,
+            timeout: float = 10.0) -> Optional[aether_pb2.TaskSubscriptionOperationResponse]:
+        """
+        Stop streaming events for a previously-created subscription.
+
+        Args:
+            subscription_id: The id returned by :meth:`subscribe_to_task`.
+            timeout: Gateway RPC timeout in seconds.
+
+        Returns:
+            TaskSubscriptionOperationResponse or None on timeout.
+
+        Raises:
+            ValueError: if subscription_id is empty.
+        """
+        if not subscription_id:
+            raise ValueError("subscription_id must not be empty")
+        client_request_id = str(uuid.uuid4())
+        op = aether_pb2.TaskSubscriptionOperation(
+            op=aether_pb2.TaskSubscriptionOperation.UNSUBSCRIBE,
+            subscription_id=subscription_id,
+            client_request_id=client_request_id,
+        )
+        return await self._send_sync_op(
+            aether_pb2.UpstreamMessage(task_subscription_op=op),
+            client_request_id, timeout,
         )
 
     async def get_task(self, task_id: str,

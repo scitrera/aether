@@ -363,6 +363,13 @@ func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVR
 		s.orchestration.TaskService.SetAuthorityGrantService(s.acl)
 	}
 
+	// Phase 4 Stage B: wire the gateway as the task-event publisher for
+	// service-layer lifecycle transitions. Best-effort — publish failures are
+	// logged at debug inside the helpers; no callers observe the error.
+	if s.orchestration != nil && s.orchestration.TaskService != nil {
+		s.orchestration.TaskService.SetEventPublisher(s)
+	}
+
 	// Seed default-allow fallback for KV scope permissions (agent + task).
 	// This ensures KV operations are allowed by default when no explicit rules are set.
 	// Admins can restrict access by creating explicit GRANT rules with lower access levels
@@ -562,6 +569,12 @@ func (s *GatewayServer) SetOrchestrationServices(orchestration *OrchestrationSer
 	}
 	if s.acl != nil && orchestration.TaskService != nil {
 		orchestration.TaskService.SetAuthorityGrantService(s.acl)
+	}
+
+	// Phase 4 Stage B: wire the gateway as the task-event publisher so
+	// lifecycle transitions fan onto tk.{workspace}.{task_id}.events.
+	if orchestration.TaskService != nil {
+		orchestration.TaskService.SetEventPublisher(s)
 	}
 
 	// Configure dispatcher callback to route tasks to connected orchestrators

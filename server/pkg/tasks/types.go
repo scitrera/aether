@@ -335,6 +335,30 @@ type TaskFilter struct {
 	ExcludeStatuses []TaskStatus // Omit tasks whose status is in this list
 	Limit           int
 	Offset          int
+
+	// Phase 4: management-surface filter extensions.
+	//
+	// CreatorActorType is informational only — the storage column backing
+	// the creator identity (parent_agent_id in the tasks table) is a single
+	// canonical identity string. CreatorActorID is the filtered value.
+	CreatorActorType string
+	CreatorActorID   string
+
+	// StatusTimestampAfterUnixMs filters to tasks whose most recent status
+	// transition (updated_at) is at or after this unix-ms timestamp.
+	// 0 = no filter.
+	StatusTimestampAfterUnixMs int64
+
+	// PageToken is the opaque cursor returned by the previous ListTasks
+	// call. When set, supersedes Offset for stable pagination. The cursor
+	// format is base64url("<unix_micros>|<task_id>") and orders by
+	// (updated_at DESC, task_id DESC).
+	PageToken string
+
+	// IncludeDescendants, combined with ParentTaskID, recursively walks the
+	// task tree below the named parent. False (default) preserves the
+	// existing direct-children-only behavior.
+	IncludeDescendants bool
 }
 
 // =============================================================================

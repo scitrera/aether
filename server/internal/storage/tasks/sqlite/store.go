@@ -466,17 +466,11 @@ func (s *Store) RescheduleTaskAt(ctx context.Context, taskID string, retryAt tim
 // Listing / queries
 // =============================================================================
 
-func (s *Store) ListTasks(ctx context.Context, filter *tasks.TaskFilter) ([]*tasks.Task, error) {
-	if filter == nil {
-		filter = &tasks.TaskFilter{}
-	}
-	if filter.Limit == 0 {
-		filter.Limit = 100
-	}
-
-	query := `SELECT ` + taskSelectColumns + ` FROM tasks WHERE 1=1`
-	args := []interface{}{}
-
+// buildFilterClausesSQLite returns the shared WHERE fragment used by
+// ListTasks and ListTasksPage. When skipParentTaskID is true the ParentTaskID
+// predicate is omitted so callers can splice the recursive CTE in.
+func buildFilterClausesSQLite(filter *tasks.TaskFilter, args []interface{}, skipParentTaskID bool) (string, []interface{}) {
+	var query string
 	if len(filter.Statuses) > 0 {
 		placeholders := make([]string, len(filter.Statuses))
 		for i, st := range filter.Statuses {
@@ -540,7 +534,7 @@ func (s *Store) ListTasks(ctx context.Context, filter *tasks.TaskFilter) ([]*tas
 		query += " AND root_authority_grant_id = ?"
 		args = append(args, filter.RootAuthorityGrantID)
 	}
-	if filter.ParentTaskID != "" {
+	if filter.ParentTaskID != "" && !skipParentTaskID {
 		query += " AND parent_task_id = ?"
 		args = append(args, filter.ParentTaskID)
 	}
@@ -568,11 +562,123 @@ func (s *Store) ListTasks(ctx context.Context, filter *tasks.TaskFilter) ([]*tas
 		}
 		query += " AND status NOT IN (" + strings.Join(placeholders, ", ") + ")"
 	}
+	// Phase 4 filters. CreatorActorID maps to the parent_agent_id column
+	// (storage backing for TaskInfo.creator_actor_id). CreatorActorType is
+	// informational only.
+	if filter.CreatorActorID != "" {
+		query += " AND parent_agent_id = ?"
+		args = append(args, filter.CreatorActorID)
+	}
+	if filter.StatusTimestampAfterUnixMs > 0 {
+		// Compare against the ISO-8601 TEXT format the native sqlite store
+		// uses for timestamps (parseTimestamp accepts both .000 and .000000
+		// fractional precisions; the canonical strftime format uses .000).
+		t := time.UnixMilli(filter.StatusTimestampAfterUnixMs).UTC()
+		query += " AND updated_at >= ?"
+		args = append(args, t.Format("2006-01-02T15:04:05.000"))
+	}
+	return query, args
+}
+
+func (s *Store) ListTasks(ctx context.Context, filter *tasks.TaskFilter) ([]*tasks.Task, error) {
+	if filter == nil {
+		filter = &tasks.TaskFilter{}
+	}
+	if filter.Limit == 0 {
+		filter.Limit = 100
+	}
+
+	query := `SELECT ` + taskSelectColumns + ` FROM tasks WHERE 1=1`
+	args := []interface{}{}
+
+	clauses, args := buildFilterClausesSQLite(filter, args, false)
+	query += clauses
 
 	query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
 	args = append(args, filter.Limit, filter.Offset)
 
 	return s.queryTasks(ctx, query, args...)
+}
+
+// ListTasksPage implements the cursor-aware Phase 4 listing. SQLite supports
+// recursive CTEs so the IncludeDescendants walk uses the same WITH RECURSIVE
+// shape as the postgres path; we cap row count at 10000 to bound runaway
+// walks on deep trees.
+func (s *Store) ListTasksPage(ctx context.Context, filter *tasks.TaskFilter) ([]*tasks.Task, string, error) {
+	if filter == nil {
+		filter = &tasks.TaskFilter{}
+	}
+	if filter.Limit == 0 {
+		filter.Limit = 100
+	}
+	limit := filter.Limit
+
+	// Decode cursor if present. The cursor encodes (updated_at_micros, task_id).
+	// On sqlite the updated_at column is ISO-8601 TEXT, so we format the
+	// cursor timestamp identically and compare lexicographically — which is
+	// correct because ISO-8601 TEXT sorts the same as time order.
+	var cursorTime string
+	var cursorTaskID string
+	useCursor := false
+	if filter.PageToken != "" {
+		micros, id, decErr := tasks.DecodePageToken(filter.PageToken)
+		if decErr != nil {
+			return nil, "", fmt.Errorf("invalid page_token: %w", decErr)
+		}
+		cursorTime = time.UnixMicro(micros).UTC().Format("2006-01-02T15:04:05.000")
+		cursorTaskID = id
+		useCursor = true
+	}
+
+	recursive := filter.IncludeDescendants && filter.ParentTaskID != ""
+
+	args := []interface{}{}
+	var query string
+	if recursive {
+		// SQLite's recursive CTE syntax mirrors postgres. We cap the
+		// walked rows to keep traversal bounded; combined with the LIMIT
+		// in the outer SELECT, deep cycles cannot DoS the server.
+		query = `
+			WITH RECURSIVE descendants AS (
+				SELECT t.* FROM tasks t WHERE t.parent_task_id = ?
+				UNION ALL
+				SELECT t.* FROM tasks t
+				INNER JOIN descendants d ON t.parent_task_id = d.task_id
+			)
+			SELECT ` + taskSelectColumns + ` FROM descendants WHERE 1=1`
+		args = append(args, filter.ParentTaskID)
+	} else {
+		query = `SELECT ` + taskSelectColumns + ` FROM tasks WHERE 1=1`
+	}
+
+	clauses, args := buildFilterClausesSQLite(filter, args, recursive)
+	query += clauses
+
+	if useCursor {
+		// SQLite supports row-value comparison since 3.15.0; pin to that
+		// for stable cursor pagination ordered (updated_at DESC, task_id DESC).
+		query += " AND (updated_at, task_id) < (?, ?)"
+		args = append(args, cursorTime, cursorTaskID)
+	}
+
+	query += " ORDER BY updated_at DESC, task_id DESC"
+	if recursive && limit > 10000 {
+		limit = 10000
+	}
+	query += " LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.queryTasks(ctx, query, args...)
+	if err != nil {
+		return nil, "", err
+	}
+
+	var nextToken string
+	if len(rows) == limit && len(rows) > 0 {
+		last := rows[len(rows)-1]
+		nextToken = tasks.EncodePageToken(last.UpdatedAt.UnixMicro(), last.TaskID)
+	}
+	return rows, nextToken, nil
 }
 
 func (s *Store) GetTasksByStatus(ctx context.Context, status tasks.TaskStatus, limit int) ([]*tasks.Task, error) {

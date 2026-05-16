@@ -126,6 +126,21 @@ func TestStoreConformance(t *testing.T) {
 				defer cleanup()
 				runContextAndDependencies(t, store)
 			})
+			t.Run("NewFilters", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runNewFilters(t, store)
+			})
+			t.Run("Descendants", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runDescendants(t, store)
+			})
+			t.Run("Cursor", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runCursorPagination(t, store)
+			})
 		})
 	}
 }
@@ -996,6 +1011,257 @@ func runContextAndDependencies(t *testing.T, store tasks.Store) {
 	}
 	if !containsTask(depTasks, parent.TaskID) {
 		t.Errorf("ListTasksWaitingOnDependency(%s) did not include parent %s", childA.TaskID, parent.TaskID)
+	}
+}
+
+// =============================================================================
+// Phase 4 — new-filter conformance subtests.
+//
+// Coverage: CreatorActorID, StatusTimestampAfterUnixMs, IncludeDescendants
+// (recursive walk via CTE), and cursor-based pagination via ListTasksPage.
+// =============================================================================
+
+// runNewFilters exercises CreatorActorID + StatusTimestampAfterUnixMs.
+//
+// CreatorActorID is matched against the parent_agent_id column (the storage
+// backing for TaskInfo.creator_actor_id). The status-timestamp filter
+// uses updated_at >= timestamp(ms); we drive updated_at by transitioning
+// task status (which bumps updated_at in both backends).
+func runNewFilters(t *testing.T, store tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	workspace := fmt.Sprintf("ws-newfilters-%d", time.Now().UnixNano())
+
+	// 3 tasks for alice, 2 tasks for bob, all in the same workspace.
+	const alice = "user::alice"
+	const bob = "user::bob"
+	const aliceCount = 3
+	const bobCount = 2
+
+	aliceIDs := make([]string, 0, aliceCount)
+	for i := 0; i < aliceCount; i++ {
+		task := newTestTask(t, fmt.Sprintf("alice-%d", i))
+		task.Workspace = workspace
+		task.ParentAgentID = alice
+		if err := store.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask alice[%d]: %v", i, err)
+		}
+		aliceIDs = append(aliceIDs, task.TaskID)
+	}
+	for i := 0; i < bobCount; i++ {
+		task := newTestTask(t, fmt.Sprintf("bob-%d", i))
+		task.Workspace = workspace
+		task.ParentAgentID = bob
+		if err := store.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask bob[%d]: %v", i, err)
+		}
+	}
+
+	// CreatorActorID filter narrows to alice's tasks only.
+	gotAlice, _, err := store.ListTasksPage(ctx, &tasks.TaskFilter{
+		Workspace:      workspace,
+		CreatorActorID: alice,
+		Limit:          100,
+	})
+	if err != nil {
+		t.Fatalf("ListTasksPage(creator=alice): %v", err)
+	}
+	if len(gotAlice) != aliceCount {
+		t.Fatalf("CreatorActorID=alice: got %d rows want %d", len(gotAlice), aliceCount)
+	}
+	for _, tsk := range gotAlice {
+		if tsk.ParentAgentID != alice {
+			t.Errorf("CreatorActorID=alice: row leaked from %q", tsk.ParentAgentID)
+		}
+	}
+
+	// StatusTimestampAfterUnixMs: capture the "now" cutoff, then transition
+	// one alice task to RUNNING which bumps its updated_at. After the
+	// cutoff, only the transitioned task should match. (We use a 50ms
+	// quiet window to ensure clock skew between rows doesn't bite.)
+	time.Sleep(50 * time.Millisecond)
+	cutoffMs := time.Now().UnixMilli()
+	time.Sleep(50 * time.Millisecond)
+
+	bumpID := aliceIDs[0]
+	if err := store.AssignTask(ctx, bumpID, "worker-bump"); err != nil {
+		t.Fatalf("AssignTask: %v", err)
+	}
+	if err := store.StartTask(ctx, bumpID); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	gotRecent, _, err := store.ListTasksPage(ctx, &tasks.TaskFilter{
+		Workspace:                  workspace,
+		StatusTimestampAfterUnixMs: cutoffMs,
+		Limit:                      100,
+	})
+	if err != nil {
+		t.Fatalf("ListTasksPage(status_timestamp_after): %v", err)
+	}
+	// At least the bumped task must be present and no rows older than
+	// the cutoff are expected. We don't assert exact count to allow for
+	// the very-slim window where another row also lands updated_at >=
+	// cutoff (e.g. trigger-side timestamp resolution).
+	foundBump := false
+	for _, tsk := range gotRecent {
+		if tsk.TaskID == bumpID {
+			foundBump = true
+		}
+		if tsk.UpdatedAt.UnixMilli() < cutoffMs {
+			t.Errorf("StatusTimestampAfter cutoff=%d returned older row updated_at=%d",
+				cutoffMs, tsk.UpdatedAt.UnixMilli())
+		}
+	}
+	if !foundBump {
+		t.Errorf("StatusTimestampAfter: bumped task %s missing from results", bumpID)
+	}
+}
+
+// runDescendants creates a 4-deep parent chain (A -> B -> C -> D) and
+// verifies IncludeDescendants=true returns B, C, D when filtering by
+// parent=A. With IncludeDescendants=false (default), only B is returned.
+func runDescendants(t *testing.T, store tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	workspace := fmt.Sprintf("ws-desc-%d", time.Now().UnixNano())
+
+	taskA := newTestTask(t, "desc-A")
+	taskA.Workspace = workspace
+	if err := store.CreateTask(ctx, taskA); err != nil {
+		t.Fatalf("CreateTask A: %v", err)
+	}
+	taskB := newTestTask(t, "desc-B")
+	taskB.Workspace = workspace
+	taskB.ParentTaskID = taskA.TaskID
+	if err := store.CreateTask(ctx, taskB); err != nil {
+		t.Fatalf("CreateTask B: %v", err)
+	}
+	taskC := newTestTask(t, "desc-C")
+	taskC.Workspace = workspace
+	taskC.ParentTaskID = taskB.TaskID
+	if err := store.CreateTask(ctx, taskC); err != nil {
+		t.Fatalf("CreateTask C: %v", err)
+	}
+	taskD := newTestTask(t, "desc-D")
+	taskD.Workspace = workspace
+	taskD.ParentTaskID = taskC.TaskID
+	if err := store.CreateTask(ctx, taskD); err != nil {
+		t.Fatalf("CreateTask D: %v", err)
+	}
+
+	// Default: direct children only.
+	direct, _, err := store.ListTasksPage(ctx, &tasks.TaskFilter{
+		Workspace:    workspace,
+		ParentTaskID: taskA.TaskID,
+		Limit:        100,
+	})
+	if err != nil {
+		t.Fatalf("ListTasksPage(direct children): %v", err)
+	}
+	if len(direct) != 1 {
+		t.Fatalf("direct children of A: got %d want 1", len(direct))
+	}
+	if direct[0].TaskID != taskB.TaskID {
+		t.Errorf("direct children of A: got %q want %q", direct[0].TaskID, taskB.TaskID)
+	}
+
+	// IncludeDescendants=true: walks the chain via recursive CTE.
+	all, _, err := store.ListTasksPage(ctx, &tasks.TaskFilter{
+		Workspace:          workspace,
+		ParentTaskID:       taskA.TaskID,
+		IncludeDescendants: true,
+		Limit:              100,
+	})
+	if err != nil {
+		t.Fatalf("ListTasksPage(include_descendants): %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("descendants of A: got %d want 3 (B+C+D)", len(all))
+	}
+	want := map[string]bool{taskB.TaskID: false, taskC.TaskID: false, taskD.TaskID: false}
+	for _, tsk := range all {
+		if _, ok := want[tsk.TaskID]; !ok {
+			t.Errorf("descendants of A: unexpected row %s", tsk.TaskID)
+			continue
+		}
+		want[tsk.TaskID] = true
+	}
+	for id, found := range want {
+		if !found {
+			t.Errorf("descendants of A: missing %s", id)
+		}
+	}
+}
+
+// runCursorPagination creates N tasks (N > limit), pages through them with
+// a small page size, and asserts: (a) no duplicates across pages, (b) no
+// gaps (count(page1) + count(page2) + ... == N), (c) empty cursor on the
+// final page, (d) invalid cursor returns an error.
+func runCursorPagination(t *testing.T, store tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	workspace := fmt.Sprintf("ws-cursor-%d", time.Now().UnixNano())
+	const total = 7
+	const pageSize = 3
+
+	for i := 0; i < total; i++ {
+		task := newTestTask(t, fmt.Sprintf("cursor-%d", i))
+		task.Workspace = workspace
+		if err := store.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask[%d]: %v", i, err)
+		}
+		// Stagger updated_at so the (updated_at DESC, task_id DESC)
+		// ordering is unambiguous; some sqlite versions tick at coarser
+		// resolution than postgres NOW().
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	seen := map[string]int{}
+	cursor := ""
+	pages := 0
+	for {
+		pages++
+		if pages > 100 {
+			t.Fatalf("cursor pagination did not terminate after %d pages", pages)
+		}
+		rows, next, err := store.ListTasksPage(ctx, &tasks.TaskFilter{
+			Workspace: workspace,
+			PageToken: cursor,
+			Limit:     pageSize,
+		})
+		if err != nil {
+			t.Fatalf("ListTasksPage(page %d): %v", pages, err)
+		}
+		for _, r := range rows {
+			seen[r.TaskID]++
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+
+	if len(seen) != total {
+		t.Fatalf("cursor pagination: saw %d unique rows want %d", len(seen), total)
+	}
+	for id, count := range seen {
+		if count != 1 {
+			t.Errorf("cursor pagination: row %s seen %d times (want exactly 1)", id, count)
+		}
+	}
+
+	// Invalid cursor must be reported as such, not silently swallowed.
+	_, _, err := store.ListTasksPage(ctx, &tasks.TaskFilter{
+		Workspace: workspace,
+		PageToken: "not-a-valid-token",
+		Limit:     pageSize,
+	})
+	if err == nil {
+		t.Errorf("ListTasksPage with malformed page_token: expected error, got nil")
 	}
 }
 

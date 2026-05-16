@@ -31,6 +31,14 @@ from .client import (
     make_hibernation_descriptor,
 )
 
+# Phase 4 (Stage C): expose task subscription proto types at the top level
+# for consumers that need to inspect TaskEvent oneofs or build
+# TaskSubscriptionOperation values without importing the proto module directly.
+from .proto.aether_pb2 import (  # type: ignore[attr-defined]
+    TaskEvent,
+    TaskSubscriptionOperation,
+)
+
 from .client_async import (
     # Client classes (async)
     AsyncAgentClient,
@@ -233,6 +241,10 @@ __all__ = (
 
     # Hibernation helper (Phase 3 Stage C)
     'make_hibernation_descriptor',
+
+    # Phase 4 (Stage C): task subscription proto types
+    'TaskEvent',
+    'TaskSubscriptionOperation',
 
     # Message type constants
     'MESSAGE_TYPE_UNSPECIFIED',

@@ -673,19 +673,39 @@ func sendAuthorityRequestResponse(client *ClientSession, clientRequestID, messag
 }
 
 // emitAuthorityRequestEvent pushes an AuthorityRequestEvent to the originating
-// session. Stage 4 will expand the delivery surface to task-scoped topics,
-// but for Stage C single-session direct delivery is the contract.
+// session and, when the request is bound to a task, also relays the event
+// onto that task's per-task event topic (tk.{workspace}.{task_id}.events) so
+// task subscribers learn about authority transitions.
+//
+// Stage B addition (Phase 4): the task relay is best-effort and only fires
+// when (a) the request has a non-empty task_id, and (b) the task exists in a
+// resolvable workspace. Errors are swallowed inside the publisher helper.
 func (s *GatewayServer) emitAuthorityRequestEvent(client *ClientSession, req *acl.AuthorityRequest, eventType pb.AuthorityRequestEvent_EventType) {
 	if client == nil || req == nil {
 		return
 	}
+	event := &pb.AuthorityRequestEvent{
+		EventType: eventType,
+		Request:   authorityRequestToProto(req),
+		EmittedAt: time.Now().Unix(),
+	}
 	_ = client.SafeSend(&pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_AuthorityRequestEvent{
-			AuthorityRequestEvent: &pb.AuthorityRequestEvent{
-				EventType: eventType,
-				Request:   authorityRequestToProto(req),
-				EmittedAt: time.Now().Unix(),
-			},
+			AuthorityRequestEvent: event,
 		},
 	})
+
+	// Per-task relay: when the request has a task_id, also publish a
+	// TaskAuthorityRequestEventRelay on tk.{workspace}.{task_id}.events so
+	// task subscribers see authority decisions affecting their task. The
+	// workspace is resolved from the bound task row when present; if the
+	// task is gone (e.g. rejected request after task termination) we skip.
+	if req.TaskID == "" || s.taskStore == nil {
+		return
+	}
+	t, terr := s.taskStore.GetTask(context.Background(), req.TaskID)
+	if terr != nil || t == nil || t.Workspace == "" {
+		return
+	}
+	s.publishAuthorityRequestTaskEvent(context.Background(), req.TaskID, t.Workspace, event)
 }

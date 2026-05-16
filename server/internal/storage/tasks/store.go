@@ -146,6 +146,14 @@ type Store interface {
 	// as an empty filter.
 	ListTasks(ctx context.Context, filter *TaskFilter) ([]*Task, error)
 
+	// ListTasksPage is the Phase 4 cursor-aware variant. Returns the matching
+	// page plus an opaque next-page cursor; the cursor is empty when no more
+	// rows exist. When filter.PageToken is set, it supersedes filter.Offset
+	// and ordering switches to (updated_at DESC, task_id DESC) so cursor
+	// pagination remains stable. When filter.IncludeDescendants is true with
+	// filter.ParentTaskID set, the walk is recursive (capped at 10000 rows).
+	ListTasksPage(ctx context.Context, filter *TaskFilter) (rows []*Task, nextPageToken string, err error)
+
 	// GetTasksByStatus is a convenience over ListTasks for a single status.
 	GetTasksByStatus(ctx context.Context, status TaskStatus, limit int) ([]*Task, error)
 

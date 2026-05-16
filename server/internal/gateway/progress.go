@@ -223,6 +223,15 @@ func (s *GatewayServer) handleProgressReport(ctx context.Context, client *Client
 		if err := s.maybeRenewTaskAuthorityGrants(ctx, report.TaskId); err != nil {
 			logging.Logger.Warn().Err(err).Str("task_id", report.TaskId).Msg("failed to renew task authority grants from progress report")
 		}
+
+		// Phase 4 Stage B: fan the progress report onto the per-task event
+		// topic (tk.{workspace}.{task_id}.events). Workspace comes from the
+		// stored task row so a sender publishing into a different workspace
+		// (e.g. an `_apps` agent reporting on a `default`-scoped task) still
+		// routes to the correct task-events topic. Best-effort.
+		if t, err := s.taskStore.GetTask(ctx, report.TaskId); err == nil && t != nil && t.Workspace != "" {
+			s.publishProgressTaskEvent(ctx, report.TaskId, t.Workspace, report)
+		}
 	}
 }
 

@@ -54,6 +54,10 @@ type TaskAssignmentService struct {
 	tokenStore      state.TokenStore
 	grantService    authorityGrantService
 	dispatcher      queueRetirementDispatcher
+	// eventPub publishes per-task lifecycle events to the per-task event topic
+	// (tk.{workspace}.{task_id}.events). Phase 4 Stage B. Nil = disabled, every
+	// publish call becomes a no-op. Injected via SetEventPublisher.
+	eventPub TaskEventPublisher
 }
 
 // queueRetirementDispatcher is the narrow interface TaskAssignmentService needs
@@ -684,6 +688,11 @@ func DefaultGraceWindowMs(class int32) int64 {
 
 // CompleteTask marks a task as completed and revokes associated tokens
 func (tas *TaskAssignmentService) CompleteTask(ctx context.Context, taskID string) error {
+	// Phase 4 Stage B: snapshot pre-transition state so publishStatusChange
+	// can include the from_status. Loading before the transition keeps us in
+	// the legal pre-state; loading after would always see TaskStatusCompleted.
+	pre := tas.loadTransitionMetadata(ctx, taskID)
+
 	// Revoke tokens before completing (allows agent to reconnect until task is marked complete)
 	if tas.tokenStore != nil {
 		if err := tas.tokenStore.RevokeTokensForTask(ctx, taskID); err != nil {
@@ -702,12 +711,15 @@ func (tas *TaskAssignmentService) CompleteTask(ctx context.Context, taskID strin
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task complete (non-fatal)")
 		}
 	}
+	tas.emitTransitionEvent(ctx, pre, taskID, tasks.TaskStatusCompleted, "")
 	tas.wakeDependents(ctx, taskID)
 	return nil
 }
 
 // FailTask marks a task as failed and revokes associated tokens
 func (tas *TaskAssignmentService) FailTask(ctx context.Context, taskID, errorMsg string) error {
+	pre := tas.loadTransitionMetadata(ctx, taskID)
+
 	// Revoke tokens on failure too
 	if tas.tokenStore != nil {
 		if err := tas.tokenStore.RevokeTokensForTask(ctx, taskID); err != nil {
@@ -726,12 +738,15 @@ func (tas *TaskAssignmentService) FailTask(ctx context.Context, taskID, errorMsg
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task fail (non-fatal)")
 		}
 	}
+	tas.emitTransitionEvent(ctx, pre, taskID, tasks.TaskStatusFailed, errorMsg)
 	tas.wakeDependents(ctx, taskID)
 	return nil
 }
 
 // CancelTask marks a task as cancelled and revokes associated tokens and authority grants.
 func (tas *TaskAssignmentService) CancelTask(ctx context.Context, taskID string) error {
+	pre := tas.loadTransitionMetadata(ctx, taskID)
+
 	if tas.tokenStore != nil {
 		if err := tas.tokenStore.RevokeTokensForTask(ctx, taskID); err != nil {
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to revoke tokens for cancelled task")
@@ -748,6 +763,7 @@ func (tas *TaskAssignmentService) CancelTask(ctx context.Context, taskID string)
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task cancel (non-fatal)")
 		}
 	}
+	tas.emitTransitionEvent(ctx, pre, taskID, tasks.TaskStatusCancelled, "")
 	tas.wakeDependents(ctx, taskID)
 	return nil
 }
@@ -758,6 +774,7 @@ func (tas *TaskAssignmentService) CancelTask(ctx context.Context, taskID string)
 // to resume. Multi-gateway safe: ValidateTransition rejects illegal sources
 // inside the store, and concurrent paused-to-paused calls are idempotent.
 func (tas *TaskAssignmentService) PauseTask(ctx context.Context, taskID string, to tasks.TaskStatus, spec *tasks.WaitSpec) error {
+	pre := tas.loadTransitionMetadata(ctx, taskID)
 	if err := tas.taskStore.PauseTask(ctx, taskID, to, spec); err != nil {
 		return err
 	}
@@ -770,6 +787,7 @@ func (tas *TaskAssignmentService) PauseTask(ctx context.Context, taskID string, 
 		Str("to_status", string(to)).
 		Str("wait_reason", reason).
 		Msg("task paused")
+	tas.emitTransitionEvent(ctx, pre, taskID, to, reason)
 	return nil
 }
 
@@ -777,6 +795,7 @@ func (tas *TaskAssignmentService) PauseTask(ctx context.Context, taskID string, 
 // pending) state, clearing the WaitSpec. Side effects: log only — tokens
 // and grants were retained across the pause.
 func (tas *TaskAssignmentService) ResumeTask(ctx context.Context, taskID string, to tasks.TaskStatus) error {
+	pre := tas.loadTransitionMetadata(ctx, taskID)
 	if err := tas.taskStore.ResumeTask(ctx, taskID, to); err != nil {
 		return err
 	}
@@ -784,6 +803,7 @@ func (tas *TaskAssignmentService) ResumeTask(ctx context.Context, taskID string,
 		Str("task_id", taskID).
 		Str("to_status", string(to)).
 		Msg("task resumed")
+	tas.emitTransitionEvent(ctx, pre, taskID, to, "")
 	return nil
 }
 
@@ -921,6 +941,8 @@ func launchProfile(task *tasks.ExtendedTask) string {
 // revoke, orchestrated_task_queue retirement, and dependency-wake fan-out.
 // Used when an agent declines a task before (or instead of) processing it.
 func (tas *TaskAssignmentService) RejectTask(ctx context.Context, taskID, reason string) error {
+	pre := tas.loadTransitionMetadata(ctx, taskID)
+
 	if tas.tokenStore != nil {
 		if err := tas.tokenStore.RevokeTokensForTask(ctx, taskID); err != nil {
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to revoke tokens for rejected task")
@@ -941,6 +963,7 @@ func (tas *TaskAssignmentService) RejectTask(ctx context.Context, taskID, reason
 		}
 	}
 	logging.Logger.Info().Str("task_id", taskID).Str("reason", reason).Msg("task rejected")
+	tas.emitTransitionEvent(ctx, pre, taskID, tasks.TaskStatusRejected, reason)
 	tas.wakeDependents(ctx, taskID)
 	return nil
 }

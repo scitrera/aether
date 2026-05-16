@@ -119,16 +119,23 @@ export interface ProtoGrpcType {
       SwitchWorkspace: MessageTypeDefinition
       TaskAssignment: MessageTypeDefinition
       TaskAssignmentMode: EnumTypeDefinition
+      TaskAuthorityRequestEventRelay: MessageTypeDefinition
+      TaskChildLifecycleEvent: MessageTypeDefinition
       TaskClass: EnumTypeDefinition
+      TaskEvent: MessageTypeDefinition
       TaskFilter: MessageTypeDefinition
       TaskHibernated: MessageTypeDefinition
       TaskIdentity: MessageTypeDefinition
       TaskInfo: MessageTypeDefinition
       TaskOperation: MessageTypeDefinition
       TaskOperationResponse: MessageTypeDefinition
+      TaskProgressEvent: MessageTypeDefinition
       TaskQuery: MessageTypeDefinition
       TaskQueryResponse: MessageTypeDefinition
       TaskStatus: EnumTypeDefinition
+      TaskStatusChangedEvent: MessageTypeDefinition
+      TaskSubscriptionOperation: MessageTypeDefinition
+      TaskSubscriptionOperationResponse: MessageTypeDefinition
       TokenCreateRequest: MessageTypeDefinition
       TokenFilter: MessageTypeDefinition
       TokenInfo: MessageTypeDefinition

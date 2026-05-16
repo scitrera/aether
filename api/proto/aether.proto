@@ -43,6 +43,7 @@ message UpstreamMessage {
     ConnectionStatusRequest connection_status_request = 28;
     SubmitAuditEventRequest submit_audit_event = 29;
     AuthorityRequestOperation authority_request_op = 30;
+    TaskSubscriptionOperation task_subscription_op = 31;
   }
 }
 
@@ -83,6 +84,8 @@ message DownstreamMessage {
     AuthorityRequestOperationResponse authority_request_response = 33;
     AuthorityRequestEvent authority_request_event = 34;
     TaskHibernated task_hibernated = 35;
+    TaskSubscriptionOperationResponse task_subscription_response = 36;
+    TaskEvent task_event = 37;
   }
 }
 
@@ -912,6 +915,28 @@ message TaskFilter {
   // is omitted. Combine with status/statuses to express "all non-terminal"
   // or similar queries without enumerating the affirmative set.
   repeated TaskStatus exclude_statuses = 16;
+
+  // Phase 4: management-surface filter extensions. Mirrors A2A's ListTasks
+  // semantics over Aether's bidi-stream surface.
+  //
+  // Filter by the actor that created the task (lineage). The principal_id
+  // field is matched against the task's stored creator identity column;
+  // principal_type is informational only since the storage column is a single
+  // canonical identity string. Empty = no filter.
+  PrincipalRef creator_actor = 17;
+  // Filter by status-changed time. Returns tasks whose most recent status
+  // transition occurred at or after this unix-ms timestamp. 0 = no filter.
+  int64 status_timestamp_after_unix_ms = 18;
+  // Cursor-based pagination. Empty = start from the beginning. The server
+  // returns a `next_page_token` on TaskQueryResponse when more results exist;
+  // pass it back to fetch the next page. The cursor encodes the last
+  // (updated_at, task_id) tuple seen and is opaque to clients. Cursor
+  // pagination takes priority over Limit/Offset when both are supplied.
+  string page_token = 19;
+  // When true and parent_task_id is set, list ALL descendants (recursive),
+  // not just direct children. Default false: direct children only, preserving
+  // the existing parent_task_id behavior.
+  bool include_descendants = 20;
 }
 
 // TaskInfo represents a task.
@@ -988,6 +1013,11 @@ message TaskQueryResponse {
 
   // Echoed from the originating TaskQuery for correlation
   string request_id = 6;
+
+  // Phase 4: cursor-based pagination. Populated when LIST results were
+  // returned at the requested page size and more rows may exist. Empty when
+  // the last page has been served. Pass back as TaskFilter.page_token.
+  string next_page_token = 7;
 }
 
 // TaskOperation allows clients to perform lifecycle operations on tasks.
@@ -2684,4 +2714,98 @@ message ConnectionStatusResponse {
   string error = 3;
   bool connected = 4;
   int64 last_seen_at = 5;
+}
+
+// =============================================================================
+// Task subscription primitive (Phase 4 Stage B)
+// =============================================================================
+
+// TaskSubscriptionOperation is the upstream op for the per-task event stream.
+// Clients send SUBSCRIBE to start streaming status / progress / child-lifecycle /
+// authority-request events for a specific task; UNSUBSCRIBE stops the stream.
+// The gateway emits TaskEvent messages downstream until the subscription is
+// cancelled or the session disconnects.
+message TaskSubscriptionOperation {
+  enum OpType {
+    TASK_SUBSCRIPTION_OP_UNSPECIFIED = 0;
+    SUBSCRIBE = 1;   // start streaming events for the given task_id
+    UNSUBSCRIBE = 2; // stop streaming
+  }
+  OpType op = 1;
+  string task_id = 2;
+  // When true, also stream events for descendant tasks (children, grandchildren).
+  // Stage B implements a snapshot-at-subscribe model: descendants known at
+  // subscribe time are tracked, but tasks born after subscribe are NOT picked
+  // up automatically. Default false = only events for task_id itself.
+  bool recursive = 3;
+  // Optional client-generated correlation id; echoed in TaskSubscriptionOperationResponse.
+  string client_request_id = 4;
+  // Optional: cold-start cursor. When non-empty, the gateway begins replay
+  // from this unix-ms timestamp instead of "now". Empty / 0 = live-only.
+  int64 start_timestamp_unix_ms = 5;
+  // For UNSUBSCRIBE: the subscription_id issued by the server on SUBSCRIBE.
+  // When empty the gateway falls back to (task_id, recursive) match.
+  string subscription_id = 6;
+}
+
+// TaskSubscriptionOperationResponse acknowledges a SUBSCRIBE / UNSUBSCRIBE.
+message TaskSubscriptionOperationResponse {
+  bool success = 1;
+  string error = 2;
+  string client_request_id = 3;
+  string task_id = 4;
+  // Server-issued subscription id for unsubscribe correlation. Stable for the
+  // lifetime of the subscription.
+  string subscription_id = 5;
+}
+
+// TaskEvent is the typed payload published on the task-scoped topic
+// `tk.{workspace}.{task_id}.events` and delivered downstream to subscribers.
+message TaskEvent {
+  string task_id = 1;
+  int64 emitted_at_unix_ms = 2;
+  // The workspace and (when applicable) parent task id for routing/auth.
+  string workspace = 3;
+  string parent_task_id = 4;
+  // Subscription id this event is being delivered to (gateway-stamped on send).
+  string subscription_id = 5;
+  oneof event {
+    TaskStatusChangedEvent status_changed = 10;
+    TaskProgressEvent progress = 11;
+    TaskChildLifecycleEvent child_lifecycle = 12;
+    TaskAuthorityRequestEventRelay authority_request = 13;
+  }
+}
+
+// TaskStatusChangedEvent fires on lifecycle transitions: pending->running,
+// running->completed, running->failed, paused->running, etc.
+message TaskStatusChangedEvent {
+  TaskStatus from_status = 1;
+  TaskStatus to_status = 2;
+  string reason = 3; // optional narrative (e.g. cancel reason, fail message)
+}
+
+// TaskProgressEvent is the task-scoped projection of a ProgressUpdate whose
+// task_id matches the subscribed task.
+message TaskProgressEvent {
+  string state = 1;
+  double progress = 2;
+  string message = 3;
+  map<string, string> metadata = 4;
+}
+
+// TaskChildLifecycleEvent reports a child task's lifecycle transition. The
+// `lifecycle` field is a coarse classifier: "spawned" | "transitioned" |
+// "completed".
+message TaskChildLifecycleEvent {
+  string child_task_id = 1;
+  TaskStatus child_status = 2;
+  string lifecycle = 3;
+}
+
+// TaskAuthorityRequestEventRelay re-emits a Phase 2 AuthorityRequestEvent onto
+// the per-task event stream when the request's task_id matches the subscribed
+// task. Just embeds the existing event type.
+message TaskAuthorityRequestEventRelay {
+  AuthorityRequestEvent event = 1;
 }

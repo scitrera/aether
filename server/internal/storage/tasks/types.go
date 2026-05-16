@@ -133,6 +133,14 @@ var (
 	ValidateTransition = legacy.ValidateTransition
 )
 
+// Phase 4: cursor pagination helpers re-exported from the legacy package so
+// in-tree callers (including the native sqlite store) can encode/decode page
+// tokens via the same canonical format used by ListTasksPage.
+var (
+	EncodePageToken = legacy.EncodePageToken
+	DecodePageToken = legacy.DecodePageToken
+)
+
 // Task category values — stored in tasks.task_category.
 const (
 	TaskCategoryRegular      = legacy.TaskCategoryRegular
