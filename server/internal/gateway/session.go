@@ -67,6 +67,15 @@ type ClientSession struct {
 	// deliveryCh buffers outbound messages so that a slow client cannot block
 	// the shared fan-out goroutine. Messages are drained by startDeliveryLoop.
 	deliveryCh chan *pb.DownstreamMessage
+
+	// activeExtensions captures the set of extension URIs (mapped to their
+	// negotiated version, "" when unpinned) that the gateway agreed to on
+	// the InitConnection handshake. Set by Connect()'s extension
+	// negotiation step (Phase 6) before any user message is processed and
+	// thereafter read-only — concurrent message handlers can read without
+	// a lock. nil/empty when the client declared no extensions or the
+	// server has nothing in KnownExtensions.
+	activeExtensions map[string]string
 }
 
 // SafeSend sends a downstream message with mutex protection.

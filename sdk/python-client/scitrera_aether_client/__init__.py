@@ -31,6 +31,8 @@ from .client import (
     make_hibernation_descriptor,
     # Resource-schema helper (Phase 5 Stage B)
     make_resource_schema_entry,
+    # Extension declaration helper (Phase 6)
+    make_extension,
 )
 
 # Phase 4 (Stage C): expose task subscription proto types at the top level
@@ -246,6 +248,9 @@ __all__ = (
 
     # Resource-schema helper (Phase 5 Stage B)
     'make_resource_schema_entry',
+
+    # Extension declaration helper (Phase 6)
+    'make_extension',
 
     # Phase 4 (Stage C): task subscription proto types
     'TaskEvent',

@@ -76,6 +76,13 @@ export interface DownstreamMessage {
   'taskHibernated'?: (_aether_v1_TaskHibernated | null);
   'taskSubscriptionResponse'?: (_aether_v1_TaskSubscriptionOperationResponse | null);
   'taskEvent'?: (_aether_v1_TaskEvent | null);
+  /**
+   * Phase 6: URIs of extensions active on this specific message. Same
+   * semantics as UpstreamMessage.active_extensions: receivers reject when
+   * an URI is listed AND required-at-connect AND unsupported; otherwise
+   * unknown URIs are ignored.
+   */
+  'activeExtensions'?: (string)[];
   'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse"|"authorityRequestResponse"|"authorityRequestEvent"|"taskHibernated"|"taskSubscriptionResponse"|"taskEvent";
 }
 
@@ -117,5 +124,12 @@ export interface DownstreamMessage__Output {
   'taskHibernated'?: (_aether_v1_TaskHibernated__Output | null);
   'taskSubscriptionResponse'?: (_aether_v1_TaskSubscriptionOperationResponse__Output | null);
   'taskEvent'?: (_aether_v1_TaskEvent__Output | null);
+  /**
+   * Phase 6: URIs of extensions active on this specific message. Same
+   * semantics as UpstreamMessage.active_extensions: receivers reject when
+   * an URI is listed AND required-at-connect AND unsupported; otherwise
+   * unknown URIs are ignored.
+   */
+  'activeExtensions': (string)[];
   'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse"|"authorityRequestResponse"|"authorityRequestEvent"|"taskHibernated"|"taskSubscriptionResponse"|"taskEvent";
 }

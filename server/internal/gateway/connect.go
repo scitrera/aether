@@ -21,6 +21,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -236,13 +237,91 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 
 	logging.Logger.Info().Str("session_id", sessionID).Str("identity", identity.String()).Msg("session connected")
 
+	// Phase 6: extension negotiation. Union the proto-side InitConnection
+	// Extensions list with any URIs supplied via the `Aether-Extensions`
+	// gRPC metadata header (comma-separated). Header-sourced entries are
+	// always non-required; the proto path is authoritative for `required`.
+	// On a required-but-unsupported extension we record an audit row,
+	// release session state, and reject the connection with
+	// codes.FailedPrecondition so the SDK can distinguish "your declared
+	// extension is unsupported" from generic auth or quota failures.
+	extDecls := append([]*pb.ExtensionDeclaration(nil), init.Extensions...)
+	if md, ok := metadata.FromIncomingContext(stream.Context()); ok {
+		extDecls = append(extDecls, parseExtensionMetadataHeader(md.Get(extensionMetadataHeader))...)
+	}
+	var negotiated *extensionNegotiationResult
+	if len(extDecls) > 0 || len(KnownExtensions) > 0 {
+		var extLookup agentDeclaredLookup
+		if s.orchestration != nil && s.orchestration.Registry != nil {
+			extLookup = registryAgentExtensions{store: s.orchestration.Registry}
+		}
+		result := negotiateExtensions(stream.Context(), extDecls, identity, extLookup)
+		negotiated = &result
+
+		// Audit one row per declaration (success or failure) so operators
+		// can see extension negotiation outcomes alongside connection
+		// lifecycle events. Uses the existing OpConnectionEstablished
+		// audit lane under a distinct operation key.
+		sessionUUID, _ := uuid.Parse(sessionID)
+		for _, nx := range result.negotiated {
+			required := false
+			for _, decl := range extDecls {
+				if decl != nil && decl.Uri == nx.Uri {
+					required = decl.Required
+					break
+				}
+			}
+			s.auditLog(stream.Context(), audit.NewConnectionEvent(
+				string(identity.Type), identity.String(), "extension_negotiated",
+				sessionUUID, nx.Supported, nx.RejectionReason,
+				map[string]interface{}{
+					"workspace": identity.Workspace,
+					"uri":       nx.Uri,
+					"version":   nx.Version,
+					"supported": nx.Supported,
+					"required":  required,
+				}))
+		}
+
+		if result.rejectURI != "" {
+			// Send the failed ack so the client can pick the rejection
+			// reason out of negotiated_extensions before the stream closes.
+			rejectMsg := result.rejectReason
+			if rejectMsg == "" {
+				rejectMsg = "extension required but not supported: " + result.rejectURI
+			}
+			_ = client.SafeSend(&pb.DownstreamMessage{
+				Payload: &pb.DownstreamMessage_ConnectionAck{
+					ConnectionAck: &pb.ConnectionAck{
+						SessionId:                 sessionID,
+						Resumed:                   cs.resumed,
+						NegotiatedExtensions:      result.negotiated,
+						ServerSupportedExtensions: result.serverSupported,
+					},
+				},
+			})
+			logging.Logger.Warn().Str("uri", result.rejectURI).Str("identity", identity.String()).Msg("rejecting connection: required extension unsupported")
+			return status.Errorf(codes.FailedPrecondition, "ERR_EXTENSION_UNSUPPORTED: %s", rejectMsg)
+		}
+
+		// Snapshot the negotiated active set onto the session for any
+		// future per-message gates (Phase 6 has none, but the data
+		// structure is in place).
+		client.activeExtensions = result.activeURIs
+	}
+
 	// Send ConnectionAck with session ID so client can store it for reconnection
+	ack := &pb.ConnectionAck{
+		SessionId: sessionID,
+		Resumed:   cs.resumed,
+	}
+	if negotiated != nil {
+		ack.NegotiatedExtensions = negotiated.negotiated
+		ack.ServerSupportedExtensions = negotiated.serverSupported
+	}
 	if err := client.SafeSend(&pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_ConnectionAck{
-			ConnectionAck: &pb.ConnectionAck{
-				SessionId: sessionID,
-				Resumed:   cs.resumed,
-			},
+			ConnectionAck: ack,
 		},
 	}); err != nil {
 		logging.Logger.Warn().Err(err).Str("identity", identity.String()).Msg("failed to send ConnectionAck")

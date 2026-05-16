@@ -45,6 +45,14 @@ message UpstreamMessage {
     AuthorityRequestOperation authority_request_op = 30;
     TaskSubscriptionOperation task_subscription_op = 31;
   }
+  // Phase 6: URIs of extensions active on this specific message. When the
+  // receiver does not support a URI listed here and the extension was
+  // declared as required at InitConnection time, the message MUST be
+  // rejected (ERR_EXTENSION_UNSUPPORTED). When non-required: receivers
+  // MAY ignore unknown URIs. Carried on the envelope (not the payload)
+  // so any oneof variant can opt into extension semantics without
+  // proto-side rewrites of every payload type.
+  repeated string active_extensions = 32;
 }
 
 message DownstreamMessage {
@@ -87,6 +95,11 @@ message DownstreamMessage {
     TaskSubscriptionOperationResponse task_subscription_response = 36;
     TaskEvent task_event = 37;
   }
+  // Phase 6: URIs of extensions active on this specific message. Same
+  // semantics as UpstreamMessage.active_extensions: receivers reject when
+  // an URI is listed AND required-at-connect AND unsupported; otherwise
+  // unknown URIs are ignored.
+  repeated string active_extensions = 38;
 }
 
 // TaskHibernated is sent to the worker assigned to a task immediately after it
@@ -110,6 +123,17 @@ message ConnectionAck {
   // the task's topic address (ta.{workspace}.{impl}.{assigned_id}).
   // Empty for all other principal types.
   string assigned_id = 3;
+  // Phase 6: negotiation result for each extension the client declared
+  // in InitConnection.extensions (or via the `Aether-Extensions` gRPC
+  // metadata header). One entry per client declaration, in the order the
+  // client supplied them; header-sourced declarations follow the
+  // proto-sourced ones. Empty when the client declared no extensions.
+  repeated NegotiatedExtension negotiated_extensions = 4;
+  // Phase 6: extensions the server natively supports that the client did
+  // NOT declare. Lets clients discover what optional extensions are
+  // available without a separate descriptor endpoint. Empty when the
+  // client already declared every server-supported URI.
+  repeated string server_supported_extensions = 5;
 }
 
 message InitConnection {
@@ -128,6 +152,62 @@ message InitConnection {
   // If provided and the lock still exists with this session ID,
   // the connection will take over the existing lock instead of failing.
   string resume_session_id = 11;
+  // Phase 6: client-declared list of extensions this connection wants
+  // active. The gateway responds in ConnectionAck.negotiated_extensions
+  // with one entry per declaration. If any declaration has required=true
+  // and the gateway does not support it (and no connected agent declared
+  // it either), the connection is rejected with codes.FailedPrecondition
+  // ("ERR_EXTENSION_UNSUPPORTED"). An alternative, lighter-weight surface
+  // is the `Aether-Extensions` gRPC metadata header (comma-separated URIs);
+  // the gateway unions both. The proto field is authoritative for
+  // `required` semantics — header-sourced URIs are always non-required.
+  repeated ExtensionDeclaration extensions = 12;
+}
+
+// ExtensionDeclaration identifies an extension a participant supports or
+// is announcing as active on a given message. Modeled on the A2A extension
+// model: URI-typed identity, optional version, and a `required` flag.
+//
+// At InitConnection time the client lists the extensions it wants active
+// on its session. The gateway returns ConnectionAck.negotiated_extensions
+// with one NegotiatedExtension per declaration. Per-message activation
+// rides on UpstreamMessage.active_extensions / DownstreamMessage.active_extensions
+// (a `repeated string` URI list — the full ExtensionDeclaration is not
+// re-sent per message).
+message ExtensionDeclaration {
+  // Globally unique extension URI. Recommended form: "https://..." style.
+  // Required.
+  string uri = 1;
+  // Optional version string. Empty = any version.
+  string version = 2;
+  // When set on a client-side declaration during InitConnection, the
+  // gateway MUST reject the connection if it does not support this
+  // extension. When set on a per-message declaration, peers MUST reject
+  // the message as `ERR_EXTENSION_UNSUPPORTED` if they cannot handle the
+  // listed extension.
+  bool required = 3;
+  // Optional JSON Schema (as a string) describing the shape of
+  // extension-specific data. Informational only; Aether does not enforce.
+  string json_schema = 4;
+}
+
+// NegotiatedExtension is the server's response side of the extension
+// handshake. Carries the URI that was negotiated and a `supported` flag —
+// the intersection of supported extensions across client + server (with
+// agent-declared URIs widening the set for sessions targeting that agent).
+message NegotiatedExtension {
+  // Echo of the client-declared URI.
+  string uri = 1;
+  // Echo of the client-declared version (empty when the client did not
+  // pin one). The server does not currently advertise its own version.
+  string version = 2;
+  // True when the server (or a connected agent whose registration carries
+  // this URI) supports the extension. False when the URI is unknown.
+  bool supported = 3;
+  // Human-readable reason populated when supported=false. Empty when
+  // supported=true. Used by clients to surface "extension X is required
+  // but unsupported" diagnostics.
+  string rejection_reason = 4;
 }
 
 // WorkflowEngineIdentity identifies a workflow engine principal.

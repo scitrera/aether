@@ -244,6 +244,48 @@ def make_resource_schema_entry(*,
     )
 
 
+def make_extension(*,
+                   uri: str,
+                   version: str = "",
+                   required: bool = False,
+                   json_schema: str = "") -> aether_pb2.ExtensionDeclaration:
+    """
+    Build an :class:`aether_pb2.ExtensionDeclaration` for use in connect-time
+    extension negotiation (Phase 6).
+
+    Pass the result list via the ``extensions`` keyword to
+    :func:`create_agent_init` / :func:`create_user_init` / etc., or to the
+    ``extensions`` parameter on :meth:`AgentClient.connect` and the parallel
+    methods on the other client classes.
+
+    Args:
+        uri: Globally unique extension URI (recommended ``"https://..."``
+            style). Required.
+        version: Optional version string. Empty = any version.
+        required: When ``True``, the gateway MUST reject the connection if
+            it does not support this extension. When ``False`` (default),
+            unsupported extensions are reported in
+            :class:`aether_pb2.ConnectionAck.negotiated_extensions` but do
+            not block the connection.
+        json_schema: Optional JSON Schema (as a string) describing the
+            shape of extension-specific data. Informational only.
+
+    Returns:
+        Populated :class:`aether_pb2.ExtensionDeclaration`.
+
+    Raises:
+        ValueError: if ``uri`` is empty.
+    """
+    if not uri:
+        raise ValueError("make_extension: uri is required")
+    return aether_pb2.ExtensionDeclaration(
+        uri=uri,
+        version=version,
+        required=required,
+        json_schema=json_schema,
+    )
+
+
 @dataclass
 class AuditSubmitResponse:
     """Response from ``submit_audit_event`` / ``submit_audit_event_async``.
@@ -345,6 +387,14 @@ class BaseAetherClient:
         self._connection_confirmed = False  # Set when server responds
         self._session_id: Optional[str] = None  # Session ID from server for reconnection
 
+        # Phase 6: extension negotiation state populated when the server's
+        # ConnectionAck arrives. ``_negotiated_extensions`` keeps the URIs
+        # the server confirmed support for; ``_server_supported_extensions``
+        # lists native extensions the server offered that the client did
+        # NOT declare (discovery hint). Empty until connect() succeeds.
+        self._negotiated_extensions: List[str] = []
+        self._server_supported_extensions: List[str] = []
+
         # Unified pending request registry: request_id -> Queue
         # Used for all response types that support request_id correlation
         self._pending_requests: Dict[str, queue.Queue] = {}
@@ -377,6 +427,25 @@ class BaseAetherClient:
     @property
     def is_running(self) -> bool:
         return not self._stop_event.is_set() or self._reconnecting
+
+    def negotiated_extensions(self) -> List[str]:
+        """
+        Return the list of extension URIs the server confirmed support for
+        at connection time (Phase 6).
+
+        Populated when the server's :class:`aether_pb2.ConnectionAck`
+        message arrives. Empty until :meth:`connect` has succeeded, and
+        empty when the client declared no extensions.
+        """
+        return list(self._negotiated_extensions)
+
+    def server_supported_extensions(self) -> List[str]:
+        """
+        Return the list of extensions the server natively supports that
+        the client did NOT declare. Useful for discovering what optional
+        extensions are available. Empty until connect() succeeds.
+        """
+        return list(self._server_supported_extensions)
 
     def _calculate_backoff(self, attempt: int) -> float:
         """Calculate backoff delay with jitter.
@@ -631,9 +700,18 @@ class BaseAetherClient:
                         self.on_task_event(response.task_event)
                 elif payload_type == "connection_ack":
                     # Store session ID for reconnection
-                    self._session_id = response.connection_ack.session_id
-                    if response.connection_ack.resumed:
+                    ack = response.connection_ack
+                    self._session_id = ack.session_id
+                    if ack.resumed:
                         logger.info("Session resumed (session_id=%s...)", self._session_id[:8])
+                    # Phase 6: capture extension negotiation outcome so
+                    # callers can introspect via negotiated_extensions().
+                    self._negotiated_extensions = [
+                        nx.uri for nx in ack.negotiated_extensions if nx.supported
+                    ]
+                    self._server_supported_extensions = list(
+                        ack.server_supported_extensions
+                    )
         except grpc.RpcError as e:
             if not self._stop_event.is_set():
                 self._on_error(e, from_listen_loop=True)
@@ -3256,7 +3334,8 @@ class AgentClient(BaseAetherClient):
                  tls_client_cert: Optional[bytes] = None,
                  tls_client_cert_path: Optional[str] = None,
                  tls_client_key: Optional[bytes] = None,
-                 tls_client_key_path: Optional[str] = None):
+                 tls_client_key_path: Optional[str] = None,
+                 extensions: Optional[List[aether_pb2.ExtensionDeclaration]] = None):
         super().__init__(max_retries=max_retries, initial_backoff=initial_backoff,
                          max_backoff=max_backoff, auto_reconnect=auto_reconnect,
                          tls_enabled=tls_enabled, tls_root_cert=tls_root_cert,
@@ -3268,7 +3347,8 @@ class AgentClient(BaseAetherClient):
         self.workspace = workspace
         self.implementation = implementation
         self.specifier = specifier
-        self.init = create_agent_init(workspace, implementation, specifier, credentials)
+        self.init = create_agent_init(workspace, implementation, specifier, credentials,
+                                      extensions=extensions)
 
     def connect(self, target: str = "localhost:50051"):
         super()._connect(self.init, target)
@@ -3344,7 +3424,8 @@ class TaskClient(BaseAetherClient):
                  tls_client_cert: Optional[bytes] = None,
                  tls_client_cert_path: Optional[str] = None,
                  tls_client_key: Optional[bytes] = None,
-                 tls_client_key_path: Optional[str] = None):
+                 tls_client_key_path: Optional[str] = None,
+                 extensions: Optional[List[aether_pb2.ExtensionDeclaration]] = None):
         super().__init__(max_retries=max_retries, initial_backoff=initial_backoff,
                          max_backoff=max_backoff, auto_reconnect=auto_reconnect,
                          tls_enabled=tls_enabled, tls_root_cert=tls_root_cert,
@@ -3356,7 +3437,8 @@ class TaskClient(BaseAetherClient):
         self.workspace = workspace
         self.implementation = implementation
         self.unique_specifier = unique_specifier
-        self.init = create_task_init(workspace, implementation, unique_specifier, credentials)
+        self.init = create_task_init(workspace, implementation, unique_specifier, credentials,
+                                     extensions=extensions)
 
     def connect(self, target: str = "localhost:50051"):
         super()._connect(self.init, target)
@@ -3419,7 +3501,8 @@ class UserClient(BaseAetherClient):
                  tls_client_cert: Optional[bytes] = None,
                  tls_client_cert_path: Optional[str] = None,
                  tls_client_key: Optional[bytes] = None,
-                 tls_client_key_path: Optional[str] = None):
+                 tls_client_key_path: Optional[str] = None,
+                 extensions: Optional[List[aether_pb2.ExtensionDeclaration]] = None):
         super().__init__(max_retries=max_retries, initial_backoff=initial_backoff,
                          max_backoff=max_backoff, auto_reconnect=auto_reconnect,
                          tls_enabled=tls_enabled, tls_root_cert=tls_root_cert,
@@ -3430,7 +3513,7 @@ class UserClient(BaseAetherClient):
                          tls_client_key_path=tls_client_key_path)
         self.user_id = user_id
         self.window_id = window_id
-        self.init = create_user_init(user_id, window_id, credentials)
+        self.init = create_user_init(user_id, window_id, credentials, extensions=extensions)
 
     def connect(self, target: str = "localhost:50051"):
         super()._connect(self.init, target)
@@ -3501,7 +3584,8 @@ class OrchestratorClient(BaseAetherClient):
                  tls_client_cert: Optional[bytes] = None,
                  tls_client_cert_path: Optional[str] = None,
                  tls_client_key: Optional[bytes] = None,
-                 tls_client_key_path: Optional[str] = None):
+                 tls_client_key_path: Optional[str] = None,
+                 extensions: Optional[List[aether_pb2.ExtensionDeclaration]] = None):
         """
         Create an orchestrator client.
 
@@ -3544,7 +3628,8 @@ class OrchestratorClient(BaseAetherClient):
         self.specifier = specifier or str(uuid.uuid4())[:8]  # Generate a specifier for this instance if not given
         self.supported_profiles = supported_profiles
         self.init = create_orchestrator_init(self.implementation, self.specifier,
-                                             self.supported_profiles, credentials)
+                                             self.supported_profiles, credentials,
+                                             extensions=extensions)
 
     def connect(self, target: str = "localhost:50051"):
         super()._connect(self.init, target)
@@ -3582,7 +3667,8 @@ class WorkflowEngineClient(BaseAetherClient):
                  tls_client_cert: Optional[bytes] = None,
                  tls_client_cert_path: Optional[str] = None,
                  tls_client_key: Optional[bytes] = None,
-                 tls_client_key_path: Optional[str] = None):
+                 tls_client_key_path: Optional[str] = None,
+                 extensions: Optional[List[aether_pb2.ExtensionDeclaration]] = None):
         super().__init__(max_retries=max_retries, initial_backoff=initial_backoff,
                          max_backoff=max_backoff, auto_reconnect=auto_reconnect,
                          tls_enabled=tls_enabled, tls_root_cert=tls_root_cert,
@@ -3591,7 +3677,7 @@ class WorkflowEngineClient(BaseAetherClient):
                          tls_client_cert_path=tls_client_cert_path,
                          tls_client_key=tls_client_key,
                          tls_client_key_path=tls_client_key_path)
-        self.init = create_workflow_engine_init(credentials)
+        self.init = create_workflow_engine_init(credentials, extensions=extensions)
 
     def connect(self, target: str = "localhost:50051"):
         super()._connect(self.init, target)
@@ -3665,7 +3751,8 @@ class MetricsBridgeClient(BaseAetherClient):
                  tls_client_cert: Optional[bytes] = None,
                  tls_client_cert_path: Optional[str] = None,
                  tls_client_key: Optional[bytes] = None,
-                 tls_client_key_path: Optional[str] = None):
+                 tls_client_key_path: Optional[str] = None,
+                 extensions: Optional[List[aether_pb2.ExtensionDeclaration]] = None):
         super().__init__(max_retries=max_retries, initial_backoff=initial_backoff,
                          max_backoff=max_backoff, auto_reconnect=auto_reconnect,
                          tls_enabled=tls_enabled, tls_root_cert=tls_root_cert,
@@ -3674,7 +3761,7 @@ class MetricsBridgeClient(BaseAetherClient):
                          tls_client_cert_path=tls_client_cert_path,
                          tls_client_key=tls_client_key,
                          tls_client_key_path=tls_client_key_path)
-        self.init = create_metrics_bridge_init(credentials)
+        self.init = create_metrics_bridge_init(credentials, extensions=extensions)
 
     def connect(self, target: str = "localhost:50051"):
         super()._connect(self.init, target)
@@ -3728,7 +3815,8 @@ class ServiceClient(BaseAetherClient):
                  tls_client_cert: Optional[bytes] = None,
                  tls_client_cert_path: Optional[str] = None,
                  tls_client_key: Optional[bytes] = None,
-                 tls_client_key_path: Optional[str] = None):
+                 tls_client_key_path: Optional[str] = None,
+                 extensions: Optional[List[aether_pb2.ExtensionDeclaration]] = None):
         if not implementation:
             raise InvalidArgumentError(
                 message="Service principal requires an implementation identifier",
@@ -3751,7 +3839,8 @@ class ServiceClient(BaseAetherClient):
                          ))
         self.implementation = implementation
         self.specifier = specifier
-        self.init = create_service_init(implementation, specifier, credentials)
+        self.init = create_service_init(implementation, specifier, credentials,
+                                        extensions=extensions)
 
     def connect(self, target: str = "localhost:50051"):
         super()._connect(self.init, target)

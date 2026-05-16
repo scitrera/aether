@@ -74,6 +74,7 @@ export interface ProtoGrpcType {
       CreateTaskResponse: MessageTypeDefinition
       DownstreamMessage: MessageTypeDefinition
       ErrorResponse: MessageTypeDefinition
+      ExtensionDeclaration: MessageTypeDefinition
       FlowEdge: MessageTypeDefinition
       FlowNode: MessageTypeDefinition
       GatewayInfo: MessageTypeDefinition
@@ -93,6 +94,7 @@ export interface ProtoGrpcType {
       Metric: MessageTypeDefinition
       MetricEntry: MessageTypeDefinition
       MetricsBridgeIdentity: MessageTypeDefinition
+      NegotiatedExtension: MessageTypeDefinition
       OrchestratorIdentity: MessageTypeDefinition
       OrchestratorInfo: MessageTypeDefinition
       PrincipalRef: MessageTypeDefinition

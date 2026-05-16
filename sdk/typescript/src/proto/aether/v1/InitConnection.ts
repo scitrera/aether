@@ -8,6 +8,7 @@ import type { WorkflowEngineIdentity as _aether_v1_WorkflowEngineIdentity, Workf
 import type { MetricsBridgeIdentity as _aether_v1_MetricsBridgeIdentity, MetricsBridgeIdentity__Output as _aether_v1_MetricsBridgeIdentity__Output } from '../../aether/v1/MetricsBridgeIdentity';
 import type { BridgeIdentity as _aether_v1_BridgeIdentity, BridgeIdentity__Output as _aether_v1_BridgeIdentity__Output } from '../../aether/v1/BridgeIdentity';
 import type { ServiceIdentity as _aether_v1_ServiceIdentity, ServiceIdentity__Output as _aether_v1_ServiceIdentity__Output } from '../../aether/v1/ServiceIdentity';
+import type { ExtensionDeclaration as _aether_v1_ExtensionDeclaration, ExtensionDeclaration__Output as _aether_v1_ExtensionDeclaration__Output } from '../../aether/v1/ExtensionDeclaration';
 
 export interface InitConnection {
   'agent'?: (_aether_v1_AgentIdentity | null);
@@ -25,6 +26,18 @@ export interface InitConnection {
    * the connection will take over the existing lock instead of failing.
    */
   'resumeSessionId'?: (string);
+  /**
+   * Phase 6: client-declared list of extensions this connection wants
+   * active. The gateway responds in ConnectionAck.negotiated_extensions
+   * with one entry per declaration. If any declaration has required=true
+   * and the gateway does not support it (and no connected agent declared
+   * it either), the connection is rejected with codes.FailedPrecondition
+   * ("ERR_EXTENSION_UNSUPPORTED"). An alternative, lighter-weight surface
+   * is the `Aether-Extensions` gRPC metadata header (comma-separated URIs);
+   * the gateway unions both. The proto field is authoritative for
+   * `required` semantics — header-sourced URIs are always non-required.
+   */
+  'extensions'?: (_aether_v1_ExtensionDeclaration)[];
   'clientType'?: "agent"|"task"|"user"|"orchestrator"|"workflowEngine"|"metricsBridge"|"bridge"|"service";
 }
 
@@ -44,5 +57,17 @@ export interface InitConnection__Output {
    * the connection will take over the existing lock instead of failing.
    */
   'resumeSessionId': (string);
+  /**
+   * Phase 6: client-declared list of extensions this connection wants
+   * active. The gateway responds in ConnectionAck.negotiated_extensions
+   * with one entry per declaration. If any declaration has required=true
+   * and the gateway does not support it (and no connected agent declared
+   * it either), the connection is rejected with codes.FailedPrecondition
+   * ("ERR_EXTENSION_UNSUPPORTED"). An alternative, lighter-weight surface
+   * is the `Aether-Extensions` gRPC metadata header (comma-separated URIs);
+   * the gateway unions both. The proto field is authoritative for
+   * `required` semantics — header-sourced URIs are always non-required.
+   */
+  'extensions': (_aether_v1_ExtensionDeclaration__Output)[];
   'clientType'?: "agent"|"task"|"user"|"orchestrator"|"workflowEngine"|"metricsBridge"|"bridge"|"service";
 }

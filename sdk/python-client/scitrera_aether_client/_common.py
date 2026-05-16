@@ -27,43 +27,75 @@ NON_RECOVERABLE_CODES = {
 # =============================================================================
 
 def create_agent_init(workspace: str, implementation: str, specifier: str,
-                      credentials: Optional[Dict[str, str]] = None) -> aether_pb2.InitConnection:
-    """Create an InitConnection message for an agent."""
+                      credentials: Optional[Dict[str, str]] = None,
+                      resume_session_id: str = "",
+                      extensions: Optional[List["aether_pb2.ExtensionDeclaration"]] = None,
+                      ) -> aether_pb2.InitConnection:
+    """Create an InitConnection message for an agent.
+
+    Args:
+        workspace: Agent workspace.
+        implementation: Agent implementation name.
+        specifier: Agent instance specifier.
+        credentials: Optional auth credentials map.
+        resume_session_id: Optional previous session ID to resume.
+        extensions: Optional list of ``ExtensionDeclaration`` values
+            describing Phase 6 extensions the client wants negotiated at
+            connect time. Pass values built via :func:`make_extension`.
+    """
     return aether_pb2.InitConnection(
         agent=aether_pb2.AgentIdentity(
             workspace=workspace,
             implementation=implementation,
             specifier=specifier
         ),
-        credentials=credentials or {}
+        credentials=credentials or {},
+        resume_session_id=resume_session_id,
+        extensions=list(extensions) if extensions else [],
     )
 
 
 def create_task_init(workspace: str, implementation: str, unique_specifier: str = "",
-                     credentials: Optional[Dict[str, str]] = None) -> aether_pb2.InitConnection:
-    """Create an InitConnection message for a task."""
+                     credentials: Optional[Dict[str, str]] = None,
+                     resume_session_id: str = "",
+                     extensions: Optional[List["aether_pb2.ExtensionDeclaration"]] = None,
+                     ) -> aether_pb2.InitConnection:
+    """Create an InitConnection message for a task.
+
+    See :func:`create_agent_init` for the ``extensions`` argument shape.
+    """
     return aether_pb2.InitConnection(
         task=aether_pb2.TaskIdentity(
             workspace=workspace,
             implementation=implementation,
             unique_specifier=unique_specifier
         ),
-        credentials=credentials or {}
+        credentials=credentials or {},
+        resume_session_id=resume_session_id,
+        extensions=list(extensions) if extensions else [],
     )
 
 
 def create_user_init(user_id: str, window_id: str,
-                     credentials: Optional[Dict[str, str]] = None) -> aether_pb2.InitConnection:
+                     credentials: Optional[Dict[str, str]] = None,
+                     resume_session_id: str = "",
+                     extensions: Optional[List["aether_pb2.ExtensionDeclaration"]] = None,
+                     ) -> aether_pb2.InitConnection:
     """Create an InitConnection message for a user."""
     return aether_pb2.InitConnection(
         user=aether_pb2.UserIdentity(user_id=user_id, window_id=window_id),
-        credentials=credentials or {}
+        credentials=credentials or {},
+        resume_session_id=resume_session_id,
+        extensions=list(extensions) if extensions else [],
     )
 
 
 def create_orchestrator_init(implementation: str, specifier: str,
                              supported_profiles: Optional[List[str]] = None,
-                             credentials: Optional[Dict[str, str]] = None) -> aether_pb2.InitConnection:
+                             credentials: Optional[Dict[str, str]] = None,
+                             resume_session_id: str = "",
+                             extensions: Optional[List["aether_pb2.ExtensionDeclaration"]] = None,
+                             ) -> aether_pb2.InitConnection:
     """Create an InitConnection message for an orchestrator."""
     return aether_pb2.InitConnection(
         orchestrator=aether_pb2.OrchestratorIdentity(
@@ -71,28 +103,43 @@ def create_orchestrator_init(implementation: str, specifier: str,
             specifier=specifier,
             supported_profiles=supported_profiles or []
         ),
-        credentials=credentials or {}
+        credentials=credentials or {},
+        resume_session_id=resume_session_id,
+        extensions=list(extensions) if extensions else [],
     )
 
 
-def create_workflow_engine_init(credentials: Optional[Dict[str, str]] = None) -> aether_pb2.InitConnection:
+def create_workflow_engine_init(credentials: Optional[Dict[str, str]] = None,
+                                resume_session_id: str = "",
+                                extensions: Optional[List["aether_pb2.ExtensionDeclaration"]] = None,
+                                ) -> aether_pb2.InitConnection:
     """Create an InitConnection message for a workflow engine."""
     return aether_pb2.InitConnection(
         workflow_engine=aether_pb2.WorkflowEngineIdentity(),
-        credentials=credentials or {}
+        credentials=credentials or {},
+        resume_session_id=resume_session_id,
+        extensions=list(extensions) if extensions else [],
     )
 
 
-def create_metrics_bridge_init(credentials: Optional[Dict[str, str]] = None) -> aether_pb2.InitConnection:
+def create_metrics_bridge_init(credentials: Optional[Dict[str, str]] = None,
+                               resume_session_id: str = "",
+                               extensions: Optional[List["aether_pb2.ExtensionDeclaration"]] = None,
+                               ) -> aether_pb2.InitConnection:
     """Create an InitConnection message for a metrics bridge."""
     return aether_pb2.InitConnection(
         metrics_bridge=aether_pb2.MetricsBridgeIdentity(),
-        credentials=credentials or {}
+        credentials=credentials or {},
+        resume_session_id=resume_session_id,
+        extensions=list(extensions) if extensions else [],
     )
 
 
 def create_service_init(implementation: str, specifier: str,
-                        credentials: Optional[Dict[str, str]] = None) -> aether_pb2.InitConnection:
+                        credentials: Optional[Dict[str, str]] = None,
+                        resume_session_id: str = "",
+                        extensions: Optional[List["aether_pb2.ExtensionDeclaration"]] = None,
+                        ) -> aether_pb2.InitConnection:
     """Create an InitConnection message for a Service principal (workspace-less).
 
     Service principals are for trusted backend intermediaries (app backends,
@@ -107,6 +154,8 @@ def create_service_init(implementation: str, specifier: str,
             specifier=specifier,
         ),
         credentials=credentials or {},
+        resume_session_id=resume_session_id,
+        extensions=list(extensions) if extensions else [],
     )
 
 

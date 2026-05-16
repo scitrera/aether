@@ -167,7 +167,7 @@ PROGRESS_KIND_APP: ProgressKind
 PROGRESS_KIND_TASK: ProgressKind
 
 class UpstreamMessage(_message.Message):
-    __slots__ = ("init", "send", "switch_workspace", "kv_op", "create_task", "checkpoint_op", "admin_query", "session_op", "task_query", "task_op", "workspace_op", "agent_op", "acl_op", "progress", "workflow_op", "workflow_response", "token_op", "audit_query", "authority_grant_op", "proxy_http_request", "proxy_http_body_chunk", "tunnel_open", "tunnel_data", "tunnel_close", "proxy_http_response", "tunnel_ack", "resolve_authority_request", "connection_status_request", "submit_audit_event", "authority_request_op", "task_subscription_op")
+    __slots__ = ("init", "send", "switch_workspace", "kv_op", "create_task", "checkpoint_op", "admin_query", "session_op", "task_query", "task_op", "workspace_op", "agent_op", "acl_op", "progress", "workflow_op", "workflow_response", "token_op", "audit_query", "authority_grant_op", "proxy_http_request", "proxy_http_body_chunk", "tunnel_open", "tunnel_data", "tunnel_close", "proxy_http_response", "tunnel_ack", "resolve_authority_request", "connection_status_request", "submit_audit_event", "authority_request_op", "task_subscription_op", "active_extensions")
     INIT_FIELD_NUMBER: _ClassVar[int]
     SEND_FIELD_NUMBER: _ClassVar[int]
     SWITCH_WORKSPACE_FIELD_NUMBER: _ClassVar[int]
@@ -199,6 +199,7 @@ class UpstreamMessage(_message.Message):
     SUBMIT_AUDIT_EVENT_FIELD_NUMBER: _ClassVar[int]
     AUTHORITY_REQUEST_OP_FIELD_NUMBER: _ClassVar[int]
     TASK_SUBSCRIPTION_OP_FIELD_NUMBER: _ClassVar[int]
+    ACTIVE_EXTENSIONS_FIELD_NUMBER: _ClassVar[int]
     init: InitConnection
     send: SendMessage
     switch_workspace: SwitchWorkspace
@@ -230,10 +231,11 @@ class UpstreamMessage(_message.Message):
     submit_audit_event: SubmitAuditEventRequest
     authority_request_op: AuthorityRequestOperation
     task_subscription_op: TaskSubscriptionOperation
-    def __init__(self, init: _Optional[_Union[InitConnection, _Mapping]] = ..., send: _Optional[_Union[SendMessage, _Mapping]] = ..., switch_workspace: _Optional[_Union[SwitchWorkspace, _Mapping]] = ..., kv_op: _Optional[_Union[KVOperation, _Mapping]] = ..., create_task: _Optional[_Union[CreateTaskRequest, _Mapping]] = ..., checkpoint_op: _Optional[_Union[CheckpointOperation, _Mapping]] = ..., admin_query: _Optional[_Union[AdminQuery, _Mapping]] = ..., session_op: _Optional[_Union[SessionOperation, _Mapping]] = ..., task_query: _Optional[_Union[TaskQuery, _Mapping]] = ..., task_op: _Optional[_Union[TaskOperation, _Mapping]] = ..., workspace_op: _Optional[_Union[WorkspaceOperation, _Mapping]] = ..., agent_op: _Optional[_Union[AgentOperation, _Mapping]] = ..., acl_op: _Optional[_Union[ACLOperation, _Mapping]] = ..., progress: _Optional[_Union[ProgressReport, _Mapping]] = ..., workflow_op: _Optional[_Union[WorkflowOperation, _Mapping]] = ..., workflow_response: _Optional[_Union[WorkflowResponse, _Mapping]] = ..., token_op: _Optional[_Union[TokenOperation, _Mapping]] = ..., audit_query: _Optional[_Union[AuditQuery, _Mapping]] = ..., authority_grant_op: _Optional[_Union[AuthorityGrantOperation, _Mapping]] = ..., proxy_http_request: _Optional[_Union[ProxyHttpRequest, _Mapping]] = ..., proxy_http_body_chunk: _Optional[_Union[ProxyHttpBodyChunk, _Mapping]] = ..., tunnel_open: _Optional[_Union[TunnelOpen, _Mapping]] = ..., tunnel_data: _Optional[_Union[TunnelData, _Mapping]] = ..., tunnel_close: _Optional[_Union[TunnelClose, _Mapping]] = ..., proxy_http_response: _Optional[_Union[ProxyHttpResponse, _Mapping]] = ..., tunnel_ack: _Optional[_Union[TunnelAck, _Mapping]] = ..., resolve_authority_request: _Optional[_Union[ResolveAuthorityRequest, _Mapping]] = ..., connection_status_request: _Optional[_Union[ConnectionStatusRequest, _Mapping]] = ..., submit_audit_event: _Optional[_Union[SubmitAuditEventRequest, _Mapping]] = ..., authority_request_op: _Optional[_Union[AuthorityRequestOperation, _Mapping]] = ..., task_subscription_op: _Optional[_Union[TaskSubscriptionOperation, _Mapping]] = ...) -> None: ...
+    active_extensions: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, init: _Optional[_Union[InitConnection, _Mapping]] = ..., send: _Optional[_Union[SendMessage, _Mapping]] = ..., switch_workspace: _Optional[_Union[SwitchWorkspace, _Mapping]] = ..., kv_op: _Optional[_Union[KVOperation, _Mapping]] = ..., create_task: _Optional[_Union[CreateTaskRequest, _Mapping]] = ..., checkpoint_op: _Optional[_Union[CheckpointOperation, _Mapping]] = ..., admin_query: _Optional[_Union[AdminQuery, _Mapping]] = ..., session_op: _Optional[_Union[SessionOperation, _Mapping]] = ..., task_query: _Optional[_Union[TaskQuery, _Mapping]] = ..., task_op: _Optional[_Union[TaskOperation, _Mapping]] = ..., workspace_op: _Optional[_Union[WorkspaceOperation, _Mapping]] = ..., agent_op: _Optional[_Union[AgentOperation, _Mapping]] = ..., acl_op: _Optional[_Union[ACLOperation, _Mapping]] = ..., progress: _Optional[_Union[ProgressReport, _Mapping]] = ..., workflow_op: _Optional[_Union[WorkflowOperation, _Mapping]] = ..., workflow_response: _Optional[_Union[WorkflowResponse, _Mapping]] = ..., token_op: _Optional[_Union[TokenOperation, _Mapping]] = ..., audit_query: _Optional[_Union[AuditQuery, _Mapping]] = ..., authority_grant_op: _Optional[_Union[AuthorityGrantOperation, _Mapping]] = ..., proxy_http_request: _Optional[_Union[ProxyHttpRequest, _Mapping]] = ..., proxy_http_body_chunk: _Optional[_Union[ProxyHttpBodyChunk, _Mapping]] = ..., tunnel_open: _Optional[_Union[TunnelOpen, _Mapping]] = ..., tunnel_data: _Optional[_Union[TunnelData, _Mapping]] = ..., tunnel_close: _Optional[_Union[TunnelClose, _Mapping]] = ..., proxy_http_response: _Optional[_Union[ProxyHttpResponse, _Mapping]] = ..., tunnel_ack: _Optional[_Union[TunnelAck, _Mapping]] = ..., resolve_authority_request: _Optional[_Union[ResolveAuthorityRequest, _Mapping]] = ..., connection_status_request: _Optional[_Union[ConnectionStatusRequest, _Mapping]] = ..., submit_audit_event: _Optional[_Union[SubmitAuditEventRequest, _Mapping]] = ..., authority_request_op: _Optional[_Union[AuthorityRequestOperation, _Mapping]] = ..., task_subscription_op: _Optional[_Union[TaskSubscriptionOperation, _Mapping]] = ..., active_extensions: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class DownstreamMessage(_message.Message):
-    __slots__ = ("msg", "config", "signal", "error", "kv", "task_assignment", "connection_ack", "checkpoint", "admin", "session_response", "task_query", "task_op", "workspace", "agent", "acl", "progress_update", "workflow_response", "workflow_op", "token", "audit_response", "authority_grant", "create_task", "proxy_http_response", "proxy_http_body_chunk", "tunnel_ack", "tunnel_close", "tunnel_data", "proxy_http_request", "resolve_authority_response", "connection_status_response", "authority_grant_revocation", "submit_audit_event_response", "authority_request_response", "authority_request_event", "task_hibernated", "task_subscription_response", "task_event")
+    __slots__ = ("msg", "config", "signal", "error", "kv", "task_assignment", "connection_ack", "checkpoint", "admin", "session_response", "task_query", "task_op", "workspace", "agent", "acl", "progress_update", "workflow_response", "workflow_op", "token", "audit_response", "authority_grant", "create_task", "proxy_http_response", "proxy_http_body_chunk", "tunnel_ack", "tunnel_close", "tunnel_data", "proxy_http_request", "resolve_authority_response", "connection_status_response", "authority_grant_revocation", "submit_audit_event_response", "authority_request_response", "authority_request_event", "task_hibernated", "task_subscription_response", "task_event", "active_extensions")
     MSG_FIELD_NUMBER: _ClassVar[int]
     CONFIG_FIELD_NUMBER: _ClassVar[int]
     SIGNAL_FIELD_NUMBER: _ClassVar[int]
@@ -271,6 +273,7 @@ class DownstreamMessage(_message.Message):
     TASK_HIBERNATED_FIELD_NUMBER: _ClassVar[int]
     TASK_SUBSCRIPTION_RESPONSE_FIELD_NUMBER: _ClassVar[int]
     TASK_EVENT_FIELD_NUMBER: _ClassVar[int]
+    ACTIVE_EXTENSIONS_FIELD_NUMBER: _ClassVar[int]
     msg: IncomingMessage
     config: ConfigSnapshot
     signal: Signal
@@ -308,7 +311,8 @@ class DownstreamMessage(_message.Message):
     task_hibernated: TaskHibernated
     task_subscription_response: TaskSubscriptionOperationResponse
     task_event: TaskEvent
-    def __init__(self, msg: _Optional[_Union[IncomingMessage, _Mapping]] = ..., config: _Optional[_Union[ConfigSnapshot, _Mapping]] = ..., signal: _Optional[_Union[Signal, _Mapping]] = ..., error: _Optional[_Union[ErrorResponse, _Mapping]] = ..., kv: _Optional[_Union[KVResponse, _Mapping]] = ..., task_assignment: _Optional[_Union[TaskAssignment, _Mapping]] = ..., connection_ack: _Optional[_Union[ConnectionAck, _Mapping]] = ..., checkpoint: _Optional[_Union[CheckpointResponse, _Mapping]] = ..., admin: _Optional[_Union[AdminResponse, _Mapping]] = ..., session_response: _Optional[_Union[SessionOperationResponse, _Mapping]] = ..., task_query: _Optional[_Union[TaskQueryResponse, _Mapping]] = ..., task_op: _Optional[_Union[TaskOperationResponse, _Mapping]] = ..., workspace: _Optional[_Union[WorkspaceResponse, _Mapping]] = ..., agent: _Optional[_Union[AgentResponse, _Mapping]] = ..., acl: _Optional[_Union[ACLResponse, _Mapping]] = ..., progress_update: _Optional[_Union[ProgressUpdate, _Mapping]] = ..., workflow_response: _Optional[_Union[WorkflowResponse, _Mapping]] = ..., workflow_op: _Optional[_Union[WorkflowOperation, _Mapping]] = ..., token: _Optional[_Union[TokenResponse, _Mapping]] = ..., audit_response: _Optional[_Union[AuditQueryResponse, _Mapping]] = ..., authority_grant: _Optional[_Union[AuthorityGrantResponse, _Mapping]] = ..., create_task: _Optional[_Union[CreateTaskResponse, _Mapping]] = ..., proxy_http_response: _Optional[_Union[ProxyHttpResponse, _Mapping]] = ..., proxy_http_body_chunk: _Optional[_Union[ProxyHttpBodyChunk, _Mapping]] = ..., tunnel_ack: _Optional[_Union[TunnelAck, _Mapping]] = ..., tunnel_close: _Optional[_Union[TunnelClose, _Mapping]] = ..., tunnel_data: _Optional[_Union[TunnelData, _Mapping]] = ..., proxy_http_request: _Optional[_Union[ProxyHttpRequest, _Mapping]] = ..., resolve_authority_response: _Optional[_Union[ResolveAuthorityResponse, _Mapping]] = ..., connection_status_response: _Optional[_Union[ConnectionStatusResponse, _Mapping]] = ..., authority_grant_revocation: _Optional[_Union[AuthorityGrantRevocation, _Mapping]] = ..., submit_audit_event_response: _Optional[_Union[SubmitAuditEventResponse, _Mapping]] = ..., authority_request_response: _Optional[_Union[AuthorityRequestOperationResponse, _Mapping]] = ..., authority_request_event: _Optional[_Union[AuthorityRequestEvent, _Mapping]] = ..., task_hibernated: _Optional[_Union[TaskHibernated, _Mapping]] = ..., task_subscription_response: _Optional[_Union[TaskSubscriptionOperationResponse, _Mapping]] = ..., task_event: _Optional[_Union[TaskEvent, _Mapping]] = ...) -> None: ...
+    active_extensions: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, msg: _Optional[_Union[IncomingMessage, _Mapping]] = ..., config: _Optional[_Union[ConfigSnapshot, _Mapping]] = ..., signal: _Optional[_Union[Signal, _Mapping]] = ..., error: _Optional[_Union[ErrorResponse, _Mapping]] = ..., kv: _Optional[_Union[KVResponse, _Mapping]] = ..., task_assignment: _Optional[_Union[TaskAssignment, _Mapping]] = ..., connection_ack: _Optional[_Union[ConnectionAck, _Mapping]] = ..., checkpoint: _Optional[_Union[CheckpointResponse, _Mapping]] = ..., admin: _Optional[_Union[AdminResponse, _Mapping]] = ..., session_response: _Optional[_Union[SessionOperationResponse, _Mapping]] = ..., task_query: _Optional[_Union[TaskQueryResponse, _Mapping]] = ..., task_op: _Optional[_Union[TaskOperationResponse, _Mapping]] = ..., workspace: _Optional[_Union[WorkspaceResponse, _Mapping]] = ..., agent: _Optional[_Union[AgentResponse, _Mapping]] = ..., acl: _Optional[_Union[ACLResponse, _Mapping]] = ..., progress_update: _Optional[_Union[ProgressUpdate, _Mapping]] = ..., workflow_response: _Optional[_Union[WorkflowResponse, _Mapping]] = ..., workflow_op: _Optional[_Union[WorkflowOperation, _Mapping]] = ..., token: _Optional[_Union[TokenResponse, _Mapping]] = ..., audit_response: _Optional[_Union[AuditQueryResponse, _Mapping]] = ..., authority_grant: _Optional[_Union[AuthorityGrantResponse, _Mapping]] = ..., create_task: _Optional[_Union[CreateTaskResponse, _Mapping]] = ..., proxy_http_response: _Optional[_Union[ProxyHttpResponse, _Mapping]] = ..., proxy_http_body_chunk: _Optional[_Union[ProxyHttpBodyChunk, _Mapping]] = ..., tunnel_ack: _Optional[_Union[TunnelAck, _Mapping]] = ..., tunnel_close: _Optional[_Union[TunnelClose, _Mapping]] = ..., tunnel_data: _Optional[_Union[TunnelData, _Mapping]] = ..., proxy_http_request: _Optional[_Union[ProxyHttpRequest, _Mapping]] = ..., resolve_authority_response: _Optional[_Union[ResolveAuthorityResponse, _Mapping]] = ..., connection_status_response: _Optional[_Union[ConnectionStatusResponse, _Mapping]] = ..., authority_grant_revocation: _Optional[_Union[AuthorityGrantRevocation, _Mapping]] = ..., submit_audit_event_response: _Optional[_Union[SubmitAuditEventResponse, _Mapping]] = ..., authority_request_response: _Optional[_Union[AuthorityRequestOperationResponse, _Mapping]] = ..., authority_request_event: _Optional[_Union[AuthorityRequestEvent, _Mapping]] = ..., task_hibernated: _Optional[_Union[TaskHibernated, _Mapping]] = ..., task_subscription_response: _Optional[_Union[TaskSubscriptionOperationResponse, _Mapping]] = ..., task_event: _Optional[_Union[TaskEvent, _Mapping]] = ..., active_extensions: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class TaskHibernated(_message.Message):
     __slots__ = ("task_id", "descriptor")
@@ -319,17 +323,21 @@ class TaskHibernated(_message.Message):
     def __init__(self, task_id: _Optional[str] = ..., descriptor: _Optional[_Union[HibernationDescriptor, _Mapping]] = ...) -> None: ...
 
 class ConnectionAck(_message.Message):
-    __slots__ = ("session_id", "resumed", "assigned_id")
+    __slots__ = ("session_id", "resumed", "assigned_id", "negotiated_extensions", "server_supported_extensions")
     SESSION_ID_FIELD_NUMBER: _ClassVar[int]
     RESUMED_FIELD_NUMBER: _ClassVar[int]
     ASSIGNED_ID_FIELD_NUMBER: _ClassVar[int]
+    NEGOTIATED_EXTENSIONS_FIELD_NUMBER: _ClassVar[int]
+    SERVER_SUPPORTED_EXTENSIONS_FIELD_NUMBER: _ClassVar[int]
     session_id: str
     resumed: bool
     assigned_id: str
-    def __init__(self, session_id: _Optional[str] = ..., resumed: bool = ..., assigned_id: _Optional[str] = ...) -> None: ...
+    negotiated_extensions: _containers.RepeatedCompositeFieldContainer[NegotiatedExtension]
+    server_supported_extensions: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, session_id: _Optional[str] = ..., resumed: bool = ..., assigned_id: _Optional[str] = ..., negotiated_extensions: _Optional[_Iterable[_Union[NegotiatedExtension, _Mapping]]] = ..., server_supported_extensions: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class InitConnection(_message.Message):
-    __slots__ = ("agent", "task", "user", "orchestrator", "workflow_engine", "metrics_bridge", "bridge", "service", "credentials", "resume_session_id")
+    __slots__ = ("agent", "task", "user", "orchestrator", "workflow_engine", "metrics_bridge", "bridge", "service", "credentials", "resume_session_id", "extensions")
     class CredentialsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -347,6 +355,7 @@ class InitConnection(_message.Message):
     SERVICE_FIELD_NUMBER: _ClassVar[int]
     CREDENTIALS_FIELD_NUMBER: _ClassVar[int]
     RESUME_SESSION_ID_FIELD_NUMBER: _ClassVar[int]
+    EXTENSIONS_FIELD_NUMBER: _ClassVar[int]
     agent: AgentIdentity
     task: TaskIdentity
     user: UserIdentity
@@ -357,7 +366,32 @@ class InitConnection(_message.Message):
     service: ServiceIdentity
     credentials: _containers.ScalarMap[str, str]
     resume_session_id: str
-    def __init__(self, agent: _Optional[_Union[AgentIdentity, _Mapping]] = ..., task: _Optional[_Union[TaskIdentity, _Mapping]] = ..., user: _Optional[_Union[UserIdentity, _Mapping]] = ..., orchestrator: _Optional[_Union[OrchestratorIdentity, _Mapping]] = ..., workflow_engine: _Optional[_Union[WorkflowEngineIdentity, _Mapping]] = ..., metrics_bridge: _Optional[_Union[MetricsBridgeIdentity, _Mapping]] = ..., bridge: _Optional[_Union[BridgeIdentity, _Mapping]] = ..., service: _Optional[_Union[ServiceIdentity, _Mapping]] = ..., credentials: _Optional[_Mapping[str, str]] = ..., resume_session_id: _Optional[str] = ...) -> None: ...
+    extensions: _containers.RepeatedCompositeFieldContainer[ExtensionDeclaration]
+    def __init__(self, agent: _Optional[_Union[AgentIdentity, _Mapping]] = ..., task: _Optional[_Union[TaskIdentity, _Mapping]] = ..., user: _Optional[_Union[UserIdentity, _Mapping]] = ..., orchestrator: _Optional[_Union[OrchestratorIdentity, _Mapping]] = ..., workflow_engine: _Optional[_Union[WorkflowEngineIdentity, _Mapping]] = ..., metrics_bridge: _Optional[_Union[MetricsBridgeIdentity, _Mapping]] = ..., bridge: _Optional[_Union[BridgeIdentity, _Mapping]] = ..., service: _Optional[_Union[ServiceIdentity, _Mapping]] = ..., credentials: _Optional[_Mapping[str, str]] = ..., resume_session_id: _Optional[str] = ..., extensions: _Optional[_Iterable[_Union[ExtensionDeclaration, _Mapping]]] = ...) -> None: ...
+
+class ExtensionDeclaration(_message.Message):
+    __slots__ = ("uri", "version", "required", "json_schema")
+    URI_FIELD_NUMBER: _ClassVar[int]
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    REQUIRED_FIELD_NUMBER: _ClassVar[int]
+    JSON_SCHEMA_FIELD_NUMBER: _ClassVar[int]
+    uri: str
+    version: str
+    required: bool
+    json_schema: str
+    def __init__(self, uri: _Optional[str] = ..., version: _Optional[str] = ..., required: bool = ..., json_schema: _Optional[str] = ...) -> None: ...
+
+class NegotiatedExtension(_message.Message):
+    __slots__ = ("uri", "version", "supported", "rejection_reason")
+    URI_FIELD_NUMBER: _ClassVar[int]
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    SUPPORTED_FIELD_NUMBER: _ClassVar[int]
+    REJECTION_REASON_FIELD_NUMBER: _ClassVar[int]
+    uri: str
+    version: str
+    supported: bool
+    rejection_reason: str
+    def __init__(self, uri: _Optional[str] = ..., version: _Optional[str] = ..., supported: bool = ..., rejection_reason: _Optional[str] = ...) -> None: ...
 
 class WorkflowEngineIdentity(_message.Message):
     __slots__ = ("instance_id",)

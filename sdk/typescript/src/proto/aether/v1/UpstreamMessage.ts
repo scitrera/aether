@@ -64,6 +64,16 @@ export interface UpstreamMessage {
   'submitAuditEvent'?: (_aether_v1_SubmitAuditEventRequest | null);
   'authorityRequestOp'?: (_aether_v1_AuthorityRequestOperation | null);
   'taskSubscriptionOp'?: (_aether_v1_TaskSubscriptionOperation | null);
+  /**
+   * Phase 6: URIs of extensions active on this specific message. When the
+   * receiver does not support a URI listed here and the extension was
+   * declared as required at InitConnection time, the message MUST be
+   * rejected (ERR_EXTENSION_UNSUPPORTED). When non-required: receivers
+   * MAY ignore unknown URIs. Carried on the envelope (not the payload)
+   * so any oneof variant can opt into extension semantics without
+   * proto-side rewrites of every payload type.
+   */
+  'activeExtensions'?: (string)[];
   'payload'?: "init"|"send"|"switchWorkspace"|"kvOp"|"createTask"|"checkpointOp"|"adminQuery"|"sessionOp"|"taskQuery"|"taskOp"|"workspaceOp"|"agentOp"|"aclOp"|"progress"|"workflowOp"|"workflowResponse"|"tokenOp"|"auditQuery"|"authorityGrantOp"|"proxyHttpRequest"|"proxyHttpBodyChunk"|"tunnelOpen"|"tunnelData"|"tunnelClose"|"proxyHttpResponse"|"tunnelAck"|"resolveAuthorityRequest"|"connectionStatusRequest"|"submitAuditEvent"|"authorityRequestOp"|"taskSubscriptionOp";
 }
 
@@ -99,5 +109,15 @@ export interface UpstreamMessage__Output {
   'submitAuditEvent'?: (_aether_v1_SubmitAuditEventRequest__Output | null);
   'authorityRequestOp'?: (_aether_v1_AuthorityRequestOperation__Output | null);
   'taskSubscriptionOp'?: (_aether_v1_TaskSubscriptionOperation__Output | null);
+  /**
+   * Phase 6: URIs of extensions active on this specific message. When the
+   * receiver does not support a URI listed here and the extension was
+   * declared as required at InitConnection time, the message MUST be
+   * rejected (ERR_EXTENSION_UNSUPPORTED). When non-required: receivers
+   * MAY ignore unknown URIs. Carried on the envelope (not the payload)
+   * so any oneof variant can opt into extension semantics without
+   * proto-side rewrites of every payload type.
+   */
+  'activeExtensions': (string)[];
   'payload'?: "init"|"send"|"switchWorkspace"|"kvOp"|"createTask"|"checkpointOp"|"adminQuery"|"sessionOp"|"taskQuery"|"taskOp"|"workspaceOp"|"agentOp"|"aclOp"|"progress"|"workflowOp"|"workflowResponse"|"tokenOp"|"auditQuery"|"authorityGrantOp"|"proxyHttpRequest"|"proxyHttpBodyChunk"|"tunnelOpen"|"tunnelData"|"tunnelClose"|"proxyHttpResponse"|"tunnelAck"|"resolveAuthorityRequest"|"connectionStatusRequest"|"submitAuditEvent"|"authorityRequestOp"|"taskSubscriptionOp";
 }
