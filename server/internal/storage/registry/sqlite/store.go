@@ -35,13 +35,16 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nats-io/nats.go/jetstream"
 
+	internalregistry "github.com/scitrera/aether/internal/registry"
 	"github.com/scitrera/aether/internal/storage/registry"
 	"github.com/scitrera/aether/pkg/errors"
 	"github.com/scitrera/aether/pkg/models"
@@ -147,8 +150,18 @@ type Store struct {
 	*profileManager
 }
 
-// Compile-time conformance assert.
+// Compile-time conformance asserts.
 var _ registry.Store = (*Store)(nil)
+var _ internalregistry.KVSetter = (*Store)(nil)
+
+// SetRegistryKV implements internalregistry.KVSetter. Passing nil disables
+// KV propagation (the default). Safe to call after construction and
+// concurrently with Register/Delete.
+func (s *Store) SetRegistryKV(kv jetstream.KeyValue) {
+	s.agentRegistry.kvMu.Lock()
+	defer s.agentRegistry.kvMu.Unlock()
+	s.agentRegistry.kv = kv
+}
 
 // New constructs a native-sqlite registry Store. The caller provides:
 //   - db: an already-opened *sql.DB using the bare "sqlite" driver, pointed
@@ -227,7 +240,9 @@ func applyMigrations(ctx context.Context, db *sql.DB, fs embed.FS) error {
 // =============================================================================
 
 type agentRegistry struct {
-	db *sql.DB
+	db   *sql.DB
+	kvMu sync.RWMutex
+	kv   jetstream.KeyValue // nil means KV propagation disabled
 }
 
 func (ar *agentRegistry) Register(ctx context.Context, reg *registry.AgentRegistration) error {
@@ -370,6 +385,20 @@ func (ar *agentRegistry) Register(ctx context.Context, reg *registry.AgentRegist
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit agent registration: %w", err)
+	}
+
+	// Best-effort KV propagation for cross-gateway PrefixIndex sync.
+	// SQLite is canonical; KV publish failure must not block or fail the caller.
+	ar.kvMu.RLock()
+	kv := ar.kv
+	ar.kvMu.RUnlock()
+	if kv != nil {
+		if err := internalregistry.PublishAgent(ctx, kv, reg); err != nil {
+			slog.Warn("registry: KV propagation failed after Register; continuing",
+				"implementation", reg.Implementation,
+				"error", err,
+			)
+		}
 	}
 
 	reg.CreatedAt, err = parseTimestamp(createdStr)
@@ -565,6 +594,19 @@ func (ar *agentRegistry) Delete(ctx context.Context, implementation string) erro
 	}
 	if rowsAffected == 0 {
 		return &errors.AgentNotFoundError{Implementation: implementation}
+	}
+
+	// Best-effort KV propagation for cross-gateway PrefixIndex sync.
+	ar.kvMu.RLock()
+	kv := ar.kv
+	ar.kvMu.RUnlock()
+	if kv != nil {
+		if err := internalregistry.DeleteAgent(ctx, kv, implementation); err != nil {
+			slog.Warn("registry: KV propagation failed after Delete; continuing",
+				"implementation", implementation,
+				"error", err,
+			)
+		}
 	}
 
 	return nil

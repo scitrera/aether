@@ -37,6 +37,7 @@ import (
 	routerpkg "github.com/scitrera/aether/internal/router"
 	"github.com/scitrera/aether/internal/secrets"
 	"github.com/scitrera/aether/internal/state"
+	aclstore "github.com/scitrera/aether/internal/storage/acl"
 	aclsqlite "github.com/scitrera/aether/internal/storage/acl/sqlite"
 	auditsqlite "github.com/scitrera/aether/internal/storage/audit/sqlite"
 	regsqlite "github.com/scitrera/aether/internal/storage/registry/sqlite"
@@ -544,7 +545,25 @@ func main() {
 	if err != nil {
 		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite acl store")
 	}
-	gatewayOpts = append(gatewayOpts, gateway.WithACLService(sharedACLService))
+
+	// Gateway-facing ACL store. In cluster mode we wrap sharedACLService in a
+	// JetStream-backed decorator so the 6 authority-request lifecycle methods
+	// flow through the CAS+event-publish wrapper (the inner sharedACLService
+	// remains the source of truth for SQL writes and is also referenced
+	// directly by the state provider + SetPrefixIndex calls below — those
+	// non-lifecycle paths don't need to traverse the JetStream wrapper). In
+	// single-node mode the gateway sees the inner store directly.
+	var aclStoreForGateway aclstore.Store = sharedACLService
+	if cenv.Enabled && natsServer != nil {
+		js := natsServer.JetStream()
+		replicas := natsServer.ReplicasForHA()
+		wrapped, werr := activateClusterAuthorityLifecycle(ctx, sharedACLService, js, replicas)
+		if werr != nil {
+			logging.Logger.Fatal().Err(werr).Msg("failed to activate cluster authority-request lifecycle resources")
+		}
+		aclStoreForGateway = wrapped
+	}
+	gatewayOpts = append(gatewayOpts, gateway.WithACLService(aclStoreForGateway))
 
 	// Cleanup service.
 	cleanupConfig := &cleanup.Config{
@@ -751,7 +770,7 @@ func main() {
 		} else {
 			logging.Logger.Warn().Err(lerr).Msg("cluster: registry seed list failed; PrefixIndex bootstrap will rely solely on KV watch")
 		}
-		clusterIdx, err := activateClusterPrefixIndex(ctx, js, replicas, registryList)
+		clusterIdx, registryKV, err := activateClusterPrefixIndex(ctx, js, replicas, registryList)
 		if err != nil {
 			logging.Logger.Fatal().Err(err).Msg("failed to activate cluster PrefixIndex JetStream watch")
 		}
@@ -760,14 +779,16 @@ func main() {
 		// its own admin-side refresh hooks but the ACL audit attribution
 		// hot-path now consults the cluster-aware index.
 		sharedACLService.SetPrefixIndex(clusterIdx)
+		// Plumb the KV bucket into the registry store so Register/Delete
+		// propagate to peer gateways via the Watch read-side above.
+		registryStore.SetRegistryKV(registryKV)
+		logging.Logger.Info().Msg("registry store wired for KV propagation (cluster mode)")
 
-		// Authority-request lifecycle JetStream provisioning (idempotent
-		// stream + KV bucket creates). See activateClusterAuthorityLifecycle
-		// godoc for the rationale on why the wrapper itself is not plumbed
-		// into the gateway's aclstore.Store-typed acl field.
-		if _, err := activateClusterAuthorityLifecycle(ctx, sharedACLService, js, replicas); err != nil {
-			logging.Logger.Fatal().Err(err).Msg("failed to activate cluster authority-request lifecycle resources")
-		}
+		// Authority-request lifecycle JetStream provisioning + Store
+		// decoration was performed earlier (before WithACLService) so the
+		// gateway's aclstore.Store-typed acl field already routes lifecycle
+		// methods through the JetStream wrapper. No additional activation
+		// needed here.
 
 		// JetStream-driven task waker — composes with the timer-based scanner.
 		startClusterTaskWaker(ctx, js, taskStore, orchServices.TaskService)

@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -424,6 +425,252 @@ func TestStorageInterfaceAssertions(t *testing.T) {
 	// so the linter sees a use.
 	var _ StorageClient = (*LocalFileStorage)(nil)
 	var _ StorageClient = (*S3StorageClient)(nil)
+}
+
+// ---------------------------------------------------------------------------
+// recordingLogger captures log calls at each level so tests can assert on
+// what was (or was not) logged.
+// ---------------------------------------------------------------------------
+
+type recordingLogger struct {
+	mu     sync.Mutex
+	infos  []string
+	warns  []string
+	errors []string
+	t      *testing.T
+}
+
+func (l *recordingLogger) Infof(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	l.mu.Lock()
+	l.infos = append(l.infos, msg)
+	l.mu.Unlock()
+	l.t.Logf("INFO "+format, args...)
+}
+func (l *recordingLogger) Warnf(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	l.mu.Lock()
+	l.warns = append(l.warns, msg)
+	l.mu.Unlock()
+	l.t.Logf("WARN "+format, args...)
+}
+func (l *recordingLogger) Errorf(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	l.mu.Lock()
+	l.errors = append(l.errors, msg)
+	l.mu.Unlock()
+	l.t.Logf("ERR  "+format, args...)
+}
+
+func (l *recordingLogger) warnCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.warns)
+}
+
+func (l *recordingLogger) errorCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.errors)
+}
+
+// ---------------------------------------------------------------------------
+// 7) Missing domain — skips quietly (no WARN/ERROR, no snapshot written,
+//    lastBackupTime stays zero so it retries on the next tick).
+// ---------------------------------------------------------------------------
+
+func TestBackupCoordinator_MissingDomain_SkipsQuietly(t *testing.T) {
+	es := newTestEmbeddedServer(t)
+	js := es.JetStream()
+	ctx := context.Background()
+
+	storageDir := t.TempDir()
+	store, err := NewLocalFileStorage(storageDir)
+	if err != nil {
+		t.Fatalf("local storage: %v", err)
+	}
+
+	// Policy targets a stream that does NOT exist.
+	pol := BackupPolicy{
+		Domain:      "nonexistent_stream",
+		Kind:        DomainKindStream,
+		MinInterval: 50 * time.Millisecond,
+		S3Prefix:    "test",
+	}
+
+	log := &recordingLogger{t: t}
+	c, err := NewBackupCoordinator(js, store, []BackupPolicy{pol}, "node-a", log, WithLeaderTTL(2*time.Second))
+	if err != nil {
+		t.Fatalf("new coord: %v", err)
+	}
+
+	// Run a few ticks; the stream never gets created.
+	for i := 0; i < 5; i++ {
+		_ = c.tickOnce(ctx, time.Now())
+		time.Sleep(60 * time.Millisecond)
+	}
+
+	// No WARN or ERROR should have been emitted for the missing domain.
+	if log.warnCount() > 0 {
+		t.Errorf("expected 0 WARN lines, got %d: %v", log.warnCount(), log.warns)
+	}
+	if log.errorCount() > 0 {
+		t.Errorf("expected 0 ERROR lines, got %d: %v", log.errorCount(), log.errors)
+	}
+
+	// No snapshot file should exist.
+	objs, _ := store.List(ctx, "test/nonexistent_stream")
+	if len(objs) > 0 {
+		t.Errorf("expected no snapshot files, got %d", len(objs))
+	}
+
+	// lastBackupTime should still be zero (so we'll retry on the next tick).
+	c.mu.Lock()
+	lastTime := c.lastBackupTime[pol.Domain]
+	c.mu.Unlock()
+	if !lastTime.IsZero() {
+		t.Errorf("expected lastBackupTime to be zero, got %v", lastTime)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 8) Self-healing: missing bucket → tick skips → bucket created → next tick
+//    succeeds and writes a snapshot.
+// ---------------------------------------------------------------------------
+
+func TestBackupCoordinator_MissingDomainBecomesProvisioned_AutoHeals(t *testing.T) {
+	es := newTestEmbeddedServer(t)
+	js := es.JetStream()
+	ctx := context.Background()
+
+	store, err := NewLocalFileStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("local storage: %v", err)
+	}
+
+	// Use a KV bucket domain that doesn't exist yet.
+	pol := BackupPolicy{
+		Domain:      "healing_kv",
+		Kind:        DomainKindKV,
+		MinInterval: 50 * time.Millisecond,
+		S3Prefix:    "test",
+	}
+
+	log := &recordingLogger{t: t}
+	c, err := NewBackupCoordinator(js, store, []BackupPolicy{pol}, "node-a", log, WithLeaderTTL(2*time.Second))
+	if err != nil {
+		t.Fatalf("new coord: %v", err)
+	}
+
+	// First tick: bucket absent — should skip quietly.
+	_ = c.tickOnce(ctx, time.Now())
+	if log.errorCount() > 0 {
+		t.Fatalf("got ERROR before provisioning: %v", log.errors)
+	}
+
+	// Now create the bucket and add data.
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "healing_kv"})
+	if err != nil {
+		t.Fatalf("create kv: %v", err)
+	}
+	if _, err := kv.Put(ctx, "ping", []byte("pong")); err != nil {
+		t.Fatalf("kv put: %v", err)
+	}
+
+	// Next tick(s): bucket now exists → snapshot should succeed.
+	var snapshotted bool
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_ = c.tickOnce(ctx, time.Now())
+		objs, _ := store.List(ctx, "test/healing_kv")
+		if countSuffix(objs, ".bin") > 0 {
+			snapshotted = true
+			break
+		}
+		time.Sleep(60 * time.Millisecond)
+	}
+	if !snapshotted {
+		t.Fatal("expected snapshot after bucket was provisioned, but none appeared")
+	}
+	if log.errorCount() > 0 {
+		t.Errorf("unexpected ERROR logs: %v", log.errors)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 9) Non-ENOENT errors still emit WARN/ERROR and tick continues.
+// ---------------------------------------------------------------------------
+
+// errorStorageClient wraps LocalFileStorage and injects a write error on Upload.
+type errorStorageClient struct {
+	inner StorageClient
+	err   error
+}
+
+func (e *errorStorageClient) Upload(ctx context.Context, key string, r io.Reader, size int64, meta map[string]string) error {
+	return e.err
+}
+func (e *errorStorageClient) Download(ctx context.Context, key string, w io.Writer) error {
+	return e.inner.Download(ctx, key, w)
+}
+func (e *errorStorageClient) LatestKey(ctx context.Context, prefix string) (string, map[string]string, error) {
+	return e.inner.LatestKey(ctx, prefix)
+}
+func (e *errorStorageClient) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	return e.inner.List(ctx, prefix)
+}
+
+func TestBackupCoordinator_OtherErrorStillWarns(t *testing.T) {
+	es := newTestEmbeddedServer(t)
+	js := es.JetStream()
+	ctx := context.Background()
+
+	// Create the stream so the "not found" path is NOT taken.
+	if _, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     "error_stream",
+		Subjects: []string{"error_stream.>"},
+		Replicas: 1,
+	}); err != nil {
+		t.Fatalf("create stream: %v", err)
+	}
+	if _, err := js.Publish(ctx, "error_stream.x", []byte("data")); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	inner, err := NewLocalFileStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("local storage: %v", err)
+	}
+	// Inject an upload error so the snapshot fails with a non-not-found error.
+	injectedErr := fmt.Errorf("simulated S3 write error")
+	store := &errorStorageClient{inner: inner, err: injectedErr}
+
+	pol := BackupPolicy{
+		Domain:      "error_stream",
+		Kind:        DomainKindStream,
+		MinInterval: 50 * time.Millisecond,
+		S3Prefix:    "test",
+	}
+
+	log := &recordingLogger{t: t}
+	c, err := NewBackupCoordinator(js, store, []BackupPolicy{pol}, "node-a", log, WithLeaderTTL(2*time.Second))
+	if err != nil {
+		t.Fatalf("new coord: %v", err)
+	}
+
+	// Run a tick — the upload will fail with the injected error.
+	_ = c.tickOnce(ctx, time.Now())
+
+	// Should have logged at ERROR level (not silently skipped).
+	if log.errorCount() == 0 {
+		t.Errorf("expected at least one ERROR log for upload failure, got none")
+	}
+
+	// Coordinator should continue (not crash); a second tick should also fire.
+	_ = c.tickOnce(ctx, time.Now())
+	if log.errorCount() < 2 {
+		t.Errorf("expected ERROR on each tick while upload fails, got %d", log.errorCount())
+	}
 }
 
 // ensure parallel tests don't share a single embedded server's state by

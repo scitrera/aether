@@ -5,12 +5,30 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lib/pq"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/scitrera/aether/pkg/errors"
 )
+
+// KVSetter is satisfied by any registry store that supports optional
+// write-side propagation to the aether_registry NATS KV bucket. The
+// cluster wiring layer uses this interface to plumb the bucket handle
+// into the store after both are constructed, so there is no circular
+// dependency between the registry package and the cluster/nats package.
+//
+// Implementations must be thread-safe: SetRegistryKV may be called
+// from a goroutine different from the one performing Register/Delete.
+type KVSetter interface {
+	// SetRegistryKV configures the NATS JetStream KV bucket used for
+	// cross-gateway agent registry propagation. Pass nil to disable KV
+	// propagation (the default). Safe to call after construction.
+	SetRegistryKV(kv jetstream.KeyValue)
+}
 
 // AgentRegistration represents an agent implementation in the registry
 type AgentRegistration struct {
@@ -44,8 +62,20 @@ type AgentResourceSchemaEntry struct {
 
 // AgentRegistry manages agent implementations and their orchestration parameters
 type AgentRegistry struct {
-	db *sql.DB
+	db   *sql.DB
+	kvMu sync.RWMutex
+	kv   jetstream.KeyValue // nil means KV propagation disabled
 }
+
+// SetRegistryKV implements KVSetter. Passing nil disables KV propagation.
+func (ar *AgentRegistry) SetRegistryKV(kv jetstream.KeyValue) {
+	ar.kvMu.Lock()
+	defer ar.kvMu.Unlock()
+	ar.kv = kv
+}
+
+// Compile-time assertion: AgentRegistry satisfies KVSetter.
+var _ KVSetter = (*AgentRegistry)(nil)
 
 // NewAgentRegistry creates a new agent registry service
 func NewAgentRegistry(db *sql.DB) *AgentRegistry {
@@ -168,6 +198,21 @@ func (ar *AgentRegistry) Register(ctx context.Context, reg *AgentRegistration) e
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit agent registration: %w", err)
+	}
+
+	// Best-effort KV propagation for cross-gateway PrefixIndex sync.
+	// The canonical store (PostgreSQL) is the source of truth; KV publish
+	// failure must not block or fail the caller.
+	ar.kvMu.RLock()
+	kv := ar.kv
+	ar.kvMu.RUnlock()
+	if kv != nil {
+		if err := PublishAgent(ctx, kv, reg); err != nil {
+			slog.Warn("registry: KV propagation failed after Register; continuing",
+				"implementation", reg.Implementation,
+				"error", err,
+			)
+		}
 	}
 
 	return nil
@@ -403,6 +448,19 @@ func (ar *AgentRegistry) Delete(ctx context.Context, implementation string) erro
 
 	if rowsAffected == 0 {
 		return &errors.AgentNotFoundError{Implementation: implementation}
+	}
+
+	// Best-effort KV propagation for cross-gateway PrefixIndex sync.
+	ar.kvMu.RLock()
+	kv := ar.kv
+	ar.kvMu.RUnlock()
+	if kv != nil {
+		if err := DeleteAgent(ctx, kv, implementation); err != nil {
+			slog.Warn("registry: KV propagation failed after Delete; continuing",
+				"implementation", implementation,
+				"error", err,
+			)
+		}
 	}
 
 	return nil

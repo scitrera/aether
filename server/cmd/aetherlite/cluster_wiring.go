@@ -227,15 +227,14 @@ func defaultBackupPolicies() []backup.BackupPolicy {
 // should treat the failure as fatal — cluster mode without cross-gateway
 // agent registry sync is a misconfiguration, not a degraded state.
 //
-// Conservative scope: only the READ side (Watch) is wired here. The matching
-// write-side PublishAgent/DeleteAgent hooks inside registry.Register / Delete
-// would require invasive surgery in internal/registry and are intentionally
-// deferred. Bootstrap via Watch is the headline win — peer gateways observe
-// each others' registrations on the next watch event.
-func activateClusterPrefixIndex(ctx context.Context, js jetstream.JetStream, replicas int, registryList []*registry.AgentRegistration) (*registry.PrefixIndex, error) {
+// Read side (Watch) is wired here; the matching write-side propagation runs
+// inside registry.Register / Delete when the registry store has been given
+// the KV bucket via KVSetter — main.go handles that plumbing using the kv
+// returned from this function.
+func activateClusterPrefixIndex(ctx context.Context, js jetstream.JetStream, replicas int, registryList []*registry.AgentRegistration) (*registry.PrefixIndex, jetstream.KeyValue, error) {
 	kv, err := registry.CreateOrOpenRegistryBucket(ctx, js, replicas)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	idx := registry.NewPrefixIndex()
 	// Seed from the local DB FIRST so the index is non-empty even before the
@@ -245,38 +244,33 @@ func activateClusterPrefixIndex(ctx context.Context, js jetstream.JetStream, rep
 		idx.Rebuild(registryList)
 	}
 	if err := idx.StartJetStreamWatch(ctx, kv, slog.Default()); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	logging.Logger.Info().
 		Str("bucket", "aether_registry").
 		Int("seed_count", len(registryList)).
 		Msg("PrefixIndex JetStream watch started (cluster mode)")
-	return idx, nil
+	return idx, kv, nil
 }
 
 // activateClusterAuthorityLifecycle idempotently provisions the JetStream
 // resources (authreq stream + aether_authority_requests / aether_authority_grants
-// KV buckets) needed by approver subscribers and the JetStreamTaskWaker.
+// KV buckets) needed by approver subscribers and the JetStreamTaskWaker, and
+// returns a Store decorator that routes the 6 authority-request lifecycle
+// methods through a JetStreamAuthorityLifecycle wrapper while delegating all
+// other Store methods to the inner.
 //
-// Conservative scope: the wrapper's Lifecycle decoration is NOT plumbed into
-// the gateway's aclstore.Store-typed `s.acl` field because the wrapper only
-// satisfies the narrow 5-method acl.Lifecycle interface, not the full Store
-// surface. Wiring the decoration end-to-end would require either:
-//   - a full Store decorator (every aclstore.Store method delegating to the
-//     inner Store, with the 5 lifecycle methods routed through the wrapper), or
-//   - a gateway.WithACLLifecycle option distinct from WithACLService.
-//
-// Both are gateway-package changes outside the scope of this wiring task.
-// Constructing the wrapper here still pays a real cost: it provisions the
-// authreq stream + KV buckets that JetStreamTaskWaker subscribes to, so the
-// waker boots cleanly when started below.
-func activateClusterAuthorityLifecycle(ctx context.Context, inner aclstore.Store, js jetstream.JetStream, replicas int) (*acl.JetStreamAuthorityLifecycle, error) {
-	// aclstore.Store satisfies acl.Lifecycle (its lifecycle methods take the
-	// same legacy.AuthorityRequest types via aliasing in internal/storage/acl).
-	// The wrapper's constructor performs the idempotent stream/bucket creates
-	// we care about regardless of whether the returned wrapper is consumed
-	// downstream.
-	wrapped, err := acl.NewJetStreamAuthorityLifecycle(ctx, inner, js, replicas, zerologClusterLogger{})
+// The returned *aclstore.JetStreamAuthorityStore is the value the caller must
+// thread into the gateway in place of the raw inner Store, so writes
+// originated by the gateway's ACL field flow through the JetStream wrapper's
+// CAS+event-publish path.
+func activateClusterAuthorityLifecycle(_ context.Context, inner aclstore.Store, js jetstream.JetStream, replicas int) (*aclstore.JetStreamAuthorityStore, error) {
+	// aclstore.JetStreamAuthorityStore embeds the inner Store and shadows the
+	// 6 lifecycle methods with calls through an internal JetStream wrapper.
+	// The wrapper's constructor (invoked inside the decorator constructor)
+	// performs the idempotent stream/bucket creates we care about regardless
+	// of whether the returned decorator is consumed downstream.
+	wrapped, err := aclstore.NewJetStreamAuthorityStore(inner, js, replicas, zerologClusterLogger{})
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +279,7 @@ func activateClusterAuthorityLifecycle(ctx context.Context, inner aclstore.Store
 		Str("requests_bucket", acl.AuthorityRequestsKVBucket).
 		Str("grants_bucket", acl.AuthorityGrantsKVBucket).
 		Int("replicas", replicas).
-		Msg("authority-request JetStream stream + KV buckets provisioned (cluster mode)")
+		Msg("authority-request JetStream stream + KV buckets provisioned (cluster mode); Store decorator installed")
 	return wrapped, nil
 }
 

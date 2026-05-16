@@ -16,12 +16,21 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
+// ErrDomainNotProvisioned is returned by snapshotStream and snapshotKV when
+// the target JetStream stream or KV bucket does not yet exist. Callers should
+// treat this as a normal transient state (domain not yet provisioned) rather
+// than an error requiring operator attention.
+var ErrDomainNotProvisioned = errors.New("backup: domain not provisioned yet")
+
 // snapshotStream walks every message in a JetStream stream in order and
 // writes one length-prefixed record per message. It returns the last
 // sequence number observed (used as the manifest's RaftIndex).
 func snapshotStream(ctx context.Context, js jetstream.JetStream, streamName string, w io.Writer) (uint64, error) {
 	stream, err := js.Stream(ctx, streamName)
 	if err != nil {
+		if errors.Is(err, jetstream.ErrStreamNotFound) {
+			return 0, fmt.Errorf("%w: %s", ErrDomainNotProvisioned, streamName)
+		}
 		return 0, fmt.Errorf("get stream: %w", err)
 	}
 	info, err := stream.Info(ctx)
@@ -87,6 +96,9 @@ func snapshotStream(ctx context.Context, js jetstream.JetStream, streamName stri
 func snapshotKV(ctx context.Context, js jetstream.JetStream, bucket string, w io.Writer) (uint64, error) {
 	kv, err := js.KeyValue(ctx, bucket)
 	if err != nil {
+		if errors.Is(err, jetstream.ErrBucketNotFound) {
+			return 0, fmt.Errorf("%w: %s", ErrDomainNotProvisioned, bucket)
+		}
 		return 0, fmt.Errorf("get kv: %w", err)
 	}
 	lister, err := kv.ListKeys(ctx)

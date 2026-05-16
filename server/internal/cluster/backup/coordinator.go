@@ -223,6 +223,11 @@ func (c *BackupCoordinator) tickOnce(ctx context.Context, now time.Time) error {
 			continue
 		}
 		if err := c.runSnapshot(ctx, pol, now); err != nil {
+			if errors.Is(err, ErrDomainNotProvisioned) {
+				c.logger.Infof("snapshot %s: skipped — not yet provisioned", pol.Domain)
+				// Do NOT update lastBackupTime so we re-check on the next tick.
+				continue
+			}
 			c.logger.Errorf("snapshot %s: %v", pol.Domain, err)
 			continue
 		}
