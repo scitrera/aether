@@ -86,6 +86,56 @@ func nowTimestamp() string {
 	return time.Now().UTC().Format(timestampLayout)
 }
 
+// encodePhase5JSON marshals one of the Phase 5 columns (resource_schema /
+// capabilities / extensions) to JSON, returning nil — which the database/sql
+// driver writes as SQL NULL — when v is empty/nil. This matches the postgres
+// path's behavior so the two backends store the same wire representation.
+func encodePhase5JSON(v interface{}) (interface{}, error) {
+	switch val := v.(type) {
+	case nil:
+		return nil, nil
+	case []registry.AgentResourceSchemaEntry:
+		if len(val) == 0 {
+			return nil, nil
+		}
+	case map[string]bool:
+		if len(val) == 0 {
+			return nil, nil
+		}
+	case []string:
+		if len(val) == 0 {
+			return nil, nil
+		}
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
+}
+
+// scanPhase5JSON decodes the resource_schema / capabilities / extensions
+// columns from a row scan into the AgentRegistration. NULL or empty-string
+// columns leave the destination fields at their zero values.
+func scanPhase5JSON(reg *registry.AgentRegistration, resourceSchema, capabilities, extensions sql.NullString) error {
+	if resourceSchema.Valid && resourceSchema.String != "" {
+		if err := json.Unmarshal([]byte(resourceSchema.String), &reg.ResourceSchema); err != nil {
+			return fmt.Errorf("failed to unmarshal resource_schema: %w", err)
+		}
+	}
+	if capabilities.Valid && capabilities.String != "" {
+		if err := json.Unmarshal([]byte(capabilities.String), &reg.Capabilities); err != nil {
+			return fmt.Errorf("failed to unmarshal capabilities: %w", err)
+		}
+	}
+	if extensions.Valid && extensions.String != "" {
+		if err := json.Unmarshal([]byte(extensions.String), &reg.Extensions); err != nil {
+			return fmt.Errorf("failed to unmarshal extensions: %w", err)
+		}
+	}
+	return nil
+}
+
 // Store is the native-sqlite registry store. It struct-embeds two
 // sub-implementations so their method sets are promoted directly onto
 // Store, satisfying registry.Store with zero forwarders.
@@ -185,35 +235,141 @@ func (ar *agentRegistry) Register(ctx context.Context, reg *registry.AgentRegist
 		return &errors.ProfileRequiredError{}
 	}
 
+	// Phase 5 Stage B: reject self-conflicts (same prefix declared twice in
+	// one schema) before opening the transaction; matches the postgres path.
+	if err := validateSqliteResourceSchemaSelfDistinct(reg.ResourceSchema); err != nil {
+		return err
+	}
+
 	launchParamsJSON, err := json.Marshal(reg.LaunchParams)
 	if err != nil {
 		return fmt.Errorf("failed to marshal launch_params: %w", err)
 	}
 
+	// Phase 5 columns are nullable: encode empty/nil as SQL NULL so legacy
+	// registrations don't carry sentinel "[]"/"{}" literals.
+	resourceSchemaArg, err := encodePhase5JSON(reg.ResourceSchema)
+	if err != nil {
+		return fmt.Errorf("failed to marshal resource_schema: %w", err)
+	}
+	capabilitiesArg, err := encodePhase5JSON(reg.Capabilities)
+	if err != nil {
+		return fmt.Errorf("failed to marshal capabilities: %w", err)
+	}
+	extensionsArg, err := encodePhase5JSON(reg.Extensions)
+	if err != nil {
+		return fmt.Errorf("failed to marshal extensions: %w", err)
+	}
+
 	now := nowTimestamp()
+
+	// Phase 5 Stage B: open a tx so the prefix-uniqueness scan and the upsert
+	// commit together. SQLite has a single-writer model (we set
+	// SetMaxOpenConns(1) in New()), so transactions provide strict
+	// serialization — no two Register calls can interleave between the
+	// scan and the write.
+	tx, err := ar.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Build the set of prefixes declared by the incoming registration so we
+	// can early-out the scan if none are declared.
+	if len(reg.ResourceSchema) > 0 {
+		// Scan the existing rows (excluding self) and detect any prefix
+		// collision. We do this in Go because sqlite's JSON1 path-query
+		// syntax is verbose for "array contains an object with key=value"
+		// and the registry's row count is small (~10s of rows in
+		// production).
+		rows, err := tx.QueryContext(ctx, `
+			SELECT implementation, resource_schema
+			FROM agent_registry
+			WHERE implementation != ?
+			  AND resource_schema IS NOT NULL
+		`, reg.Implementation)
+		if err != nil {
+			return fmt.Errorf("failed to scan existing resource schemas: %w", err)
+		}
+
+		// Build a map of declared prefix -> implementation across the live
+		// table, then check each incoming prefix against it.
+		existingPrefixes := make(map[string]string)
+		for rows.Next() {
+			var impl string
+			var schemaJSON sql.NullString
+			if err := rows.Scan(&impl, &schemaJSON); err != nil {
+				rows.Close()
+				return fmt.Errorf("failed to scan registry row: %w", err)
+			}
+			if !schemaJSON.Valid || schemaJSON.String == "" {
+				continue
+			}
+			var entries []registry.AgentResourceSchemaEntry
+			if err := json.Unmarshal([]byte(schemaJSON.String), &entries); err != nil {
+				rows.Close()
+				return fmt.Errorf("failed to unmarshal existing resource_schema for %q: %w", impl, err)
+			}
+			for _, e := range entries {
+				if e.ResourceTypePrefix == "" {
+					continue
+				}
+				existingPrefixes[e.ResourceTypePrefix] = impl
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return fmt.Errorf("error iterating existing registrations: %w", err)
+		}
+		rows.Close()
+
+		for _, entry := range reg.ResourceSchema {
+			if entry.ResourceTypePrefix == "" {
+				continue
+			}
+			if owner, claimed := existingPrefixes[entry.ResourceTypePrefix]; claimed {
+				return &errors.ResourceTypePrefixConflictError{
+					Implementation: reg.Implementation,
+					Prefix:         entry.ResourceTypePrefix,
+					Existing:       owner,
+				}
+			}
+		}
+	}
+
 	// Upsert: INSERT OR REPLACE would reset created_at on update.
 	// Use INSERT ... ON CONFLICT ... DO UPDATE to preserve created_at.
 	query := `
-		INSERT INTO agent_registry (implementation, launch_params, description, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO agent_registry (implementation, launch_params, description, resource_schema, capabilities, extensions, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (implementation)
 		DO UPDATE SET
 			launch_params = excluded.launch_params,
 			description = excluded.description,
+			resource_schema = excluded.resource_schema,
+			capabilities = excluded.capabilities,
+			extensions = excluded.extensions,
 			updated_at = excluded.updated_at
 		RETURNING created_at, updated_at
 	`
 
 	var createdStr, updatedStr string
-	err = ar.db.QueryRowContext(ctx, query,
+	err = tx.QueryRowContext(ctx, query,
 		reg.Implementation,
 		string(launchParamsJSON),
 		reg.Description,
+		resourceSchemaArg,
+		capabilitiesArg,
+		extensionsArg,
 		now,
 		now,
 	).Scan(&createdStr, &updatedStr)
 	if err != nil {
 		return fmt.Errorf("failed to register agent: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit agent registration: %w", err)
 	}
 
 	reg.CreatedAt, err = parseTimestamp(createdStr)
@@ -228,24 +384,52 @@ func (ar *agentRegistry) Register(ctx context.Context, reg *registry.AgentRegist
 	return nil
 }
 
+// validateSqliteResourceSchemaSelfDistinct mirrors the postgres path's
+// validateResourceSchemaSelfDistinct (defined in internal/registry) — kept as
+// a separate function here to avoid a dependency on the legacy registry
+// package from the sqlite native implementation.
+func validateSqliteResourceSchemaSelfDistinct(schema []registry.AgentResourceSchemaEntry) error {
+	if len(schema) < 2 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(schema))
+	for _, e := range schema {
+		if e.ResourceTypePrefix == "" {
+			continue
+		}
+		if _, dup := seen[e.ResourceTypePrefix]; dup {
+			return &errors.ResourceTypePrefixConflictError{
+				Prefix:   e.ResourceTypePrefix,
+				Existing: "(self)",
+			}
+		}
+		seen[e.ResourceTypePrefix] = struct{}{}
+	}
+	return nil
+}
+
 func (ar *agentRegistry) Get(ctx context.Context, implementation string) (*registry.AgentRegistration, error) {
 	if idx := strings.LastIndex(implementation, ":"); idx > 0 {
 		implementation = implementation[:idx]
 	}
 	query := `
-		SELECT implementation, launch_params, description, created_at, updated_at
+		SELECT implementation, launch_params, description, resource_schema, capabilities, extensions, created_at, updated_at
 		FROM agent_registry
 		WHERE implementation = ?
 	`
 
 	var reg registry.AgentRegistration
 	var launchParamsJSON string
+	var resourceSchemaJSON, capabilitiesJSON, extensionsJSON sql.NullString
 	var createdStr, updatedStr string
 
 	err := ar.db.QueryRowContext(ctx, query, implementation).Scan(
 		&reg.Implementation,
 		&launchParamsJSON,
 		&reg.Description,
+		&resourceSchemaJSON,
+		&capabilitiesJSON,
+		&extensionsJSON,
 		&createdStr,
 		&updatedStr,
 	)
@@ -258,6 +442,9 @@ func (ar *agentRegistry) Get(ctx context.Context, implementation string) (*regis
 
 	if err := json.Unmarshal([]byte(launchParamsJSON), &reg.LaunchParams); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal launch_params: %w", err)
+	}
+	if err := scanPhase5JSON(&reg, resourceSchemaJSON, capabilitiesJSON, extensionsJSON); err != nil {
+		return nil, err
 	}
 
 	reg.CreatedAt, err = parseTimestamp(createdStr)
@@ -292,7 +479,7 @@ func (ar *agentRegistry) List(ctx context.Context, profile string) ([]*registry.
 	if profile != "" {
 		// Use json_extract instead of postgres's ->> operator.
 		query = `
-			SELECT implementation, launch_params, description, created_at, updated_at
+			SELECT implementation, launch_params, description, resource_schema, capabilities, extensions, created_at, updated_at
 			FROM agent_registry
 			WHERE json_extract(launch_params, '$.profile') = ?
 			ORDER BY implementation
@@ -300,7 +487,7 @@ func (ar *agentRegistry) List(ctx context.Context, profile string) ([]*registry.
 		args = []interface{}{profile}
 	} else {
 		query = `
-			SELECT implementation, launch_params, description, created_at, updated_at
+			SELECT implementation, launch_params, description, resource_schema, capabilities, extensions, created_at, updated_at
 			FROM agent_registry
 			ORDER BY implementation
 		`
@@ -316,12 +503,16 @@ func (ar *agentRegistry) List(ctx context.Context, profile string) ([]*registry.
 	for rows.Next() {
 		var reg registry.AgentRegistration
 		var launchParamsJSON string
+		var resourceSchemaJSON, capabilitiesJSON, extensionsJSON sql.NullString
 		var createdStr, updatedStr string
 
 		if err := rows.Scan(
 			&reg.Implementation,
 			&launchParamsJSON,
 			&reg.Description,
+			&resourceSchemaJSON,
+			&capabilitiesJSON,
+			&extensionsJSON,
 			&createdStr,
 			&updatedStr,
 		); err != nil {
@@ -330,6 +521,9 @@ func (ar *agentRegistry) List(ctx context.Context, profile string) ([]*registry.
 
 		if err := json.Unmarshal([]byte(launchParamsJSON), &reg.LaunchParams); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal launch_params: %w", err)
+		}
+		if err := scanPhase5JSON(&reg, resourceSchemaJSON, capabilitiesJSON, extensionsJSON); err != nil {
+			return nil, err
 		}
 
 		var parseErr error

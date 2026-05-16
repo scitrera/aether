@@ -102,6 +102,25 @@ func (e *DuplicateRegistrationError) Error() string {
 	return fmt.Sprintf("agent implementation '%s' is already registered", e.Implementation)
 }
 
+// ResourceTypePrefixConflictError indicates an agent's resource_schema declares
+// a resource_type_prefix already claimed by another active registration. Phase
+// 5 Stage B uniqueness enforcement returns this error from Register / Update
+// inside the same transaction (postgres) or the same Go-side scan (sqlite),
+// so the loser of a race never overwrites the winner's claim.
+//
+// Existing carries the implementation name of the registration that already
+// owns Prefix; the gateway handler surfaces it in the error response so
+// operators can diagnose the conflict without re-querying the registry.
+type ResourceTypePrefixConflictError struct {
+	Implementation string // the registration being rejected
+	Prefix         string // the offending resource_type_prefix
+	Existing       string // implementation name that already owns Prefix
+}
+
+func (e *ResourceTypePrefixConflictError) Error() string {
+	return fmt.Sprintf("resource_type_prefix %q already declared by agent %q", e.Prefix, e.Existing)
+}
+
 // InitializationError indicates a orchestration service failed to initialize
 type InitializationError struct {
 	Component string

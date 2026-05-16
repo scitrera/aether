@@ -78,6 +78,12 @@ type (
 	// authority request. Empty / zero fields mean "inherit from the
 	// request" (no narrowing).
 	ApproveDecision = legacy.ApproveDecision
+
+	// PrefixLookup is the resource_type → owning_agent resolver consumed by
+	// acl.Store.SetPrefixIndex (Phase 5 Stage B). Aliased to the legacy ACL
+	// package's interface so callers building registries can pass a
+	// concrete impl that satisfies both surfaces.
+	PrefixLookup = legacy.PrefixLookup
 )
 
 // AuthorityRequest lifecycle status constants.

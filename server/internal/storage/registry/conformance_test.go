@@ -12,6 +12,7 @@ package registry_test
 import (
 	"context"
 	"database/sql"
+	stderrors "errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	registrysqlite "github.com/scitrera/aether/internal/storage/registry/sqlite"
 	"github.com/scitrera/aether/internal/testutil"
 	sqliteregistrymigrations "github.com/scitrera/aether/migrations/sqlite_registry"
+	aethererrors "github.com/scitrera/aether/pkg/errors"
 )
 
 // storeFactory builds a Store and returns a cleanup func plus a capability
@@ -76,6 +78,21 @@ func TestStoreConformance(t *testing.T) {
 				defer cleanup()
 				runAgentRegistryRoundtrip(t, store, supports)
 			})
+			t.Run("AgentRegistry_Phase5_Roundtrip", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runAgentRegistryPhase5Roundtrip(t, store)
+			})
+			t.Run("AgentRegistry_PrefixConflict", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runAgentRegistryPrefixConflict(t, store)
+			})
+			t.Run("AgentRegistry_PrefixIndexLookup", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runAgentRegistryPrefixIndexLookup(t, store)
+			})
 			t.Run("OrchestratorProfiles_Roundtrip", func(t *testing.T) {
 				store, supports, cleanup := b.factory(t)
 				defer cleanup()
@@ -91,6 +108,358 @@ func TestStoreConformance(t *testing.T) {
 			})
 		})
 	}
+}
+
+// runAgentRegistryPhase5Roundtrip exercises the Phase 5 resource_schema,
+// capabilities, and extensions columns end-to-end: Register with non-nil
+// values → Get returns them → List returns them → re-Register with different
+// values → Get reflects the update. Stage A only verifies that the data model
+// round-trips through every backend; uniqueness enforcement on
+// resource_type_prefix lives in Stage B and is not tested here.
+func runAgentRegistryPhase5Roundtrip(t *testing.T, store registry.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	impl := uniqueTag(t, "agent-phase5")
+	profile := "k8s"
+	resourceSchema := []registry.AgentResourceSchemaEntry{
+		{
+			ResourceTypePrefix: "chat/",
+			PermissionVerbs:    []string{"read", "write"},
+			ResourceIDSchema:   `{"type":"string","pattern":"^[a-z0-9-]+$"}`,
+		},
+		{
+			ResourceTypePrefix: "docmgmt/document",
+			PermissionVerbs:    []string{"read", "write", "admin"},
+		},
+	}
+	capabilities := map[string]bool{
+		"streaming":            true,
+		"hibernation_aware":    false,
+		"extensions_supported": true,
+	}
+	extensions := []string{
+		"https://example.com/ext/a2a/streaming",
+		"https://example.com/ext/a2a/auth",
+	}
+
+	reg := &registry.AgentRegistration{
+		Implementation: impl,
+		LaunchParams: map[string]interface{}{
+			"profile": profile,
+			"image":   "ghcr.io/example/agent:latest",
+		},
+		Description:    "phase5 round-trip agent",
+		ResourceSchema: resourceSchema,
+		Capabilities:   capabilities,
+		Extensions:     extensions,
+	}
+
+	if err := store.Register(ctx, reg); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	got, err := store.Get(ctx, impl)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	assertPhase5Fields(t, "Get", got, resourceSchema, capabilities, extensions)
+
+	listAll, err := store.List(ctx, "")
+	if err != nil {
+		t.Fatalf("List all: %v", err)
+	}
+	var found *registry.AgentRegistration
+	for _, r := range listAll {
+		if r.Implementation == impl {
+			found = r
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("List did not return %q", impl)
+	}
+	assertPhase5Fields(t, "List", found, resourceSchema, capabilities, extensions)
+
+	// Update: drop one resource family, flip a capability, replace extensions.
+	updatedSchema := []registry.AgentResourceSchemaEntry{
+		{
+			ResourceTypePrefix: "workflow/run",
+			PermissionVerbs:    []string{"read"},
+		},
+	}
+	updatedCaps := map[string]bool{"streaming": false}
+	updatedExts := []string{"https://example.com/ext/a2a/v2"}
+
+	reg2 := &registry.AgentRegistration{
+		Implementation: impl,
+		LaunchParams: map[string]interface{}{
+			"profile": profile,
+			"image":   "ghcr.io/example/agent:next",
+		},
+		Description:    "phase5 round-trip agent (updated)",
+		ResourceSchema: updatedSchema,
+		Capabilities:   updatedCaps,
+		Extensions:     updatedExts,
+	}
+	if err := store.Register(ctx, reg2); err != nil {
+		t.Fatalf("Register (update): %v", err)
+	}
+
+	got2, err := store.Get(ctx, impl)
+	if err != nil {
+		t.Fatalf("Get after update: %v", err)
+	}
+	assertPhase5Fields(t, "GetAfterUpdate", got2, updatedSchema, updatedCaps, updatedExts)
+
+	// Empty/nil values on a subsequent update should clear the columns back
+	// to NULL — exercising the encodeNullableJSON / encodePhase5JSON path.
+	reg3 := &registry.AgentRegistration{
+		Implementation: impl,
+		LaunchParams: map[string]interface{}{
+			"profile": profile,
+		},
+		Description: "phase5 cleared",
+	}
+	if err := store.Register(ctx, reg3); err != nil {
+		t.Fatalf("Register (clear): %v", err)
+	}
+	got3, err := store.Get(ctx, impl)
+	if err != nil {
+		t.Fatalf("Get after clear: %v", err)
+	}
+	if len(got3.ResourceSchema) != 0 {
+		t.Fatalf("expected nil ResourceSchema after clear, got %+v", got3.ResourceSchema)
+	}
+	if len(got3.Capabilities) != 0 {
+		t.Fatalf("expected nil Capabilities after clear, got %+v", got3.Capabilities)
+	}
+	if len(got3.Extensions) != 0 {
+		t.Fatalf("expected nil Extensions after clear, got %+v", got3.Extensions)
+	}
+
+	if err := store.Delete(ctx, impl); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+}
+
+// runAgentRegistryPrefixConflict verifies Phase 5 Stage B uniqueness
+// enforcement: two registrations may not claim the same resource_type_prefix
+// simultaneously, but releasing a prefix (via an update that drops it) allows
+// another registration to claim it.
+func runAgentRegistryPrefixConflict(t *testing.T, store registry.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	implA := uniqueTag(t, "prefconfA")
+	implB := uniqueTag(t, "prefconfB")
+	prefix := uniqueTag(t, "prefix") + "/"
+	altPrefix := uniqueTag(t, "altprefix") + "/"
+
+	// Register A claiming "prefix/"
+	regA := &registry.AgentRegistration{
+		Implementation: implA,
+		LaunchParams:   map[string]interface{}{"profile": "k8s"},
+		ResourceSchema: []registry.AgentResourceSchemaEntry{
+			{ResourceTypePrefix: prefix, PermissionVerbs: []string{"read"}},
+		},
+	}
+	if err := store.Register(ctx, regA); err != nil {
+		t.Fatalf("Register A: %v", err)
+	}
+	defer func() { _ = store.Delete(ctx, implA) }()
+
+	// Register B claiming the same prefix → expect ResourceTypePrefixConflictError.
+	regB := &registry.AgentRegistration{
+		Implementation: implB,
+		LaunchParams:   map[string]interface{}{"profile": "k8s"},
+		ResourceSchema: []registry.AgentResourceSchemaEntry{
+			{ResourceTypePrefix: prefix, PermissionVerbs: []string{"read"}},
+		},
+	}
+	err := store.Register(ctx, regB)
+	if err == nil {
+		_ = store.Delete(ctx, implB)
+		t.Fatalf("Register B: expected ResourceTypePrefixConflictError, got nil")
+	}
+	var conflict *aethererrors.ResourceTypePrefixConflictError
+	if !stderrors.As(err, &conflict) {
+		t.Fatalf("Register B: expected ResourceTypePrefixConflictError, got %T: %v", err, err)
+	}
+	if conflict.Prefix != prefix {
+		t.Fatalf("conflict.Prefix = %q, want %q", conflict.Prefix, prefix)
+	}
+	if conflict.Existing != implA {
+		t.Fatalf("conflict.Existing = %q, want %q", conflict.Existing, implA)
+	}
+
+	// Register B with a different (non-colliding) prefix → expect success.
+	regB.ResourceSchema = []registry.AgentResourceSchemaEntry{
+		{ResourceTypePrefix: altPrefix, PermissionVerbs: []string{"write"}},
+	}
+	if err := store.Register(ctx, regB); err != nil {
+		t.Fatalf("Register B with altPrefix: %v", err)
+	}
+	defer func() { _ = store.Delete(ctx, implB) }()
+
+	// Update A to drop "prefix/" — releases it for future claims.
+	regA.ResourceSchema = nil
+	if err := store.Register(ctx, regA); err != nil {
+		t.Fatalf("Register A (drop prefix): %v", err)
+	}
+
+	// Now B can extend its schema to include the previously contested prefix.
+	regB.ResourceSchema = []registry.AgentResourceSchemaEntry{
+		{ResourceTypePrefix: altPrefix},
+		{ResourceTypePrefix: prefix},
+	}
+	if err := store.Register(ctx, regB); err != nil {
+		t.Fatalf("Register B claiming released prefix: %v", err)
+	}
+
+	// Self-conflict (same prefix declared twice in one registration) must be
+	// rejected at input validation, regardless of the live table.
+	regSelf := &registry.AgentRegistration{
+		Implementation: uniqueTag(t, "self"),
+		LaunchParams:   map[string]interface{}{"profile": "k8s"},
+		ResourceSchema: []registry.AgentResourceSchemaEntry{
+			{ResourceTypePrefix: "dup/"},
+			{ResourceTypePrefix: "dup/"},
+		},
+	}
+	if err := store.Register(ctx, regSelf); err == nil {
+		_ = store.Delete(ctx, regSelf.Implementation)
+		t.Fatalf("Register self-conflict: expected error, got nil")
+	} else if !stderrors.As(err, &conflict) {
+		t.Fatalf("self-conflict error %v: want ResourceTypePrefixConflictError, got %T", err, err)
+	}
+}
+
+// runAgentRegistryPrefixIndexLookup registers two agents with non-overlapping
+// resource_type_prefix declarations and asserts that registry.PrefixIndex
+// resolves resource types under each prefix to the right owning agent. The
+// uniqueness check is exercised implicitly: both Register calls must succeed.
+func runAgentRegistryPrefixIndexLookup(t *testing.T, store registry.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	implA := uniqueTag(t, "idxA")
+	implB := uniqueTag(t, "idxB")
+	prefixA := uniqueTag(t, "famA") + "/"
+	prefixB := uniqueTag(t, "famB") + "/"
+
+	regA := &registry.AgentRegistration{
+		Implementation: implA,
+		LaunchParams:   map[string]interface{}{"profile": "k8s"},
+		ResourceSchema: []registry.AgentResourceSchemaEntry{
+			{ResourceTypePrefix: prefixA},
+		},
+	}
+	regB := &registry.AgentRegistration{
+		Implementation: implB,
+		LaunchParams:   map[string]interface{}{"profile": "k8s"},
+		ResourceSchema: []registry.AgentResourceSchemaEntry{
+			{ResourceTypePrefix: prefixB},
+		},
+	}
+	if err := store.Register(ctx, regA); err != nil {
+		t.Fatalf("Register A: %v", err)
+	}
+	defer func() { _ = store.Delete(ctx, implA) }()
+	if err := store.Register(ctx, regB); err != nil {
+		t.Fatalf("Register B: %v", err)
+	}
+	defer func() { _ = store.Delete(ctx, implB) }()
+
+	// Build a PrefixIndex from the live registry state and verify Lookup
+	// routes resource types under each prefix to the right owner.
+	all, err := store.List(ctx, "")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	idx := legacyregistry.NewPrefixIndex()
+	idx.Rebuild(all)
+
+	if impl, _, ok := idx.Lookup(prefixA + "thing/xyz"); !ok || impl != implA {
+		t.Fatalf("Lookup(%q): got impl=%q ok=%v, want %q true", prefixA+"thing/xyz", impl, ok, implA)
+	}
+	if impl, _, ok := idx.Lookup(prefixB + "thing/xyz"); !ok || impl != implB {
+		t.Fatalf("Lookup(%q): got impl=%q ok=%v, want %q true", prefixB+"thing/xyz", impl, ok, implB)
+	}
+	if _, _, ok := idx.Lookup("nonexistent-resource/abc"); ok {
+		t.Fatalf("Lookup unknown resource: ok=true, want false")
+	}
+
+	// Delete A and verify the index releases its prefix when rebuilt.
+	if err := store.Delete(ctx, implA); err != nil {
+		t.Fatalf("Delete A: %v", err)
+	}
+	all2, err := store.List(ctx, "")
+	if err != nil {
+		t.Fatalf("List after delete: %v", err)
+	}
+	idx.Rebuild(all2)
+	if _, _, ok := idx.Lookup(prefixA + "thing/xyz"); ok {
+		t.Fatalf("Lookup(%q) after delete: ok=true, want false", prefixA+"thing/xyz")
+	}
+	if impl, _, ok := idx.Lookup(prefixB + "thing/xyz"); !ok || impl != implB {
+		t.Fatalf("Lookup(%q) after A delete: got %q ok=%v, want %q true", prefixB+"thing/xyz", impl, ok, implB)
+	}
+}
+
+// assertPhase5Fields compares the Phase 5 fields on a retrieved registration
+// against expected values. Resource schema is compared entry-by-entry by
+// prefix because the storage layer doesn't guarantee slice order (sqlite +
+// postgres both preserve insertion order today, but the API contract is
+// "set of entries").
+func assertPhase5Fields(t *testing.T, label string, got *registry.AgentRegistration,
+	wantSchema []registry.AgentResourceSchemaEntry, wantCaps map[string]bool, wantExts []string,
+) {
+	t.Helper()
+	if len(got.ResourceSchema) != len(wantSchema) {
+		t.Fatalf("%s: ResourceSchema length got %d want %d", label, len(got.ResourceSchema), len(wantSchema))
+	}
+	gotByPrefix := make(map[string]registry.AgentResourceSchemaEntry, len(got.ResourceSchema))
+	for _, e := range got.ResourceSchema {
+		gotByPrefix[e.ResourceTypePrefix] = e
+	}
+	for _, want := range wantSchema {
+		g, ok := gotByPrefix[want.ResourceTypePrefix]
+		if !ok {
+			t.Fatalf("%s: ResourceSchema missing prefix %q", label, want.ResourceTypePrefix)
+		}
+		if g.ResourceIDSchema != want.ResourceIDSchema {
+			t.Fatalf("%s: ResourceIDSchema for %q got %q want %q",
+				label, want.ResourceTypePrefix, g.ResourceIDSchema, want.ResourceIDSchema)
+		}
+		if !stringsEqual(g.PermissionVerbs, want.PermissionVerbs) {
+			t.Fatalf("%s: PermissionVerbs for %q got %v want %v",
+				label, want.ResourceTypePrefix, g.PermissionVerbs, want.PermissionVerbs)
+		}
+	}
+	if len(got.Capabilities) != len(wantCaps) {
+		t.Fatalf("%s: Capabilities length got %d want %d", label, len(got.Capabilities), len(wantCaps))
+	}
+	for k, v := range wantCaps {
+		if gv, ok := got.Capabilities[k]; !ok || gv != v {
+			t.Fatalf("%s: Capabilities[%q] got %v ok=%v want %v", label, k, gv, ok, v)
+		}
+	}
+	if !stringsEqual(got.Extensions, wantExts) {
+		t.Fatalf("%s: Extensions got %v want %v", label, got.Extensions, wantExts)
+	}
+}
+
+func stringsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // runAgentRegistryRoundtrip walks the agent_registry surface end-to-end:

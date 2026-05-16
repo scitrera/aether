@@ -1460,7 +1460,7 @@ class AgentFilter(_message.Message):
     def __init__(self, orchestrator_profile: _Optional[str] = ..., limit: _Optional[int] = ..., offset: _Optional[int] = ...) -> None: ...
 
 class AgentRegistrationInfo(_message.Message):
-    __slots__ = ("implementation", "orchestrator_profile", "description", "launch_params", "registered_at", "updated_at")
+    __slots__ = ("implementation", "orchestrator_profile", "description", "launch_params", "registered_at", "updated_at", "resource_schema", "capabilities", "extensions")
     class LaunchParamsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -1468,19 +1468,42 @@ class AgentRegistrationInfo(_message.Message):
         key: str
         value: str
         def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    class CapabilitiesEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: bool
+        def __init__(self, key: _Optional[str] = ..., value: bool = ...) -> None: ...
     IMPLEMENTATION_FIELD_NUMBER: _ClassVar[int]
     ORCHESTRATOR_PROFILE_FIELD_NUMBER: _ClassVar[int]
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
     LAUNCH_PARAMS_FIELD_NUMBER: _ClassVar[int]
     REGISTERED_AT_FIELD_NUMBER: _ClassVar[int]
     UPDATED_AT_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_SCHEMA_FIELD_NUMBER: _ClassVar[int]
+    CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
+    EXTENSIONS_FIELD_NUMBER: _ClassVar[int]
     implementation: str
     orchestrator_profile: str
     description: str
     launch_params: _containers.ScalarMap[str, str]
     registered_at: int
     updated_at: int
-    def __init__(self, implementation: _Optional[str] = ..., orchestrator_profile: _Optional[str] = ..., description: _Optional[str] = ..., launch_params: _Optional[_Mapping[str, str]] = ..., registered_at: _Optional[int] = ..., updated_at: _Optional[int] = ...) -> None: ...
+    resource_schema: _containers.RepeatedCompositeFieldContainer[AgentResourceSchemaEntry]
+    capabilities: _containers.ScalarMap[str, bool]
+    extensions: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, implementation: _Optional[str] = ..., orchestrator_profile: _Optional[str] = ..., description: _Optional[str] = ..., launch_params: _Optional[_Mapping[str, str]] = ..., registered_at: _Optional[int] = ..., updated_at: _Optional[int] = ..., resource_schema: _Optional[_Iterable[_Union[AgentResourceSchemaEntry, _Mapping]]] = ..., capabilities: _Optional[_Mapping[str, bool]] = ..., extensions: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class AgentResourceSchemaEntry(_message.Message):
+    __slots__ = ("resource_type_prefix", "permission_verbs", "resource_id_schema")
+    RESOURCE_TYPE_PREFIX_FIELD_NUMBER: _ClassVar[int]
+    PERMISSION_VERBS_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_ID_SCHEMA_FIELD_NUMBER: _ClassVar[int]
+    resource_type_prefix: str
+    permission_verbs: _containers.RepeatedScalarFieldContainer[str]
+    resource_id_schema: str
+    def __init__(self, resource_type_prefix: _Optional[str] = ..., permission_verbs: _Optional[_Iterable[str]] = ..., resource_id_schema: _Optional[str] = ...) -> None: ...
 
 class AgentLaunchParams(_message.Message):
     __slots__ = ("specifier", "workspace", "param_overrides")

@@ -2,12 +2,21 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/internal/admin"
 	"github.com/scitrera/aether/internal/logging"
+	aethererrors "github.com/scitrera/aether/pkg/errors"
 )
+
+// ErrCodePrefixConflict is the error_code returned to clients when
+// REGISTER/UPDATE rejects an agent because its resource_type_prefix is
+// already claimed by another active registration. See
+// aethererrors.ResourceTypePrefixConflictError for the typed error that
+// triggers this code.
+const ErrCodePrefixConflict = "ERR_PREFIX_CONFLICT"
 
 // handleAgentOp processes an AgentOperation from a connected client.
 func (s *GatewayServer) handleAgentOp(ctx context.Context, client *ClientSession, op *pb.AgentOperation) {
@@ -62,7 +71,7 @@ func (s *GatewayServer) handleAgentOp(ctx context.Context, client *ClientSession
 		adminAgent := protoAgentToAdmin(op.Agent)
 		if err := s.adminProvider.RegisterAgent(ctx, adminAgent); err != nil {
 			logging.Logger.Error().Err(err).Str("implementation", op.Agent.Implementation).Msg("handleAgentOp: register agent failed")
-			sendAgentError(client, err.Error())
+			sendAgentError(client, formatAgentError(err))
 			return
 		}
 		_ = client.SafeSend(&pb.DownstreamMessage{
@@ -82,7 +91,7 @@ func (s *GatewayServer) handleAgentOp(ctx context.Context, client *ClientSession
 		adminAgent := protoAgentToAdmin(op.Agent)
 		if err := s.adminProvider.UpdateAgent(ctx, op.Implementation, adminAgent); err != nil {
 			logging.Logger.Error().Err(err).Str("implementation", op.Implementation).Msg("handleAgentOp: update agent failed")
-			sendAgentError(client, err.Error())
+			sendAgentError(client, formatAgentError(err))
 			return
 		}
 		_ = client.SafeSend(&pb.DownstreamMessage{
@@ -176,6 +185,22 @@ func sendAgentError(client *ClientSession, msg string) {
 	})
 }
 
+// formatAgentError shapes the error string returned to AgentResponse callers
+// for REGISTER/UPDATE failures. Phase 5 Stage B prepends a typed error-code
+// prefix ("ERR_PREFIX_CONFLICT: ...") for the resource_type_prefix uniqueness
+// conflict so SDK callers can parse the code without a dedicated proto field.
+// All other errors fall through to Error().
+func formatAgentError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var conflict *aethererrors.ResourceTypePrefixConflictError
+	if errors.As(err, &conflict) {
+		return ErrCodePrefixConflict + ": " + conflict.Error()
+	}
+	return err.Error()
+}
+
 func adminAgentToProto(a *admin.AgentRegistrationInfo) *pb.AgentRegistrationInfo {
 	params := make(map[string]string)
 	for k, v := range a.LaunchParams {
@@ -183,14 +208,27 @@ func adminAgentToProto(a *admin.AgentRegistrationInfo) *pb.AgentRegistrationInfo
 			params[k] = s
 		}
 	}
-	return &pb.AgentRegistrationInfo{
+	out := &pb.AgentRegistrationInfo{
 		Implementation:      a.Implementation,
 		OrchestratorProfile: a.OrchestratorProfile,
 		Description:         a.Description,
 		LaunchParams:        params,
 		RegisteredAt:        a.RegisteredAt.Unix(),
 		UpdatedAt:           a.UpdatedAt.Unix(),
+		Capabilities:        a.Capabilities,
+		Extensions:          a.Extensions,
 	}
+	if len(a.ResourceSchema) > 0 {
+		out.ResourceSchema = make([]*pb.AgentResourceSchemaEntry, len(a.ResourceSchema))
+		for i, e := range a.ResourceSchema {
+			out.ResourceSchema[i] = &pb.AgentResourceSchemaEntry{
+				ResourceTypePrefix: e.ResourceTypePrefix,
+				PermissionVerbs:    e.PermissionVerbs,
+				ResourceIdSchema:   e.ResourceIDSchema,
+			}
+		}
+	}
+	return out
 }
 
 func protoAgentToAdmin(a *pb.AgentRegistrationInfo) *admin.AgentRegistrationInfo {
@@ -198,12 +236,28 @@ func protoAgentToAdmin(a *pb.AgentRegistrationInfo) *admin.AgentRegistrationInfo
 	for k, v := range a.LaunchParams {
 		params[k] = v
 	}
-	return &admin.AgentRegistrationInfo{
+	out := &admin.AgentRegistrationInfo{
 		Implementation:      a.Implementation,
 		OrchestratorProfile: a.OrchestratorProfile,
 		Description:         a.Description,
 		LaunchParams:        params,
 		RegisteredAt:        time.Unix(a.RegisteredAt, 0),
 		UpdatedAt:           time.Unix(a.UpdatedAt, 0),
+		Capabilities:        a.Capabilities,
+		Extensions:          a.Extensions,
 	}
+	if len(a.ResourceSchema) > 0 {
+		out.ResourceSchema = make([]admin.AgentResourceSchemaEntry, len(a.ResourceSchema))
+		for i, e := range a.ResourceSchema {
+			if e == nil {
+				continue
+			}
+			out.ResourceSchema[i] = admin.AgentResourceSchemaEntry{
+				ResourceTypePrefix: e.ResourceTypePrefix,
+				PermissionVerbs:    e.PermissionVerbs,
+				ResourceIDSchema:   e.ResourceIdSchema,
+			}
+		}
+	}
+	return out
 }

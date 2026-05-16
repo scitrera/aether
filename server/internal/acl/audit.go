@@ -116,10 +116,21 @@ func (a *AuditLogger) buildEntry(decision *ACLDecision, principal models.Identit
 // Non-blocking: drops if the shared queue is full (same performance safety
 // valve as audit.AuditLogger.LogEvent).
 func (a *AuditLogger) LogDecision(ctx context.Context, decision *ACLDecision, principal models.Identity, resourceType, resourceID, operation, workspace string, sessionID uuid.UUID) {
+	a.LogDecisionWithAttribution(ctx, decision, principal, resourceType, resourceID, operation, workspace, sessionID, "", "")
+}
+
+// LogDecisionWithAttribution is the Phase 5 Stage B variant of LogDecision
+// that additionally records the owning-agent implementation + matched prefix
+// in the audit entry's metadata. The owningImpl / owningPrefix args may both
+// be empty, in which case the entry is identical to one produced by
+// LogDecision (no metadata noise).
+func (a *AuditLogger) LogDecisionWithAttribution(ctx context.Context, decision *ACLDecision, principal models.Identity, resourceType, resourceID, operation, workspace string, sessionID uuid.UUID, owningImpl, owningPrefix string) {
 	if a.shared == nil {
 		return
 	}
 	entry := a.buildEntry(decision, principal, resourceType, resourceID, operation, workspace, sessionID)
+	entry.OwningAgentImpl = owningImpl
+	entry.OwningAgentPrefix = owningPrefix
 	event := a.entryToEvent(entry)
 	a.shared.LogEvent(ctx, event)
 }
@@ -306,6 +317,16 @@ func buildACLMetadata(entry *AuditLogEntry) ([]byte, error) {
 	merged["fallback_applied"] = entry.FallbackApplied
 	if entry.RuleID != nil {
 		merged["rule_id"] = *entry.RuleID
+	}
+	// Phase 5 Stage B: surface owning-agent attribution in the audit
+	// metadata when the access target falls under a registered prefix.
+	// Kept inside the metadata bag (not a dedicated column) so we don't
+	// migrate the comprehensive_audit_log schema for an advisory field.
+	if entry.OwningAgentImpl != "" {
+		merged["owning_agent"] = entry.OwningAgentImpl
+	}
+	if entry.OwningAgentPrefix != "" {
+		merged["owning_agent_prefix"] = entry.OwningAgentPrefix
 	}
 	return json.Marshal(merged)
 }

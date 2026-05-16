@@ -78,6 +78,23 @@ type Store struct {
 	gatewayID string
 
 	fallbackCache sync.Map // key: string (category), value: fallbackCacheEntry
+
+	// prefixIndex resolves resource_type → owning agent implementation for
+	// Phase 5 Stage B audit attribution. Set via SetPrefixIndex by the
+	// gateway after every Register/Delete on the agent registry. nil
+	// means attribution is disabled (CheckAccess emits audit rows without
+	// owning_agent metadata, identical to pre-Phase-5 behavior).
+	prefixIndex aclstore.PrefixLookup
+}
+
+// SetPrefixIndex injects (or replaces) the resource_type → owning_agent
+// resolver used for Phase 5 Stage B audit attribution. Safe to call before
+// any CheckAccess runs. Pass nil to disable attribution.
+func (s *Store) SetPrefixIndex(p aclstore.PrefixLookup) {
+	if s == nil {
+		return
+	}
+	s.prefixIndex = p
 }
 
 // Casbin model text — identical to internal/acl/enforcer.go.
@@ -173,7 +190,8 @@ func (s *Store) CheckAccess(ctx context.Context, principal models.Identity, reso
 		return nil, err
 	}
 
-	s.aclAudit.LogDecision(ctx, decision, principal, resourceType, resourceID, operation, workspace, sessionID)
+	owningImpl, owningPrefix := s.lookupPrefixOwner(resourceType)
+	s.aclAudit.LogDecisionWithAttribution(ctx, decision, principal, resourceType, resourceID, operation, workspace, sessionID, owningImpl, owningPrefix)
 	return decision, nil
 }
 
@@ -182,10 +200,12 @@ func (s *Store) CheckAccessWithAuthority(ctx context.Context, actor models.Ident
 		return s.CheckAccess(ctx, actor, resourceType, resourceID, operation, workspace, sessionID, requiredLevel)
 	}
 
+	owningImpl, owningPrefix := s.lookupPrefixOwner(resourceType)
+
 	if decision := validateGrantConstraints(authority.Grant, resourceType, resourceID, operation, workspace, requiredLevel); decision != nil {
 		decision.AuthorityGrant = authority.Grant
 		decision.AuthorityMode = "on_behalf_of"
-		s.aclAudit.LogDecision(ctx, decision, actor, resourceType, resourceID, operation, workspace, sessionID)
+		s.aclAudit.LogDecisionWithAttribution(ctx, decision, actor, resourceType, resourceID, operation, workspace, sessionID, owningImpl, owningPrefix)
 		return decision, nil
 	}
 
@@ -196,8 +216,21 @@ func (s *Store) CheckAccessWithAuthority(ctx context.Context, actor models.Ident
 	decision.AuthorityGrant = authority.Grant
 	decision.AuthorityMode = "on_behalf_of"
 
-	s.aclAudit.LogDecision(ctx, decision, actor, resourceType, resourceID, operation, workspace, sessionID)
+	s.aclAudit.LogDecisionWithAttribution(ctx, decision, actor, resourceType, resourceID, operation, workspace, sessionID, owningImpl, owningPrefix)
 	return decision, nil
+}
+
+// lookupPrefixOwner resolves the agent that owns resourceType for Phase 5
+// Stage B audit attribution. Returns empty strings when no prefix matches or
+// when the index is unset (nil-tolerant).
+func (s *Store) lookupPrefixOwner(resourceType string) (impl string, prefix string) {
+	if s == nil || s.prefixIndex == nil {
+		return "", ""
+	}
+	if i, p, ok := s.prefixIndex.Lookup(resourceType); ok {
+		return i, p
+	}
+	return "", ""
 }
 
 func (s *Store) CanConnect(ctx context.Context, principal models.Identity, targetType, targetID, workspace string, sessionID uuid.UUID) (*aclstore.Decision, error) {

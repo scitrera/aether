@@ -165,6 +165,17 @@ type AuditLogEntry struct {
 	GatewayID        string
 	SessionID        uuid.UUID
 	Metadata         map[string]interface{}
+
+	// Phase 5 Stage B: owning-agent attribution. When the audited
+	// ResourceType falls under a resource_type_prefix declared by a
+	// registered agent, OwningAgentImpl is the implementation name of that
+	// agent and OwningAgentPrefix is the matched prefix string. The fields
+	// are NOT persisted as dedicated columns — they flow into the entry's
+	// Metadata bag (keys "owning_agent" + "owning_agent_prefix") via
+	// buildACLMetadata so the existing comprehensive_audit_log schema can
+	// absorb them without migration churn.
+	OwningAgentImpl   string
+	OwningAgentPrefix string
 }
 
 // FallbackPolicy represents a configurable fallback policy

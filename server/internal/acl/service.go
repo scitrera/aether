@@ -24,6 +24,21 @@ type fallbackCacheEntry struct {
 	cachedAt time.Time
 }
 
+// PrefixLookup is the narrow lookup surface the ACL service consumes for
+// Phase 5 Stage B audit attribution. The full implementation lives in
+// internal/registry.PrefixIndex (which satisfies this interface). Defining the
+// interface locally keeps the acl package free of a back-edge dependency on
+// internal/registry — the gateway wires the concrete type in via SetPrefixIndex.
+//
+// Lookup returns (implementation, matchedPrefix, true) when resourceType falls
+// under a declared prefix, or zero values + ok=false otherwise. The returned
+// matchedPrefix is the literal string from the agent's declaration that the
+// resource_type matched against, which audit consumers record so an operator
+// can see WHICH prefix in the agent's schema caught the access.
+type PrefixLookup interface {
+	Lookup(resourceType string) (implementation string, matchedPrefix string, ok bool)
+}
+
 // Service provides the complete ACL API
 type Service struct {
 	db        *sql.DB
@@ -41,6 +56,24 @@ type Service struct {
 	// fallbackCache caches per-category fallback policy query results to avoid
 	// hitting the database on every unenforced access check.
 	fallbackCache sync.Map // key: string (category), value: fallbackCacheEntry
+
+	// prefixIndex resolves a resource_type to its owning agent implementation
+	// for Phase 5 Stage B audit attribution. Set via SetPrefixIndex at gateway
+	// boot (and on every Register / Delete) by the gateway-side wiring.
+	// nil-tolerant: CheckAccess simply skips attribution when the field is nil
+	// (no audit metadata noise, no nil-deref).
+	prefixIndex PrefixLookup
+}
+
+// SetPrefixIndex injects (or replaces) the resource_type → owning_agent
+// resolver used for Phase 5 audit attribution. Safe to call before any
+// CheckAccess runs; the caller is responsible for invoking Set on the index
+// after every Register/Delete. Passing nil disables attribution.
+func (s *Service) SetPrefixIndex(p PrefixLookup) {
+	if s == nil {
+		return
+	}
+	s.prefixIndex = p
 }
 
 // NewService creates a new ACL service whose ACL rules and audit log both
@@ -162,8 +195,19 @@ func (s *Service) CheckAccess(ctx context.Context, principal models.Identity, re
 		return nil, err
 	}
 
+	// Phase 5 Stage B: resolve the owning agent for resourceType (if any)
+	// and pass it into the audit emitter so the audit row records who
+	// "owns" the resource family being accessed. Lookup is nil-tolerant.
+	owningImpl, owningPrefix := "", ""
+	if s.prefixIndex != nil {
+		if impl, prefix, ok := s.prefixIndex.Lookup(resourceType); ok {
+			owningImpl = impl
+			owningPrefix = prefix
+		}
+	}
+
 	// Audit the decision (async)
-	s.audit.LogDecision(ctx, decision, principal, resourceType, resourceID, operation, workspace, sessionID)
+	s.audit.LogDecisionWithAttribution(ctx, decision, principal, resourceType, resourceID, operation, workspace, sessionID, owningImpl, owningPrefix)
 
 	return decision, nil
 }

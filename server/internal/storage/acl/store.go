@@ -317,4 +317,27 @@ type Store interface {
 	// construction path (NewWithSharedAudit) leaves the caller's audit
 	// writer alone. Safe to call multiple times.
 	Close() error
+
+	// =====================================================================
+	// Phase 5 Stage B: prefix-index attribution (audit only)
+	// =====================================================================
+
+	// SetPrefixIndex injects a resource_type → owning_agent resolver used
+	// to attribute ACL decisions to the agent whose declared
+	// resource_type_prefix covers the access target. The audit row records
+	// the owning agent in its metadata (keys "owning_agent" +
+	// "owning_agent_prefix"). Pass nil to disable attribution.
+	//
+	// The argument is typed as PrefixLookup (the narrow read surface);
+	// callers typically pass *internal/registry.PrefixIndex, which
+	// satisfies the interface. Safe to call before any CheckAccess runs;
+	// the gateway/state-provider is responsible for keeping the index in
+	// sync via Register/Delete hooks.
+	SetPrefixIndex(p PrefixLookup)
 }
+
+// PrefixLookup is the narrow resource-type → owning-agent resolver consumed by
+// acl.Store.SetPrefixIndex. Aliased to the legacy ACL package's PrefixLookup
+// type so the postgres-backed *internal/acl.Service satisfies acl.Store
+// without any extra method-set surgery. The concrete
+// *internal/registry.PrefixIndex implements this interface.

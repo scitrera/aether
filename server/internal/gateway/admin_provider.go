@@ -13,6 +13,7 @@ import (
 	"github.com/scitrera/aether/internal/auth"
 	"github.com/scitrera/aether/internal/kv"
 	"github.com/scitrera/aether/internal/quota"
+	"github.com/scitrera/aether/internal/registry"
 	"github.com/scitrera/aether/internal/router"
 	"github.com/scitrera/aether/internal/state"
 	aclstore "github.com/scitrera/aether/internal/storage/acl"
@@ -49,6 +50,13 @@ type GatewayStateProvider struct {
 	profileMgr regstore.Store
 	// aclService is the ACL domain Store (internal/storage/acl).
 	aclService aclstore.Store
+	// prefixIndex is the Phase 5 Stage B in-memory routing table from
+	// resource_type_prefix → owning agent implementation. Constructed
+	// alongside the state provider and seeded from the registry at startup
+	// via initPrefixIndex(). After Register/Update/Delete it is refreshed
+	// here so audit attribution via aclService stays in sync without a
+	// round-trip to the DB.
+	prefixIndex *registry.PrefixIndex
 	// apiTokenStore is the API token domain store (internal/auth).
 	// Both the PostgreSQL-backed and SQLite-backed implementations satisfy
 	// this interface. When nil, admin token endpoints return "not available".
@@ -90,6 +98,21 @@ func NewGatewayStateProvider(
 	db *sql.DB,
 	r *router.Router,
 ) *GatewayStateProvider {
+	// Phase 5 Stage B: construct the prefix index, seed it from the current
+	// registry state, and wire it into the ACL service. Seeding is
+	// best-effort — a registry handle that's missing or temporarily
+	// unreachable just leaves the index empty (CheckAccess emits audit
+	// rows without owning-agent attribution, identical to pre-Phase-5).
+	idx := registry.NewPrefixIndex()
+	if agentRegistry != nil {
+		if all, err := agentRegistry.List(context.Background(), ""); err == nil {
+			idx.Rebuild(all)
+		}
+	}
+	if aclService != nil {
+		aclService.SetPrefixIndex(idx)
+	}
+
 	return &GatewayStateProvider{
 		gatewayID:     gatewayID,
 		startedAt:     time.Now(),
@@ -103,6 +126,7 @@ func NewGatewayStateProvider(
 		db:            db,
 		router:        r,
 		eventSubs:     make(map[chan *admin.Event]struct{}),
+		prefixIndex:   idx,
 	}
 }
 

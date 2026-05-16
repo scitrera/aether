@@ -31,6 +31,11 @@ type (
 	// legacy.AgentRegistration for field docs.
 	AgentRegistration = legacy.AgentRegistration
 
+	// AgentResourceSchemaEntry is one entry in AgentRegistration.ResourceSchema.
+	// Aliased so callers building registrations through this package don't
+	// need to import the legacy package directly. Phase 5.
+	AgentResourceSchemaEntry = legacy.AgentResourceSchemaEntry
+
 	// OrchestratorProfile is one row of the orchestrator_profiles table.
 	OrchestratorProfile = legacy.OrchestratorProfile
 

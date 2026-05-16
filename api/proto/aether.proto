@@ -1328,6 +1328,40 @@ message AgentRegistrationInfo {
   map<string, string> launch_params = 4;  // Default launch parameters for the agent
   int64 registered_at = 5;           // Unix timestamp when registration was created
   int64 updated_at = 6;              // Unix timestamp when registration was last updated
+
+  // Phase 5: declared resource schema. Each entry describes a family of
+  // resources the agent owns (by resource_type_prefix), the permission
+  // verbs it understands on those resources, and an optional JSON Schema
+  // describing the shape of resource ids in that family. Aether enforces
+  // that no two registrations declare overlapping resource_type_prefix
+  // values across active registrations.
+  repeated AgentResourceSchemaEntry resource_schema = 7;
+
+  // Phase 5: capability flags. Generic key→bool map for future A2A interop
+  // (e.g. "streaming", "hibernation_aware", "extensions_supported").
+  // Keys are agent-defined; consumers should treat unknown keys as false.
+  map<string, bool> capabilities = 8;
+
+  // Phase 5: URI list of supported extensions. Each extension is identified
+  // by URI per the A2A extension model. Format: free string; recommended
+  // "https://..." style URIs.
+  repeated string extensions = 9;
+}
+
+// AgentResourceSchemaEntry describes one resource family owned by an agent.
+message AgentResourceSchemaEntry {
+  // The resource_type prefix the agent claims ownership of. Examples:
+  // "chat/", "docmgmt/document", "workflow/run". Prefixes are checked
+  // for collision across active registrations.
+  string resource_type_prefix = 1;
+  // Permission verbs the agent declares on this family. Examples: "read",
+  // "write", "admin". Used by tooling/docs; Aether's CheckAccess still
+  // routes through the existing operation/access-level model unchanged.
+  repeated string permission_verbs = 2;
+  // Optional JSON Schema (as a string) describing the resource_id shape.
+  // Aether does not currently enforce this; it's informational for
+  // consumers and the future AgentCard generator (Phase 6).
+  string resource_id_schema = 3;
 }
 
 // AgentLaunchParams specifies parameters for launching an agent via orchestration.

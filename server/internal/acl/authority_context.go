@@ -91,10 +91,20 @@ func (s *Service) CheckAccessWithAuthority(ctx context.Context, actor models.Ide
 		return s.CheckAccess(ctx, actor, resourceType, resourceID, operation, workspace, sessionID, requiredLevel)
 	}
 
+	// Phase 5 Stage B: resolve owning-agent attribution once and reuse for
+	// both audit paths below (constraint-violation early-out + happy path).
+	owningImpl, owningPrefix := "", ""
+	if s.prefixIndex != nil {
+		if impl, prefix, ok := s.prefixIndex.Lookup(resourceType); ok {
+			owningImpl = impl
+			owningPrefix = prefix
+		}
+	}
+
 	if decision := validateGrantConstraints(authority.Grant, resourceType, resourceID, operation, workspace, requiredLevel); decision != nil {
 		decision.AuthorityGrant = authority.Grant
 		decision.AuthorityMode = "on_behalf_of"
-		s.audit.LogDecision(ctx, decision, actor, resourceType, resourceID, operation, workspace, sessionID)
+		s.audit.LogDecisionWithAttribution(ctx, decision, actor, resourceType, resourceID, operation, workspace, sessionID, owningImpl, owningPrefix)
 		return decision, nil
 	}
 
@@ -105,7 +115,7 @@ func (s *Service) CheckAccessWithAuthority(ctx context.Context, actor models.Ide
 	decision.AuthorityGrant = authority.Grant
 	decision.AuthorityMode = "on_behalf_of"
 
-	s.audit.LogDecision(ctx, decision, actor, resourceType, resourceID, operation, workspace, sessionID)
+	s.audit.LogDecisionWithAttribution(ctx, decision, actor, resourceType, resourceID, operation, workspace, sessionID, owningImpl, owningPrefix)
 	return decision, nil
 }
 

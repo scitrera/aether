@@ -29,6 +29,8 @@ from .client import (
     make_authority_request_resource_scope_entry,
     # Hibernation helper (Phase 3 Stage C)
     make_hibernation_descriptor,
+    # Resource-schema helper (Phase 5 Stage B)
+    make_resource_schema_entry,
 )
 
 # Phase 4 (Stage C): expose task subscription proto types at the top level
@@ -241,6 +243,9 @@ __all__ = (
 
     # Hibernation helper (Phase 3 Stage C)
     'make_hibernation_descriptor',
+
+    # Resource-schema helper (Phase 5 Stage B)
+    'make_resource_schema_entry',
 
     # Phase 4 (Stage C): task subscription proto types
     'TaskEvent',

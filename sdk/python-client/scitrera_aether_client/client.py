@@ -203,6 +203,47 @@ def make_authority_request_resource_scope_entry(resource_type: str,
     )
 
 
+def make_resource_schema_entry(*,
+                               resource_type_prefix: str,
+                               permission_verbs: Optional[List[str]] = None,
+                               resource_id_schema: str = "") -> aether_pb2.AgentResourceSchemaEntry:
+    """
+    Build an :class:`aether_pb2.AgentResourceSchemaEntry` for use in
+    :meth:`BaseAetherClient.register_agent` / :meth:`BaseAetherClient.update_agent`.
+
+    Phase 5 (Stage B) introduces resource-schema declarations on agent
+    registrations. Each entry declares one resource family the agent owns:
+    the gateway uses ``resource_type_prefix`` to enforce uniqueness across
+    registrations and to attribute ACL audit events to the owning agent.
+
+    Args:
+        resource_type_prefix: The resource-type prefix this agent owns
+            (e.g. ``"chat/"`` or ``"docmgmt/document"``). Required and
+            non-empty; uniqueness is enforced by the gateway across active
+            registrations.
+        permission_verbs: Optional list of allowed verbs for this resource
+            family (e.g. ``["read", "write"]``). Informational — used by
+            tooling and the AgentCard generator, not by ACL enforcement.
+        resource_id_schema: Optional JSON Schema fragment (as a string)
+            describing the resource_id shape under this prefix.
+
+    Returns:
+        Populated :class:`aether_pb2.AgentResourceSchemaEntry`.
+
+    Raises:
+        ValueError: if ``resource_type_prefix`` is empty.
+    """
+    if not resource_type_prefix:
+        raise ValueError(
+            "make_resource_schema_entry: resource_type_prefix is required"
+        )
+    return aether_pb2.AgentResourceSchemaEntry(
+        resource_type_prefix=resource_type_prefix,
+        permission_verbs=list(permission_verbs or []),
+        resource_id_schema=resource_id_schema,
+    )
+
+
 @dataclass
 class AuditSubmitResponse:
     """Response from ``submit_audit_event`` / ``submit_audit_event_async``.
@@ -2802,6 +2843,9 @@ class BaseAetherClient:
                        profile: str = "local",
                        description: str = "",
                        launch_params: Optional[Dict[str, str]] = None,
+                       resource_schema: Optional[List[aether_pb2.AgentResourceSchemaEntry]] = None,
+                       capabilities: Optional[Dict[str, bool]] = None,
+                       extensions: Optional[List[str]] = None,
                        timeout: float = 10.0):
         """Register an agent implementation for orchestration.
 
@@ -2810,7 +2854,59 @@ class BaseAetherClient:
             profile: Orchestrator profile that handles this agent (e.g. "local", "k8s").
             description: Human-readable description.
             launch_params: Default launch parameters (string key-value pairs).
+            resource_schema: Phase 5 — list of
+                :class:`aether_pb2.AgentResourceSchemaEntry` declaring the
+                ``resource_type_prefix`` values this agent owns. Build entries
+                with :func:`make_resource_schema_entry`. The gateway rejects
+                registrations that claim a prefix already declared by another
+                active registration (error code ``ERR_PREFIX_CONFLICT``).
+            capabilities: Phase 5 — free-form capability flags
+                (e.g. ``{"streaming": True}``).
+            extensions: Phase 5 — list of extension URIs the agent supports.
             timeout: Response timeout in seconds.
+
+        Returns:
+            AgentResponse or None on timeout. On ``ERR_PREFIX_CONFLICT`` the
+            response carries ``success=False`` and ``error`` is prefixed with
+            ``"ERR_PREFIX_CONFLICT: "``.
+        """
+        params = dict(launch_params or {})
+        params.setdefault("profile", profile)
+
+        agent = aether_pb2.AgentRegistrationInfo(
+            implementation=implementation,
+            orchestrator_profile=profile,
+            description=description,
+            launch_params=params,
+            capabilities=capabilities or {},
+            extensions=list(extensions or []),
+        )
+        if resource_schema:
+            agent.resource_schema.extend(resource_schema)
+
+        op = aether_pb2.AgentOperation(
+            op=aether_pb2.AgentOperation.REGISTER,
+            agent=agent,
+        )
+        return self.agent_op(op, timeout=timeout)
+
+    def update_agent(self, implementation: str,
+                     profile: str = "local",
+                     description: str = "",
+                     launch_params: Optional[Dict[str, str]] = None,
+                     resource_schema: Optional[List[aether_pb2.AgentResourceSchemaEntry]] = None,
+                     capabilities: Optional[Dict[str, bool]] = None,
+                     extensions: Optional[List[str]] = None,
+                     timeout: float = 10.0):
+        """Update an existing agent registration (UPDATE op).
+
+        Wire-level ``UPDATE`` is upsert-shaped: it replaces every column on
+        the existing row with the supplied values (including clearing
+        ``resource_schema`` if not provided). Use this when you want
+        explicit-update semantics; :meth:`register_agent` is the equivalent
+        REGISTER op.
+
+        See :meth:`register_agent` for the Phase 5 kwargs.
 
         Returns:
             AgentResponse or None on timeout.
@@ -2818,14 +2914,21 @@ class BaseAetherClient:
         params = dict(launch_params or {})
         params.setdefault("profile", profile)
 
+        agent = aether_pb2.AgentRegistrationInfo(
+            implementation=implementation,
+            orchestrator_profile=profile,
+            description=description,
+            launch_params=params,
+            capabilities=capabilities or {},
+            extensions=list(extensions or []),
+        )
+        if resource_schema:
+            agent.resource_schema.extend(resource_schema)
+
         op = aether_pb2.AgentOperation(
-            op=aether_pb2.AgentOperation.REGISTER,
-            agent=aether_pb2.AgentRegistrationInfo(
-                implementation=implementation,
-                orchestrator_profile=profile,
-                description=description,
-                launch_params=params,
-            ),
+            op=aether_pb2.AgentOperation.UPDATE,
+            implementation=implementation,
+            agent=agent,
         )
         return self.agent_op(op, timeout=timeout)
 

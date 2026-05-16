@@ -145,28 +145,71 @@ func (p *GatewayStateProvider) GetAgentRegistrations(ctx context.Context) ([]*ad
 
 	var infos []*admin.AgentRegistrationInfo
 	for _, r := range regs {
-		params := make(map[string]interface{})
-		for k, v := range r.LaunchParams {
-			params[k] = v
-		}
-
-		// Extract profile from launch params
-		profile := ""
-		if p, ok := r.LaunchParams["profile"].(string); ok {
-			profile = p
-		}
-
-		infos = append(infos, &admin.AgentRegistrationInfo{
-			Implementation:      r.Implementation,
-			OrchestratorProfile: profile,
-			Description:         r.Description,
-			LaunchParams:        params,
-			RegisteredAt:        r.CreatedAt,
-			UpdatedAt:           r.UpdatedAt,
-		})
+		infos = append(infos, registryToAdminAgent(r))
 	}
 
 	return infos, nil
+}
+
+// registryToAdminAgent lifts a registry.AgentRegistration into the
+// admin.AgentRegistrationInfo type that the admin/gateway boundary trades in.
+// Handles the launch_params copy + profile extraction + Phase 5 field
+// projection in a single place so the GET/LIST paths stay in sync.
+func registryToAdminAgent(r *registry.AgentRegistration) *admin.AgentRegistrationInfo {
+	params := make(map[string]interface{})
+	for k, v := range r.LaunchParams {
+		params[k] = v
+	}
+
+	profile := ""
+	if p, ok := r.LaunchParams["profile"].(string); ok {
+		profile = p
+	}
+
+	info := &admin.AgentRegistrationInfo{
+		Implementation:      r.Implementation,
+		OrchestratorProfile: profile,
+		Description:         r.Description,
+		LaunchParams:        params,
+		RegisteredAt:        r.CreatedAt,
+		UpdatedAt:           r.UpdatedAt,
+		Capabilities:        r.Capabilities,
+		Extensions:          r.Extensions,
+	}
+	if len(r.ResourceSchema) > 0 {
+		info.ResourceSchema = make([]admin.AgentResourceSchemaEntry, len(r.ResourceSchema))
+		for i, e := range r.ResourceSchema {
+			info.ResourceSchema[i] = admin.AgentResourceSchemaEntry{
+				ResourceTypePrefix: e.ResourceTypePrefix,
+				PermissionVerbs:    e.PermissionVerbs,
+				ResourceIDSchema:   e.ResourceIDSchema,
+			}
+		}
+	}
+	return info
+}
+
+// adminToRegistryAgent is the inverse of registryToAdminAgent for the
+// REGISTER / UPDATE write path.
+func adminToRegistryAgent(implementation string, a *admin.AgentRegistrationInfo) *registry.AgentRegistration {
+	reg := &registry.AgentRegistration{
+		Implementation: implementation,
+		Description:    a.Description,
+		LaunchParams:   a.LaunchParams,
+		Capabilities:   a.Capabilities,
+		Extensions:     a.Extensions,
+	}
+	if len(a.ResourceSchema) > 0 {
+		reg.ResourceSchema = make([]registry.AgentResourceSchemaEntry, len(a.ResourceSchema))
+		for i, e := range a.ResourceSchema {
+			reg.ResourceSchema[i] = registry.AgentResourceSchemaEntry{
+				ResourceTypePrefix: e.ResourceTypePrefix,
+				PermissionVerbs:    e.PermissionVerbs,
+				ResourceIDSchema:   e.ResourceIDSchema,
+			}
+		}
+	}
+	return reg
 }
 
 func (p *GatewayStateProvider) GetAgentByImplementation(ctx context.Context, implementation string) (*admin.AgentRegistrationInfo, error) {
@@ -179,24 +222,7 @@ func (p *GatewayStateProvider) GetAgentByImplementation(ctx context.Context, imp
 		return nil, err
 	}
 
-	params := make(map[string]interface{})
-	for k, v := range r.LaunchParams {
-		params[k] = v
-	}
-
-	profile := ""
-	if p, ok := r.LaunchParams["profile"].(string); ok {
-		profile = p
-	}
-
-	return &admin.AgentRegistrationInfo{
-		Implementation:      r.Implementation,
-		OrchestratorProfile: profile,
-		Description:         r.Description,
-		LaunchParams:        params,
-		RegisteredAt:        r.CreatedAt,
-		UpdatedAt:           r.UpdatedAt,
-	}, nil
+	return registryToAdminAgent(r), nil
 }
 
 func (p *GatewayStateProvider) RegisterAgent(ctx context.Context, agent *admin.AgentRegistrationInfo) error {
@@ -204,13 +230,18 @@ func (p *GatewayStateProvider) RegisterAgent(ctx context.Context, agent *admin.A
 		return fmt.Errorf("agent registry not available")
 	}
 
-	reg := &registry.AgentRegistration{
-		Implementation: agent.Implementation,
-		Description:    agent.Description,
-		LaunchParams:   agent.LaunchParams,
+	reg := adminToRegistryAgent(agent.Implementation, agent)
+	if err := p.agentRegistry.Register(ctx, reg); err != nil {
+		return err
 	}
-
-	return p.agentRegistry.Register(ctx, reg)
+	// Phase 5 Stage B: refresh the in-memory prefix index after a
+	// successful write so subsequent CheckAccess calls can attribute
+	// resource access to this implementation. Safe to call with a nil
+	// prefixIndex (Set is a no-op).
+	if p.prefixIndex != nil {
+		p.prefixIndex.Set(reg.Implementation, reg.ResourceSchema)
+	}
+	return nil
 }
 
 func (p *GatewayStateProvider) UpdateAgent(ctx context.Context, implementation string, agent *admin.AgentRegistrationInfo) error {
@@ -219,13 +250,17 @@ func (p *GatewayStateProvider) UpdateAgent(ctx context.Context, implementation s
 	}
 
 	// For update, we use the same Register method which does upsert
-	reg := &registry.AgentRegistration{
-		Implementation: implementation,
-		Description:    agent.Description,
-		LaunchParams:   agent.LaunchParams,
+	reg := adminToRegistryAgent(implementation, agent)
+	if err := p.agentRegistry.Register(ctx, reg); err != nil {
+		return err
 	}
-
-	return p.agentRegistry.Register(ctx, reg)
+	// Phase 5 Stage B: refresh index. Set replaces any prefixes
+	// previously owned by `implementation`, so dropped prefixes are
+	// released for future claims.
+	if p.prefixIndex != nil {
+		p.prefixIndex.Set(reg.Implementation, reg.ResourceSchema)
+	}
+	return nil
 }
 
 func (p *GatewayStateProvider) DeleteAgent(ctx context.Context, implementation string) error {
@@ -233,7 +268,15 @@ func (p *GatewayStateProvider) DeleteAgent(ctx context.Context, implementation s
 		return fmt.Errorf("agent registry not available")
 	}
 
-	return p.agentRegistry.Delete(ctx, implementation)
+	if err := p.agentRegistry.Delete(ctx, implementation); err != nil {
+		return err
+	}
+	// Phase 5 Stage B: drop any prefix entries owned by this implementation
+	// so the prefixes become claimable again.
+	if p.prefixIndex != nil {
+		p.prefixIndex.Delete(implementation)
+	}
+	return nil
 }
 
 func (p *GatewayStateProvider) GetOrchestratorProfiles(ctx context.Context) ([]*admin.OrchestratorProfileInfo, error) {

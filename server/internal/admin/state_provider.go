@@ -228,6 +228,25 @@ type AgentRegistrationInfo struct {
 	LaunchParams        map[string]interface{} `json:"launch_params"`
 	RegisteredAt        time.Time              `json:"registered_at,omitempty"`
 	UpdatedAt           time.Time              `json:"updated_at,omitempty"`
+
+	// Phase 5: declared resource schema, capability flags, and A2A-style
+	// extension URIs. All optional; ACL routing/uniqueness enforcement on
+	// these fields lands in Stage B.
+	ResourceSchema []AgentResourceSchemaEntry `json:"resource_schema,omitempty"`
+	Capabilities   map[string]bool            `json:"capabilities,omitempty"`
+	Extensions     []string                   `json:"extensions,omitempty"`
+}
+
+// AgentResourceSchemaEntry mirrors the AgentResourceSchemaEntry proto and the
+// registry.AgentResourceSchemaEntry storage struct: one resource family
+// owned by an agent. Defined here (not aliased to the registry package)
+// because the admin layer is the lowest-level type boundary visible to
+// HTTP/JSON handlers — adding a direct dependency on internal/registry would
+// invert the existing layering (admin -> gateway -> registry).
+type AgentResourceSchemaEntry struct {
+	ResourceTypePrefix string   `json:"resource_type_prefix"`
+	PermissionVerbs    []string `json:"permission_verbs,omitempty"`
+	ResourceIDSchema   string   `json:"resource_id_schema,omitempty"`
 }
 
 // OrchestratorProfileInfo represents an orchestrator profile

@@ -35,6 +35,7 @@ export interface ProtoGrpcType {
       AgentLaunchResult: MessageTypeDefinition
       AgentOperation: MessageTypeDefinition
       AgentRegistrationInfo: MessageTypeDefinition
+      AgentResourceSchemaEntry: MessageTypeDefinition
       AgentResponse: MessageTypeDefinition
       AuditEntry: MessageTypeDefinition
       AuditQuery: MessageTypeDefinition

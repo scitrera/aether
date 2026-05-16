@@ -463,6 +463,116 @@ func TestACLAuditLogger_NilSharedWriterIsNoop(t *testing.T) {
 	}
 }
 
+// TestBuildACLMetadata_IncludesOwningAgentAttribution exercises Phase 5
+// Stage B: when an AuditLogEntry carries OwningAgentImpl/OwningAgentPrefix,
+// buildACLMetadata surfaces them as metadata.owning_agent +
+// metadata.owning_agent_prefix so audit dashboards can attribute the access
+// to the agent that declared the resource family.
+func TestBuildACLMetadata_IncludesOwningAgentAttribution(t *testing.T) {
+	entry := &AuditLogEntry{
+		Decision:          DecisionAllow,
+		AccessLevel:       AccessRead,
+		Metadata:          map[string]interface{}{},
+		OwningAgentImpl:   "chat-agent",
+		OwningAgentPrefix: "chat/",
+	}
+	raw, err := buildACLMetadata(entry)
+	if err != nil {
+		t.Fatalf("buildACLMetadata: %v", err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m["owning_agent"] != "chat-agent" {
+		t.Errorf("metadata[owning_agent] = %v, want %q", m["owning_agent"], "chat-agent")
+	}
+	if m["owning_agent_prefix"] != "chat/" {
+		t.Errorf("metadata[owning_agent_prefix] = %v, want %q", m["owning_agent_prefix"], "chat/")
+	}
+}
+
+// TestBuildACLMetadata_OmitsAttributionWhenEmpty verifies that an entry
+// without Phase 5 attribution produces metadata that does NOT carry the
+// owning_agent keys at all (so existing dashboards / queries that don't know
+// about Phase 5 see no extra fields).
+func TestBuildACLMetadata_OmitsAttributionWhenEmpty(t *testing.T) {
+	entry := &AuditLogEntry{
+		Decision:    DecisionAllow,
+		AccessLevel: AccessRead,
+		Metadata:    map[string]interface{}{},
+	}
+	raw, err := buildACLMetadata(entry)
+	if err != nil {
+		t.Fatalf("buildACLMetadata: %v", err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := m["owning_agent"]; ok {
+		t.Errorf("metadata unexpectedly contains owning_agent: %v", m)
+	}
+	if _, ok := m["owning_agent_prefix"]; ok {
+		t.Errorf("metadata unexpectedly contains owning_agent_prefix: %v", m)
+	}
+}
+
+// TestLogDecisionWithAttribution_SurfacesOwningAgent verifies the full audit
+// path: a CheckAccess-style decision attributed to a registered prefix is
+// emitted to the shared writer with the owning agent's identity in metadata.
+func TestLogDecisionWithAttribution_SurfacesOwningAgent(t *testing.T) {
+	db, conn := newACLFakeDB(t)
+	defer db.Close()
+
+	cfg := audit.DefaultConfig()
+	cfg.BatchSize = 1
+	cfg.FlushPeriod = 10 * time.Minute
+	shared := audit.NewAuditLogger(db, "gw-attr", cfg)
+	defer shared.Close()
+
+	logger := NewAuditLogger(shared, nil, "gw-attr")
+
+	decision := &ACLDecision{
+		Decision:             DecisionAllow,
+		EffectiveAccessLevel: AccessRead,
+	}
+	principal := models.Identity{Type: models.PrincipalUser, ID: "alice"}
+	logger.LogDecisionWithAttribution(context.Background(), decision, principal,
+		"docmgmt/document/abc", "doc-1", "read", "prod", uuid.New(),
+		"docmgmt-agent", "docmgmt/document/")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if conn.execCount() >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := conn.execCount(); got != 1 {
+		t.Fatalf("expected 1 INSERT, got %d", got)
+	}
+
+	conn.mu.Lock()
+	args := conn.execs[0]
+	conn.mu.Unlock()
+
+	metaJSON, ok := args[20].([]byte)
+	if !ok {
+		t.Fatalf("metadata arg type = %T, want []byte", args[20])
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(metaJSON, &m); err != nil {
+		t.Fatalf("metadata JSON: %v", err)
+	}
+	if m["owning_agent"] != "docmgmt-agent" {
+		t.Errorf("metadata[owning_agent] = %v, want %q", m["owning_agent"], "docmgmt-agent")
+	}
+	if m["owning_agent_prefix"] != "docmgmt/document/" {
+		t.Errorf("metadata[owning_agent_prefix] = %v, want %q", m["owning_agent_prefix"], "docmgmt/document/")
+	}
+}
+
 // Compile-time interface satisfaction
 var _ driver.Stmt = (*aclFakeStmt)(nil)
 var _ driver.Tx = (*aclFakeTx)(nil)
