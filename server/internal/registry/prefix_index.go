@@ -28,6 +28,17 @@ type PrefixIndex struct {
 	// (e.g. "chat/", "docmgmt/document"). Trailing slash semantics match
 	// what the agent declared; Lookup tolerates both forms.
 	prefixes map[string]string
+
+	// watchMu guards watchActive separately from the prefix map so the
+	// hot CheckAccess path never serializes against the watch lifecycle
+	// state. Acquired only in StartJetStreamWatch / IsWatchActive /
+	// runWatchLoop teardown — never on Lookup.
+	watchMu sync.RWMutex
+	// watchActive is true between a successful StartJetStreamWatch return
+	// and the parent ctx's cancellation. Callers (gateway periodic
+	// Rebuild scheduler) consult IsWatchActive to suppress redundant
+	// DB-driven Rebuilds when JetStream is the live propagation channel.
+	watchActive bool
 }
 
 // NewPrefixIndex returns an empty PrefixIndex ready for use.

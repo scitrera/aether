@@ -588,3 +588,72 @@ func TestResolveConnectionIdentity_RelaxedMode_NoCertificate_MTLSRequired_Return
 		t.Fatal("expected Unauthenticated error when mTLS required in relaxed mode but no cert")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// resolveIdentity: charset validation boundary tests
+//
+// These tests verify that the identval validation is wired into the
+// resolveIdentity path.  They rely on the default strict mode (true) which
+// is active when AETHER_STRICT_IDENTIFIER_CHARSET is unset.  Strict-mode-off
+// behaviour is covered in identval/identval_test.go.
+// ---------------------------------------------------------------------------
+
+func TestResolveIdentity_InvalidWorkspace_Wildcard_ReturnsError(t *testing.T) {
+	// Default strict mode (env var unset) rejects '*'.
+	h := newAuthHandler(nil, false, MTLSModeStrict, nil, nil)
+
+	init := &pb.InitConnection{
+		ClientType: &pb.InitConnection_Agent{
+			Agent: &pb.AgentIdentity{
+				Workspace:      "bad*workspace",
+				Implementation: "my-impl",
+				Specifier:      "spec1",
+			},
+		},
+	}
+
+	_, err := h.resolveIdentity(init)
+	if err == nil {
+		t.Fatal("expected error for workspace containing '*', got nil")
+	}
+}
+
+func TestResolveIdentity_InvalidImpl_DoubleSeparator_ReturnsError(t *testing.T) {
+	// Default strict mode rejects '::' inside a token.
+	h := newAuthHandler(nil, false, MTLSModeStrict, nil, nil)
+
+	init := &pb.InitConnection{
+		ClientType: &pb.InitConnection_Agent{
+			Agent: &pb.AgentIdentity{
+				Workspace:      "prod",
+				Implementation: "impl::bad",
+				Specifier:      "spec1",
+			},
+		},
+	}
+
+	_, err := h.resolveIdentity(init)
+	if err == nil {
+		t.Fatal("expected error for implementation containing '::', got nil")
+	}
+}
+
+func TestResolveIdentity_ValidReverseDNSImpl_Succeeds(t *testing.T) {
+	// Default strict mode must accept dotted reverse-DNS impl names.
+	h := newAuthHandler(nil, false, MTLSModeStrict, nil, nil)
+
+	init := &pb.InitConnection{
+		ClientType: &pb.InitConnection_Agent{
+			Agent: &pb.AgentIdentity{
+				Workspace:      "prod",
+				Implementation: "com.example.chat-agent",
+				Specifier:      "instance-1",
+			},
+		},
+	}
+
+	_, err := h.resolveIdentity(init)
+	if err != nil {
+		t.Fatalf("expected success for reverse-DNS impl, got: %v", err)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"github.com/scitrera/aether/internal/identval"
 )
 
 // =============================================================================
@@ -56,6 +57,11 @@ func (s *Server) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 
 	if body.WorkspaceID == "" {
 		respondError(w, http.StatusBadRequest, "workspace_id is required")
+		return
+	}
+
+	if err := identval.ValidateToken(body.WorkspaceID, "workspace"); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

@@ -1,0 +1,301 @@
+# DEVELOPMENT/TESTING ONLY — 3-node AetherLite full HA cluster (quorum, R=3).
+#
+# AetherLite Cluster — Topology C (3-node, R=3 quorum)
+# ======================================================
+# Three aetherlite nodes running in cluster mode. Each node embeds a NATS server
+# that forms a 3-member JetStream cluster. HA_MODE=auto causes the embedded NATS
+# server to auto-configure R=3 replication once all three peers are joined —
+# equivalent to NATS "R=3 majority quorum". This topology tolerates a single
+# node failure with no data loss: any two nodes constitute a quorum.
+#
+# What's included:
+#   aetherlite-1  — cluster member 1 (any node can be leader)
+#   aetherlite-2  — cluster member 2
+#   aetherlite-3  — cluster member 3
+#   minio         — S3-compatible object storage for JetStream backups
+#   minio-init    — one-shot bucket creation (exits after setup)
+#   nginx         — optional gRPC load balancer with ip_hash sticky sessions
+#   netshoot      — optional network-debug sidecar (sleep infinity)
+#
+# Optional overrides:
+#   AETHERLITE_IMAGE      — Docker image tag (default: scitrera/aether-gateway:latest)
+#   MINIO_ROOT_USER       — MinIO root user (default: minioadmin)
+#   MINIO_ROOT_PASSWORD   — MinIO root password (default: minioadmin)
+#
+# Usage:
+#   docker compose -f server/deployments/docker-compose/cluster.yaml up
+#   # With nginx LB:
+#   docker compose -f server/deployments/docker-compose/cluster.yaml --profile lb up
+#   # With debug sidecar:
+#   docker compose -f server/deployments/docker-compose/cluster.yaml --profile debug up
+#   docker compose -f server/deployments/docker-compose/cluster.yaml down -v  # removes volumes
+
+services:
+  # ===========================================================================
+  # MinIO — S3-compatible backup store
+  # ===========================================================================
+  minio:
+    image: minio/minio:latest
+    container_name: aetherlite-cluster-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # MinIO console UI
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - aetherlite-cluster
+
+  minio-init:
+    image: minio/minio:latest
+    container_name: aetherlite-cluster-minio-init
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin} &&
+        mc mb --ignore-existing local/aetherlite-backups &&
+        echo 'Bucket aetherlite-backups ready.'
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - aetherlite-cluster
+    restart: "no"
+
+  # ===========================================================================
+  # AetherLite node 1
+  # ===========================================================================
+  aetherlite-1:
+    image: ${AETHERLITE_IMAGE:-scitrera/aether-gateway:latest}
+    container_name: aetherlite-cluster-1
+    entrypoint: ["aetherlite"]
+    environment:
+      # Core
+      AETHERLITE_DATA_DIR: /data/aetherlite
+      AETHERLITE_PORT: "50051"
+      AETHERLITE_ADMIN_PORT: "31880"
+      AETHERLITE_DEV: "true"
+      AETHERLITE_INSECURE_ADMIN: "true"
+      AETHER_ALLOW_DEV_MODE: "true"
+
+      # Cluster mode — peers are nodes 2 and 3
+      AETHERLITE_CLUSTER_MODE: "true"
+      AETHERLITE_CLUSTER_PEERS: "nats://aetherlite-2:6222,nats://aetherlite-3:6222"
+      AETHERLITE_HA_MODE: "auto"
+      AETHERLITE_NATS_CLUSTER_PORT: "6222"
+
+      # S3 backup — MinIO
+      AETHERLITE_S3_BUCKET: aetherlite-backups
+      AETHERLITE_S3_ENDPOINT: http://minio:9000
+      AETHERLITE_S3_REGION: us-east-1
+      AETHERLITE_S3_PREFIX: "aetherlite/"
+      AETHERLITE_S3_FORCE_PATH_STYLE: "true"
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+
+      # Dispatcher
+      AETHER_DISPATCHER: jetstream
+
+      # Logging
+      OBSERVABILITY_LOG_LEVEL: info
+    ports:
+      - "50051:50051"   # gRPC
+      - "31880:31880"   # Admin UI
+    volumes:
+      - aetherlite-1-data:/data/aetherlite
+    depends_on:
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:31880/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    networks:
+      - aetherlite-cluster
+    restart: unless-stopped
+
+  # ===========================================================================
+  # AetherLite node 2
+  # ===========================================================================
+  aetherlite-2:
+    image: ${AETHERLITE_IMAGE:-scitrera/aether-gateway:latest}
+    container_name: aetherlite-cluster-2
+    entrypoint: ["aetherlite"]
+    environment:
+      # Core
+      AETHERLITE_DATA_DIR: /data/aetherlite
+      AETHERLITE_PORT: "50051"
+      AETHERLITE_ADMIN_PORT: "31880"
+      AETHERLITE_DEV: "true"
+      AETHERLITE_INSECURE_ADMIN: "true"
+      AETHER_ALLOW_DEV_MODE: "true"
+
+      # Cluster mode — peers are nodes 1 and 3
+      AETHERLITE_CLUSTER_MODE: "true"
+      AETHERLITE_CLUSTER_PEERS: "nats://aetherlite-1:6222,nats://aetherlite-3:6222"
+      AETHERLITE_HA_MODE: "auto"
+      AETHERLITE_NATS_CLUSTER_PORT: "6222"
+
+      # S3 backup — MinIO
+      AETHERLITE_S3_BUCKET: aetherlite-backups
+      AETHERLITE_S3_ENDPOINT: http://minio:9000
+      AETHERLITE_S3_REGION: us-east-1
+      AETHERLITE_S3_PREFIX: "aetherlite/"
+      AETHERLITE_S3_FORCE_PATH_STYLE: "true"
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+
+      # Dispatcher
+      AETHER_DISPATCHER: jetstream
+
+      # Logging
+      OBSERVABILITY_LOG_LEVEL: info
+    ports:
+      - "50052:50051"   # gRPC
+      - "31881:31880"   # Admin UI
+    volumes:
+      - aetherlite-2-data:/data/aetherlite
+    depends_on:
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:31880/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    networks:
+      - aetherlite-cluster
+    restart: unless-stopped
+
+  # ===========================================================================
+  # AetherLite node 3
+  # ===========================================================================
+  aetherlite-3:
+    image: ${AETHERLITE_IMAGE:-scitrera/aether-gateway:latest}
+    container_name: aetherlite-cluster-3
+    entrypoint: ["aetherlite"]
+    environment:
+      # Core
+      AETHERLITE_DATA_DIR: /data/aetherlite
+      AETHERLITE_PORT: "50051"
+      AETHERLITE_ADMIN_PORT: "31880"
+      AETHERLITE_DEV: "true"
+      AETHERLITE_INSECURE_ADMIN: "true"
+      AETHER_ALLOW_DEV_MODE: "true"
+
+      # Cluster mode — peers are nodes 1 and 2
+      AETHERLITE_CLUSTER_MODE: "true"
+      AETHERLITE_CLUSTER_PEERS: "nats://aetherlite-1:6222,nats://aetherlite-2:6222"
+      AETHERLITE_HA_MODE: "auto"
+      AETHERLITE_NATS_CLUSTER_PORT: "6222"
+
+      # S3 backup — MinIO
+      AETHERLITE_S3_BUCKET: aetherlite-backups
+      AETHERLITE_S3_ENDPOINT: http://minio:9000
+      AETHERLITE_S3_REGION: us-east-1
+      AETHERLITE_S3_PREFIX: "aetherlite/"
+      AETHERLITE_S3_FORCE_PATH_STYLE: "true"
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+
+      # Dispatcher
+      AETHER_DISPATCHER: jetstream
+
+      # Logging
+      OBSERVABILITY_LOG_LEVEL: info
+    ports:
+      - "50053:50051"   # gRPC
+      - "31882:31880"   # Admin UI
+    volumes:
+      - aetherlite-3-data:/data/aetherlite
+    depends_on:
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:31880/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    networks:
+      - aetherlite-cluster
+    restart: unless-stopped
+
+  # ===========================================================================
+  # nginx — optional gRPC load balancer with ip_hash sticky sessions
+  # Enable with: --profile lb
+  # ===========================================================================
+  nginx:
+    image: nginx:alpine
+    container_name: aetherlite-cluster-nginx
+    volumes:
+      - ./nginx/aetherlite-cluster.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "50050:50050"   # gRPC load-balanced endpoint
+      - "8080:8080"     # HTTP health / status
+    depends_on:
+      aetherlite-1:
+        condition: service_healthy
+      aetherlite-2:
+        condition: service_healthy
+      aetherlite-3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aetherlite-cluster
+    profiles:
+      - lb
+
+  # ===========================================================================
+  # netshoot — network debug sidecar (optional, chaos/packet-sniff testing)
+  # Enable with: --profile debug
+  # ===========================================================================
+  netshoot:
+    image: nicolaka/netshoot
+    container_name: aetherlite-cluster-netshoot
+    command: sleep infinity
+    networks:
+      - aetherlite-cluster
+    profiles:
+      - debug
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  aetherlite-1-data:
+    driver: local
+  aetherlite-2-data:
+    driver: local
+  aetherlite-3-data:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  aetherlite-cluster:
+    driver: bridge

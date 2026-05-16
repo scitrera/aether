@@ -14,6 +14,7 @@ import (
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/internal/acl"
 	"github.com/scitrera/aether/internal/audit"
+	"github.com/scitrera/aether/internal/identval"
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/internal/metering"
 	"github.com/scitrera/aether/internal/orchestration"
@@ -307,6 +308,20 @@ func (s *GatewayServer) handleCreateTask(
 	taskWorkspace := req.Workspace
 	if taskWorkspace == "" {
 		taskWorkspace = identity.Workspace
+	}
+
+	// Validate identifier charset for the task workspace and implementation
+	// before any persistent write. The caller-supplied workspace may differ
+	// from the caller's own workspace (cross-workspace task creation).
+	if err := identval.ValidateToken(taskWorkspace, "workspace"); err != nil {
+		sendClientError(client, "ERR_INVALID_IDENTIFIER", err.Error())
+		return err
+	}
+	if impl := req.GetTargetImplementation(); impl != "" {
+		if err := identval.ValidateImpl(impl); err != nil {
+			sendClientError(client, "ERR_INVALID_IDENTIFIER", err.Error())
+			return err
+		}
 	}
 
 	// Extract correlation ID for optional response path.

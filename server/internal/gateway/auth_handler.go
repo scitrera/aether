@@ -9,6 +9,7 @@ import (
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/internal/audit"
 	"github.com/scitrera/aether/internal/auth"
+	"github.com/scitrera/aether/internal/identval"
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/internal/state"
 	aclstore "github.com/scitrera/aether/internal/storage/acl"
@@ -493,6 +494,32 @@ func (h *AuthHandler) resolveIdentity(init *pb.InitConnection) (models.Identity,
 
 	if ident.Type == "" {
 		return ident, fmt.Errorf("unknown principal type")
+	}
+
+	// Validate identifier charset at the ingestion boundary. This catches '*',
+	// '>', whitespace, control characters, '::' substrings, and oversized tokens
+	// before any persistent write or topic construction occurs.
+	// Workspace and specifier use ValidateToken; implementation uses ValidateImpl
+	// which permits '.' for reverse-DNS names (e.g. "com.example.chat-agent").
+	if ident.Workspace != "" {
+		if err := identval.ValidateToken(ident.Workspace, "workspace"); err != nil {
+			return models.Identity{}, err
+		}
+	}
+	if ident.Implementation != "" {
+		if err := identval.ValidateImpl(ident.Implementation); err != nil {
+			return models.Identity{}, err
+		}
+	}
+	if ident.Specifier != "" {
+		if err := identval.ValidateToken(ident.Specifier, "specifier"); err != nil {
+			return models.Identity{}, err
+		}
+	}
+	if ident.ID != "" {
+		if err := identval.ValidateToken(ident.ID, "id"); err != nil {
+			return models.Identity{}, err
+		}
 	}
 
 	// Validate that no segment contains the reserved "::" separator. This is the

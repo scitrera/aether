@@ -23,6 +23,8 @@ import (
 	authsqlite "github.com/scitrera/aether/internal/auth/sqlite"
 	"github.com/scitrera/aether/internal/checkpoint"
 	"github.com/scitrera/aether/internal/cleanup"
+	"github.com/scitrera/aether/internal/cluster/backup"
+	clusternats "github.com/scitrera/aether/internal/cluster/nats"
 	"github.com/scitrera/aether/internal/config"
 	"github.com/scitrera/aether/internal/gateway"
 	"github.com/scitrera/aether/internal/kv"
@@ -252,15 +254,207 @@ func main() {
 	}
 	defer tasksDB.Close()
 
-	// Build lite-mode subsystems.
-	sessions := state.NewBadgerSessionRegistry(badgerDB)
-	kvStore := kv.NewBadgerKVStore(badgerDB)
-	checkpointStore := checkpoint.NewBadgerCheckpointStore(badgerDB)
+	// ===== Cluster-mode env vars =====
+	// AETHERLITE_CLUSTER_MODE flips wiring from single-node Badger backends to
+	// a JetStream-backed cluster (embedded NATS server + JetStream router /
+	// session / KV / checkpoint / dispatcher + S3-or-local backup coordinator).
+	// Every cluster-related env var is parsed once here so the topology decision
+	// and effective values can be logged in one place.
+	//
+	// Env vars (see cluster_wiring.go for defaults / parsing details):
+	//   AETHERLITE_CLUSTER_MODE        bool   master switch (default false)
+	//   AETHERLITE_CLUSTER_PEERS       csv    NATS route URLs (default empty)
+	//   AETHERLITE_HA_MODE             enum   auto|async|sync (default auto)
+	//   AETHERLITE_NATS_CLIENT_PORT    int    0=ephemeral (default 0)
+	//   AETHERLITE_NATS_CLUSTER_PORT   int    peer routing port (default 6222)
+	//   AETHERLITE_S3_BUCKET           str    S3 bucket; empty = LocalFileStorage
+	//   AETHERLITE_S3_PREFIX           str    key prefix (default aetherlite/)
+	//   AETHERLITE_S3_REGION           str    AWS region (default us-east-1)
+	//   AETHERLITE_S3_ENDPOINT         str    optional, for MinIO / R2
+	//   AETHERLITE_S3_ACCESS_KEY       str    optional, static credentials
+	//   AETHERLITE_S3_SECRET_KEY       str    optional, static credentials
+	//   AETHERLITE_S3_FORCE_PATH_STYLE bool   force path-style URLs (MinIO)
+	//   AETHERLITE_RESTORE_FROM_S3     bool   restore JetStream on cold start
+	//   AETHER_DISPATCHER              enum   polling|jetstream (default polling
+	//                                         in single-node, jetstream in cluster)
+	cenv := readClusterEnv()
+	if cenv.Enabled {
+		logging.Logger.Info().
+			Bool("cluster_mode", cenv.Enabled).
+			Strs("peers", cenv.Peers).
+			Str("ha_mode", cenv.HAModeRaw).
+			Int("nats_client_port", cenv.NATSClientPort).
+			Int("nats_cluster_port", cenv.NATSClusterPort).
+			Str("s3_bucket", cenv.S3Bucket).
+			Str("s3_prefix", cenv.S3Prefix).
+			Str("s3_region", cenv.S3Region).
+			Str("s3_endpoint", cenv.S3Endpoint).
+			Bool("restore_from_s3", cenv.RestoreFromS3).
+			Str("dispatcher", cenv.Dispatcher).
+			Str("topology", topologyLabel(len(cenv.Peers), cenv.HAMode)).
+			Msg("cluster mode enabled")
+	}
+
+	// ===== Backend construction =====
+	// Two branches, kept side-by-side and intentionally NOT refactored to
+	// share code: when cluster mode is off, behavior must match the historical
+	// single-node Badger configuration byte-for-byte. The cluster branch
+	// constructs JetStream-backed twins of every backend behind the same
+	// gateway interfaces (SessionManager, MessageRouter, KVReadWriter,
+	// CheckpointManager, TaskDispatcher).
+	// sessionsBackend combines the two interface views the gateway and
+	// orchestration packages need: the full SessionManager surface (gateway)
+	// and the IsOnline/IsActive convenience methods that
+	// TaskAssignmentService requires (orchestration.SessionLivenessRegistry).
+	// Both BadgerSessionRegistry and JetStreamSession satisfy this composite.
+	type sessionsBackend interface {
+		gateway.SessionManager
+		orchestration.SessionLivenessRegistry
+	}
+	var (
+		sessions        sessionsBackend
+		kvStore         gateway.KVReadWriter
+		checkpointStore gateway.CheckpointManager
+		msgRouter       gateway.MessageRouter
+		dispatcher      orchestration.TaskDispatcher
+		natsServer      *clusternats.EmbeddedServer
+		backupCoord     *backup.BackupCoordinator
+		backupCtx       context.Context
+		backupCancel    context.CancelFunc
+	)
+	// tokenStore stays Badger-backed in both modes — there is no
+	// JetStream-backed TokenStore impl yet, and orchestration token issuance
+	// is identical for single-node and cluster deployments.
 	tokenStore := state.NewBadgerTokenStore(badgerDB)
-	msgRouter := routerpkg.NewBadgerRouter(badgerDB)
 	taskStore, err := tasksqlite.New(tasksDB)
 	if err != nil {
 		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite tasks store")
+	}
+
+	if cenv.Enabled {
+		// ---- Cluster mode: embedded NATS + JetStream backends + backup ----
+		natsLogger := zerologClusterLogger{}
+		natsServer = &clusternats.EmbeddedServer{}
+		// NATS server only opens its cluster route listener (and requires
+		// configured routes for JetStream clustering) when ClusterName is
+		// non-empty. For single-node embedded mode (no peers) we leave
+		// ClusterName blank so JetStream runs standalone. When peers are
+		// supplied, we name the cluster so peer routes can join.
+		clusterName := ""
+		if len(cenv.Peers) > 0 {
+			clusterName = "aetherlite"
+		}
+		natsCfg := clusternats.Config{
+			DataDir:     *dataDir,
+			ClusterName: clusterName,
+			NodeName:    cfg.Gateway.GatewayID,
+			ClientPort:  cenv.NATSClientPort,
+			ClusterPort: cenv.NATSClusterPort,
+			Peers:       cenv.Peers,
+			HAMode:      cenv.HAMode,
+			Logger:      natsLogger,
+		}
+		if err := natsServer.Start(ctx, natsCfg); err != nil {
+			logging.Logger.Fatal().Err(err).Msg("failed to start embedded NATS server")
+		}
+		// Best-effort shutdown if a fatal happens between here and the main
+		// shutdown path. The main shutdown path will Stop() again — Stop() is
+		// idempotent.
+		defer natsServer.Stop()
+		js := natsServer.JetStream()
+		replicas := natsServer.ReplicasForHA()
+		logging.Logger.Info().
+			Int("replicas", replicas).
+			Msg("embedded NATS server ready; JetStream available")
+
+		// Optional: pre-flight restore from S3 before constructing JetStream-
+		// backed backends. Restore is destructive of any current state for the
+		// targeted domains, so it only runs when explicitly requested.
+		if cenv.RestoreFromS3 {
+			restoreStorage, rerr := buildBackupStorage(ctx, cenv, *dataDir)
+			if rerr != nil {
+				logging.Logger.Error().Err(rerr).Msg("restore: failed to construct backup storage; skipping restore")
+			} else {
+				for _, pol := range defaultBackupPolicies() {
+					if err := backup.RestoreFromS3(ctx, js, restoreStorage, pol, natsLogger); err != nil {
+						// Per-domain failure is non-fatal: a fresh cluster has
+						// no backup to restore, and partial restore is better
+						// than no startup.
+						logging.Logger.Warn().Err(err).Str("domain", pol.Domain).Msg("restore: per-domain failure; continuing")
+						continue
+					}
+					logging.Logger.Info().Str("domain", pol.Domain).Msg("restore: domain restored from backup")
+				}
+			}
+		}
+
+		// JetStream-backed backends. Constructor errors here are fatal because
+		// the only way they fail is "JetStream isn't ready" or a misconfigured
+		// stream/bucket replica count.
+		jsRouter, err := routerpkg.NewJetStreamRouter(js, replicas, &zerologClusterLogger{})
+		if err != nil {
+			logging.Logger.Fatal().Err(err).Msg("failed to construct JetStream router")
+		}
+		msgRouter = jsRouter
+
+		jsSession, err := state.NewJetStreamSession(ctx, js, state.JetStreamSessionConfig{Replicas: replicas})
+		if err != nil {
+			logging.Logger.Fatal().Err(err).Msg("failed to construct JetStream session manager")
+		}
+		sessions = jsSession
+
+		jsKV, err := kv.NewJetStreamKVStore(ctx, js)
+		if err != nil {
+			logging.Logger.Fatal().Err(err).Msg("failed to construct JetStream KV store")
+		}
+		kvStore = jsKV
+
+		// Checkpoint pruner inherits the main context so it stops when we
+		// cancel during shutdown.
+		jsCheckpoint, err := checkpoint.NewJetStreamCheckpointStore(ctx, js)
+		if err != nil {
+			logging.Logger.Fatal().Err(err).Msg("failed to construct JetStream checkpoint store")
+		}
+		checkpointStore = jsCheckpoint
+
+		// Dispatcher choice: jetstream when cluster mode + cenv.Dispatcher
+		// allows it, otherwise polling (kept available for cluster operators
+		// who haven't migrated their orchestrator-side code).
+		if cenv.Dispatcher == "jetstream" {
+			jsDispatcher, err := orchestration.NewJetStreamTaskDispatcher(ctx, js, cfg.Gateway.GatewayID, replicas, taskStore)
+			if err != nil {
+				logging.Logger.Fatal().Err(err).Msg("failed to construct JetStream dispatcher")
+			}
+			dispatcher = jsDispatcher
+		} else {
+			dispatcher = orchestration.NewPollingTaskDispatcher(taskStore)
+		}
+
+		// Backup coordinator. Storage backend is S3 when AETHERLITE_S3_BUCKET
+		// is set, otherwise a local filesystem rooted under {data_dir}/backups.
+		backupStorage, berr := buildBackupStorage(ctx, cenv, *dataDir)
+		if berr != nil {
+			logging.Logger.Fatal().Err(berr).Msg("failed to construct backup storage")
+		}
+		coord, berr := backup.NewBackupCoordinator(js, backupStorage, defaultBackupPolicies(), cfg.Gateway.GatewayID, natsLogger)
+		if berr != nil {
+			logging.Logger.Fatal().Err(berr).Msg("failed to construct backup coordinator")
+		}
+		backupCoord = coord
+		backupCtx, backupCancel = context.WithCancel(ctx)
+		go func() {
+			if err := backupCoord.Run(backupCtx); err != nil && backupCtx.Err() == nil {
+				logging.Logger.Error().Err(err).Msg("backup coordinator stopped with error")
+			}
+		}()
+		logging.Logger.Info().Int("policies", len(defaultBackupPolicies())).Msg("backup coordinator running")
+	} else {
+		// ---- Single-node mode: existing Badger backends, unchanged ----
+		sessions = state.NewBadgerSessionRegistry(badgerDB)
+		kvStore = kv.NewBadgerKVStore(badgerDB)
+		checkpointStore = checkpoint.NewBadgerCheckpointStore(badgerDB)
+		msgRouter = routerpkg.NewBadgerRouter(badgerDB)
+		dispatcher = orchestration.NewPollingTaskDispatcher(taskStore)
 	}
 
 	quotaDefaults := quota.DefaultQuotas{
@@ -271,8 +465,7 @@ func main() {
 	}
 	quotaManager := quota.NewMemoryQuotaManager(quotaDefaults)
 
-	// Orchestration (polling dispatcher — no AMQP, no pq.Listener).
-	dispatcher := orchestration.NewPollingTaskDispatcher(taskStore)
+	// Dispatcher was constructed above per cluster mode (jetstream vs polling).
 	// Badger-backed profile state store gives lite mode round-robin
 	// orchestrator selection without needing Redis. Wires up the first-ever
 	// Registry in aetherlite; previously the legacy ProfileManager was nil
@@ -302,6 +495,18 @@ func main() {
 		),
 	}
 	orchServices.TaskService.SetTokenStore(tokenStore)
+
+	// Cluster mode: swap the default (no-op) task event publisher for the
+	// JetStream-backed one so task lifecycle events fan out across the cluster.
+	// In single-node mode the field stays nil and publishStatusChange is a no-op,
+	// matching the historical behavior of aetherlite. Constructed after
+	// orchServices.TaskService so we don't have to thread a publisher through
+	// the constructor signature.
+	if cenv.Enabled && natsServer != nil {
+		js := natsServer.JetStream()
+		orchServices.TaskService.SetEventPublisher(orchestration.NewJetStreamTaskEventPublisher(js))
+		logging.Logger.Info().Msg("JetStream task event publisher installed (cluster mode)")
+	}
 
 	// Gateway options.
 	var gatewayOpts []gateway.GatewayOption
@@ -527,6 +732,47 @@ func main() {
 	stateProvider.SetWorkspaceRateLimiter(workspaceRL)
 	gatewayServer.SetAdminProvider(stateProvider)
 
+	// Cluster mode: activate Slice 4 protocol-specific JetStream wirings.
+	// Performed AFTER stateProvider construction (which seeds + installs its
+	// own non-watching PrefixIndex into the ACL service) so we can override
+	// the ACL service's prefix index with the watch-enabled one. Performed
+	// BEFORE grpcServer.Serve is reached so the cluster is consistent the
+	// moment the first client lands.
+	if cenv.Enabled && natsServer != nil {
+		js := natsServer.JetStream()
+		replicas := natsServer.ReplicasForHA()
+
+		// PrefixIndex JetStream Watch — read-side activation.
+		// Seed from the local SQLite registry first so we have something
+		// usable before the WatchAll initial-values burst arrives.
+		var registryList []*registry.AgentRegistration
+		if all, lerr := registryStore.List(ctx, ""); lerr == nil {
+			registryList = all
+		} else {
+			logging.Logger.Warn().Err(lerr).Msg("cluster: registry seed list failed; PrefixIndex bootstrap will rely solely on KV watch")
+		}
+		clusterIdx, err := activateClusterPrefixIndex(ctx, js, replicas, registryList)
+		if err != nil {
+			logging.Logger.Fatal().Err(err).Msg("failed to activate cluster PrefixIndex JetStream watch")
+		}
+		// Override the ACL service's prefix index with the watch-enabled one
+		// the state provider's own (non-watching) index is left in place for
+		// its own admin-side refresh hooks but the ACL audit attribution
+		// hot-path now consults the cluster-aware index.
+		sharedACLService.SetPrefixIndex(clusterIdx)
+
+		// Authority-request lifecycle JetStream provisioning (idempotent
+		// stream + KV bucket creates). See activateClusterAuthorityLifecycle
+		// godoc for the rationale on why the wrapper itself is not plumbed
+		// into the gateway's aclstore.Store-typed acl field.
+		if _, err := activateClusterAuthorityLifecycle(ctx, sharedACLService, js, replicas); err != nil {
+			logging.Logger.Fatal().Err(err).Msg("failed to activate cluster authority-request lifecycle resources")
+		}
+
+		// JetStream-driven task waker — composes with the timer-based scanner.
+		startClusterTaskWaker(ctx, js, taskStore, orchServices.TaskService)
+	}
+
 	// Ops server (health + metrics).
 	opsServer := admin.NewOpsServer(cfg.Gateway.GetOpsPort(), stateProvider)
 	opsServer.SetReady(true)
@@ -652,6 +898,20 @@ func main() {
 	case <-time.After(gracefulTimeout):
 		logging.Logger.Warn().Dur("timeout", gracefulTimeout).Msg("graceful shutdown timed out, forcing stop")
 		grpcServer.Stop()
+	}
+
+	// Cluster-mode shutdown: stop the backup coordinator (cancel its context
+	// so Run returns), then tear down the embedded NATS server. Order
+	// matters: the coordinator publishes/reads JetStream during snapshot, so
+	// it has to be quiesced before we shut the server down.
+	if backupCancel != nil {
+		backupCancel()
+		_ = backupCoord // keeps the variable referenced even when nil-checked
+		logging.Logger.Info().Msg("backup coordinator stop requested")
+	}
+	if natsServer != nil {
+		natsServer.Stop()
+		logging.Logger.Info().Msg("embedded NATS server stopped")
 	}
 
 	logging.Logger.Info().Msg("AetherLite stopped")

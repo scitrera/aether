@@ -757,5 +757,57 @@ Errors are returned as `ErrorResponse` messages with structured codes:
 | `ERR_METRIC_EMPTY` | InvalidArgument | No | `Metric.entries` is empty |
 | `ERR_METRIC_INVALID_ENTRY` | InvalidArgument | No | An entry has an empty name or a non-finite `qty` (NaN/Inf) |
 | `ERR_METRIC_NEGATIVE_FORBIDDEN` | PermissionDenied | No | Negative `qty` entry requires ACL permission `capability/metric_credit` |
+| `ERR_INVALID_IDENTIFIER` | InvalidArgument | No | Identifier token violates charset policy (see Section 17) |
+
+See `docs/error-codes.md` for the complete catalog.
+
+---
+
+## 17. Identifier Charset Policy
+
+### 17.1 Rationale
+
+Aether identifier tokens (workspace names, agent implementations, specifiers, user IDs, window IDs, etc.) are embedded directly into NATS subject strings after translation by the `natscodec` package. Certain characters cause irreversible ambiguity:
+
+- `*` and `>` are NATS wildcard tokens; a literal `*` in an agent workspace would match every topic in every namespace.
+- The substring `::` is aether's own segment separator; if it appeared inside a token the resulting topic string would be structurally ambiguous (extra apparent segments).
+- ASCII whitespace and control characters (bytes `< 0x20` or `== 0x7F`) are never safe in subject tokens and indicate malformed or adversarially-crafted input.
+
+The `natscodec` package *can* escape these characters (it does so for the internal translation layer), but allowing them at registration time would create identities that behave differently depending on whether they are used via NATS or via the RabbitMQ/PostgreSQL paths. Rejecting them at the ingestion boundary keeps all paths consistent.
+
+### 17.2 Allowed Characters
+
+| Character class | Allowed? | Notes |
+|---|---|---|
+| ASCII letters (`A-Z`, `a-z`) | Yes | |
+| ASCII digits (`0-9`) | Yes | |
+| Hyphen (`-`) | Yes | |
+| Underscore (`_`) | Yes | |
+| Period (`.`) | Yes | Reverse-DNS impl names like `com.example.chat-agent` are explicitly supported; `natscodec` escapes `.` when translating to NATS subjects |
+| `*` | **No** | NATS wildcard |
+| `>` | **No** | NATS wildcard |
+| Space or any whitespace | **No** | |
+| Control chars `< 0x20` or `== 0x7F` | **No** | |
+| Substring `::` | **No** | Aether segment separator |
+
+Maximum token length: **128 bytes**.
+
+### 17.3 Enforcement Points
+
+Validation runs at every ingestion boundary — any point where a new identifier is first accepted from external input — before any persistent write:
+
+| Boundary | Location | Fields validated |
+|---|---|---|
+| `InitConnection` (gRPC) | `internal/gateway/auth_handler.go` → `resolveIdentity` | `workspace`, `implementation`, `specifier`, `id` |
+| `CreateTaskRequest` (gRPC) | `internal/gateway/orchestration_integration.go` → `handleCreateTask` | `workspace`, `target_implementation` |
+| Admin `POST /workspaces` (HTTP) | `internal/admin/workspace_handler.go` → `handleCreateWorkspace` | `workspace_id` |
+
+Validation does **not** run in hot paths (per-message routing, per-lookup ACL) — only at the boundary where an identifier is first persisted.
+
+### 17.4 Configuration
+
+Set `AETHER_STRICT_IDENTIFIER_CHARSET=false` to disable charset validation globally. This opt-out is intended for operators migrating from deployments that pre-date this policy and have existing identifiers that would fail the new rules. The default is `true` (strict validation enabled).
+
+Implementation: `internal/identval/identval.go`.
 
 See `docs/error-codes.md` for the complete catalog.
