@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
+	aclstore "github.com/scitrera/aether/internal/storage/acl"
 	taskstore "github.com/scitrera/aether/internal/storage/tasks"
 	taskssqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
 	"github.com/scitrera/aether/pkg/tasks"
@@ -17,6 +20,44 @@ import (
 	// Register bare "sqlite" driver for the native sqlite backend.
 	_ "modernc.org/sqlite"
 )
+
+// fakeAuthorityRequestSource is an in-memory stand-in for the *acl.Service /
+// sqlite Store AuthorityRequestSource. The waker tests use it to drive
+// per-status branches deterministically without spinning a real SQL-backed
+// ACL service.
+type fakeAuthorityRequestSource struct {
+	requests   map[string]*aclstore.AuthorityRequest
+	sweepCount int64
+}
+
+func newFakeAuthorityRequestSource() *fakeAuthorityRequestSource {
+	return &fakeAuthorityRequestSource{
+		requests: make(map[string]*aclstore.AuthorityRequest),
+	}
+}
+
+func (f *fakeAuthorityRequestSource) put(req *aclstore.AuthorityRequest) {
+	if req == nil || req.RequestID == "" {
+		return
+	}
+	f.requests[req.RequestID] = req
+}
+
+func (f *fakeAuthorityRequestSource) GetAuthorityRequest(ctx context.Context, requestID string) (*aclstore.AuthorityRequest, error) {
+	if req, ok := f.requests[requestID]; ok {
+		return req, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeAuthorityRequestSource) SweepExpiredAuthorityRequests(ctx context.Context, now time.Time, limit int) ([]*aclstore.AuthorityRequest, error) {
+	atomic.AddInt64(&f.sweepCount, 1)
+	return nil, nil
+}
+
+func (f *fakeAuthorityRequestSource) sweepCalls() int64 {
+	return atomic.LoadInt64(&f.sweepCount)
+}
 
 // newWakerStore opens a fresh temp-dir SQLite database and returns a Store
 // (with cleanup). Mirrors sqliteNativeFactory from the storage conformance
@@ -99,7 +140,7 @@ func TestTaskWaker_DependencyWake(t *testing.T) {
 	}
 
 	svc := newWakerService(store)
-	waker := NewTaskWaker(store, svc)
+	waker := NewTaskWaker(store, svc, nil)
 	waker.scan(ctx)
 
 	got, err := store.GetTask(ctx, parent.TaskID)
@@ -140,7 +181,7 @@ func TestTaskWaker_WakeOnAny(t *testing.T) {
 	}
 
 	svc := newWakerService(store)
-	waker := NewTaskWaker(store, svc)
+	waker := NewTaskWaker(store, svc, nil)
 	waker.scan(ctx)
 
 	got, err := store.GetTask(ctx, parent.TaskID)
@@ -178,7 +219,7 @@ func TestTaskWaker_WakeAll_BlocksUntilAll(t *testing.T) {
 	}
 
 	svc := newWakerService(store)
-	waker := NewTaskWaker(store, svc)
+	waker := NewTaskWaker(store, svc, nil)
 	waker.scan(ctx)
 
 	got, err := store.GetTask(ctx, parent.TaskID)
@@ -225,7 +266,7 @@ func TestTaskWaker_TimeoutWakeToFail(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	svc := newWakerService(store)
-	waker := NewTaskWaker(store, svc)
+	waker := NewTaskWaker(store, svc, nil)
 	waker.scan(ctx)
 
 	got, err := store.GetTask(ctx, task.TaskID)
@@ -259,7 +300,7 @@ func TestTaskWaker_ScheduledWake(t *testing.T) {
 	}
 
 	svc := newWakerService(store)
-	waker := NewTaskWaker(store, svc)
+	waker := NewTaskWaker(store, svc, nil)
 	waker.scan(ctx)
 
 	got, err := store.GetTask(ctx, task.TaskID)
@@ -279,7 +320,7 @@ func TestTaskWaker_NoOpWhenNothingPending(t *testing.T) {
 	ctx := context.Background()
 
 	svc := newWakerService(store)
-	waker := NewTaskWaker(store, svc)
+	waker := NewTaskWaker(store, svc, nil)
 	// Should be a complete no-op; we just want to confirm no panic / no
 	// error escape.
 	waker.scan(ctx)
@@ -306,7 +347,7 @@ func TestTaskWaker_NilTaskService_Skipped(t *testing.T) {
 		t.Fatalf("PauseTask: %v", err)
 	}
 
-	waker := NewTaskWaker(store, nil)
+	waker := NewTaskWaker(store, nil, nil)
 	waker.scan(ctx) // must not panic
 }
 
@@ -341,5 +382,167 @@ func TestTaskAssignmentService_WakeDependents_EventDriven(t *testing.T) {
 	}
 	if got.Status != tasks.TaskStatusRunning {
 		t.Errorf("event-driven wake: parent got %q want running", got.Status)
+	}
+}
+
+// =============================================================================
+// Phase 2 Stage C: WAITING_AUTHORITY reconciliation
+// =============================================================================
+
+// buildWaitingAuthorityTask CreateTask → AssignTask → StartTask → PauseTask
+// with a WAITING_AUTHORITY wait spec keyed on the supplied request id.
+func buildWaitingAuthorityTask(t *testing.T, ctx context.Context, store taskstore.Store, hint, requestID string) *tasks.Task {
+	t.Helper()
+	task := buildRunningTask(t, ctx, store, hint)
+	spec := &tasks.WaitSpec{
+		Reason:             tasks.WaitReasonAuthority,
+		AuthorityRequestID: requestID,
+	}
+	if err := store.PauseTask(ctx, task.TaskID, tasks.TaskStatusWaitingAuthority, spec); err != nil {
+		t.Fatalf("PauseTask(%s) waiting_authority: %v", hint, err)
+	}
+	return task
+}
+
+// TestTaskWaker_AuthorityApproved_WakesTask: PENDING request keeps the task
+// paused; once the request flips to APPROVED, the next scan transitions the
+// task back to running.
+func TestTaskWaker_AuthorityApproved_WakesTask(t *testing.T) {
+	store, cleanup := newWakerStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	requestID := "ar-approve"
+	task := buildWaitingAuthorityTask(t, ctx, store, "approve", requestID)
+
+	fake := newFakeAuthorityRequestSource()
+	fake.put(&aclstore.AuthorityRequest{
+		RequestID: requestID,
+		Status:    aclstore.AuthorityRequestStatusPending,
+	})
+
+	svc := newWakerService(store)
+	waker := NewTaskWaker(store, svc, fake)
+
+	// First scan: request still pending — task must remain paused.
+	waker.scan(ctx)
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask after pending scan: %v", err)
+	}
+	if got.Status != tasks.TaskStatusWaitingAuthority {
+		t.Fatalf("after pending scan: task got %q want waiting_authority", got.Status)
+	}
+
+	// Flip to approved; the next scan resumes.
+	fake.put(&aclstore.AuthorityRequest{
+		RequestID:      requestID,
+		Status:         aclstore.AuthorityRequestStatusApproved,
+		GrantedGrantID: "grant-abc",
+	})
+	waker.scan(ctx)
+	got, err = store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask after approved scan: %v", err)
+	}
+	if got.Status != tasks.TaskStatusRunning {
+		t.Errorf("after approved scan: task got %q want running", got.Status)
+	}
+}
+
+// TestTaskWaker_AuthorityDenied_FailsTask: request DENIED + reason → task
+// transitions to FAILED with an error message containing "denied:<reason>".
+func TestTaskWaker_AuthorityDenied_FailsTask(t *testing.T) {
+	store, cleanup := newWakerStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	requestID := "ar-deny"
+	task := buildWaitingAuthorityTask(t, ctx, store, "deny", requestID)
+
+	fake := newFakeAuthorityRequestSource()
+	fake.put(&aclstore.AuthorityRequest{
+		RequestID:        requestID,
+		Status:           aclstore.AuthorityRequestStatusDenied,
+		ResolutionReason: "policy",
+	})
+
+	svc := newWakerService(store)
+	waker := NewTaskWaker(store, svc, fake)
+	waker.scan(ctx)
+
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask after denied scan: %v", err)
+	}
+	if got.Status != tasks.TaskStatusFailed {
+		t.Errorf("after denied scan: task got %q want failed", got.Status)
+	}
+	if !strings.Contains(got.ErrorMessage, "denied") || !strings.Contains(got.ErrorMessage, "policy") {
+		t.Errorf("after denied scan: error_message=%q want substring 'denied' AND 'policy'", got.ErrorMessage)
+	}
+}
+
+// TestTaskWaker_AuthorityExpired_FailsTask: same as denied but with status
+// EXPIRED and an empty resolution reason — the failure message still names
+// the status so operators can disambiguate.
+func TestTaskWaker_AuthorityExpired_FailsTask(t *testing.T) {
+	store, cleanup := newWakerStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	requestID := "ar-expire"
+	task := buildWaitingAuthorityTask(t, ctx, store, "expire", requestID)
+
+	fake := newFakeAuthorityRequestSource()
+	fake.put(&aclstore.AuthorityRequest{
+		RequestID: requestID,
+		Status:    aclstore.AuthorityRequestStatusExpired,
+	})
+
+	svc := newWakerService(store)
+	waker := NewTaskWaker(store, svc, fake)
+	waker.scan(ctx)
+
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask after expired scan: %v", err)
+	}
+	if got.Status != tasks.TaskStatusFailed {
+		t.Errorf("after expired scan: task got %q want failed", got.Status)
+	}
+	if !strings.Contains(got.ErrorMessage, "expired") {
+		t.Errorf("after expired scan: error_message=%q want substring 'expired'", got.ErrorMessage)
+	}
+}
+
+// TestTaskWaker_SweepCalledOnce confirms the per-scan SweepExpired*
+// invocation runs exactly once per tick regardless of the waiting-task
+// population.
+func TestTaskWaker_SweepCalledOnce(t *testing.T) {
+	store, cleanup := newWakerStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Park one task on a pending request so the per-task loop has work to do.
+	requestID := "ar-sweep"
+	_ = buildWaitingAuthorityTask(t, ctx, store, "sweep", requestID)
+
+	fake := newFakeAuthorityRequestSource()
+	fake.put(&aclstore.AuthorityRequest{
+		RequestID: requestID,
+		Status:    aclstore.AuthorityRequestStatusPending,
+	})
+
+	svc := newWakerService(store)
+	waker := NewTaskWaker(store, svc, fake)
+
+	waker.scan(ctx)
+	if got := fake.sweepCalls(); got != 1 {
+		t.Errorf("after first scan: sweep call count=%d want 1", got)
+	}
+	waker.scan(ctx)
+	if got := fake.sweepCalls(); got != 2 {
+		t.Errorf("after second scan: sweep call count=%d want 2", got)
 	}
 }

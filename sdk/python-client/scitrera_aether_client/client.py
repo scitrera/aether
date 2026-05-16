@@ -115,6 +115,61 @@ def _authority_resource_scope_entries(resource_scope: Optional[Dict[str, List[st
     ]
 
 
+def make_authority_request_routing(*,
+                                   principal: Optional[aether_pb2.PrincipalRef] = None,
+                                   capability: str = "") -> aether_pb2.AuthorityRequestRoutingTarget:
+    """
+    Build an ``aether_pb2.AuthorityRequestRoutingTarget``. Exactly one of
+    ``principal`` or ``capability`` must be provided; supplying both or
+    neither raises :class:`ValueError`.
+
+    A capability routing target accepts any actor whose ACL ``CheckAccess``
+    against the supplied gate succeeds. A principal routing target restricts
+    resolution to that single approver.
+
+    Args:
+        principal: Specific approver / role / group identity.
+        capability: Capability-gate string ("capability/approve/<action>").
+
+    Returns:
+        Populated ``AuthorityRequestRoutingTarget``.
+
+    Raises:
+        ValueError: If both ``principal`` and ``capability`` are set, or
+            both are empty.
+    """
+    capability = (capability or "").strip()
+    has_principal = principal is not None and (principal.principal_id or principal.principal_type)
+    has_capability = bool(capability)
+    if has_principal and has_capability:
+        raise ValueError(
+            "make_authority_request_routing: exactly one of principal or capability must be set"
+        )
+    if not has_principal and not has_capability:
+        raise ValueError(
+            "make_authority_request_routing: principal or capability is required"
+        )
+    target = aether_pb2.AuthorityRequestRoutingTarget()
+    if has_principal:
+        target.principal.CopyFrom(principal)
+    else:
+        target.capability = capability
+    return target
+
+
+def make_authority_request_resource_scope_entry(resource_type: str,
+                                                patterns: List[str]) -> aether_pb2.AuthorityRequestResourceScopeEntry:
+    """
+    Build an ``aether_pb2.AuthorityRequestResourceScopeEntry`` from a
+    resource-type string + a list of glob patterns. Convenience wrapper that
+    matches the shape used inside :class:`BaseAetherClient.request_authority`.
+    """
+    return aether_pb2.AuthorityRequestResourceScopeEntry(
+        resource_type=resource_type,
+        patterns=list(patterns or []),
+    )
+
+
 @dataclass
 class AuditSubmitResponse:
     """Response from ``submit_audit_event`` / ``submit_audit_event_async``.
@@ -1620,6 +1675,242 @@ class BaseAetherClient:
         return self._send_sync_op(
             aether_pb2.UpstreamMessage(task_op=op),
             request_id, timeout,
+        )
+
+    # =========================================================================
+    # Phase 2 Stage C: AuthorityRequest ("sudo") lifecycle
+    # =========================================================================
+
+    def request_authority(self,
+                          desired_workspace_scope: Optional[List[str]] = None,
+                          desired_resource_scope: Optional[List[aether_pb2.AuthorityRequestResourceScopeEntry]] = None,
+                          desired_operation_scope: Optional[List[str]] = None,
+                          requested_access_level: int = aether_pb2.ACCESS_LEVEL_READWRITE,
+                          requested_duration_seconds: int = 1800,
+                          audience_type: str = "",
+                          audience_id: str = "",
+                          routing_principal: Optional[aether_pb2.PrincipalRef] = None,
+                          routing_capability: str = "",
+                          reason: str = "",
+                          task_id: str = "",
+                          metadata: Optional[Dict[str, str]] = None,
+                          requesting_actor: Optional[aether_pb2.PrincipalRef] = None,
+                          target_subject: Optional[aether_pb2.PrincipalRef] = None,
+                          timeout: float = 10.0) -> Optional[aether_pb2.AuthorityRequestOperationResponse]:
+        """
+        Submit a new authority request (the "sudo" handshake).
+
+        ``requesting_actor`` defaults to the caller's session identity when
+        left ``None``. Exactly one of (``routing_principal``,
+        ``routing_capability``) must be provided.
+
+        On success the gateway echoes back an
+        :class:`aether_pb2.AuthorityRequestOperationResponse` with the
+        created request (server-assigned ``request_id``, ``status=PENDING``,
+        and ``expires_at`` populated).
+
+        Args:
+            desired_workspace_scope: Workspaces the resulting grant should
+                authorize.
+            desired_resource_scope: Resource-type + glob pattern entries.
+                Build via :func:`make_authority_request_resource_scope_entry`.
+            desired_operation_scope: Operation strings (e.g. ``["send_message"]``).
+            requested_access_level: Proto :class:`aether_pb2.AccessLevel`
+                enum value (default ``READWRITE``).
+            requested_duration_seconds: Lifetime of the resulting grant.
+                The server clamps to ``MaxAuthorityRequestDurationSeconds``.
+            audience_type: Optional audience binding (session / task / agent / service).
+            audience_id: Concrete audience id (must match the caller's
+                associated context unless cross-binding is permitted).
+            routing_principal: Specific approver. Mutually exclusive with
+                ``routing_capability``.
+            routing_capability: Capability gate, e.g.
+                ``"capability/approve/admin"``. Mutually exclusive with
+                ``routing_principal``.
+            reason: Human-readable narrative for the audit trail.
+            task_id: Optional task id the requester is parked on; the waker
+                uses this to reconcile WAITING_AUTHORITY tasks.
+            metadata: Free-form key/value annotations propagated to the
+                eventual grant.
+            requesting_actor: Override the requester identity; defaults to
+                the caller.
+            target_subject: On-behalf-of escalation target; leave ``None``
+                for the common "asking for myself" case.
+            timeout: Timeout in seconds for the RPC.
+
+        Returns:
+            ``AuthorityRequestOperationResponse`` or ``None`` on timeout.
+
+        Raises:
+            ValueError: If routing_principal and routing_capability are both
+                set, or both empty.
+        """
+        routing = make_authority_request_routing(
+            principal=routing_principal,
+            capability=routing_capability,
+        )
+        payload = aether_pb2.CreateAuthorityRequestPayload(
+            desired_workspace_scope=list(desired_workspace_scope or []),
+            desired_resource_scope=list(desired_resource_scope or []),
+            desired_operation_scope=list(desired_operation_scope or []),
+            requested_access_level=requested_access_level,  # type: ignore[arg-type]
+            requested_duration_seconds=requested_duration_seconds,
+            audience_type=audience_type,
+            audience_id=audience_id,
+            routing_target=routing,
+            reason=reason,
+            task_id=task_id,
+            metadata=metadata or {},
+        )
+        if requesting_actor is not None:
+            payload.requesting_actor.CopyFrom(requesting_actor)
+        if target_subject is not None:
+            payload.target_subject.CopyFrom(target_subject)
+
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.AuthorityRequestOperation(
+            op=aether_pb2.AuthorityRequestOperation.CREATE,
+            create=payload,
+            client_request_id=request_id,
+        )
+        return self._send_sync_op(
+            aether_pb2.UpstreamMessage(authority_request_op=op),
+            request_id, timeout,
+        )
+
+    def list_pending_authority_requests(self,
+                                        workspace: str = "",
+                                        matching_capabilities: Optional[List[str]] = None,
+                                        limit: int = 100,
+                                        offset: int = 0,
+                                        timeout: float = 10.0) -> Optional[aether_pb2.AuthorityRequestOperationResponse]:
+        """
+        List pending authority requests the caller can resolve.
+
+        The server returns requests whose routing addresses the caller's
+        identity OR whose ``routing_capability`` matches any entry in
+        ``matching_capabilities``. The server does NOT auto-discover the
+        caller's full capability set in Stage C — the caller must enumerate
+        which gates it is representing.
+
+        Args:
+            workspace: Optional workspace filter; empty = no filter.
+            matching_capabilities: List of capability-gate strings the
+                caller holds. Empty list = no capability-gate matches
+                (principal-routed requests still returned).
+            limit: Max rows to return.
+            offset: Pagination offset.
+            timeout: RPC timeout in seconds.
+
+        Returns:
+            ``AuthorityRequestOperationResponse`` with ``requests`` populated.
+        """
+        list_filter = aether_pb2.AuthorityRequestListFilter(
+            workspace=workspace,
+            limit=int(limit),
+            offset=int(offset),
+            matching_capabilities=list(matching_capabilities or []),
+        )
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.AuthorityRequestOperation(
+            op=aether_pb2.AuthorityRequestOperation.LIST_PENDING,
+            list_filter=list_filter,
+            client_request_id=request_id,
+        )
+        return self._send_sync_op(
+            aether_pb2.UpstreamMessage(authority_request_op=op),
+            request_id, timeout,
+        )
+
+    def resolve_authority_request(self,
+                                  request_id: str,
+                                  approve: bool = True,
+                                  reason: str = "",
+                                  granted_workspace_scope: Optional[List[str]] = None,
+                                  granted_resource_scope: Optional[List[aether_pb2.AuthorityRequestResourceScopeEntry]] = None,
+                                  granted_operation_scope: Optional[List[str]] = None,
+                                  granted_access_level: int = 0,
+                                  granted_duration_seconds: int = 0,
+                                  may_delegate: bool = False,
+                                  remaining_hops: int = 0,
+                                  timeout: float = 10.0) -> Optional[aether_pb2.AuthorityRequestOperationResponse]:
+        """
+        Resolve a pending authority request (approve or deny).
+
+        ``approve=True`` mints a grant via the standard CreateAuthorityGrant
+        path. ``approve=False`` flips the row to DENIED with the supplied
+        reason; the granted_* fields are ignored.
+
+        Approvers may NARROW scope: each ``granted_*`` field is intersected
+        with the corresponding desired_* field from the original request.
+        Anything in the granted set that is NOT in the request is silently
+        dropped server-side (approvers cannot broaden).
+
+        Args:
+            request_id: Server-assigned request id from CREATE.
+            approve: True to APPROVE, False to DENY.
+            reason: Human-readable resolution explanation.
+            granted_workspace_scope: Optional narrower workspace scope.
+            granted_resource_scope: Optional narrower resource scope.
+            granted_operation_scope: Optional narrower operation scope.
+            granted_access_level: Optional access-level cap (proto enum
+                value; 0 = inherit).
+            granted_duration_seconds: Optional shorter duration; 0 = inherit.
+            may_delegate: Whether the resulting grant carries delegate-on
+                authority.
+            remaining_hops: Initial hop count for delegation chains.
+            timeout: RPC timeout in seconds.
+        """
+        decision = (
+            aether_pb2.ResolveAuthorityRequestPayload.APPROVE
+            if approve else aether_pb2.ResolveAuthorityRequestPayload.DENY
+        )
+        payload = aether_pb2.ResolveAuthorityRequestPayload(
+            decision=decision,
+            granted_workspace_scope=list(granted_workspace_scope or []),
+            granted_resource_scope=list(granted_resource_scope or []),
+            granted_operation_scope=list(granted_operation_scope or []),
+            granted_access_level=granted_access_level,  # type: ignore[arg-type]
+            granted_duration_seconds=int(granted_duration_seconds),
+            reason=reason,
+            may_delegate=may_delegate,
+            remaining_hops=int(remaining_hops),
+        )
+        client_request_id = str(uuid.uuid4())
+        op = aether_pb2.AuthorityRequestOperation(
+            op=aether_pb2.AuthorityRequestOperation.RESOLVE,
+            request_id=request_id,
+            resolve=payload,
+            client_request_id=client_request_id,
+        )
+        return self._send_sync_op(
+            aether_pb2.UpstreamMessage(authority_request_op=op),
+            client_request_id, timeout,
+        )
+
+    def cancel_authority_request(self, request_id: str, reason: str = "",
+                                 timeout: float = 10.0) -> Optional[aether_pb2.AuthorityRequestOperationResponse]:
+        """
+        Withdraw a pending authority request. Only the original requester
+        may call this — the gateway returns a not-found-style error to
+        non-requesters (info hiding).
+
+        Args:
+            request_id: Server-assigned request id.
+            reason: Optional reason for withdrawal (recorded as
+                ``resolution_reason``).
+            timeout: RPC timeout in seconds.
+        """
+        client_request_id = str(uuid.uuid4())
+        op = aether_pb2.AuthorityRequestOperation(
+            op=aether_pb2.AuthorityRequestOperation.CANCEL,
+            request_id=request_id,
+            reason=reason,
+            client_request_id=client_request_id,
+        )
+        return self._send_sync_op(
+            aether_pb2.UpstreamMessage(authority_request_op=op),
+            client_request_id, timeout,
         )
 
     def _send_lockable_op(self, lock: threading.Lock, response_queue: queue.Queue,

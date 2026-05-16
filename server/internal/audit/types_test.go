@@ -128,8 +128,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.ChannelBuffer != DefaultChannelBuffer {
 		t.Errorf("default channel buffer = %d, want %d", cfg.ChannelBuffer, DefaultChannelBuffer)
 	}
-	if len(cfg.EnabledEventTypes) != 8 {
-		t.Errorf("default enabled event types = %d, want 8", len(cfg.EnabledEventTypes))
+	if len(cfg.EnabledEventTypes) != 9 {
+		t.Errorf("default enabled event types = %d, want 9", len(cfg.EnabledEventTypes))
 	}
 }
 

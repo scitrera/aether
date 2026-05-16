@@ -32,6 +32,8 @@ import type { ResolveAuthorityResponse as _aether_v1_ResolveAuthorityResponse, R
 import type { ConnectionStatusResponse as _aether_v1_ConnectionStatusResponse, ConnectionStatusResponse__Output as _aether_v1_ConnectionStatusResponse__Output } from '../../aether/v1/ConnectionStatusResponse';
 import type { AuthorityGrantRevocation as _aether_v1_AuthorityGrantRevocation, AuthorityGrantRevocation__Output as _aether_v1_AuthorityGrantRevocation__Output } from '../../aether/v1/AuthorityGrantRevocation';
 import type { SubmitAuditEventResponse as _aether_v1_SubmitAuditEventResponse, SubmitAuditEventResponse__Output as _aether_v1_SubmitAuditEventResponse__Output } from '../../aether/v1/SubmitAuditEventResponse';
+import type { AuthorityRequestOperationResponse as _aether_v1_AuthorityRequestOperationResponse, AuthorityRequestOperationResponse__Output as _aether_v1_AuthorityRequestOperationResponse__Output } from '../../aether/v1/AuthorityRequestOperationResponse';
+import type { AuthorityRequestEvent as _aether_v1_AuthorityRequestEvent, AuthorityRequestEvent__Output as _aether_v1_AuthorityRequestEvent__Output } from '../../aether/v1/AuthorityRequestEvent';
 
 export interface DownstreamMessage {
   'msg'?: (_aether_v1_IncomingMessage | null);
@@ -66,7 +68,9 @@ export interface DownstreamMessage {
   'connectionStatusResponse'?: (_aether_v1_ConnectionStatusResponse | null);
   'authorityGrantRevocation'?: (_aether_v1_AuthorityGrantRevocation | null);
   'submitAuditEventResponse'?: (_aether_v1_SubmitAuditEventResponse | null);
-  'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse";
+  'authorityRequestResponse'?: (_aether_v1_AuthorityRequestOperationResponse | null);
+  'authorityRequestEvent'?: (_aether_v1_AuthorityRequestEvent | null);
+  'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse"|"authorityRequestResponse"|"authorityRequestEvent";
 }
 
 export interface DownstreamMessage__Output {
@@ -102,5 +106,7 @@ export interface DownstreamMessage__Output {
   'connectionStatusResponse'?: (_aether_v1_ConnectionStatusResponse__Output | null);
   'authorityGrantRevocation'?: (_aether_v1_AuthorityGrantRevocation__Output | null);
   'submitAuditEventResponse'?: (_aether_v1_SubmitAuditEventResponse__Output | null);
-  'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse";
+  'authorityRequestResponse'?: (_aether_v1_AuthorityRequestOperationResponse__Output | null);
+  'authorityRequestEvent'?: (_aether_v1_AuthorityRequestEvent__Output | null);
+  'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse"|"authorityRequestResponse"|"authorityRequestEvent";
 }

@@ -353,6 +353,11 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 			s.handleSubmitAuditEvent(sessionCtx, client, p.SubmitAuditEvent)
 		case *pb.UpstreamMessage_AuthorityGrantOp:
 			s.handleAuthorityGrantOp(sessionCtx, client, p.AuthorityGrantOp)
+		case *pb.UpstreamMessage_AuthorityRequestOp:
+			// Phase 2 Stage C: authority-request lifecycle ("sudo"). The
+			// handler routes per OpType and pushes downstream responses +
+			// AuthorityRequestEvent notifications directly to this session.
+			go s.handleAuthorityRequestOp(sessionCtx, client, p.AuthorityRequestOp)
 		case *pb.UpstreamMessage_WorkflowOp:
 			s.handleWorkflowOp(sessionCtx, client, p.WorkflowOp)
 		case *pb.UpstreamMessage_WorkflowResponse:

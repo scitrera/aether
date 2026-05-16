@@ -36,6 +36,10 @@ from ._common import (
     _scope_to_proto,
     _env_tls_kwargs_filter,
 )
+# Phase 2 Stage C authority-request helpers live in client.py (the sync side)
+# so we re-import them here for the async surface. Avoid duplicating the
+# proto-fiddling logic across both files.
+from .client import make_authority_request_routing
 from .exceptions import (
     AetherError,
     ConnectionError,
@@ -2062,6 +2066,151 @@ class BaseAsyncAetherClient:
         return await self._send_sync_op(
             aether_pb2.UpstreamMessage(task_op=op),
             request_id, timeout,
+        )
+
+    # =========================================================================
+    # Phase 2 Stage C: AuthorityRequest ("sudo") lifecycle (async)
+    # =========================================================================
+
+    async def request_authority(self,
+                                desired_workspace_scope: Optional[List[str]] = None,
+                                desired_resource_scope: Optional[List[aether_pb2.AuthorityRequestResourceScopeEntry]] = None,
+                                desired_operation_scope: Optional[List[str]] = None,
+                                requested_access_level: int = aether_pb2.ACCESS_LEVEL_READWRITE,
+                                requested_duration_seconds: int = 1800,
+                                audience_type: str = "",
+                                audience_id: str = "",
+                                routing_principal: Optional[aether_pb2.PrincipalRef] = None,
+                                routing_capability: str = "",
+                                reason: str = "",
+                                task_id: str = "",
+                                metadata: Optional[Dict[str, str]] = None,
+                                requesting_actor: Optional[aether_pb2.PrincipalRef] = None,
+                                target_subject: Optional[aether_pb2.PrincipalRef] = None,
+                                timeout: float = 10.0) -> Optional[aether_pb2.AuthorityRequestOperationResponse]:
+        """
+        Async counterpart to :meth:`BaseAetherClient.request_authority`. See
+        the sync docstring for the parameter contract.
+        """
+        routing = make_authority_request_routing(
+            principal=routing_principal,
+            capability=routing_capability,
+        )
+        payload = aether_pb2.CreateAuthorityRequestPayload(
+            desired_workspace_scope=list(desired_workspace_scope or []),
+            desired_resource_scope=list(desired_resource_scope or []),
+            desired_operation_scope=list(desired_operation_scope or []),
+            requested_access_level=requested_access_level,  # type: ignore[arg-type]
+            requested_duration_seconds=requested_duration_seconds,
+            audience_type=audience_type,
+            audience_id=audience_id,
+            routing_target=routing,
+            reason=reason,
+            task_id=task_id,
+            metadata=metadata or {},
+        )
+        if requesting_actor is not None:
+            payload.requesting_actor.CopyFrom(requesting_actor)
+        if target_subject is not None:
+            payload.target_subject.CopyFrom(target_subject)
+
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.AuthorityRequestOperation(
+            op=aether_pb2.AuthorityRequestOperation.CREATE,
+            create=payload,
+            client_request_id=request_id,
+        )
+        return await self._send_sync_op(
+            aether_pb2.UpstreamMessage(authority_request_op=op),
+            request_id, timeout,
+        )
+
+    async def list_pending_authority_requests(self,
+                                              workspace: str = "",
+                                              matching_capabilities: Optional[List[str]] = None,
+                                              limit: int = 100,
+                                              offset: int = 0,
+                                              timeout: float = 10.0) -> Optional[aether_pb2.AuthorityRequestOperationResponse]:
+        """
+        Async counterpart to
+        :meth:`BaseAetherClient.list_pending_authority_requests`.
+        """
+        list_filter = aether_pb2.AuthorityRequestListFilter(
+            workspace=workspace,
+            limit=int(limit),
+            offset=int(offset),
+            matching_capabilities=list(matching_capabilities or []),
+        )
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.AuthorityRequestOperation(
+            op=aether_pb2.AuthorityRequestOperation.LIST_PENDING,
+            list_filter=list_filter,
+            client_request_id=request_id,
+        )
+        return await self._send_sync_op(
+            aether_pb2.UpstreamMessage(authority_request_op=op),
+            request_id, timeout,
+        )
+
+    async def resolve_authority_request(self,
+                                        request_id: str,
+                                        approve: bool = True,
+                                        reason: str = "",
+                                        granted_workspace_scope: Optional[List[str]] = None,
+                                        granted_resource_scope: Optional[List[aether_pb2.AuthorityRequestResourceScopeEntry]] = None,
+                                        granted_operation_scope: Optional[List[str]] = None,
+                                        granted_access_level: int = 0,
+                                        granted_duration_seconds: int = 0,
+                                        may_delegate: bool = False,
+                                        remaining_hops: int = 0,
+                                        timeout: float = 10.0) -> Optional[aether_pb2.AuthorityRequestOperationResponse]:
+        """
+        Async counterpart to
+        :meth:`BaseAetherClient.resolve_authority_request`.
+        """
+        decision = (
+            aether_pb2.ResolveAuthorityRequestPayload.APPROVE
+            if approve else aether_pb2.ResolveAuthorityRequestPayload.DENY
+        )
+        payload = aether_pb2.ResolveAuthorityRequestPayload(
+            decision=decision,
+            granted_workspace_scope=list(granted_workspace_scope or []),
+            granted_resource_scope=list(granted_resource_scope or []),
+            granted_operation_scope=list(granted_operation_scope or []),
+            granted_access_level=granted_access_level,  # type: ignore[arg-type]
+            granted_duration_seconds=int(granted_duration_seconds),
+            reason=reason,
+            may_delegate=may_delegate,
+            remaining_hops=int(remaining_hops),
+        )
+        client_request_id = str(uuid.uuid4())
+        op = aether_pb2.AuthorityRequestOperation(
+            op=aether_pb2.AuthorityRequestOperation.RESOLVE,
+            request_id=request_id,
+            resolve=payload,
+            client_request_id=client_request_id,
+        )
+        return await self._send_sync_op(
+            aether_pb2.UpstreamMessage(authority_request_op=op),
+            client_request_id, timeout,
+        )
+
+    async def cancel_authority_request(self, request_id: str, reason: str = "",
+                                       timeout: float = 10.0) -> Optional[aether_pb2.AuthorityRequestOperationResponse]:
+        """
+        Async counterpart to
+        :meth:`BaseAetherClient.cancel_authority_request`.
+        """
+        client_request_id = str(uuid.uuid4())
+        op = aether_pb2.AuthorityRequestOperation(
+            op=aether_pb2.AuthorityRequestOperation.CANCEL,
+            request_id=request_id,
+            reason=reason,
+            client_request_id=client_request_id,
+        )
+        return await self._send_sync_op(
+            aether_pb2.UpstreamMessage(authority_request_op=op),
+            client_request_id, timeout,
         )
 
     async def workspace_op(self, op: aether_pb2.WorkspaceOperation,

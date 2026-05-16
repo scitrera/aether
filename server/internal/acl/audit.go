@@ -124,6 +124,127 @@ func (a *AuditLogger) LogDecision(ctx context.Context, decision *ACLDecision, pr
 	a.shared.LogEvent(ctx, event)
 }
 
+// LogAuthorityRequestEvent emits a Phase 2 authority-request lifecycle audit
+// event (EventTypeAuthorityRequest) through the shared writer. This is the
+// generic-event sibling to LogDecision: it skips the ACL-decision plumbing
+// (no rule_applied / fallback_applied / access-level), embedding the request
+// shape in the AuditEvent's metadata map instead.
+//
+// Non-blocking: drops if the shared queue is full (same performance safety
+// valve as audit.AuditLogger.LogEvent) — preserve the fire-and-forget contract
+// the existing audit pipeline relies on. If `a.shared` is nil (audit disabled
+// at the platform level) this is a no-op.
+//
+// Field shape:
+//   - EventType    = audit.EventTypeAuthorityRequest
+//   - ActorType/ID = the actor performing the lifecycle action (the requester
+//     on Submit; the approver on Approve/Deny; the requester on Cancel; the
+//     system on Sweep — caller passes models.Identity{} for system-initiated
+//     events and the helper leaves the actor fields blank).
+//   - Subject*     = the request's requesting_actor (the principal whose
+//     authority would be elevated). For approval flows the resulting grant
+//     subject is recorded separately in metadata.granted_grant_id.
+//   - Operation    = lifecycleOp (e.g. "authority_request_created").
+//   - Workspace    = first entry of req.WorkspaceScope when present, else "".
+//   - Metadata     = {request_id, status, requesting_actor_type,
+//     requesting_actor_id, routing_capability,
+//     routing_principal_type/_id, requested_access,
+//     duration_seconds, task_id, audience_type, audience_id,
+//     resolution_reason, granted_grant_id (when set),
+//     expires_at (RFC3339)}, merged with caller-supplied extras.
+//
+// `lifecycleOp` is the operation string used both as the event's Operation
+// column and as a metadata.request_lifecycle_event hint. Callers should pass
+// the canonical constant strings ("authority_request_created",
+// "authority_request_approved", "authority_request_denied",
+// "authority_request_expired", "authority_request_cancelled").
+func (a *AuditLogger) LogAuthorityRequestEvent(
+	ctx context.Context,
+	req *AuthorityRequest,
+	lifecycleOp string,
+	actor models.Identity,
+	extras map[string]interface{},
+) {
+	if a.shared == nil || req == nil {
+		return
+	}
+
+	actorType, actorID := "", ""
+	if ref := actor.PrincipalRef(); !ref.IsZero() {
+		actorType = PrincipalTypeForModel(ref.Type)
+		actorID = ref.ID
+	}
+
+	subjectType, subjectID := "", ""
+	if ref := req.RequestingActor.PrincipalRef(); !ref.IsZero() {
+		subjectType = PrincipalTypeForModel(ref.Type)
+		subjectID = ref.ID
+	}
+
+	workspace := ""
+	if len(req.WorkspaceScope) > 0 {
+		workspace = req.WorkspaceScope[0]
+	}
+
+	metadata := make(map[string]interface{}, 16+len(extras))
+	for k, v := range extras {
+		metadata[k] = v
+	}
+	metadata["request_lifecycle_event"] = lifecycleOp
+	metadata["request_id"] = req.RequestID
+	metadata["status"] = string(req.Status)
+	if subjectType != "" {
+		metadata["requesting_actor_type"] = subjectType
+		metadata["requesting_actor_id"] = subjectID
+	}
+	if req.RoutingTarget.Capability != "" {
+		metadata["routing_capability"] = req.RoutingTarget.Capability
+	}
+	if req.RoutingTarget.Principal != nil {
+		if ref := req.RoutingTarget.Principal.PrincipalRef(); !ref.IsZero() {
+			metadata["routing_principal_type"] = PrincipalTypeForModel(ref.Type)
+			metadata["routing_principal_id"] = ref.ID
+		}
+	}
+	metadata["requested_access"] = req.RequestedAccess
+	metadata["duration_seconds"] = req.DurationSeconds
+	if req.TaskID != "" {
+		metadata["task_id"] = req.TaskID
+	}
+	if req.AudienceType != "" {
+		metadata["audience_type"] = req.AudienceType
+	}
+	if req.AudienceID != "" {
+		metadata["audience_id"] = req.AudienceID
+	}
+	if req.ResolutionReason != "" {
+		metadata["resolution_reason"] = req.ResolutionReason
+	}
+	if req.GrantedGrantID != "" {
+		metadata["granted_grant_id"] = req.GrantedGrantID
+	}
+	if !req.ExpiresAt.IsZero() {
+		metadata["expires_at"] = req.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+
+	event := &audit.AuditEvent{
+		Timestamp:     time.Now(),
+		EventType:     audit.EventTypeAuthorityRequest,
+		ActorType:     actorType,
+		ActorID:       actorID,
+		SubjectType:   subjectType,
+		SubjectID:     subjectID,
+		AuthorityMode: audit.AuthorityModeDirect,
+		Operation:     lifecycleOp,
+		Workspace:     workspace,
+		GatewayID:     a.gatewayID,
+		Success:       true,
+		Metadata:      metadata,
+		Source:        audit.SourceGateway,
+	}
+	a.shared.LogEvent(ctx, event)
+}
+
 // entryToEvent translates an ACL AuditLogEntry into an audit.AuditEvent
 // suitable for the shared writer. Field shape matches the INSERT that the
 // old acl.aclEntryBatchWriter performed (event_type='authorization',

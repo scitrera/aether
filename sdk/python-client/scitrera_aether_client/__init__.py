@@ -24,6 +24,9 @@ from .client import (
     AuditSubmitResponse,
     # WaitSpec convenience helper
     make_wait_spec,
+    # Authority-request helpers (Phase 2 Stage C)
+    make_authority_request_routing,
+    make_authority_request_resource_scope_entry,
 )
 
 from .client_async import (
@@ -221,6 +224,10 @@ __all__ = (
 
     # WaitSpec convenience helper
     'make_wait_spec',
+
+    # Authority-request helpers (Phase 2 Stage C)
+    'make_authority_request_routing',
+    'make_authority_request_resource_scope_entry',
 
     # Message type constants
     'MESSAGE_TYPE_UNSPECIFIED',

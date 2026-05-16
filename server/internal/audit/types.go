@@ -26,6 +26,14 @@ const (
 	// rows. The acl.AuditLogger.entryToEvent translation sets this value.
 	EventTypeAuthorization = "authorization"
 	EventTypeCustom        = "custom" // Custom event type for principal-submitted events
+	// EventTypeAuthorityRequest is the canonical event_type string used for
+	// authority-request lifecycle events (Phase 2 "sudo" handshake). Distinct
+	// from EventTypeAuthorization (the ACL decision row) and from
+	// EventTypeACL (typed ACL admin operations): authority requests are a
+	// separate audit lane that captures the request/approve/deny flow that
+	// later results in a standard authority-grant exchange. Emitted by the
+	// gateway-side lifecycle service in Phase 2 Stage B.
+	EventTypeAuthorityRequest = "authority_request"
 )
 
 // Source values distinguish gateway-emitted audit rows from principal-submitted ones.
@@ -86,6 +94,12 @@ const (
 	OpAuthorityGrantRenew    = "authority_grant_renew"
 	OpAuthorityGrantRevoke   = "authority_grant_revoke"
 	OpAuthorityIntermediary  = "authority_intermediary_reroot" // a service principal exercised capability/authority_intermediary to mint a task grant that re-roots from the original subject (preserving principal chain) instead of failing at hop exhaustion
+
+	// Authority-request lifecycle operations (Phase 2 Stage C). Used both as
+	// the audit Operation column value and as the operation argument to
+	// ACL CheckAccess when the gateway gates a request resolver against
+	// the routing capability.
+	OpAuthorityRequestResolve = "authority_request_resolve"
 
 	// Admin operations
 	OpAdminStateQuery        = "admin_state_query"
@@ -211,6 +225,10 @@ func DefaultConfig() *Config {
 			EventTypeAdmin,
 			EventTypeACL,
 			EventTypeAuthorization,
+			// EventTypeAuthorityRequest is enabled by default so the
+			// Phase 2 lifecycle service's audit events flow through the
+			// shared writer without the platform having to opt in.
+			EventTypeAuthorityRequest,
 		},
 		VerbosityLevel: DefaultVerbosityLevel,
 		BatchSize:      DefaultBatchSize,
@@ -247,7 +265,7 @@ func ValidateEventType(eventType string) error {
 	switch eventType {
 	case EventTypeConnection, EventTypeAuth, EventTypeMessage,
 		EventTypeKV, EventTypeTask, EventTypeAdmin, EventTypeACL,
-		EventTypeAuthorization, EventTypeCustom:
+		EventTypeAuthorization, EventTypeCustom, EventTypeAuthorityRequest:
 		return nil
 	default:
 		return ErrInvalidEventType

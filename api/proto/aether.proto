@@ -42,6 +42,7 @@ message UpstreamMessage {
     ResolveAuthorityRequest resolve_authority_request = 27;
     ConnectionStatusRequest connection_status_request = 28;
     SubmitAuditEventRequest submit_audit_event = 29;
+    AuthorityRequestOperation authority_request_op = 30;
   }
 }
 
@@ -79,6 +80,8 @@ message DownstreamMessage {
     ConnectionStatusResponse connection_status_response = 30;
     AuthorityGrantRevocation authority_grant_revocation = 31;
     SubmitAuditEventResponse submit_audit_event_response = 32;
+    AuthorityRequestOperationResponse authority_request_response = 33;
+    AuthorityRequestEvent authority_request_event = 34;
   }
 }
 
@@ -1795,6 +1798,186 @@ message AuthorityGrantRevocation {
   string reason = 3;
   int64 revoked_at = 4;
   bool cascade = 5;        // True if revocation cascaded from parent
+}
+
+// ============================================================================
+// Authority Request Lifecycle ("sudo") Messages
+// ----------------------------------------------------------------------------
+// Phase 2 of the enterprise-agentic-fabric upgrade. A running task asks for
+// elevated authority via CREATE; an approver resolves it via RESOLVE; on
+// APPROVE the gateway mints a standard AuthorityGrant through the existing
+// CreateAuthorityGrant path. No parallel grant type exists.
+//
+// Names intentionally do NOT collide with the legacy `ResolveAuthorityRequest`
+// message above (~line 2389), which is the query/validate-an-existing-grant
+// flow, not the approval handshake.
+// ============================================================================
+
+// AuthorityRequestStatus tracks the lifecycle of an AuthorityRequest.
+enum AuthorityRequestStatus {
+  AUTHORITY_REQUEST_STATUS_UNSPECIFIED = 0;
+  AUTHORITY_REQUEST_STATUS_PENDING = 1;   // awaiting an approver
+  AUTHORITY_REQUEST_STATUS_APPROVED = 2;  // resolved approved -- a grant has been minted
+  AUTHORITY_REQUEST_STATUS_DENIED = 3;    // resolved denied with reason
+  AUTHORITY_REQUEST_STATUS_EXPIRED = 4;   // never resolved within the timeout window
+  AUTHORITY_REQUEST_STATUS_CANCELLED = 5; // requester withdrew / task was cancelled
+}
+
+// AuthorityRequestRoutingTarget tells the gateway which approvers to notify
+// for a given request. Exactly one of (principal, capability) is populated.
+message AuthorityRequestRoutingTarget {
+  // Specific approver principal/role/group identity.
+  // Examples: "user::alice", "role::ops-on-call", "ag::tenant::policy::v1".
+  PrincipalRef principal = 1;
+  // Or a capability-gate string: "capability/approve/<action>".
+  // Any actor holding this gate via existing ACL CheckAccess may resolve.
+  string capability = 2;
+}
+
+// AuthorityRequestResourceScopeEntry mirrors ACLAuthorityGrantResourceScopeEntry
+// shape (the existing entry type used in grant exchange).
+message AuthorityRequestResourceScopeEntry {
+  string resource_type = 1;
+  repeated string patterns = 2;
+}
+
+// AuthorityRequest is a typed "sudo" -- a running task asks for elevated
+// authority and parks until an approver resolves it. Approval mints a
+// standard AuthorityGrant via the existing CreateAuthorityGrant path; no
+// parallel grant type exists.
+message AuthorityRequest {
+  string request_id = 1;
+  AuthorityRequestStatus status = 2;
+  // Authority being requested ("desired grant").
+  PrincipalRef requesting_actor = 3;   // who needs the elevated authority
+  PrincipalRef target_subject = 4;     // empty = same as requesting_actor (the common case)
+  repeated string desired_workspace_scope = 5;
+  repeated AuthorityRequestResourceScopeEntry desired_resource_scope = 6;
+  repeated string desired_operation_scope = 7;
+  AccessLevel requested_access_level = 8;
+  int64 requested_duration_seconds = 9;
+  string audience_type = 10;
+  string audience_id = 11;
+  // Routing: who can approve. Required.
+  AuthorityRequestRoutingTarget routing_target = 12;
+  // Free-text narrative for the audit trail.
+  string reason = 13;
+  // Optional: the task that is paused on this request (for waker integration).
+  string task_id = 14;
+  // Optional metadata propagated to the resulting grant.
+  map<string, string> metadata = 15;
+  // Lifecycle timestamps (unix seconds).
+  int64 created_at = 16;
+  int64 expires_at = 17;        // server-set; computed from requested_duration_seconds capped by policy
+  int64 resolved_at = 18;       // 0 until status moves out of PENDING
+  // Populated on APPROVED.
+  string granted_grant_id = 19;
+  PrincipalRef resolved_by = 20;
+  // Populated on DENIED / EXPIRED / CANCELLED.
+  string resolution_reason = 21;
+}
+
+// CreateAuthorityRequestPayload is the body of an AuthorityRequestOperation
+// with op=CREATE -- the request the task submits when asking for elevation.
+message CreateAuthorityRequestPayload {
+  PrincipalRef requesting_actor = 1;   // empty = caller's session identity
+  PrincipalRef target_subject = 2;     // empty = requesting_actor
+  repeated string desired_workspace_scope = 3;
+  repeated AuthorityRequestResourceScopeEntry desired_resource_scope = 4;
+  repeated string desired_operation_scope = 5;
+  AccessLevel requested_access_level = 6;
+  int64 requested_duration_seconds = 7;
+  string audience_type = 8;
+  string audience_id = 9;
+  AuthorityRequestRoutingTarget routing_target = 10;
+  string reason = 11;
+  string task_id = 12;
+  map<string, string> metadata = 13;
+}
+
+// ResolveAuthorityRequestPayload is the body of an AuthorityRequestOperation
+// with op=RESOLVE -- the approver's verdict. (Note: distinct from the
+// top-level `ResolveAuthorityRequest` message used for grant validation.)
+message ResolveAuthorityRequestPayload {
+  enum Decision {
+    DECISION_UNSPECIFIED = 0;
+    APPROVE = 1;
+    DENY = 2;
+  }
+  Decision decision = 1;
+  // Optional approver-side scope refinements; populated when the approver wants
+  // to grant a NARROWER authority than requested. Empty fields fall back to
+  // the request's values. (Approvers cannot broaden; the gateway intersects.)
+  repeated string granted_workspace_scope = 2;
+  repeated AuthorityRequestResourceScopeEntry granted_resource_scope = 3;
+  repeated string granted_operation_scope = 4;
+  AccessLevel granted_access_level = 5;
+  int64 granted_duration_seconds = 6;
+  string reason = 7;                   // human-readable reason (esp. for DENY)
+  bool may_delegate = 8;
+  int32 remaining_hops = 9;
+}
+
+// AuthorityRequestListFilter narrows LIST_PENDING results.
+message AuthorityRequestListFilter {
+  AuthorityRequestStatus status = 1;   // 0 = no filter
+  string workspace = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+  // Caller-declared capability gates: requests whose routing_capability matches
+  // any entry are eligible. Stage C does not auto-discover the caller's full
+  // held-capability set; the caller must enumerate which gates it is
+  // representing when asking "what requests can I resolve?".
+  repeated string matching_capabilities = 5;
+}
+
+// AuthorityRequestOperation is the upstream op for the request lifecycle.
+message AuthorityRequestOperation {
+  enum OpType {
+    AUTHORITY_REQUEST_OP_UNSPECIFIED = 0;
+    CREATE = 1;        // submit a new request, payload = CreateAuthorityRequestPayload
+    GET = 2;           // fetch by request_id
+    LIST_PENDING = 3;  // list pending requests targeting the caller (principal or capability)
+    RESOLVE = 4;       // approve or deny, payload = ResolveAuthorityRequestPayload
+    CANCEL = 5;        // requester withdraws an outstanding request
+  }
+  OpType op = 1;
+  string request_id = 2;          // for GET / RESOLVE / CANCEL; CREATE leaves empty (server-assigned)
+  CreateAuthorityRequestPayload create = 3;
+  ResolveAuthorityRequestPayload resolve = 4;
+  AuthorityRequestListFilter list_filter = 5;
+  string client_request_id = 6;   // correlation
+  // Generic free-text reason; primarily used by CANCEL to record why the
+  // requester withdrew. CREATE/RESOLVE carry their own reason inside their
+  // respective payloads.
+  string reason = 7;
+}
+
+// AuthorityRequestOperationResponse is the downstream reply for any
+// AuthorityRequestOperation.
+message AuthorityRequestOperationResponse {
+  bool success = 1;
+  string error = 2;
+  string client_request_id = 3;
+  AuthorityRequest request = 4;            // populated for GET / CREATE / RESOLVE / CANCEL
+  repeated AuthorityRequest requests = 5;  // populated for LIST_PENDING
+  int32 total_count = 6;
+}
+
+// AuthorityRequestEvent is the downstream notification published when a
+// request transitions. Used by Stage C (subscription/waker integration).
+message AuthorityRequestEvent {
+  enum EventType {
+    AUTHORITY_REQUEST_EVENT_UNSPECIFIED = 0;
+    AUTHORITY_REQUEST_EVENT_CREATED = 1;
+    AUTHORITY_REQUEST_EVENT_APPROVED = 2;
+    AUTHORITY_REQUEST_EVENT_DENIED = 3;
+    AUTHORITY_REQUEST_EVENT_EXPIRED = 4;
+    AUTHORITY_REQUEST_EVENT_CANCELLED = 5;
+  }
+  EventType event_type = 1;
+  AuthorityRequest request = 2;
+  int64 emitted_at = 3;
 }
 
 // ============================================================================

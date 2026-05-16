@@ -61,6 +61,32 @@ type (
 	// validate that a persisted authority grant is being used by the
 	// bound audience (session, task, agent, or service).
 	GrantAudienceContext = legacy.GrantAudienceContext
+
+	// AuthorityRequest is a Phase 2 "sudo" request row: a running task
+	// asks for elevated authority and parks until an approver resolves
+	// it. Approval mints a standard AuthorityGrant via the existing
+	// CreateAuthorityGrant path; no parallel grant type exists.
+	AuthorityRequest = legacy.AuthorityRequest
+	// AuthorityRequestStatus is the lifecycle state of an AuthorityRequest.
+	AuthorityRequestStatus = legacy.AuthorityRequestStatus
+	// AuthorityRequestRoutingTarget addresses approvers for a request.
+	// Exactly one of (Principal, Capability) is populated.
+	AuthorityRequestRoutingTarget = legacy.AuthorityRequestRoutingTarget
+	// AuthorityRequestFilter narrows ListAuthorityRequests results.
+	AuthorityRequestFilter = legacy.AuthorityRequestFilter
+	// ApproveDecision carries the approver's refinements when accepting an
+	// authority request. Empty / zero fields mean "inherit from the
+	// request" (no narrowing).
+	ApproveDecision = legacy.ApproveDecision
+)
+
+// AuthorityRequest lifecycle status constants.
+const (
+	AuthorityRequestStatusPending   = legacy.AuthorityRequestStatusPending
+	AuthorityRequestStatusApproved  = legacy.AuthorityRequestStatusApproved
+	AuthorityRequestStatusDenied    = legacy.AuthorityRequestStatusDenied
+	AuthorityRequestStatusExpired   = legacy.AuthorityRequestStatusExpired
+	AuthorityRequestStatusCancelled = legacy.AuthorityRequestStatusCancelled
 )
 
 // Access levels — hierarchical permission scale used by acl_rules.access_level
@@ -174,6 +200,10 @@ var (
 	ErrAuthorityGrantOperationDenied  = legacy.ErrAuthorityGrantOperationDenied
 	ErrAuthorityGrantWorkspaceDenied  = legacy.ErrAuthorityGrantWorkspaceDenied
 	ErrAuthorityGrantResourceDenied   = legacy.ErrAuthorityGrantResourceDenied
+	// Phase 2 authority-request lifecycle sentinels.
+	ErrAuthorityRequestNotFound        = legacy.ErrAuthorityRequestNotFound
+	ErrAuthorityRequestAlreadyResolved = legacy.ErrAuthorityRequestAlreadyResolved
+	ErrAuthorityRequestInvalid         = legacy.ErrAuthorityRequestInvalid
 )
 
 // Helpers — re-exported so callers can build canonical ACL inputs without

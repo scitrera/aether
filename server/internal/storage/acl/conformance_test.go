@@ -106,6 +106,11 @@ func TestStoreConformance(t *testing.T) {
 				}
 				runCleanupExpiredRules(t, store)
 			})
+			t.Run("AuthorityRequestLifecycle", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runAuthorityRequestLifecycle(t, store)
+			})
 		})
 	}
 }
@@ -304,6 +309,174 @@ func runAuthorityGrantLifecycle(t *testing.T, store acl.Store) {
 	}
 }
 
+// runAuthorityRequestLifecycle is the Phase 2 Stage A sanity test for the
+// AuthorityRequest CRUD surface: it exercises Create / Get / List / Resolve
+// (approved + idempotent-already-resolved) / Expire round trips against
+// each backend, mirroring runAuthorityGrantLifecycle.
+//
+// The test stays narrow on purpose -- the gateway-side lifecycle service
+// (Stage B) layers approvers, audit emission, and waker integration on top
+// of these primitives. Anything beyond row-level persistence is tested
+// there, not here.
+func runAuthorityRequestLifecycle(t *testing.T, store acl.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	requester := models.Identity{
+		Type:           models.PrincipalTask,
+		Workspace:      uniqueID(t, "ws-areq"),
+		Implementation: "demo-task",
+		Specifier:      uniqueID(t, "task-areq"),
+	}
+	approver := models.Identity{
+		Type: models.PrincipalUser,
+		ID:   uniqueID(t, "approver"),
+	}
+	now := time.Now()
+
+	req := &acl.AuthorityRequest{
+		RequestingActor: requester,
+		WorkspaceScope:  []string{requester.Workspace},
+		ResourceScope:   map[string][]string{"workspace": {requester.Workspace}},
+		OperationScope:  []string{"manage"},
+		RequestedAccess: acl.AccessManage,
+		DurationSeconds: 3600,
+		AudienceType:    acl.AuthorityAudienceTask,
+		AudienceID:      requester.CanonicalPrincipalID(),
+		RoutingTarget: acl.AuthorityRequestRoutingTarget{
+			Capability: "capability/approve/conformance",
+		},
+		Reason:    "phase2 stage a sanity test",
+		TaskID:    uniqueID(t, "task-id-areq"),
+		Metadata:  map[string]interface{}{"hint": "round-trip"},
+		CreatedAt: now,
+		ExpiresAt: now.Add(15 * time.Minute),
+	}
+
+	if err := store.CreateAuthorityRequest(ctx, req); err != nil {
+		t.Fatalf("CreateAuthorityRequest: %v", err)
+	}
+	if req.RequestID == "" {
+		t.Fatalf("CreateAuthorityRequest left RequestID empty")
+	}
+	if req.Status != acl.AuthorityRequestStatusPending {
+		t.Fatalf("CreateAuthorityRequest set status=%q, want pending", req.Status)
+	}
+
+	got, err := store.GetAuthorityRequest(ctx, req.RequestID)
+	if err != nil {
+		t.Fatalf("GetAuthorityRequest: %v", err)
+	}
+	if got.RequestID != req.RequestID {
+		t.Fatalf("GetAuthorityRequest: got request_id %q, want %q", got.RequestID, req.RequestID)
+	}
+	if got.Status != acl.AuthorityRequestStatusPending {
+		t.Fatalf("GetAuthorityRequest: status=%q, want pending", got.Status)
+	}
+	if got.RoutingTarget.Capability != "capability/approve/conformance" {
+		t.Fatalf("GetAuthorityRequest: routing capability %q, want %q",
+			got.RoutingTarget.Capability, "capability/approve/conformance")
+	}
+	if got.RequestedAccess != acl.AccessManage {
+		t.Fatalf("GetAuthorityRequest: requested_access=%d, want %d",
+			got.RequestedAccess, acl.AccessManage)
+	}
+	if got.TaskID != req.TaskID {
+		t.Fatalf("GetAuthorityRequest: task_id=%q, want %q", got.TaskID, req.TaskID)
+	}
+
+	// List by capability gate.
+	listed, err := store.ListAuthorityRequests(ctx, acl.AuthorityRequestFilter{
+		Status:               acl.AuthorityRequestStatusPending,
+		ResolverCapabilities: []string{"capability/approve/conformance"},
+	})
+	if err != nil {
+		t.Fatalf("ListAuthorityRequests: %v", err)
+	}
+	if !containsAuthorityRequest(listed, req.RequestID) {
+		t.Fatalf("ListAuthorityRequests did not include request %q (got %d rows)",
+			req.RequestID, len(listed))
+	}
+
+	// Resolve as APPROVED with a placeholder grant id (Stage B will sequence
+	// the real CreateAuthorityGrant before calling this method).
+	grantID := uniqueID(t, "grant")
+	resolvedAt := time.Now()
+	if err := store.ResolveAuthorityRequest(ctx, req.RequestID,
+		acl.AuthorityRequestStatusApproved, approver,
+		"approved by conformance test", grantID, resolvedAt,
+	); err != nil {
+		t.Fatalf("ResolveAuthorityRequest: %v", err)
+	}
+
+	resolved, err := store.GetAuthorityRequest(ctx, req.RequestID)
+	if err != nil {
+		t.Fatalf("GetAuthorityRequest after resolve: %v", err)
+	}
+	if resolved.Status != acl.AuthorityRequestStatusApproved {
+		t.Fatalf("after resolve: status=%q, want approved", resolved.Status)
+	}
+	if resolved.GrantedGrantID != grantID {
+		t.Fatalf("after resolve: granted_grant_id=%q, want %q",
+			resolved.GrantedGrantID, grantID)
+	}
+	if resolved.ResolvedAt == nil {
+		t.Fatalf("after resolve: ResolvedAt is nil")
+	}
+
+	// Idempotency: re-resolving a terminal row must return
+	// ErrAuthorityRequestAlreadyResolved.
+	err = store.ResolveAuthorityRequest(ctx, req.RequestID,
+		acl.AuthorityRequestStatusDenied, approver,
+		"second resolve", "", time.Now(),
+	)
+	if err != acl.ErrAuthorityRequestAlreadyResolved {
+		t.Fatalf("re-resolve: expected ErrAuthorityRequestAlreadyResolved, got %v", err)
+	}
+
+	// ExpireAuthorityRequests on a fresh PENDING row that's already in the
+	// past should sweep it.
+	expiringRequester := models.Identity{
+		Type:           models.PrincipalTask,
+		Workspace:      uniqueID(t, "ws-expire"),
+		Implementation: "demo-task",
+		Specifier:      uniqueID(t, "task-expire"),
+	}
+	pastExpiry := time.Now().Add(-1 * time.Minute)
+	expiring := &acl.AuthorityRequest{
+		RequestingActor: expiringRequester,
+		WorkspaceScope:  []string{expiringRequester.Workspace},
+		OperationScope:  []string{"read"},
+		RequestedAccess: acl.AccessRead,
+		DurationSeconds: 60,
+		RoutingTarget: acl.AuthorityRequestRoutingTarget{
+			Capability: "capability/approve/sweep-test",
+		},
+		Reason:    "expire sweep test",
+		CreatedAt: time.Now().Add(-2 * time.Minute),
+		ExpiresAt: pastExpiry,
+	}
+	if err := store.CreateAuthorityRequest(ctx, expiring); err != nil {
+		t.Fatalf("CreateAuthorityRequest (expiring): %v", err)
+	}
+
+	swept, err := store.ExpireAuthorityRequests(ctx, time.Now(), 10)
+	if err != nil {
+		t.Fatalf("ExpireAuthorityRequests: %v", err)
+	}
+	if !containsAuthorityRequest(swept, expiring.RequestID) {
+		t.Fatalf("ExpireAuthorityRequests did not include %q (got %d rows)",
+			expiring.RequestID, len(swept))
+	}
+	postSweep, err := store.GetAuthorityRequest(ctx, expiring.RequestID)
+	if err != nil {
+		t.Fatalf("GetAuthorityRequest after expire: %v", err)
+	}
+	if postSweep.Status != acl.AuthorityRequestStatusExpired {
+		t.Fatalf("after expire: status=%q, want expired", postSweep.Status)
+	}
+}
+
 // runCleanupExpiredRules verifies GrantAccess with a past ExpiresAt is
 // removed by CleanupExpiredRules. Skipped on backends without the
 // cleanup_expired_acl_rules() PG stored function (sqlite Stage 1).
@@ -490,6 +663,15 @@ func containsRule(rules []*acl.Rule, resourceID string) bool {
 func containsGrant(grants []*acl.AuthorityGrant, grantID string) bool {
 	for _, g := range grants {
 		if g.GrantID == grantID {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAuthorityRequest(requests []*acl.AuthorityRequest, requestID string) bool {
+	for _, r := range requests {
+		if r.RequestID == requestID {
 			return true
 		}
 	}

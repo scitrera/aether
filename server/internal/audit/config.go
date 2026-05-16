@@ -33,6 +33,7 @@ func LoadConfigFromEnv() *Config {
 				EventTypeAdmin,
 				EventTypeACL,
 				EventTypeAuthorization,
+				EventTypeAuthorityRequest,
 			}
 		} else {
 			types := strings.Split(v, ",")

@@ -166,6 +166,77 @@ type Store interface {
 	FindVisibleDerivedGrant(ctx context.Context, parentGrantID string, target models.Identity, audienceType, audienceID string) (*AuthorityGrant, error)
 
 	// =====================================================================
+	// Authority requests (Phase 2 "sudo" lifecycle)
+	// =====================================================================
+	//
+	// AuthorityRequest is a typed request/approve/deny handshake on top of
+	// the existing CreateAuthorityGrant machinery. On approve the lifecycle
+	// service mints a standard AuthorityGrant via CreateAuthorityGrant and
+	// records the new grant_id on the request row. Storage owns row
+	// persistence and the idempotent terminal-state guard; the gateway-side
+	// lifecycle service (Stage B) is responsible for sequencing the grant
+	// mint and emitting events.
+
+	// CreateAuthorityRequest persists a new request in PENDING state.
+	// Returns ErrAuthorityRequestInvalid when the input is incomplete
+	// (empty routing target, non-positive duration, missing actor).
+	CreateAuthorityRequest(ctx context.Context, req *AuthorityRequest) error
+
+	// GetAuthorityRequest fetches a single row by request_id. Returns
+	// ErrAuthorityRequestNotFound when no row matches.
+	GetAuthorityRequest(ctx context.Context, requestID string) (*AuthorityRequest, error)
+
+	// ListAuthorityRequests returns rows matching the filter, ordered by
+	// created_at DESC. Resolver-targeting filters (ResolverPrincipal /
+	// ResolverCapabilities) are ORed: a request matches when either
+	// principal addressing or capability gate addresses the caller.
+	ListAuthorityRequests(ctx context.Context, filter AuthorityRequestFilter) ([]*AuthorityRequest, error)
+
+	// ResolveAuthorityRequest atomically flips a PENDING row to a terminal
+	// state (APPROVED, DENIED, or CANCELLED). Returns
+	// ErrAuthorityRequestAlreadyResolved when the row is already terminal
+	// (idempotent on retries — callers should re-read to recover the
+	// existing resolution).
+	ResolveAuthorityRequest(ctx context.Context, requestID string, status AuthorityRequestStatus, resolvedBy models.Identity, resolutionReason string, grantedGrantID string, resolvedAt time.Time) error
+
+	// CancelAuthorityRequest withdraws a pending request. Convenience
+	// wrapper around ResolveAuthorityRequest with status=cancelled.
+	CancelAuthorityRequest(ctx context.Context, requestID string, reason string) error
+
+	// ExpireAuthorityRequests atomically flips PENDING rows whose
+	// expires_at <= `before` to EXPIRED, returning the affected rows so
+	// the caller can wake any waiting tasks and emit events. `limit`
+	// bounds the scan (pass 0 for unlimited).
+	ExpireAuthorityRequests(ctx context.Context, before time.Time, limit int) ([]*AuthorityRequest, error)
+
+	// SubmitAuthorityRequest is the Stage B lifecycle entry-point for
+	// submitting a new request. Validates the payload, fills in
+	// server-managed fields, persists via CreateAuthorityRequest, and emits
+	// an audit event. See internal/acl/authority_request_lifecycle.go for
+	// the canonical doc.
+	SubmitAuthorityRequest(ctx context.Context, req *AuthorityRequest) (*AuthorityRequest, error)
+
+	// ApproveAuthorityRequest mints an AuthorityGrant and flips the request
+	// row to APPROVED. Returns the resolved row (with GrantedGrantID set)
+	// or an error. Both backends share the same intersection / clamping
+	// semantics defined in internal/acl/authority_request_lifecycle.go.
+	ApproveAuthorityRequest(ctx context.Context, requestID string, approverIdentity models.Identity, decision *ApproveDecision) (*AuthorityRequest, error)
+
+	// DenyAuthorityRequest flips a PENDING row to DENIED with the supplied
+	// reason. Emits an audit event.
+	DenyAuthorityRequest(ctx context.Context, requestID string, approverIdentity models.Identity, reason string) (*AuthorityRequest, error)
+
+	// CancelOpenAuthorityRequest is the lifecycle wrapper around the
+	// storage-layer CancelAuthorityRequest; emits an audit event in
+	// addition to flipping PENDING → CANCELLED.
+	CancelOpenAuthorityRequest(ctx context.Context, requestID string, reason string) (*AuthorityRequest, error)
+
+	// SweepExpiredAuthorityRequests is the background-task entry-point: it
+	// invokes ExpireAuthorityRequests then emits an audit event per swept
+	// row. `limit` bounds the scan (pass 0 for unlimited).
+	SweepExpiredAuthorityRequests(ctx context.Context, now time.Time, limit int) ([]*AuthorityRequest, error)
+
+	// =====================================================================
 	// Grants / Rules (direct ACL rule CRUD on acl_rules)
 	// =====================================================================
 

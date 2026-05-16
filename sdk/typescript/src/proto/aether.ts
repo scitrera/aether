@@ -49,6 +49,14 @@ export interface ProtoGrpcType {
       AuthorityGrantResponse: MessageTypeDefinition
       AuthorityGrantRevocation: MessageTypeDefinition
       AuthorityIdentity: MessageTypeDefinition
+      AuthorityRequest: MessageTypeDefinition
+      AuthorityRequestEvent: MessageTypeDefinition
+      AuthorityRequestListFilter: MessageTypeDefinition
+      AuthorityRequestOperation: MessageTypeDefinition
+      AuthorityRequestOperationResponse: MessageTypeDefinition
+      AuthorityRequestResourceScopeEntry: MessageTypeDefinition
+      AuthorityRequestRoutingTarget: MessageTypeDefinition
+      AuthorityRequestStatus: EnumTypeDefinition
       AuthoritySpan: MessageTypeDefinition
       AuthorizationContext: MessageTypeDefinition
       BridgeIdentity: MessageTypeDefinition
@@ -60,6 +68,7 @@ export interface ProtoGrpcType {
       ConnectionInfo: MessageTypeDefinition
       ConnectionStatusRequest: MessageTypeDefinition
       ConnectionStatusResponse: MessageTypeDefinition
+      CreateAuthorityRequestPayload: MessageTypeDefinition
       CreateTaskRequest: MessageTypeDefinition
       CreateTaskResponse: MessageTypeDefinition
       DownstreamMessage: MessageTypeDefinition
@@ -95,6 +104,7 @@ export interface ProtoGrpcType {
       ProxyHttpRequest: MessageTypeDefinition
       ProxyHttpResponse: MessageTypeDefinition
       ResolveAuthorityRequest: MessageTypeDefinition
+      ResolveAuthorityRequestPayload: MessageTypeDefinition
       ResolveAuthorityResponse: MessageTypeDefinition
       ResolvedAuthority: MessageTypeDefinition
       ResolvedAuthorityInfo: MessageTypeDefinition

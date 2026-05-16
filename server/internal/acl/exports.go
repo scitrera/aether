@@ -33,3 +33,20 @@ func GlobMatch(name, pattern string) bool {
 func GlobMatchPath(pattern, name string) (bool, error) {
 	return path.Match(pattern, name)
 }
+
+// IntersectStringSlices returns the intersection of `requested` and `granted`.
+// When `granted` is empty the helper returns `requested` (inherit-on-empty).
+// Out-of-scope additions in `granted` are silently dropped — approvers cannot
+// broaden a request. Exported so the sqlite-native lifecycle in
+// internal/storage/acl/sqlite can share the same intersection semantics.
+func IntersectStringSlices(requested, granted []string) []string {
+	return intersectStringSlices(requested, granted)
+}
+
+// IntersectResourceScope returns the intersection of two map[string][]string
+// scopes. Per-key the inner slices are intersected; keys missing from
+// `granted` (when `granted` is non-empty) are dropped. Empty `granted`
+// inherits `requested` verbatim. Exported for the sqlite-native lifecycle.
+func IntersectResourceScope(requested, granted map[string][]string) map[string][]string {
+	return intersectResourceScope(requested, granted)
+}

@@ -397,10 +397,17 @@ func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVR
 
 		// Task waker: scans WAITING_*/HIBERNATED rows for satisfied wake
 		// conditions (dependency reconciliation, scheduled wake, timeout
-		// -> FAILED). Multi-gateway safe — every transition goes through
-		// the TaskAssignmentService state-machine ops, which no-op on
-		// terminal tasks. Sibling of the disconnect reaper.
-		waker := orchestration.NewTaskWaker(s.taskStore, s.orchestration.TaskService)
+		// -> FAILED, and Phase 2 Stage C authority-request reconciliation).
+		// Multi-gateway safe — every transition goes through the
+		// TaskAssignmentService state-machine ops, which no-op on terminal
+		// tasks. Sibling of the disconnect reaper.
+		//
+		// `s.acl` is passed in as the AuthorityRequestSource: both the
+		// postgres impl (legacy.Service via the storage alias) and the
+		// aetherlite sqlite impl satisfy the narrow interface the waker
+		// needs (GetAuthorityRequest + SweepExpiredAuthorityRequests). The
+		// waker tolerates a nil source — it just skips the authority axis.
+		waker := orchestration.NewTaskWaker(s.taskStore, s.orchestration.TaskService, s.acl)
 		go waker.Run(bgCtx)
 	} else {
 		logging.Logger.Debug().Msg("task waker not started: taskStore or orchestration.TaskService unavailable")
