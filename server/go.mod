@@ -5,6 +5,11 @@ go 1.25.10
 require (
 	github.com/MicahParks/keyfunc/v3 v3.8.0
 	github.com/alicebob/miniredis/v2 v2.37.0
+	github.com/aws/aws-sdk-go-v2 v1.41.7
+	github.com/aws/aws-sdk-go-v2/config v1.32.17
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
+	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.18
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/casbin/casbin/v3 v3.10.0
 	github.com/coreos/go-oidc/v3 v3.18.0
@@ -14,7 +19,10 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/lib/pq v1.10.9
+	github.com/nats-io/nats-server/v2 v2.14.0
+	github.com/nats-io/nats.go v1.52.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 	github.com/rabbitmq/amqp091-go v1.10.0
@@ -22,8 +30,8 @@ require (
 	github.com/redis/go-redis/v9 v9.17.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/zerolog v1.34.0
-	github.com/scitrera/aether/api v0.1.60
-	github.com/scitrera/aether/sdk/go v0.1.60
+	github.com/scitrera/aether/api v0.2.0
+	github.com/scitrera/aether/sdk/go v0.2.0
 	github.com/stretchr/testify v1.11.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0
@@ -51,12 +59,8 @@ replace github.com/scitrera/aether/sdk/go => ../sdk/go
 require (
 	github.com/MicahParks/jwkset v0.11.0 // indirect
 	github.com/antithesishq/antithesis-sdk-go v0.7.0-default-no-op // indirect
-	github.com/aws/aws-sdk-go-v2 v1.41.7 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.10 // indirect
-	github.com/aws/aws-sdk-go-v2/config v1.32.17 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.16 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.23 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.18 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.23 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.23 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.24 // indirect
@@ -64,7 +68,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.15 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.23 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.23 // indirect
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.11 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.17 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.21 // indirect
@@ -92,8 +95,6 @@ require (
 	github.com/minio/highwayhash v1.0.4 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/nats-io/jwt/v2 v2.8.1 // indirect
-	github.com/nats-io/nats-server/v2 v2.14.0 // indirect
-	github.com/nats-io/nats.go v1.52.0 // indirect
 	github.com/nats-io/nkeys v0.4.15 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect

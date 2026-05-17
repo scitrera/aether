@@ -334,6 +334,156 @@ func TestJetStreamRouter_SubscribeExclusiveFromTimestamp(t *testing.T) {
 	}
 }
 
+// TestJetStreamRouter_DurableConsumer_WithAetherIdentityName_Succeeds verifies
+// that a consumerName containing characters NATS rejects in durable names
+// (':', '@') is escaped via natscodec.EscapeForConsumerName and the subscribe
+// + publish round-trip succeeds. Regression test for the bug where raw aether
+// identity strings caused `nats: invalid consumer name` errors.
+func TestJetStreamRouter_DurableConsumer_WithAetherIdentityName_Succeeds(t *testing.T) {
+	r, cleanup := newTestJetStreamRouter(t)
+	defer cleanup()
+
+	const topic = "us::user-42::win-1"
+	const consumerName = "us::user@example.com::win-1"
+	const payload = "identity-name-payload"
+
+	received := make(chan []byte, 1)
+	unsub, err := r.SubscribeExclusive(topic, consumerName, func(data []byte) {
+		cp := make([]byte, len(data))
+		copy(cp, data)
+		received <- cp
+	})
+	if err != nil {
+		t.Fatalf("SubscribeExclusive with aether-identity consumer name: %v", err)
+	}
+	defer unsub()
+
+	time.Sleep(50 * time.Millisecond)
+
+	if err := r.Publish(context.Background(), topic, []byte(payload)); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	select {
+	case got := <-received:
+		if string(got) != payload {
+			t.Errorf("payload mismatch: got %q, want %q", got, payload)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for message via durable consumer with aether identity name")
+	}
+}
+
+// TestJetStreamRouter_DurableConsumer_ReconnectResumes proves that an escaped
+// aether-identity consumerName is stable across reconnects: publishing batch1
+// + draining all of it + publishing batch2 + re-subscribing with the SAME
+// raw aether consumer name must deliver only batch2 (i.e. JetStream stored
+// the consumer offset under the same escaped durable name).
+func TestJetStreamRouter_DurableConsumer_ReconnectResumes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping reconnect-resume test in -short mode")
+	}
+
+	r, cleanup := newTestJetStreamRouter(t)
+	defer cleanup()
+
+	const topic = "tu::ws::com.example.task::reconnect-test"
+	// Aether identity form — contains ':' which NATS rejects as a raw consumer
+	// name. The router must escape it deterministically so reconnects map to
+	// the same durable consumer.
+	const consumerName = "us::a::b"
+	const batch1 = 2
+	const batch2 = 3
+
+	ctx := context.Background()
+
+	// Publish batch1 BEFORE subscribing.
+	for i := 0; i < batch1; i++ {
+		if err := r.Publish(ctx, topic, []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+			t.Fatalf("Publish batch1[%d]: %v", i, err)
+		}
+	}
+
+	// First subscription: drain all of batch1, then cancel.
+	var (
+		mu1       sync.Mutex
+		received1 []string
+		done1     = make(chan struct{})
+		once1     sync.Once
+	)
+	unsub1, err := r.SubscribeExclusive(topic, consumerName, func(data []byte) {
+		mu1.Lock()
+		defer mu1.Unlock()
+		received1 = append(received1, string(data))
+		if len(received1) >= batch1 {
+			once1.Do(func() { close(done1) })
+		}
+	})
+	if err != nil {
+		t.Fatalf("first SubscribeExclusive: %v", err)
+	}
+
+	select {
+	case <-done1:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for first batch (2 messages)")
+	}
+	// Give NATS a moment to record the ack offset before cancelling.
+	time.Sleep(150 * time.Millisecond)
+	unsub1()
+
+	// Publish batch2 AFTER the first subscription is cancelled.
+	for i := batch1; i < batch1+batch2; i++ {
+		if err := r.Publish(ctx, topic, []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+			t.Fatalf("Publish batch2[%d]: %v", i, err)
+		}
+	}
+
+	// Second subscription: same consumerName → must resume and only see batch2.
+	var (
+		mu2       sync.Mutex
+		received2 []string
+		done2     = make(chan struct{})
+		once2     sync.Once
+	)
+	unsub2, err := r.SubscribeExclusive(topic, consumerName, func(data []byte) {
+		mu2.Lock()
+		defer mu2.Unlock()
+		received2 = append(received2, string(data))
+		if len(received2) >= batch2 {
+			once2.Do(func() { close(done2) })
+		}
+	})
+	if err != nil {
+		t.Fatalf("second SubscribeExclusive: %v", err)
+	}
+	defer unsub2()
+
+	select {
+	case <-done2:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for remaining messages on reconnect")
+	}
+
+	// Briefly wait to ensure no extra (already-acked) messages leak in.
+	time.Sleep(200 * time.Millisecond)
+
+	mu2.Lock()
+	got2 := append([]string(nil), received2...)
+	mu2.Unlock()
+
+	if len(got2) != batch2 {
+		t.Errorf("reconnect received %d messages, want exactly %d", len(got2), batch2)
+	}
+	// None of the already-acked batch1 messages must reappear on the resumed
+	// durable consumer — that's the offset-resumption guarantee.
+	for _, m := range got2 {
+		if m == "msg-0" || m == "msg-1" {
+			t.Errorf("reconnect delivered already-acked message %q — offset NOT resumed", m)
+		}
+	}
+}
+
 // TestJetStreamRouter_UnknownPrefix_Error verifies that publishing to a topic
 // with no registered stream prefix returns an error.
 func TestJetStreamRouter_UnknownPrefix_Error(t *testing.T) {

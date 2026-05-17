@@ -29,6 +29,7 @@ var knownStreams = map[string]struct {
 	"gu":     {name: "gu", subjects: []string{"gu.>"}},
 	"pg":     {name: "pg", subjects: []string{"pg.>"}},
 	"br":     {name: "br", subjects: []string{"br.>"}},
+	"sv":     {name: "sv", subjects: []string{"sv.>"}},
 	"event":  {name: "event", subjects: []string{"event.>"}},
 	"metric": {name: "metric", subjects: []string{"metric.>"}},
 	"tk":     {name: "tk", subjects: []string{"tk.>"}},
@@ -199,8 +200,15 @@ func (r *JetStreamRouter) subscribeDurable(topic, consumerName string, deliverPo
 		return nil, fmt.Errorf("jetstream_router: subscribe exclusive %q: %w", topic, err)
 	}
 
+	// Aether-form consumerName may carry characters NATS rejects in a durable
+	// consumer name (e.g. "us::user@example.com::win-1"). Escape it through
+	// the consumer-name namespace so it becomes a valid NATS identifier.
+	// The escape is deterministic, so the same input always maps to the same
+	// durable name — preserving offset resumption across reconnects.
+	natsConsumerName := natscodec.EscapeForConsumerName(consumerName)
+
 	cfg := jetstream.ConsumerConfig{
-		Durable:       consumerName,
+		Durable:       natsConsumerName,
 		FilterSubject: subject,
 		DeliverPolicy: deliverPolicy,
 		AckPolicy:     jetstream.AckExplicitPolicy,

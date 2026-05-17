@@ -127,8 +127,14 @@ func (p *JetStreamTaskEventPublisher) subscribeDurable(
 	// The "tk" stream name matches the prefix by the knownStreams convention.
 	streamName := "tk"
 
+	// consumerName may be an aether identity or subscription_id carrying
+	// characters NATS rejects in a durable consumer name. Escape through the
+	// consumer-name namespace; the escape is deterministic so reconnects with
+	// the same input resume the same durable consumer.
+	natsConsumerName := natscodec.EscapeForConsumerName(consumerName)
+
 	cfg := jetstream.ConsumerConfig{
-		Durable:       consumerName,
+		Durable:       natsConsumerName,
 		FilterSubject: filterSubject,
 		DeliverPolicy: jetstream.DeliverNewPolicy,
 		AckPolicy:     jetstream.AckExplicitPolicy,

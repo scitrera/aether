@@ -336,6 +336,53 @@ func TestJetStreamKV_DecrementIf_RespectsFloor(t *testing.T) {
 	}
 }
 
+// TestJetStreamKV_KeyWithColons_Roundtrip verifies that user-supplied keys
+// containing characters NATS KV rejects (':', '@') round-trip through Set/Get
+// without provoking `nats: invalid key` errors. Regression test for the bug
+// that motivated the natscodec charset-aware refactor.
+func TestJetStreamKV_KeyWithColons_Roundtrip(t *testing.T) {
+	s := newTestJSStore(t)
+	ctx := context.Background()
+	agent := jsAgent()
+
+	cases := []struct {
+		name string
+		key  string
+		val  string
+	}{
+		{"ratelimit-ip", "ratelimit:ip:aether", "ip-payload"},
+		{"enc-ti", "enc:ti:botwinick:ikv:billing:openmeter", "token-payload"},
+		{"workspace-metadata", "workspace:default:metadata", `{"display":"Default"}`},
+		{"user-email", "user@example.com", "u-payload"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := s.Set(ctx, agent, kv.ScopeGlobal, c.key, c.val, "", "", 0); err != nil {
+				t.Fatalf("Set %q: %v", c.key, err)
+			}
+			got, err := s.Get(ctx, agent, kv.ScopeGlobal, c.key, "", "")
+			if err != nil {
+				t.Fatalf("Get %q: %v", c.key, err)
+			}
+			if got != c.val {
+				t.Errorf("Get %q: got %q, want %q", c.key, got, c.val)
+			}
+			// List should also surface the original (decoded) user-visible key.
+			items, err := s.List(ctx, agent, kv.ScopeGlobal, "", "")
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if items[c.key] != c.val {
+				t.Errorf("List did not surface key %q: items=%v", c.key, items)
+			}
+			// Cleanup so the next subtest sees a clean namespace.
+			if err := s.Delete(ctx, agent, kv.ScopeGlobal, c.key, "", ""); err != nil {
+				t.Fatalf("Delete %q: %v", c.key, err)
+			}
+		})
+	}
+}
+
 // TestJetStreamKV_ScopeIsolation writes a key in global scope and confirms
 // it does not appear when listing workspace scope.
 func TestJetStreamKV_ScopeIsolation(t *testing.T) {

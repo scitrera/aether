@@ -12,6 +12,14 @@ import (
 // and individual tokens must not be bare * or >.
 var natsSubjectRe = regexp.MustCompile(`^[A-Za-z0-9_\-\.]+$`)
 
+// kvKeyRe matches a legal NATS JetStream KV key (per nats.go validator):
+// A-Z a-z 0-9 - _ = . /
+var kvKeyRe = regexp.MustCompile(`^[A-Za-z0-9_\-=./]*$`)
+
+// consumerNameRe matches a legal NATS JetStream durable consumer name:
+// A-Z a-z 0-9 - _
+var consumerNameRe = regexp.MustCompile(`^[A-Za-z0-9_\-]*$`)
+
 func isNATSLegal(s string) bool {
 	if !natsSubjectRe.MatchString(s) {
 		return false
@@ -104,7 +112,7 @@ func TestWildcardEscaping(t *testing.T) {
 }
 
 // alphabet used for property testing — includes chars that must be escaped and some safe ones
-const propAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.*> \t-:"
+const propAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.*> \t-:@+&?=/"
 
 func randomTopic(rng *rand.Rand) string {
 	// Build 1-4 tokens separated by ::
@@ -176,6 +184,207 @@ func TestLiteralEscapeSequenceNotDoubleEscaped(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Per-namespace escape variants
+// ---------------------------------------------------------------------------
+
+func TestEscapeForSubject_RoundTrip(t *testing.T) {
+	cases := []string{
+		"plain",
+		"with-dash",
+		"under_score",
+		"colon:in:middle",
+		"at@domain",
+		"plus+sign",
+		"amp&ersand",
+		"question?mark",
+		"dot.between",
+		"star*",
+		"gt>",
+		"space here",
+		"tab\there",
+		"café日本語",
+		"",
+		"_",
+		"__",
+	}
+	for _, s := range cases {
+		t.Run(s, func(t *testing.T) {
+			esc := EscapeForSubject(s)
+			if !natsSubjectRe.MatchString(esc) && esc != "" {
+				t.Errorf("EscapeForSubject(%q) = %q is not a legal NATS subject token", s, esc)
+			}
+			got := Unescape(esc)
+			if got != s {
+				t.Errorf("round-trip: input=%q esc=%q recovered=%q", s, esc, got)
+			}
+		})
+	}
+}
+
+func TestEscapeForKVKey_AllowsKVSafeChars(t *testing.T) {
+	// Chars that MUST pass through unescaped for KV keys.
+	passthrough := "abcXYZ0189-/=" // alphanumeric, -, /, =
+	got := EscapeForKVKey(passthrough)
+	if got != passthrough {
+		t.Errorf("KV-safe chars should pass through unchanged: got %q want %q", got, passthrough)
+	}
+
+	// Chars that MUST be escaped even though they may be ASCII.
+	mustEscape := map[byte]string{
+		':': "_3A_",
+		'@': "_40_",
+		'+': "_2B_",
+		'.': "_2E_", // even though NATS KV allows '.', we reserve it
+		'_': "_5F_", // bijectivity sentinel
+	}
+	for c, want := range mustEscape {
+		in := string([]byte{c})
+		got := EscapeForKVKey(in)
+		if got != want {
+			t.Errorf("EscapeForKVKey(%q) = %q want %q", in, got, want)
+		}
+	}
+}
+
+func TestEscapeForConsumerName_StrictlyAlphanumDashUnderscore(t *testing.T) {
+	// Pass-through set: alphanumeric, '-'. Underscore appears in output only as
+	// part of escape sequences (e.g. _5F_).
+	passthrough := "abcDEF0189-"
+	got := EscapeForConsumerName(passthrough)
+	if got != passthrough {
+		t.Errorf("consumer-name safe chars should pass through: got %q want %q", got, passthrough)
+	}
+
+	// '.' '=' '/' '_' ':' '@' all escape.
+	for _, c := range []byte{'.', '=', '/', '_', ':', '@'} {
+		in := string([]byte{c})
+		out := EscapeForConsumerName(in)
+		if out == in {
+			t.Errorf("EscapeForConsumerName(%q) must escape, got identity %q", in, out)
+		}
+		if !consumerNameRe.MatchString(out) {
+			t.Errorf("EscapeForConsumerName(%q) = %q is not consumer-name legal", in, out)
+		}
+	}
+}
+
+// Property test: any bijective round-trip across all three variants.
+func TestEscapeForX_BijectiveProperty(t *testing.T) {
+	rng := rand.New(rand.NewSource(99))
+	const propAlphabet = "abcXYZ012-_:.=/@*+&?> \t\n\x01"
+	for i := 0; i < 1000; i++ {
+		n := rng.Intn(20)
+		buf := make([]byte, n)
+		for j := range buf {
+			buf[j] = propAlphabet[rng.Intn(len(propAlphabet))]
+		}
+		in := string(buf)
+
+		if got := Unescape(EscapeForSubject(in)); got != in {
+			t.Errorf("subject: in=%q recovered=%q", in, got)
+		}
+		if got := Unescape(EscapeForKVKey(in)); got != in {
+			t.Errorf("kvkey: in=%q recovered=%q", in, got)
+		}
+		if got := Unescape(EscapeForConsumerName(in)); got != in {
+			t.Errorf("consumer: in=%q recovered=%q", in, got)
+		}
+	}
+}
+
+func TestEscapeForKVKey_OutputPassesNATSCharset(t *testing.T) {
+	rng := rand.New(rand.NewSource(7))
+	const alphabet = "abcXYZ012-_:.=/@*+&?> \t\x01日café"
+	for i := 0; i < 500; i++ {
+		buf := make([]byte, rng.Intn(20))
+		for j := range buf {
+			buf[j] = alphabet[rng.Intn(len(alphabet))]
+		}
+		in := string(buf)
+		out := EscapeForKVKey(in)
+		if !kvKeyRe.MatchString(out) {
+			t.Errorf("EscapeForKVKey(%q) = %q violates KV charset", in, out)
+		}
+	}
+}
+
+func TestEscapeForConsumerName_OutputPassesNATSCharset(t *testing.T) {
+	rng := rand.New(rand.NewSource(8))
+	const alphabet = "abcXYZ012-_:.=/@*+&?> \t\x01日café"
+	for i := 0; i < 500; i++ {
+		buf := make([]byte, rng.Intn(20))
+		for j := range buf {
+			buf[j] = alphabet[rng.Intn(len(alphabet))]
+		}
+		in := string(buf)
+		out := EscapeForConsumerName(in)
+		if !consumerNameRe.MatchString(out) {
+			t.Errorf("EscapeForConsumerName(%q) = %q violates consumer-name charset", in, out)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// LRU cache
+// ---------------------------------------------------------------------------
+
+func TestCache_HitOnRepeatedInput(t *testing.T) {
+	// Use a small dedicated cache so we don't interfere with other tests.
+	SetCacheCapacity(8)
+	t.Cleanup(func() { SetCacheCapacity(defaultCacheCapacity) })
+
+	subjectCache.resetStats()
+	kvKeyCache.resetStats()
+	consumerNameCache.resetStats()
+
+	in := "us::user@example.com::win-1"
+
+	// First call: miss + add.
+	_ = EscapeForSubject(in)
+	_ = EscapeForKVKey(in)
+	_ = EscapeForConsumerName(in)
+
+	// Second call: must hit cache in each shard.
+	_ = EscapeForSubject(in)
+	_ = EscapeForKVKey(in)
+	_ = EscapeForConsumerName(in)
+
+	for name, c := range map[string]*escapeCache{
+		"subject":      subjectCache,
+		"kvKey":        kvKeyCache,
+		"consumerName": consumerNameCache,
+	} {
+		hits, misses := c.stats()
+		if hits < 1 {
+			t.Errorf("%s cache: expected >= 1 hit, got hits=%d misses=%d", name, hits, misses)
+		}
+		if misses < 1 {
+			t.Errorf("%s cache: expected >= 1 miss, got hits=%d misses=%d", name, hits, misses)
+		}
+	}
+}
+
+func TestSetCacheCapacity_Resets(t *testing.T) {
+	SetCacheCapacity(4)
+	// Fill beyond capacity.
+	for i := 0; i < 10; i++ {
+		_ = EscapeForSubject(fmt.Sprintf("input-%d", i))
+	}
+	// Reset to default — cache should be empty.
+	SetCacheCapacity(defaultCacheCapacity)
+	subjectCache.resetStats()
+	_ = EscapeForSubject("input-0")
+	_, misses := subjectCache.stats()
+	if misses == 0 {
+		t.Errorf("expected cache miss after SetCacheCapacity reset, got %d misses", misses)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Benchmarks
+// ---------------------------------------------------------------------------
+
 func BenchmarkToNATSSubject(b *testing.B) {
 	topic := "ag::ws::com.example.chat-agent::v2"
 	b.ResetTimer()
@@ -183,6 +392,54 @@ func BenchmarkToNATSSubject(b *testing.B) {
 		_ = ToNATSSubject(topic)
 	}
 	b.ReportMetric(float64(b.N), "iters")
+}
+
+func BenchmarkEscapeForSubject_Cached(b *testing.B) {
+	in := "us::user@example.com::win-1"
+	// Warm the cache.
+	_ = EscapeForSubject(in)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = EscapeForSubject(in)
+	}
+}
+
+func BenchmarkEscapeForSubject_Uncached(b *testing.B) {
+	// Use unique inputs each iteration to defeat the cache.
+	// Pre-generate strings to keep the benchmark loop free of allocation noise.
+	inputs := make([]string, b.N)
+	for i := 0; i < b.N; i++ {
+		inputs[i] = fmt.Sprintf("us::user-%d@example.com::win-%d", i, i)
+	}
+	// Use a tiny cache so each entry is immediately evicted.
+	SetCacheCapacity(1)
+	b.Cleanup(func() { SetCacheCapacity(defaultCacheCapacity) })
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = EscapeForSubject(inputs[i])
+	}
+}
+
+func BenchmarkEscapeForConsumerName_Cached(b *testing.B) {
+	in := "us::user@example.com::win-1"
+	_ = EscapeForConsumerName(in)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = EscapeForConsumerName(in)
+	}
+}
+
+func BenchmarkEscapeForConsumerName_Uncached(b *testing.B) {
+	inputs := make([]string, b.N)
+	for i := 0; i < b.N; i++ {
+		inputs[i] = fmt.Sprintf("us::user-%d::win-%d", i, i)
+	}
+	SetCacheCapacity(1)
+	b.Cleanup(func() { SetCacheCapacity(defaultCacheCapacity) })
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = EscapeForConsumerName(inputs[i])
+	}
 }
 
 func ExampleToNATSSubject() {

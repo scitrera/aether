@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/scitrera/aether/internal/router/natscodec"
 	"github.com/scitrera/aether/pkg/models"
 )
 
@@ -72,96 +73,29 @@ func NewJetStreamKVStore(ctx context.Context, js jetstream.JetStream) (*JetStrea
 }
 
 // ---- key encoding ----
-
-// encodeSegment escapes an arbitrary string so it is safe as a NATS KV key
-// segment. Allowed chars in the output: alphanumeric, -, =, plus the
-// _XX_ hex escape sequences. The intra-key separator "." is reserved
-// (handled by the caller via strings.Join), so any literal "." in the
-// input is escaped to "_2E_".
 //
-// Empty segments are represented as a bare "_". A bare "_" is impossible
-// in encoded output because the encoder always escapes a real "_" to
-// "_5F_", so the sentinel is unambiguous.
-func encodeSegment(s string) string {
+// Per-segment escaping is delegated to natscodec.EscapeForKVKey, which uses a
+// shared LRU cache and a single source of truth for byte classification across
+// all NATS namespaces (subject, KV key, durable consumer name). The empty
+// segment "_" sentinel convention is local to this package — natscodec does
+// not need to know about it. A bare "_" is unambiguous because natscodec
+// always escapes a real "_" byte to "_5F_".
+
+// encodeKVSegment wraps natscodec.EscapeForKVKey with the empty-segment
+// sentinel used by this package's namespace layout.
+func encodeKVSegment(s string) string {
 	if s == "" {
 		return "_"
 	}
-	var b strings.Builder
-	b.Grow(len(s) + 4)
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c == '_':
-			b.WriteString("_5F_")
-		case c == '/':
-			b.WriteString("_2F_")
-		case c == '.':
-			b.WriteString("_2E_")
-		case c == '*':
-			b.WriteString("_2A_")
-		case c == '>':
-			b.WriteString("_3E_")
-		case c == ' ':
-			b.WriteString("_20_")
-		case c < 0x20 || c > 0x7E:
-			b.WriteByte('_')
-			b.WriteByte(hexNibbleJS(c >> 4))
-			b.WriteByte(hexNibbleJS(c & 0x0F))
-			b.WriteByte('_')
-		default:
-			b.WriteByte(c)
-		}
-	}
-	return b.String()
+	return natscodec.EscapeForKVKey(s)
 }
 
-// decodeSegment reverses encodeSegment.
-func decodeSegment(s string) string {
+// decodeKVSegment reverses encodeKVSegment.
+func decodeKVSegment(s string) string {
 	if s == "_" {
 		return ""
 	}
-	if !strings.Contains(s, "_") {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	i := 0
-	for i < len(s) {
-		if s[i] == '_' && i+3 < len(s) {
-			j := i + 1
-			if isHexJS(s[j]) && isHexJS(s[j+1]) && s[j+2] == '_' {
-				val := (hexValJS(s[j]) << 4) | hexValJS(s[j+1])
-				b.WriteByte(val)
-				i += 4
-				continue
-			}
-		}
-		b.WriteByte(s[i])
-		i++
-	}
-	return b.String()
-}
-
-func hexNibbleJS(v byte) byte {
-	if v < 10 {
-		return '0' + v
-	}
-	return 'A' + v - 10
-}
-
-func isHexJS(c byte) bool {
-	return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')
-}
-
-func hexValJS(c byte) byte {
-	switch {
-	case c >= '0' && c <= '9':
-		return c - '0'
-	case c >= 'A' && c <= 'F':
-		return c - 'A' + 10
-	default:
-		return c - 'a' + 10
-	}
+	return natscodec.Unescape(s)
 }
 
 // scopeTag maps a KVScope to a short NATS-safe tag.
@@ -184,7 +118,7 @@ func scopeTag(scope KVScope) string {
 	case ScopeUserWorkspace:
 		return "uw"
 	default:
-		return encodeSegment(string(scope))
+		return encodeKVSegment(string(scope))
 	}
 }
 
@@ -193,11 +127,11 @@ func scopeTag(scope KVScope) string {
 func buildJSKey(agent models.Identity, scope KVScope, userID, workspace, key string) string {
 	return strings.Join([]string{
 		scopeTag(scope),
-		encodeSegment(agent.Implementation),
-		encodeSegment(agent.Specifier),
-		encodeSegment(userID),
-		encodeSegment(workspace),
-		encodeSegment(key),
+		encodeKVSegment(agent.Implementation),
+		encodeKVSegment(agent.Specifier),
+		encodeKVSegment(userID),
+		encodeKVSegment(workspace),
+		encodeKVSegment(key),
 	}, jsSeparator)
 }
 
@@ -206,10 +140,10 @@ func buildJSKey(agent models.Identity, scope KVScope, userID, workspace, key str
 func buildJSPrefix(agent models.Identity, scope KVScope, userID, workspace string) string {
 	return strings.Join([]string{
 		scopeTag(scope),
-		encodeSegment(agent.Implementation),
-		encodeSegment(agent.Specifier),
-		encodeSegment(userID),
-		encodeSegment(workspace),
+		encodeKVSegment(agent.Implementation),
+		encodeKVSegment(agent.Specifier),
+		encodeKVSegment(userID),
+		encodeKVSegment(workspace),
 	}, jsSeparator) + jsSeparator
 }
 
@@ -220,7 +154,7 @@ func extractUserKey(fullKey, prefix string) (string, bool) {
 		return "", false
 	}
 	encoded := fullKey[len(prefix):]
-	return decodeSegment(encoded), true
+	return decodeKVSegment(encoded), true
 }
 
 // ---- KVReadWriter implementation ----
@@ -597,7 +531,7 @@ func parseCounter(b []byte) (int64, error) {
 // On Get/List we check the wall clock and treat stale entries as not-found.
 // This is soft expiry: the entry stays in the bucket until GC or bucket TTL
 // removes it. The "@" prefix is a sentinel that cannot appear from
-// encodeSegment (which would encode "@" as "_40_") so it is unambiguous.
+// encodeKVSegment (which would encode "@" as "_40_") so it is unambiguous.
 
 const ttlPrefix = "@"
 

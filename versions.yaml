@@ -38,6 +38,7 @@ project_rules:
     - { type: gomod_require, path: server/go.mod, args: [ github.com/scitrera/aether/api ] }
     - { type: gomod_require, path: server/go.mod, args: [ github.com/scitrera/aether/sdk/go ] }
   aether-sdk-go:
+    - { type: go_version,    path: sdk/go/aether/version.go }
     - { type: gomod_require, path: sdk/go/go.mod, args: [ github.com/scitrera/aether/api ] }
   aether-sdk-python:
     - { type: pyproject, path: sdk/python-client/pyproject.toml }
