@@ -205,5 +205,10 @@ type connectionState struct {
 	sessionCancel    context.CancelFunc
 	associatedTaskID string
 	resumed          bool
-	client           *ClientSession
+	// Session-lifetime fields populated by acquireSessionLock from the
+	// session registry's ConnectResult, so the connect handler can echo
+	// them on ConnectionAck and the connection-established audit row.
+	initialConnectionUnixMs int64
+	reconnectionCount       int32
+	client                  *ClientSession
 }

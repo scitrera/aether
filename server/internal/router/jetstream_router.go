@@ -4,6 +4,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -222,9 +223,21 @@ func (r *JetStreamRouter) subscribeDurable(topic, consumerName string, deliverPo
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cons, err := r.js.CreateOrUpdateConsumer(ctx, streamName, cfg)
+	// Prefer resuming an existing durable consumer over recreating one.
+	// NATS rejects updates that mutate DeliverPolicy/OptStartTime on an
+	// existing consumer (api error 10012: "start time can not be updated"),
+	// so passing the cold-start timestamp to CreateOrUpdate fails on the
+	// second connect for pool-dispatched agents. The existing consumer's
+	// stored offset is what we want anyway.
+	cons, err := r.js.Consumer(ctx, streamName, natsConsumerName)
 	if err != nil {
-		return nil, fmt.Errorf("jetstream_router: create durable consumer %q on %q: %w", consumerName, topic, err)
+		if !errors.Is(err, jetstream.ErrConsumerNotFound) {
+			return nil, fmt.Errorf("jetstream_router: lookup durable consumer %q on %q: %w", consumerName, topic, err)
+		}
+		cons, err = r.js.CreateOrUpdateConsumer(ctx, streamName, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("jetstream_router: create durable consumer %q on %q: %w", consumerName, topic, err)
+		}
 	}
 
 	msgCtx, err := cons.Messages()

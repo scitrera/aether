@@ -179,7 +179,11 @@ func (s *JetStreamKVStore) Get(
 		}
 		return "", fmt.Errorf("failed to get key %s: %w", key, err)
 	}
-	return string(entry.Value()), nil
+	val, _, expired := decodeStoredValue(string(entry.Value()), time.Now())
+	if expired {
+		return "", fmt.Errorf("%w: %s", ErrKeyNotFound, key)
+	}
+	return val, nil
 }
 
 // Set stores a value. When ttl > 0 a per-entry TTL is requested via Put
@@ -330,7 +334,7 @@ func (s *JetStreamKVStore) ListPaginated(
 			}
 			return nil, fmt.Errorf("failed to get value for %s: %w", fullKey, err)
 		}
-		val, expired := decodeStoredValue(string(entry.Value()), now)
+		val, _, expired := decodeStoredValue(string(entry.Value()), now)
 		if expired {
 			continue
 		}
@@ -421,7 +425,7 @@ func (s *JetStreamKVStore) DecrementIf(
 // Parameters:
 //   - delta: amount to add (negative for decrement).
 //   - guard: ceiling (isCeiling=true) or floor (isCeiling=false); ignored when neither.
-//   - useGuard: when false the guard check is skipped (plain Increment/Decrement).
+//   - isCeiling: when false the guard check is skipped (plain Increment/Decrement).
 func (s *JetStreamKVStore) casCounter(
 	ctx context.Context,
 	agent models.Identity,
@@ -436,8 +440,8 @@ func (s *JetStreamKVStore) casCounter(
 	fullKey := buildJSKey(agent, scope, userID, workspace, key)
 
 	for attempt := 0; attempt < jsMaxCASAttempts; attempt++ {
-		// Read current value + revision.
 		var current int64
+		var expireAt int64 // non-zero means entry had a TTL wrapper
 		var rev uint64
 
 		entry, err := s.kv.Get(ctx, fullKey)
@@ -445,15 +449,24 @@ func (s *JetStreamKVStore) casCounter(
 			if !errors.Is(err, jetstream.ErrKeyNotFound) {
 				return 0, false, fmt.Errorf("casCounter get %s: %w", key, err)
 			}
-			// Key absent → treat as 0, revision 0 (Create path).
-			current = 0
-			rev = 0
+			// Key absent → start at 0, no TTL, Create path (rev==0).
 		} else {
-			current, err = parseCounter(entry.Value())
-			if err != nil {
-				return 0, false, fmt.Errorf("casCounter parse %s: %w", key, err)
-			}
 			rev = entry.Revision()
+			decoded, exp, expired := decodeStoredValue(string(entry.Value()), time.Now())
+			if expired {
+				// Logically expired: start fresh at 0, drop the TTL window.
+				// Caller must Set-with-TTL again to open a new rate window.
+				current = 0
+				expireAt = 0
+			} else {
+				expireAt = exp
+				if decoded != "" {
+					current, err = strconv.ParseInt(strings.TrimSpace(decoded), 10, 64)
+					if err != nil {
+						return 0, false, fmt.Errorf("casCounter parse %s: %w", key, err)
+					}
+				}
+			}
 		}
 
 		proposed := current + delta
@@ -466,8 +479,15 @@ func (s *JetStreamKVStore) casCounter(
 			return current, false, nil
 		}
 
-		// Attempt CAS write.
-		encoded := []byte(strconv.FormatInt(proposed, 10))
+		// Re-encode. Preserve the existing TTL window when present and not
+		// expired — Increment/Decrement must NOT reset the expiry deadline.
+		var encoded []byte
+		if expireAt > 0 {
+			encoded = []byte(fmt.Sprintf("%s%d:%d", ttlPrefix, expireAt, proposed))
+		} else {
+			encoded = []byte(strconv.FormatInt(proposed, 10))
+		}
+
 		var writeErr error
 		if rev == 0 {
 			// No entry yet — use Create for atomic first-write.
@@ -514,14 +534,6 @@ func isRevisionConflict(err error) bool {
 	return strings.Contains(msg, "wrong last sequence") || strings.Contains(msg, "key exists")
 }
 
-// parseCounter parses a decimal int64 from raw stored bytes.
-func parseCounter(b []byte) (int64, error) {
-	if len(b) == 0 {
-		return 0, nil
-	}
-	return strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
-}
-
 // ---- soft TTL encoding ----
 //
 // NATS KV (v2.10 / nats.go v1.52) supports only bucket-level MaxAge, not
@@ -543,23 +555,27 @@ func encodeStoredValue(value string, ttl time.Duration) string {
 	return fmt.Sprintf("%s%d:%s", ttlPrefix, expireAt, value)
 }
 
-// decodeStoredValue decodes a stored value. Returns (value, expired).
-func decodeStoredValue(raw string, now time.Time) (string, bool) {
+// decodeStoredValue decodes a stored value. Returns (plainValue, expireUnixNano, expired).
+//
+// expireUnixNano==0 means no TTL wrapper was present.
+// expired==true means a wrapper was present but the entry is stale; callers
+// should treat the entry as not-found. When expired==true, plainValue is "".
+func decodeStoredValue(raw string, now time.Time) (string, int64, bool) {
 	if !strings.HasPrefix(raw, ttlPrefix) {
-		return raw, false
+		return raw, 0, false
 	}
 	rest := raw[len(ttlPrefix):]
 	idx := strings.IndexByte(rest, ':')
 	if idx < 0 {
-		return raw, false // malformed, treat as no-TTL
+		return raw, 0, false // malformed, treat as no-TTL
 	}
 	expireNano, err := strconv.ParseInt(rest[:idx], 10, 64)
 	if err != nil {
-		return raw, false
+		return raw, 0, false
 	}
 	expireAt := time.Unix(0, expireNano)
 	if now.After(expireAt) {
-		return "", true // expired
+		return "", expireNano, true // expired
 	}
-	return rest[idx+1:], false
+	return rest[idx+1:], expireNano, false
 }

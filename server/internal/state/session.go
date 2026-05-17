@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -24,8 +25,15 @@ const tunnelPinKeyPrefix = "tunnel-pin:"
 // caller and the assigned service instance.
 const requestPinKeyPrefix = "request-pin:"
 
+// lockMetaKeyPrefix is the Redis key prefix for the JSON sidecar that
+// holds session-lifetime + client-version metadata for each identity
+// lock. Written atomically with the lock value via Lua; TTL matches the
+// lock so it dies with the connection.
+const lockMetaKeyPrefix = "lockmeta:"
+
 func tunnelPinKey(tunnelID string) string   { return tunnelPinKeyPrefix + tunnelID }
 func requestPinKey(requestID string) string { return requestPinKeyPrefix + requestID }
+func lockMetaKey(identity string) string    { return lockMetaKeyPrefix + identity }
 
 const (
 	// LockTTL is the time-to-live for session locks.
@@ -66,59 +74,139 @@ func (s *SessionRegistry) AcquireLock(ctx context.Context, identity models.Ident
 	return success, nil
 }
 
+// luaAcquireOrResumeLock atomically acquires/resumes/force-takes the
+// identity lock and updates the sidecar `lockmeta:{identity}` JSON
+// holding session-lifetime + client-version metadata.
+//
+// KEYS[1] = lock:{identity}, KEYS[2] = lockmeta:{identity}
+// ARGV[1] = new sessionID
+// ARGV[2] = lock TTL ms
+// ARGV[3] = resume sessionID (or "")
+// ARGV[4] = force-takeover threshold ms
+// ARGV[5] = now (unix ms)
+// ARGV[6] = client meta JSON; the script merges lifetime fields and
+//
+//	re-writes the sidecar.
+//
+// Returns: {acquired, resumed, forced, initial_connection_unix_ms,
+//
+//	reconnection_count}.
+var luaAcquireOrResumeLock = redis.NewScript(`
+	local current = redis.call("get", KEYS[1])
+	local now = tonumber(ARGV[5])
+	local function writeFresh()
+		local meta = cjson.decode(ARGV[6])
+		meta.session_id = ARGV[1]
+		meta.acquired_unix_ms = now
+		meta.initial_connection_unix_ms = now
+		meta.reconnection_count = 0
+		redis.call("set", KEYS[1], ARGV[1], "PX", ARGV[2])
+		redis.call("set", KEYS[2], cjson.encode(meta), "PX", ARGV[2])
+		return {now, 0}
+	end
+	if current == false then
+		local r = writeFresh()
+		return {1, 0, 0, r[1], r[2]}
+	end
+	if ARGV[3] ~= "" and current == ARGV[3] then
+		-- Resume: preserve initial connect time, bump reconnect count.
+		local initial = now
+		local count = 1
+		local existing = redis.call("get", KEYS[2])
+		if existing ~= false then
+			local ok, cur = pcall(cjson.decode, existing)
+			if ok and type(cur) == "table" then
+				if cur.initial_connection_unix_ms then initial = cur.initial_connection_unix_ms end
+				if cur.reconnection_count then count = cur.reconnection_count + 1 end
+			end
+		end
+		local meta = cjson.decode(ARGV[6])
+		meta.session_id = ARGV[1]
+		meta.acquired_unix_ms = now
+		meta.initial_connection_unix_ms = initial
+		meta.reconnection_count = count
+		redis.call("set", KEYS[1], ARGV[1], "PX", ARGV[2])
+		redis.call("set", KEYS[2], cjson.encode(meta), "PX", ARGV[2])
+		return {1, 1, 0, initial, count}
+	end
+	local ttl = redis.call("pttl", KEYS[1])
+	if ttl > 0 and ttl < tonumber(ARGV[4]) then
+		-- Force takeover: treat as fresh (prior holder considered dead).
+		local r = writeFresh()
+		return {1, 0, 1, r[1], r[2]}
+	end
+	return {0, 0, 0, 0, 0}
+`)
+
 // AcquireOrResumeLock attempts to acquire a lock, allowing takeover if the existing
 // lock has a matching session ID (reconnection scenario) or if the existing lock
 // appears to be held by a dead client (TTL decayed below forceTakeoverThresholdMs).
 //
-// Returns (acquired, resumed, forced, error) where:
-//   - acquired: true if lock was acquired (fresh, resumed, or forced)
-//   - resumed: true if this was a session resume (existing lock had matching sessionID)
-//   - forced: true if the lock was force-taken from a dead holder (TTL below threshold)
-func (s *SessionRegistry) AcquireOrResumeLock(ctx context.Context, identity models.Identity, sessionID, resumeSessionID string, forceTakeoverThresholdMs int64) (bool, bool, bool, error) {
-	key := fmt.Sprintf("lock:%s", identity.String())
+// Returns ConnectResult containing acquisition status and session-lifetime
+// fields. The lifetime fields (InitialConnectionUnixMs, ReconnectionCount)
+// are preserved across resume_session_id takeovers; force takeover resets
+// them since the prior holder is considered dead.
+func (s *SessionRegistry) AcquireOrResumeLock(ctx context.Context, identity models.Identity, sessionID, resumeSessionID string, forceTakeoverThresholdMs int64, meta ConnectMeta) (ConnectResult, error) {
+	lockKey := fmt.Sprintf("lock:%s", identity.String())
+	metaKey := lockMetaKey(identity.String())
 
-	// Use a unified Lua script that handles all cases atomically:
-	// 1. No lock exists → acquire
-	// 2. Lock matches resume session ID → resume
-	// 3. Lock held by another session but TTL decayed below threshold → force takeover (dead holder)
-	// 4. Lock held by another session with healthy TTL → reject
-	script := `
-		local current = redis.call("get", KEYS[1])
-		if current == false then
-			-- No lock exists, create new one
-			redis.call("set", KEYS[1], ARGV[1], "PX", ARGV[2])
-			return {1, 0, 0}  -- acquired, not resumed, not forced
-		elseif ARGV[3] ~= "" and current == ARGV[3] then
-			-- Lock exists with matching resume session ID, take over
-			redis.call("set", KEYS[1], ARGV[1], "PX", ARGV[2])
-			return {1, 1, 0}  -- acquired, resumed, not forced
-		else
-			-- Lock held by different session — check if stale
-			local ttl = redis.call("pttl", KEYS[1])
-			if ttl > 0 and ttl < tonumber(ARGV[4]) then
-				-- TTL below threshold: holder missed refresh cycles, likely dead
-				redis.call("set", KEYS[1], ARGV[1], "PX", ARGV[2])
-				return {1, 0, 1}  -- acquired, not resumed, forced
-			end
-			return {0, 0, 0}  -- rejected
-		end
-	`
-	result, err := s.redis.Eval(ctx, script, []string{key}, sessionID, LockTTL.Milliseconds(), resumeSessionID, forceTakeoverThresholdMs).Result()
+	// Build the meta JSON: cjson cannot manufacture struct shape from
+	// the Go side without going through encoding/json. We send a
+	// pre-shaped JSON object; the Lua script merges lifetime fields on
+	// top of it.
+	metaPayload := map[string]interface{}{}
+	if meta.ClientVersion != "" {
+		metaPayload["client_version"] = meta.ClientVersion
+	}
+	if meta.ClientSDK != "" {
+		metaPayload["client_sdk"] = meta.ClientSDK
+	}
+	if meta.ClientBuildInfo != nil {
+		metaPayload["client_build_info"] = meta.ClientBuildInfo
+	}
+	metaJSON, err := json.Marshal(metaPayload)
 	if err != nil {
-		return false, false, false, err
+		return ConnectResult{}, fmt.Errorf("marshal connect meta: %w", err)
+	}
+	// cjson.decode rejects empty arrays vs objects ambiguously; for an
+	// empty map encoding/json emits "{}" which decodes cleanly to a Lua
+	// table, so no special-casing required.
+
+	nowMs := time.Now().UnixMilli()
+
+	result, err := luaAcquireOrResumeLock.Run(
+		ctx, s.redis,
+		[]string{lockKey, metaKey},
+		sessionID,
+		LockTTL.Milliseconds(),
+		resumeSessionID,
+		forceTakeoverThresholdMs,
+		nowMs,
+		string(metaJSON),
+	).Result()
+	if err != nil {
+		return ConnectResult{}, err
 	}
 
 	arr, ok := result.([]interface{})
-	if !ok || len(arr) < 3 {
-		return false, false, false, fmt.Errorf("unexpected Lua script result type: %T", result)
+	if !ok || len(arr) < 5 {
+		return ConnectResult{}, fmt.Errorf("unexpected Lua script result type: %T", result)
 	}
 	acquiredVal, ok1 := arr[0].(int64)
 	resumedVal, ok2 := arr[1].(int64)
 	forcedVal, ok3 := arr[2].(int64)
-	if !ok1 || !ok2 || !ok3 {
-		return false, false, false, fmt.Errorf("unexpected Lua script result values: %v", arr)
+	initialMs, ok4 := arr[3].(int64)
+	count, ok5 := arr[4].(int64)
+	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 {
+		return ConnectResult{}, fmt.Errorf("unexpected Lua script result values: %v", arr)
 	}
-	return acquiredVal == 1, resumedVal == 1, forcedVal == 1, nil
+	return ConnectResult{
+		Acquired:                acquiredVal == 1,
+		Resumed:                 resumedVal == 1,
+		Forced:                  forcedVal == 1,
+		InitialConnectionUnixMs: initialMs,
+		ReconnectionCount:       int32(count),
+	}, nil
 }
 
 // RefreshLock extends the TTL of an existing lock.
@@ -150,16 +238,21 @@ func (s *SessionRegistry) ReleaseLock(ctx context.Context, identity models.Ident
 	defer span.End()
 	span.SetAttributes(attribute.String("identity", identity.String()))
 
-	key := fmt.Sprintf("lock:%s", identity.String())
-	// Only release if we own it
+	lockKey := fmt.Sprintf("lock:%s", identity.String())
+	metaKey := lockMetaKey(identity.String())
+	// Only release if we own the lock; the sidecar lockmeta entry is
+	// dropped alongside so admin queries don't observe orphan metadata
+	// once a session ends.
 	script := `
 		if redis.call("get", KEYS[1]) == ARGV[1] then
-			return redis.call("del", KEYS[1])
+			redis.call("del", KEYS[1])
+			redis.call("del", KEYS[2])
+			return 1
 		else
 			return 0
 		end
 	`
-	_, err := s.redis.Eval(ctx, script, []string{key}, sessionID).Result()
+	_, err := s.redis.Eval(ctx, script, []string{lockKey, metaKey}, sessionID).Result()
 	return err
 }
 
@@ -272,9 +365,9 @@ func (s *SessionRegistry) RefreshSession(ctx context.Context, sessionID string) 
 	return s.redis.Expire(ctx, key, LockTTL).Err()
 }
 
-// luaRefreshLockAndSession atomically refreshes both the lock TTL and session TTL
-// in a single Redis round-trip, replacing the previous two-call sequence.
-// KEYS[1] = lock key, KEYS[2] = session key
+// luaRefreshLockAndSession atomically refreshes the lock TTL, the session
+// HASH TTL, and the lockmeta sidecar TTL in a single Redis round-trip.
+// KEYS[1] = lock key, KEYS[2] = session key, KEYS[3] = lockmeta key
 // ARGV[1] = expected lock value (sessionID), ARGV[2] = lock TTL ms, ARGV[3] = session TTL seconds
 // Returns 1 if the lock was refreshed (we still own it), 0 otherwise.
 var luaRefreshLockAndSession = redis.NewScript(`
@@ -282,6 +375,9 @@ var luaRefreshLockAndSession = redis.NewScript(`
 		redis.call("pexpire", KEYS[1], ARGV[2])
 		if redis.call("exists", KEYS[2]) == 1 then
 			redis.call("expire", KEYS[2], ARGV[3])
+		end
+		if redis.call("exists", KEYS[3]) == 1 then
+			redis.call("pexpire", KEYS[3], ARGV[2])
 		end
 		return 1
 	else
@@ -303,10 +399,11 @@ func (s *SessionRegistry) RefreshLockAndSession(ctx context.Context, identity mo
 
 	lockKey := fmt.Sprintf("lock:%s", identity.String())
 	sessionKey := fmt.Sprintf("session:%s", sessionID)
+	metaKey := lockMetaKey(identity.String())
 
 	result, err := luaRefreshLockAndSession.Run(
 		ctx, s.redis,
-		[]string{lockKey, sessionKey},
+		[]string{lockKey, sessionKey, metaKey},
 		sessionID,
 		LockTTL.Milliseconds(),
 		int64(LockTTL.Seconds()),

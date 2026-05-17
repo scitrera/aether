@@ -76,7 +76,7 @@ func TestSessionRegistryIntegration(t *testing.T) {
 		sessionID := "new-session"
 
 		// Acquire new lock without resume
-		acquired, resumed, forced, err := registry.AcquireOrResumeLock(ctx, testAgent, sessionID, "", LockRefreshInterval.Milliseconds())
+		acquired, resumed, forced, err := acquireLegacy(registry, ctx, testAgent, sessionID, "", LockRefreshInterval.Milliseconds())
 		if err != nil {
 			t.Fatalf("AcquireOrResumeLock() error = %v", err)
 		}
@@ -117,7 +117,7 @@ func TestSessionRegistryIntegration(t *testing.T) {
 		}
 
 		// Resume with matching session ID
-		acquired, resumed, forced, err := registry.AcquireOrResumeLock(ctx, testAgent, newSessionID, originalSessionID, LockRefreshInterval.Milliseconds())
+		acquired, resumed, forced, err := acquireLegacy(registry, ctx, testAgent, newSessionID, originalSessionID, LockRefreshInterval.Milliseconds())
 		if err != nil {
 			t.Fatalf("AcquireOrResumeLock() error = %v", err)
 		}
@@ -159,7 +159,7 @@ func TestSessionRegistryIntegration(t *testing.T) {
 		}
 
 		// Try to resume with wrong session ID
-		acquired, resumed, forced, err := registry.AcquireOrResumeLock(ctx, testAgent, newSessionID, wrongResumeID, LockRefreshInterval.Milliseconds())
+		acquired, resumed, forced, err := acquireLegacy(registry, ctx, testAgent, newSessionID, wrongResumeID, LockRefreshInterval.Milliseconds())
 		if err != nil {
 			t.Fatalf("AcquireOrResumeLock() error = %v", err)
 		}

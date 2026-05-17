@@ -104,7 +104,7 @@ func TestBadgerGetSessionGateway_ReturnsStoredGatewayID(t *testing.T) {
 	const sessionID = "sess-bg-1"
 	const gatewayID = "test-gateway-1"
 
-	if _, _, _, err := reg.AcquireOrResumeLock(ctx, id, sessionID, "", 0); err != nil {
+	if _, _, _, err := acquireLegacy(reg, ctx, id, sessionID, "", 0); err != nil {
 		t.Fatalf("AcquireOrResumeLock: %v", err)
 	}
 	if err := reg.RegisterSession(ctx, id, sessionID, gatewayID); err != nil {

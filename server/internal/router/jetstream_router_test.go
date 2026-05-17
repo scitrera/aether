@@ -495,3 +495,82 @@ func TestJetStreamRouter_UnknownPrefix_Error(t *testing.T) {
 		t.Fatal("expected error publishing to unknown prefix, got nil")
 	}
 }
+
+// TestJetStreamRouter_SubscribeExclusiveFromTimestamp_ReconnectWithDifferentTimestamp
+// verifies that re-subscribing with the same consumerName but a different
+// startTimestampMs does not fail with NATS api error 10012 ("start time can
+// not be updated"). Production agents are pool-dispatched with a cold-start
+// trigger timestamp that changes on every restart; the durable consumer
+// must resume from its stored offset instead.
+func TestJetStreamRouter_SubscribeExclusiveFromTimestamp_ReconnectWithDifferentTimestamp(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping reconnect-with-different-timestamp test in -short mode")
+	}
+
+	r, cleanup := newTestJetStreamRouter(t)
+	defer cleanup()
+
+	const topic = "ag::ws::com.example.agent::default"
+	const consumerName = "ag::ws::com.example.agent::default"
+	ctx := context.Background()
+
+	// First subscribe: cold-start timestamp T1.
+	t1 := time.Now().UnixMilli()
+	received1 := make(chan string, 4)
+	unsub1, err := r.SubscribeExclusiveFromTimestamp(topic, consumerName, t1, func(data []byte) {
+		cp := make([]byte, len(data))
+		copy(cp, data)
+		received1 <- string(cp)
+	})
+	if err != nil {
+		t.Fatalf("first subscribe (t1=%d): %v", t1, err)
+	}
+
+	time.Sleep(150 * time.Millisecond)
+	if err := r.Publish(ctx, topic, []byte("msg-1")); err != nil {
+		t.Fatalf("publish msg-1: %v", err)
+	}
+	select {
+	case got := <-received1:
+		if got != "msg-1" {
+			t.Errorf("first subscribe got %q, want %q", got, "msg-1")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first subscribe did not receive msg-1")
+	}
+	unsub1()
+
+	// Publish a message while no subscriber is attached. The durable
+	// consumer's stored offset means the next subscribe should still
+	// receive it.
+	time.Sleep(100 * time.Millisecond)
+	if err := r.Publish(ctx, topic, []byte("msg-2")); err != nil {
+		t.Fatalf("publish msg-2: %v", err)
+	}
+
+	// Second subscribe: same consumerName, but a different (later) timestamp.
+	// Pre-fix this returned `nats: API error code=500 err_code=10012` because
+	// CreateOrUpdateConsumer rejects mutating OptStartTime on an existing
+	// durable. Post-fix, the router detects the existing consumer and
+	// resumes it without attempting an update.
+	t2 := time.Now().UnixMilli()
+	received2 := make(chan string, 4)
+	unsub2, err := r.SubscribeExclusiveFromTimestamp(topic, consumerName, t2, func(data []byte) {
+		cp := make([]byte, len(data))
+		copy(cp, data)
+		received2 <- string(cp)
+	})
+	if err != nil {
+		t.Fatalf("second subscribe (t2=%d, must not fail with 10012): %v", t2, err)
+	}
+	defer unsub2()
+
+	select {
+	case got := <-received2:
+		if got != "msg-2" {
+			t.Errorf("second subscribe got %q, want %q (durable offset resume)", got, "msg-2")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("second subscribe did not receive msg-2 — offset resume broken")
+	}
+}

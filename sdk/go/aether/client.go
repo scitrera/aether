@@ -422,6 +422,19 @@ func (c *BaseClient) establishStream(ctx context.Context) error {
 	}
 	c.sessionIDMu.RUnlock()
 
+	// Auto-populate client SDK version metadata. Per the InitConnection
+	// versioning spec these fields are additive — older gateways simply
+	// ignore them, so wiring them unconditionally is safe.
+	version, commit, builtAt, runtimeStr, osStr := clientVersionMeta()
+	initMsg.ClientVersion = version
+	initMsg.ClientSdk = clientSDKName
+	initMsg.ClientBuildInfo = &pb.BuildInfo{
+		Commit:  commit,
+		BuiltAt: builtAt,
+		Runtime: runtimeStr,
+		Os:      osStr,
+	}
+
 	// Send the init message
 	upstream := &pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_Init{

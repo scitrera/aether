@@ -69,7 +69,8 @@ func TestClusterIntegration_IdentityLock_ExactlyOneWinner(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			sessionID := fmt.Sprintf("sess-racer-%02d", i)
-			ok, _, _, err := s.AcquireOrResumeLock(ctx, identity, sessionID, "", 0)
+			r, err := s.AcquireOrResumeLock(ctx, identity, sessionID, "", 0, state.ConnectMeta{})
+			ok := r.Acquired
 			if err != nil {
 				t.Logf("goroutine %d AcquireOrResumeLock error: %v", i, err)
 				errs.Add(1)
@@ -142,7 +143,8 @@ func TestClusterIntegration_IdentityLock_NodeKillMidAcquire(t *testing.T) {
 	}
 
 	// Step 1: victim acquires.
-	ok, _, _, err := victim.AcquireOrResumeLock(ctx, identity, "sess-victim", "", 0)
+	rv, err := victim.AcquireOrResumeLock(ctx, identity, "sess-victim", "", 0, state.ConnectMeta{})
+	ok := rv.Acquired
 	if err != nil {
 		t.Fatalf("victim acquire: %v", err)
 	}
@@ -152,7 +154,9 @@ func TestClusterIntegration_IdentityLock_NodeKillMidAcquire(t *testing.T) {
 
 	// Step 2: survivor's first attempt should be rejected because the
 	// victim is still holding a healthy lease.
-	ok, _, _, err = survivor.AcquireOrResumeLock(ctx, identity, "sess-survivor", "", 0)
+	rs, err := survivor.AcquireOrResumeLock(ctx, identity, "sess-survivor", "", 0, state.ConnectMeta{})
+	ok = rs.Acquired
+	_ = err
 	if err != nil {
 		t.Fatalf("survivor pre-kill acquire: %v", err)
 	}
@@ -179,7 +183,8 @@ func TestClusterIntegration_IdentityLock_NodeKillMidAcquire(t *testing.T) {
 		forced   bool
 	)
 	if got := waitUntil(15*time.Second, 100*time.Millisecond, func() bool {
-		ok, _, f, err := survivor.AcquireOrResumeLock(ctx, identity, "sess-survivor", "", 24*60*60*1000)
+		r, err := survivor.AcquireOrResumeLock(ctx, identity, "sess-survivor", "", 24*60*60*1000, state.ConnectMeta{})
+		ok, f := r.Acquired, r.Forced
 		if err != nil {
 			t.Logf("survivor retry error (will retry): %v", err)
 			return false

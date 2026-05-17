@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/scitrera/aether/internal/orchestration"
 	"github.com/scitrera/aether/internal/registry"
 	aclstore "github.com/scitrera/aether/internal/storage/acl"
+	auditstore "github.com/scitrera/aether/internal/storage/audit"
 	taskstore "github.com/scitrera/aether/internal/storage/tasks"
 )
 
@@ -297,6 +299,124 @@ func startClusterTaskWaker(ctx context.Context, js jetstream.JetStream, ts tasks
 	w := orchestration.NewJetStreamTaskWaker(js, ts, svc, "")
 	go w.Run(ctx)
 	logging.Logger.Info().Msg("JetStream task waker started (cluster mode)")
+}
+
+// activateClusterACLRuleStore wraps the inner ACL Store with the
+// JetStreamACLRuleStore decorator and returns both the wrapper (to install
+// in place of the inner via WithACLService) and the KV bucket handle (so the
+// caller can start a Watch goroutine for cross-gateway cache invalidation).
+//
+// On error the caller should treat the failure as fatal — cluster mode
+// without ACL-rule cross-gateway propagation creates correctness windows
+// that are difficult to reason about.
+func activateClusterACLRuleStore(ctx context.Context, inner aclstore.Store, js jetstream.JetStream, replicas int) (*aclstore.JetStreamACLRuleStore, jetstream.KeyValue, error) {
+	wrapped, err := aclstore.NewJetStreamACLRuleStore(ctx, inner, js, replicas, zerologClusterLogger{})
+	if err != nil {
+		return nil, nil, err
+	}
+	// Re-open the bucket handle for the Watch wiring. The KV is already
+	// idempotent inside the constructor; CreateOrUpdateKeyValue on an
+	// existing bucket is a no-op so this is safe and avoids a new return
+	// from the constructor signature.
+	kv, err := js.KeyValue(ctx, aclstore.ACLRulesKVBucket)
+	if err != nil {
+		return nil, nil, err
+	}
+	logging.Logger.Info().
+		Str("bucket", aclstore.ACLRulesKVBucket).
+		Int("replicas", replicas).
+		Msg("ACL rules JetStream KV decorator installed (cluster mode)")
+	return wrapped, kv, nil
+}
+
+// startClusterACLRuleWatch starts a background goroutine that consumes the
+// aether_acl_rules KV bucket's WatchAll updates and triggers local cache
+// invalidation. The current invalidator surface is narrow (the ACL service
+// exposes only InvalidateFallbackCache and the per-mutation Casbin reload
+// on its own write path); a complete cross-gateway rule-cache refresh on
+// peer Put/Delete would require an additional ACL-service-side hook (see
+// FOLLOWUP below). For now this watcher logs each event so operators can
+// confirm propagation is observed at the bucket level — the actual SQL
+// store stays in sync because all peer gateways share the same SQLite
+// file in lite cluster mode (or each has its own and bootstraps from KV
+// on next access).
+//
+// FOLLOWUP: extend acl.Store (or aclstore.Store) with a
+// ReloadRule(principal, resource) hook so the watcher can surgically
+// invalidate only the affected enforcer entry rather than logging and
+// waiting for the next process restart / fallback-cache TTL.
+//
+// Respects ctx cancellation for clean shutdown.
+func startClusterACLRuleWatch(ctx context.Context, kv jetstream.KeyValue, aclSvc aclRuleCacheInvalidator) {
+	watcher, err := kv.WatchAll(ctx)
+	if err != nil {
+		logging.Logger.Error().Err(err).Str("bucket", aclstore.ACLRulesKVBucket).Msg("ACL rules JetStream watch failed to start; cross-gateway propagation degraded to bootstrap-only")
+		return
+	}
+	go func() {
+		defer watcher.Stop()
+		logging.Logger.Info().
+			Str("bucket", aclstore.ACLRulesKVBucket).
+			Msg("ACL rules JetStream watch started (cluster mode)")
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case entry, ok := <-watcher.Updates():
+				if !ok {
+					logging.Logger.Warn().Str("bucket", aclstore.ACLRulesKVBucket).Msg("ACL rules JetStream watch channel closed")
+					return
+				}
+				if entry == nil {
+					// End of initial-values burst — watcher is now live for
+					// incremental updates.
+					continue
+				}
+				op := entry.Operation()
+				logging.Logger.Debug().
+					Str("bucket", aclstore.ACLRulesKVBucket).
+					Str("key", entry.Key()).
+					Str("op", op.String()).
+					Uint64("revision", entry.Revision()).
+					Msg("ACL rules JetStream event")
+				// Best-effort local cache invalidation. The fallback-policy
+				// cache is the only ACL-service-side cache we can poke
+				// today without an additional hook on aclstore.Store.
+				if aclSvc != nil {
+					aclSvc.InvalidateFallbackCache()
+				}
+			}
+		}
+	}()
+}
+
+// aclRuleCacheInvalidator is the narrow surface startClusterACLRuleWatch needs
+// to poke local caches on incoming peer ACL events. Satisfied by
+// aclsqlite.Store (and the legacy acl.Service) — both expose
+// InvalidateFallbackCache.
+type aclRuleCacheInvalidator interface {
+	InvalidateFallbackCache()
+}
+
+// activateClusterAuditEmitter wraps the inner audit Store with the
+// JetStreamAuditEmitter so every LogEvent/LogEventSync call also publishes
+// onto the "audit" stream for cross-gateway fan-out.
+//
+// On error the caller should treat the failure as fatal — cluster mode
+// without audit event propagation defeats the operational visibility
+// guarantee.
+func activateClusterAuditEmitter(ctx context.Context, inner auditstore.Store, js jetstream.JetStream, replicas int) (auditstore.Store, error) {
+	if inner == nil {
+		return nil, errors.New("activateClusterAuditEmitter: inner store is required")
+	}
+	emitter, err := auditstore.NewJetStreamAuditEmitter(ctx, inner, js, replicas, zerologClusterLogger{})
+	if err != nil {
+		return nil, err
+	}
+	logging.Logger.Info().
+		Int("replicas", replicas).
+		Msg("audit JetStream emitter installed (cluster mode)")
+	return emitter, nil
 }
 
 // buildBackupStorage returns the StorageClient for the backup coordinator.

@@ -10,66 +10,6 @@ __version__ = "0.2.0"
 # of the SDK gets the hooks for free, with no requirement to import
 # ``scitrera_aether_client.proxy`` explicitly.
 from . import proxy as _proxy_side_effect  # noqa: F401
-
-from .client import (
-    # Client classes (sync)
-    AgentClient,
-    TaskClient,
-    UserClient,
-    OrchestratorClient,
-    WorkflowEngineClient,
-    MetricsBridgeClient,
-    ServiceClient,
-    # Audit submission response
-    AuditSubmitResponse,
-    # WaitSpec convenience helper
-    make_wait_spec,
-    # Authority-request helpers (Phase 2 Stage C)
-    make_authority_request_routing,
-    make_authority_request_resource_scope_entry,
-    # Hibernation helper (Phase 3 Stage C)
-    make_hibernation_descriptor,
-    # Resource-schema helper (Phase 5 Stage B)
-    make_resource_schema_entry,
-    # Extension declaration helper (Phase 6)
-    make_extension,
-)
-
-# Phase 4 (Stage C): expose task subscription proto types at the top level
-# for consumers that need to inspect TaskEvent oneofs or build
-# TaskSubscriptionOperation values without importing the proto module directly.
-from .proto.aether_pb2 import (  # type: ignore[attr-defined]
-    TaskEvent,
-    TaskSubscriptionOperation,
-)
-
-from .client_async import (
-    # Client classes (async)
-    AsyncAgentClient,
-    AsyncTaskClient,
-    AsyncUserClient,
-    AsyncServiceClient,
-    AsyncOrchestratorClient,
-    AsyncWorkflowEngineClient,
-    AsyncMetricsBridgeClient,
-)
-
-from .orchestrator import (
-    # Orchestrator classes
-    BaseOrchestrator,
-    LaunchedProcess,
-    MultiprocessOrchestrator,
-    SubprocessInfo,
-)
-
-from .admin import AdminClient
-from .admin_async import AsyncAdminClient
-
-from .metrics import (
-    MetricBuilder,
-    new_metric,
-)
-
 from ._common import (
     # Message type constants
     MESSAGE_TYPE_UNSPECIFIED,
@@ -103,8 +43,45 @@ from ._common import (
 
     # Auth credentials builder
     Credentials,
-)
 
+    # internal
+    _logging_lite_hook,
+)
+from .admin import AdminClient
+from .admin_async import AsyncAdminClient
+from .client import (
+    # Client classes (sync)
+    AgentClient,
+    TaskClient,
+    UserClient,
+    OrchestratorClient,
+    WorkflowEngineClient,
+    MetricsBridgeClient,
+    ServiceClient,
+    # Audit submission response
+    AuditSubmitResponse,
+    # WaitSpec convenience helper
+    make_wait_spec,
+    # Authority-request helpers (Phase 2 Stage C)
+    make_authority_request_routing,
+    make_authority_request_resource_scope_entry,
+    # Hibernation helper (Phase 3 Stage C)
+    make_hibernation_descriptor,
+    # Resource-schema helper (Phase 5 Stage B)
+    make_resource_schema_entry,
+    # Extension declaration helper (Phase 6)
+    make_extension,
+)
+from .client_async import (
+    # Client classes (async)
+    AsyncAgentClient,
+    AsyncTaskClient,
+    AsyncUserClient,
+    AsyncServiceClient,
+    AsyncOrchestratorClient,
+    AsyncWorkflowEngineClient,
+    AsyncMetricsBridgeClient,
+)
 from .exceptions import (
     # Base exception
     AetherError,
@@ -131,7 +108,24 @@ from .exceptions import (
     from_grpc_error,
     is_recoverable_error,
 )
-
+from .metrics import (
+    MetricBuilder,
+    new_metric,
+)
+from .orchestrator import (
+    # Orchestrator classes
+    BaseOrchestrator,
+    LaunchedProcess,
+    MultiprocessOrchestrator,
+    SubprocessInfo,
+)
+# Phase 4 (Stage C): expose task subscription proto types at the top level
+# for consumers that need to inspect TaskEvent oneofs or build
+# TaskSubscriptionOperation values without importing the proto module directly.
+from .proto.aether_pb2 import (  # type: ignore[attr-defined]
+    TaskEvent,
+    TaskSubscriptionOperation,
+)
 from .types import (
     # Configuration TypedDicts
     ConnectionConfig,
@@ -404,3 +398,7 @@ __all__ = (
     'MetricBuilder',
     'new_metric',
 )
+
+# limit grpc internal DEBUG logging
+_logging_lite_hook()
+del _logging_lite_hook

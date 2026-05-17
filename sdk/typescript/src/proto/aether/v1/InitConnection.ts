@@ -9,6 +9,7 @@ import type { MetricsBridgeIdentity as _aether_v1_MetricsBridgeIdentity, Metrics
 import type { BridgeIdentity as _aether_v1_BridgeIdentity, BridgeIdentity__Output as _aether_v1_BridgeIdentity__Output } from '../../aether/v1/BridgeIdentity';
 import type { ServiceIdentity as _aether_v1_ServiceIdentity, ServiceIdentity__Output as _aether_v1_ServiceIdentity__Output } from '../../aether/v1/ServiceIdentity';
 import type { ExtensionDeclaration as _aether_v1_ExtensionDeclaration, ExtensionDeclaration__Output as _aether_v1_ExtensionDeclaration__Output } from '../../aether/v1/ExtensionDeclaration';
+import type { BuildInfo as _aether_v1_BuildInfo, BuildInfo__Output as _aether_v1_BuildInfo__Output } from '../../aether/v1/BuildInfo';
 
 export interface InitConnection {
   'agent'?: (_aether_v1_AgentIdentity | null);
@@ -38,6 +39,22 @@ export interface InitConnection {
    * `required` semantics — header-sourced URIs are always non-required.
    */
   'extensions'?: (_aether_v1_ExtensionDeclaration)[];
+  /**
+   * Client SDK version metadata. All fields are optional — older SDKs
+   * omit them and the gateway records "unknown" in audit. Populated
+   * automatically by each SDK's connect path; consumer-app code does
+   * not set these directly. Field numbers 50–69 are reserved for
+   * connection-metadata additions.
+   */
+  'clientVersion'?: (string);
+  /**
+   * "go" / "python" / "ts"
+   */
+  'clientSdk'?: (string);
+  /**
+   * commit / built_at / runtime / os
+   */
+  'clientBuildInfo'?: (_aether_v1_BuildInfo | null);
   'clientType'?: "agent"|"task"|"user"|"orchestrator"|"workflowEngine"|"metricsBridge"|"bridge"|"service";
 }
 
@@ -69,5 +86,21 @@ export interface InitConnection__Output {
    * `required` semantics — header-sourced URIs are always non-required.
    */
   'extensions': (_aether_v1_ExtensionDeclaration__Output)[];
+  /**
+   * Client SDK version metadata. All fields are optional — older SDKs
+   * omit them and the gateway records "unknown" in audit. Populated
+   * automatically by each SDK's connect path; consumer-app code does
+   * not set these directly. Field numbers 50–69 are reserved for
+   * connection-metadata additions.
+   */
+  'clientVersion': (string);
+  /**
+   * "go" / "python" / "ts"
+   */
+  'clientSdk': (string);
+  /**
+   * commit / built_at / runtime / os
+   */
+  'clientBuildInfo': (_aether_v1_BuildInfo__Output | null);
   'clientType'?: "agent"|"task"|"user"|"orchestrator"|"workflowEngine"|"metricsBridge"|"bridge"|"service";
 }

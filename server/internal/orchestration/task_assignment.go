@@ -54,6 +54,13 @@ type TaskAssignmentService struct {
 	tokenStore      state.TokenStore
 	grantService    authorityGrantService
 	dispatcher      queueRetirementDispatcher
+	// notifyPublisher publishes orchestration task notifications to the
+	// dispatcher's queue (e.g. JetStream "tasks_queue" subject). Set via
+	// SetDispatcher in cluster mode. When nil (the default), task creation
+	// skips the publish step — appropriate for polling/notify dispatchers
+	// that wake via the storage layer directly (poll ticker / PostgreSQL
+	// LISTEN/NOTIFY on the orchestrated_task_queue row insert).
+	notifyPublisher taskNotificationPublisher
 	// eventPub publishes per-task lifecycle events to the per-task event topic
 	// (tk::{workspace}::{task_id}::events). Phase 4 Stage B. Nil = disabled, every
 	// publish call becomes a no-op. Injected via SetEventPublisher.
@@ -65,6 +72,17 @@ type TaskAssignmentService struct {
 type queueRetirementDispatcher interface {
 	CompleteTaskByTaskID(ctx context.Context, taskID string) error
 	FailTaskByTaskID(ctx context.Context, taskID, errorMsg string) error
+}
+
+// taskNotificationPublisher is the narrow interface TaskAssignmentService needs
+// to wake a dispatcher after inserting an orchestrated_task_queue row. The
+// JetStreamTaskDispatcher requires an explicit publish to its "tasks_queue"
+// subject — the SQL row alone is invisible to the JetStream consumer.
+// PollingTaskDispatcher / NotifyTaskDispatcher wake from the storage layer
+// directly, so callers leave the dispatcher unset and the publish step is
+// skipped.
+type taskNotificationPublisher interface {
+	PublishTask(ctx context.Context, task *OrchestrationTaskNotification) error
 }
 
 type authorityGrantService interface {
@@ -116,6 +134,20 @@ func (tas *TaskAssignmentService) SetAuthorityGrantService(grantService authorit
 // or lightweight in-process setups) are unaffected — queue retirement is simply skipped.
 func (tas *TaskAssignmentService) SetOrchestratorDispatcher(d queueRetirementDispatcher) {
 	tas.dispatcher = d
+}
+
+// SetDispatcher installs a taskNotificationPublisher used to publish
+// orchestration tasks onto the dispatcher's queue (cluster-mode JetStream
+// "tasks_queue" subject). When nil (the default), task creation skips the
+// publish step — appropriate for polling/notify dispatchers that wake via
+// the storage layer directly. JetStream-backed dispatchers REQUIRE this
+// wiring; without it the SQL row sits invisibly and the consumer never
+// fires (the discriminating symptom traced in Phase 5).
+//
+// Idempotent: last writer wins. Safe to pass a *JetStreamTaskDispatcher,
+// which satisfies taskNotificationPublisher via its PublishTask method.
+func (tas *TaskAssignmentService) SetDispatcher(d taskNotificationPublisher) {
+	tas.notifyPublisher = d
 }
 
 // CreateTaskRequest represents a request to create a task
@@ -508,7 +540,42 @@ func (tas *TaskAssignmentService) createOrchestratedStartupTask(
 
 	logging.Logger.Info().Str("task_id", startupTaskID).Str("queue_id", queueID).Str("implementation", targetIdentity.Implementation).Str("profile", profile).Msg("created orchestrated startup task")
 
+	// Wake the dispatcher (cluster mode). For JetStream-backed dispatchers
+	// the SQL row alone is invisible — an explicit publish to the work-queue
+	// stream is required to wake any connected consumer. For polling/notify
+	// dispatchers notifyPublisher is left nil and this is a no-op. Failure
+	// is non-fatal: the row is already durable, and the next polling tick
+	// (or operator intervention) drives recovery.
+	tas.publishOrchestrationNotification(ctx, queueID, startupTaskID, targetIdentity.Implementation, workspace, profile)
+
 	return startupTaskID, nil
+}
+
+// publishOrchestrationNotification best-effort publishes an orchestration task
+// notification to the dispatcher. No-op when no notifyPublisher is configured
+// (single-node polling/notify topology). Errors are logged at WARN — the
+// underlying queue row is canonical and a publish failure self-heals on the
+// next dispatcher reconciliation pass.
+func (tas *TaskAssignmentService) publishOrchestrationNotification(ctx context.Context, queueID, taskID, targetImplementation, workspace, profile string) {
+	if tas.notifyPublisher == nil {
+		return
+	}
+	notification := &OrchestrationTaskNotification{
+		QueueID:              queueID,
+		TaskID:               taskID,
+		Profile:              profile,
+		Workspace:            workspace,
+		TargetImplementation: targetImplementation,
+	}
+	if err := tas.notifyPublisher.PublishTask(ctx, notification); err != nil {
+		logging.Logger.Warn().Err(err).
+			Str("queue_id", queueID).
+			Str("task_id", taskID).
+			Str("implementation", targetImplementation).
+			Str("workspace", workspace).
+			Str("profile", profile).
+			Msg("dispatcher publish failed after queue insert; queue row remains and will be picked up by polling/recovery")
+	}
 }
 
 // DeliverQueuedTasks delivers all queued tasks to an agent when it connects
@@ -904,6 +971,12 @@ func (tas *TaskAssignmentService) WakeHibernatedTask(ctx context.Context, taskID
 	if err := tas.taskStore.InsertQueueEntry(ctx, queueID, taskID, task.TargetImplementation, task.Workspace, profile, launchParamsJSON); err != nil {
 		return fmt.Errorf("WakeHibernatedTask: insert queue entry for %s: %w", taskID, err)
 	}
+
+	// Wake the dispatcher in cluster mode (JetStream); no-op for
+	// polling/notify dispatchers. Same rationale as
+	// createOrchestratedStartupTask — the SQL row is invisible to JetStream
+	// consumers without an explicit publish.
+	tas.publishOrchestrationNotification(ctx, queueID, taskID, task.TargetImplementation, task.Workspace, profile)
 
 	logging.Logger.Info().
 		Str("task_id", taskID).

@@ -81,6 +81,7 @@ import { TunnelClosedError } from "./tunnel.js";
 import type { AuthorityGrantCacheOptions } from "./authority-cache.js";
 import { AuthorityGrantCache } from "./authority-cache.js";
 import type { ProxyHttpResponse } from "./proxy.js";
+import { clientVersionMeta } from "./version-meta.js";
 
 // =============================================================================
 // Client Options
@@ -901,8 +902,11 @@ export class AetherClient {
         this._handleStreamEnd();
       });
 
-      // Send init message
-      const initMsg = this._buildInitMessage();
+      // Send init message. Merge in SDK version metadata so the gateway
+      // can attribute the connection to a specific TS build in audit
+      // rows — additive, ignored by older gateways. Subclass-supplied
+      // fields win on collision.
+      const initMsg = { ...clientVersionMeta(), ...this._buildInitMessage() };
       stream.write({ init: initMsg });
 
     } catch (err) {

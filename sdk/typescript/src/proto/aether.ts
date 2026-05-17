@@ -61,6 +61,7 @@ export interface ProtoGrpcType {
       AuthoritySpan: MessageTypeDefinition
       AuthorizationContext: MessageTypeDefinition
       BridgeIdentity: MessageTypeDefinition
+      BuildInfo: MessageTypeDefinition
       CheckpointOperation: MessageTypeDefinition
       CheckpointResponse: MessageTypeDefinition
       ConfigSnapshot: MessageTypeDefinition

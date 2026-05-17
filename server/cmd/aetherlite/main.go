@@ -39,6 +39,7 @@ import (
 	"github.com/scitrera/aether/internal/state"
 	aclstore "github.com/scitrera/aether/internal/storage/acl"
 	aclsqlite "github.com/scitrera/aether/internal/storage/acl/sqlite"
+	auditstore "github.com/scitrera/aether/internal/storage/audit"
 	auditsqlite "github.com/scitrera/aether/internal/storage/audit/sqlite"
 	regsqlite "github.com/scitrera/aether/internal/storage/registry/sqlite"
 	tasksqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
@@ -49,6 +50,7 @@ import (
 	sqliteregistrymigrations "github.com/scitrera/aether/migrations/sqlite_registry"
 	pb_health "google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/scitrera/aether/pkg/crypto"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	otelgrpcfilters "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc/filters"
@@ -537,6 +539,23 @@ func main() {
 	}
 	defer auditLogger.Close()
 
+	// Cluster mode: wrap the gateway-consumed audit Store with the JetStream
+	// emitter so every LogEvent / LogEventSync also fans onto the "audit"
+	// stream. Inner sqlite store remains canonical (and is still passed to
+	// the ACL service below for write-through — the JetStream side is purely
+	// additive). Single-node mode skips this wrap and the gateway sees the
+	// inner store directly.
+	var auditLoggerForGateway auditstore.Store = auditLogger
+	if cenv.Enabled && natsServer != nil {
+		js := natsServer.JetStream()
+		replicas := natsServer.ReplicasForHA()
+		wrapped, werr := activateClusterAuditEmitter(ctx, auditLogger, js, replicas)
+		if werr != nil {
+			logging.Logger.Fatal().Err(werr).Msg("failed to activate cluster audit JetStream emitter")
+		}
+		auditLoggerForGateway = wrapped
+	}
+
 	// ACL service (SQLite-backed, Stage 2 native). ACL rules live in acl.db;
 	// audit writes funnel through the shared auditLogger above (single writer
 	// goroutine), and audit READS use auditDB directly. Per-domain WAL
@@ -553,15 +572,27 @@ func main() {
 	// directly by the state provider + SetPrefixIndex calls below — those
 	// non-lifecycle paths don't need to traverse the JetStream wrapper). In
 	// single-node mode the gateway sees the inner store directly.
+	//
+	// We also chain a JetStreamACLRuleStore wrapper above the authority
+	// lifecycle wrapper so ACL rule mutations (GrantAccess / RevokeAccess /
+	// SetFallbackPolicy) propagate to peer gateways via the aether_acl_rules
+	// KV bucket. The two wrappers compose cleanly: each shadows a disjoint
+	// set of methods on the embedded inner.
 	var aclStoreForGateway aclstore.Store = sharedACLService
+	var aclRulesKV jetstream.KeyValue
 	if cenv.Enabled && natsServer != nil {
 		js := natsServer.JetStream()
 		replicas := natsServer.ReplicasForHA()
-		wrapped, werr := activateClusterAuthorityLifecycle(ctx, sharedACLService, js, replicas)
+		authorityWrapped, werr := activateClusterAuthorityLifecycle(ctx, sharedACLService, js, replicas)
 		if werr != nil {
 			logging.Logger.Fatal().Err(werr).Msg("failed to activate cluster authority-request lifecycle resources")
 		}
-		aclStoreForGateway = wrapped
+		rulesWrapped, kv, werr := activateClusterACLRuleStore(ctx, authorityWrapped, js, replicas)
+		if werr != nil {
+			logging.Logger.Fatal().Err(werr).Msg("failed to activate cluster ACL rule store")
+		}
+		aclStoreForGateway = rulesWrapped
+		aclRulesKV = kv
 	}
 	gatewayOpts = append(gatewayOpts, gateway.WithACLService(aclStoreForGateway))
 
@@ -588,9 +619,11 @@ func main() {
 	}
 
 	// Create gateway server. ACL is supplied via WithACLService above.
+	// auditLoggerForGateway is the cluster-mode JetStreamAuditEmitter wrapper
+	// when cenv.Enabled is true; otherwise it is the plain inner sqlite store.
 	gatewayServer := gateway.NewGatewayServer(
 		sessions, msgRouter, kvStore, checkpointStore, taskStore,
-		cfg.Gateway.GatewayID, auditLogger, mtlsConfig, gatewayOpts...,
+		cfg.Gateway.GatewayID, auditLoggerForGateway, mtlsConfig, gatewayOpts...,
 	)
 	defer gatewayServer.Stop()
 
@@ -790,8 +823,29 @@ func main() {
 		// methods through the JetStream wrapper. No additional activation
 		// needed here.
 
+		// ACL rule store decoration was also performed earlier; here we
+		// start the Watch goroutine on the same aether_acl_rules KV bucket
+		// so peer-originated rule changes invalidate this gateway's local
+		// caches.
+		if aclRulesKV != nil {
+			startClusterACLRuleWatch(ctx, aclRulesKV, sharedACLService)
+		}
+
 		// JetStream-driven task waker — composes with the timer-based scanner.
 		startClusterTaskWaker(ctx, js, taskStore, orchServices.TaskService)
+
+		// Wire the JetStream dispatcher into the task assignment service so
+		// orchestrated task creation explicitly publishes onto the
+		// "tasks_queue" subject after the SQL insert. Without this, queue
+		// rows are invisible to JetStream consumers and orchestration stalls
+		// silently (Phase 5 tracer-discovered defect). When the dispatcher
+		// is the polling fallback (cenv.Dispatcher != "jetstream"), the type
+		// assertion below is false and we skip the wiring — polling wakes
+		// from the SQL row directly via its ticker.
+		if jsDispatcher, ok := dispatcher.(*orchestration.JetStreamTaskDispatcher); ok {
+			orchServices.TaskService.SetDispatcher(jsDispatcher)
+			logging.Logger.Info().Msg("JetStream dispatcher wired into TaskAssignmentService (cluster mode)")
+		}
 	}
 
 	// Ops server (health + metrics).

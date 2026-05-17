@@ -134,6 +134,18 @@ message ConnectionAck {
   // available without a separate descriptor endpoint. Empty when the
   // client already declared every server-supported URI.
   repeated string server_supported_extensions = 5;
+
+  // Server build metadata, returned so the client can log/observe the
+  // gateway version it negotiated with. Optional/additive — older
+  // gateways simply omit these fields.
+  string server_version = 50;           // e.g., "0.2.0"
+  BuildInfo server_build_info = 51;     // commit / built_at / runtime / os
+
+  // Session-lifetime metadata. The gateway populates these so the SDK can
+  // surface accurate "connected since" semantics even across reconnect
+  // takeovers via resume_session_id.
+  int64 initial_connection_unix_ms = 60; // first-ever connect for this identity
+  int32 reconnection_count = 61;         // bumped on each successful resume
 }
 
 message InitConnection {
@@ -162,6 +174,27 @@ message InitConnection {
   // the gateway unions both. The proto field is authoritative for
   // `required` semantics — header-sourced URIs are always non-required.
   repeated ExtensionDeclaration extensions = 12;
+
+  // Client SDK version metadata. All fields are optional — older SDKs
+  // omit them and the gateway records "unknown" in audit. Populated
+  // automatically by each SDK's connect path; consumer-app code does
+  // not set these directly. Field numbers 50–69 are reserved for
+  // connection-metadata additions.
+  string client_version = 50;            // SemVer string, e.g. "0.2.0"
+  string client_sdk = 51;                // "go" / "python" / "ts"
+  BuildInfo client_build_info = 52;      // commit / built_at / runtime / os
+}
+
+// BuildInfo captures language/runtime build metadata for both the client
+// SDK (sent in InitConnection.client_build_info) and the server
+// (returned in ConnectionAck.server_build_info). Each field is
+// best-effort; SDKs populate what they can determine from their own
+// language ecosystem and leave the rest empty.
+message BuildInfo {
+  string commit = 1;     // short or full git SHA, optional
+  string built_at = 2;   // RFC3339 timestamp, optional
+  string runtime = 3;    // e.g. "go1.25.5", "python3.12", "node20"
+  string os = 4;         // e.g. "linux/amd64"
 }
 
 // ExtensionDeclaration identifies an extension a participant supports or

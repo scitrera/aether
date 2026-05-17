@@ -126,7 +126,8 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 
 	// 5. Lock acquisition + session registration (before quota to avoid quota leak on lock failure)
 	resumeSessionID := init.ResumeSessionId
-	if err := s.acquireSessionLock(ctx, cs, resumeSessionID); err != nil {
+	connectMeta := connectMetaFromInit(init)
+	if err := s.acquireSessionLock(ctx, cs, resumeSessionID, connectMeta); err != nil {
 		connectionAttempts.WithLabelValues(identity.Workspace, string(identity.Type), "lock_failed").Inc()
 		return err
 	}
@@ -297,6 +298,10 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 						Resumed:                   cs.resumed,
 						NegotiatedExtensions:      result.negotiated,
 						ServerSupportedExtensions: result.serverSupported,
+						ServerVersion:             serverVersionString(),
+						ServerBuildInfo:           serverBuildInfoProto(),
+						InitialConnectionUnixMs:   cs.initialConnectionUnixMs,
+						ReconnectionCount:         cs.reconnectionCount,
 					},
 				},
 			})
@@ -312,8 +317,12 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 
 	// Send ConnectionAck with session ID so client can store it for reconnection
 	ack := &pb.ConnectionAck{
-		SessionId: sessionID,
-		Resumed:   cs.resumed,
+		SessionId:               sessionID,
+		Resumed:                 cs.resumed,
+		ServerVersion:           serverVersionString(),
+		ServerBuildInfo:         serverBuildInfoProto(),
+		InitialConnectionUnixMs: cs.initialConnectionUnixMs,
+		ReconnectionCount:       cs.reconnectionCount,
 	}
 	if negotiated != nil {
 		ack.NegotiatedExtensions = negotiated.negotiated
@@ -713,7 +722,7 @@ func (s *GatewayServer) isAllowedAdminOpQuiet(client *ClientSession, identity mo
 
 // acquireSessionLock acquires a distributed lock for the identity, with optional session resume.
 // It also registers the session. On success, the caller must ensure cleanup on disconnect.
-func (s *GatewayServer) acquireSessionLock(ctx context.Context, cs *connectionState, resumeSessionID string) error {
+func (s *GatewayServer) acquireSessionLock(ctx context.Context, cs *connectionState, resumeSessionID string, meta state.ConnectMeta) error {
 	ctx, span := tracing.Tracer.Start(ctx, "gateway.AcquireSessionLock")
 	defer span.End()
 	span.SetAttributes(
@@ -729,7 +738,8 @@ func (s *GatewayServer) acquireSessionLock(ctx context.Context, cs *connectionSt
 	// LockRefreshInterval (10s) so a single missed refresh cycle does not
 	// prematurely declare the holder dead.
 	forceTakeoverThresholdMs := (state.LockRefreshInterval * 3 / 2).Milliseconds()
-	success, resumed, forced, err := s.sessions.AcquireOrResumeLock(cs.sessionCtx, cs.identity, cs.sessionID, resumeSessionID, forceTakeoverThresholdMs)
+	connResult, err := s.sessions.AcquireOrResumeLock(cs.sessionCtx, cs.identity, cs.sessionID, resumeSessionID, forceTakeoverThresholdMs, meta)
+	success, resumed, forced := connResult.Acquired, connResult.Resumed, connResult.Forced
 	sessionLockDuration.Observe(time.Since(lockStart).Seconds())
 	if err != nil {
 		redisOperations.WithLabelValues("lock_acquire", "failure").Inc()
@@ -754,20 +764,38 @@ func (s *GatewayServer) acquireSessionLock(ctx context.Context, cs *connectionSt
 	}
 	redisOperations.WithLabelValues("lock_acquire", "success").Inc()
 	cs.resumed = resumed
+	cs.initialConnectionUnixMs = connResult.InitialConnectionUnixMs
+	cs.reconnectionCount = connResult.ReconnectionCount
 	if resumed {
-		logging.Logger.Info().Str("session_id", cs.sessionID).Str("resume_session_id", resumeSessionID).Str("identity", cs.identity.String()).Msg("session resumed")
+		logging.Logger.Info().Str("session_id", cs.sessionID).Str("resume_session_id", resumeSessionID).Str("identity", cs.identity.String()).Int32("reconnection_count", connResult.ReconnectionCount).Msg("session resumed")
 	}
 	if forced {
 		logging.Logger.Warn().Str("session_id", cs.sessionID).Str("identity", cs.identity.String()).Msg("session lock force-takeover: previous holder appears dead")
 	}
-	// Audit: Lock acquired successfully
+	// Audit: Lock acquired successfully. Decorate with client SDK version,
+	// session lifetime, and server build info so connection-audit consumers
+	// can answer "which clients are still on the old SDK?" and "how long
+	// has this identity been bouncing?" without joining a separate table.
 	sessionUUID, _ := uuid.Parse(cs.sessionID)
-	s.auditLog(ctx, audit.NewConnectionEvent(string(cs.identity.Type), cs.identity.String(), audit.OpLockAcquired, sessionUUID, true, "", map[string]interface{}{
-		"workspace":         cs.identity.Workspace,
-		"resumed":           resumed,
-		"forced":            forced,
-		"resume_session_id": resumeSessionID,
-	}))
+	lockMeta := map[string]interface{}{
+		"workspace":                  cs.identity.Workspace,
+		"resumed":                    resumed,
+		"forced":                     forced,
+		"resume_session_id":          resumeSessionID,
+		"client_version":             clientVersionOrUnknown(meta.ClientVersion),
+		"client_sdk":                 clientSDKOrUnknown(meta.ClientSDK),
+		"server_version":             serverVersionString(),
+		"initial_connection_unix_ms": connResult.InitialConnectionUnixMs,
+		"reconnection_count":         connResult.ReconnectionCount,
+		"event_kind":                 connectionEventKind(resumed, forced),
+	}
+	if meta.ClientBuildInfo != nil && meta.ClientBuildInfo.Commit != "" {
+		lockMeta["client_build_commit"] = meta.ClientBuildInfo.Commit
+	}
+	if commit := serverBuildCommit(); commit != "" {
+		lockMeta["server_build_commit"] = commit
+	}
+	s.auditLog(ctx, audit.NewConnectionEvent(string(cs.identity.Type), cs.identity.String(), audit.OpLockAcquired, sessionUUID, true, "", lockMeta))
 
 	// Register Session
 	err = s.sessions.RegisterSession(cs.sessionCtx, cs.identity, cs.sessionID, s.gatewayID)

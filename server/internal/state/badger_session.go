@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -44,6 +45,55 @@ func decodeMetaValue(raw []byte) (identity, gatewayID string) {
 	return s[idx+len(metaSep):], s[:idx]
 }
 
+// badgerLockValue is the JSON payload stored at lock keys. We don't need
+// ExpiresUnixMs here because Badger's WithTTL handles expiry natively;
+// the value carries the holder's sessionID plus the session-lifetime
+// + client-version fields added by the InitConnection versioning spec.
+//
+// For backwards compatibility with the previous format (raw sessionID
+// bytes), decodeBadgerLockValue falls back to treating an undecodable
+// value as a legacy sessionID with zeroed metadata. Existing locks
+// expire within LockTTL (30s) so this fallback is only relevant during
+// rolling upgrades.
+type badgerLockValue struct {
+	SessionID               string         `json:"session_id"`
+	AcquiredUnixMs          int64          `json:"acquired_unix_ms"`
+	ClientVersion           string         `json:"client_version,omitempty"`
+	ClientSDK               string         `json:"client_sdk,omitempty"`
+	ClientBuildInfo         *BuildInfoMeta `json:"client_build_info,omitempty"`
+	InitialConnectionUnixMs int64          `json:"initial_connection_unix_ms,omitempty"`
+	ReconnectionCount       int32          `json:"reconnection_count,omitempty"`
+}
+
+func encodeBadgerLockValue(v badgerLockValue) ([]byte, error) {
+	return json.Marshal(v)
+}
+
+func decodeBadgerLockValue(raw []byte) badgerLockValue {
+	var v badgerLockValue
+	if err := json.Unmarshal(raw, &v); err == nil && v.SessionID != "" {
+		return v
+	}
+	// Legacy format: raw sessionID bytes.
+	return badgerLockValue{SessionID: string(raw)}
+}
+
+func newBadgerLockValue(sessionID string, meta ConnectMeta, initialMs int64, reconnectionCount int32) badgerLockValue {
+	now := time.Now().UnixMilli()
+	if initialMs == 0 {
+		initialMs = now
+	}
+	return badgerLockValue{
+		SessionID:               sessionID,
+		AcquiredUnixMs:          now,
+		ClientVersion:           meta.ClientVersion,
+		ClientSDK:               meta.ClientSDK,
+		ClientBuildInfo:         meta.ClientBuildInfo,
+		InitialConnectionUnixMs: initialMs,
+		ReconnectionCount:       reconnectionCount,
+	}
+}
+
 // BadgerSessionRegistry implements SessionManager using a local Badger database.
 // It is intended for AetherLite (single-node) deployments where distributed
 // coordination via Redis is not required. A sync.Mutex serialises all
@@ -84,22 +134,34 @@ func (r *BadgerSessionRegistry) AcquireOrResumeLock(
 	identity models.Identity,
 	sessionID, resumeSessionID string,
 	forceTakeoverThresholdMs int64,
-) (acquired bool, resumed bool, forced bool, err error) {
+	meta ConnectMeta,
+) (ConnectResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	key := lockKey(identity.String())
 	ttlDuration := LockTTL
 
-	err = r.db.Update(func(txn *badger.Txn) error {
+	var result ConnectResult
+
+	err := r.db.Update(func(txn *badger.Txn) error {
 		item, getErr := txn.Get(key)
 		if getErr == badger.ErrKeyNotFound {
 			// No lock exists — acquire fresh.
-			e := badger.NewEntry(key, []byte(sessionID)).WithTTL(ttlDuration)
+			lv := newBadgerLockValue(sessionID, meta, 0, 0)
+			encoded, encErr := encodeBadgerLockValue(lv)
+			if encErr != nil {
+				return encErr
+			}
+			e := badger.NewEntry(key, encoded).WithTTL(ttlDuration)
 			if setErr := txn.SetEntry(e); setErr != nil {
 				return setErr
 			}
-			acquired = true
+			result = ConnectResult{
+				Acquired:                true,
+				InitialConnectionUnixMs: lv.InitialConnectionUnixMs,
+				ReconnectionCount:       lv.ReconnectionCount,
+			}
 			return nil
 		}
 		if getErr != nil {
@@ -111,16 +173,26 @@ func (r *BadgerSessionRegistry) AcquireOrResumeLock(
 		if valErr != nil {
 			return valErr
 		}
-		currentHolder := string(valBytes)
+		current := decodeBadgerLockValue(valBytes)
 
 		// Resume: matching session ID.
-		if resumeSessionID != "" && currentHolder == resumeSessionID {
-			e := badger.NewEntry(key, []byte(sessionID)).WithTTL(ttlDuration)
+		if resumeSessionID != "" && current.SessionID == resumeSessionID {
+			initial := current.InitialConnectionUnixMs
+			lv := newBadgerLockValue(sessionID, meta, initial, current.ReconnectionCount+1)
+			encoded, encErr := encodeBadgerLockValue(lv)
+			if encErr != nil {
+				return encErr
+			}
+			e := badger.NewEntry(key, encoded).WithTTL(ttlDuration)
 			if setErr := txn.SetEntry(e); setErr != nil {
 				return setErr
 			}
-			acquired = true
-			resumed = true
+			result = ConnectResult{
+				Acquired:                true,
+				Resumed:                 true,
+				InitialConnectionUnixMs: lv.InitialConnectionUnixMs,
+				ReconnectionCount:       lv.ReconnectionCount,
+			}
 			return nil
 		}
 
@@ -129,12 +201,21 @@ func (r *BadgerSessionRegistry) AcquireOrResumeLock(
 		if expiresAt > 0 {
 			remainingMs := int64(time.Until(time.Unix(int64(expiresAt), 0)).Milliseconds())
 			if remainingMs > 0 && remainingMs < forceTakeoverThresholdMs {
-				e := badger.NewEntry(key, []byte(sessionID)).WithTTL(ttlDuration)
+				lv := newBadgerLockValue(sessionID, meta, 0, 0)
+				encoded, encErr := encodeBadgerLockValue(lv)
+				if encErr != nil {
+					return encErr
+				}
+				e := badger.NewEntry(key, encoded).WithTTL(ttlDuration)
 				if setErr := txn.SetEntry(e); setErr != nil {
 					return setErr
 				}
-				acquired = true
-				forced = true
+				result = ConnectResult{
+					Acquired:                true,
+					Forced:                  true,
+					InitialConnectionUnixMs: lv.InitialConnectionUnixMs,
+					ReconnectionCount:       lv.ReconnectionCount,
+				}
 				logging.Logger.Warn().
 					Str("identity", identity.String()).
 					Int64("remaining_ms", remainingMs).
@@ -144,11 +225,10 @@ func (r *BadgerSessionRegistry) AcquireOrResumeLock(
 		}
 
 		// Lock is held by a different session with healthy TTL — reject.
-		acquired = false
 		return nil
 	})
 
-	return acquired, resumed, forced, err
+	return result, err
 }
 
 // ReleaseLock releases the lock for the given identity, but only if the caller
@@ -173,7 +253,7 @@ func (r *BadgerSessionRegistry) ReleaseLock(ctx context.Context, identity models
 			return err
 		}
 
-		if string(valBytes) != sessionID {
+		if decodeBadgerLockValue(valBytes).SessionID != sessionID {
 			// We don't own this lock any more — do nothing.
 			return nil
 		}
@@ -205,11 +285,15 @@ func (r *BadgerSessionRegistry) RefreshLock(ctx context.Context, identity models
 			return err
 		}
 
-		if string(valBytes) != sessionID {
+		if decodeBadgerLockValue(valBytes).SessionID != sessionID {
 			return nil
 		}
 
-		e := badger.NewEntry(key, []byte(sessionID)).WithTTL(LockTTL)
+		// Refresh re-writes the same value with a new TTL. We preserve the
+		// full payload (lifetime + version metadata) rather than rewriting
+		// it as a bare sessionID; otherwise every heartbeat would drop the
+		// admin-observable fields.
+		e := badger.NewEntry(key, valBytes).WithTTL(LockTTL)
 		if err := txn.SetEntry(e); err != nil {
 			return err
 		}
@@ -244,12 +328,13 @@ func (r *BadgerSessionRegistry) RefreshLockAndSession(ctx context.Context, ident
 			return err
 		}
 
-		if string(valBytes) != sessionID {
+		if decodeBadgerLockValue(valBytes).SessionID != sessionID {
 			return nil
 		}
 
-		// Refresh lock.
-		if err := txn.SetEntry(badger.NewEntry(lockK, []byte(sessionID)).WithTTL(LockTTL)); err != nil {
+		// Refresh lock — preserve the existing JSON payload so we don't
+		// drop the lifetime/version metadata on every heartbeat.
+		if err := txn.SetEntry(badger.NewEntry(lockK, valBytes).WithTTL(LockTTL)); err != nil {
 			return err
 		}
 
@@ -330,8 +415,12 @@ func (r *BadgerSessionRegistry) GetSessionGateway(ctx context.Context, identity 
 		if err != nil {
 			return err
 		}
+		// The lock value is JSON-encoded with the holder's sessionID
+		// inside. Use the decoded form (falls back to raw bytes for any
+		// legacy entry) so the meta lookup hits the right key.
+		sid := decodeBadgerLockValue(sidBytes).SessionID
 		// Read the session metadata to extract gateway_id.
-		metaItem, err := txn.Get(metaKey(string(sidBytes)))
+		metaItem, err := txn.Get(metaKey(sid))
 		if err == badger.ErrKeyNotFound {
 			return nil
 		}

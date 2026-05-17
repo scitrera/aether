@@ -383,6 +383,147 @@ func TestJetStreamKV_KeyWithColons_Roundtrip(t *testing.T) {
 	}
 }
 
+// TestJetStreamKV_IncrementOnTTLKey_PreservesExpiry verifies that Increment
+// on a key initially written with a TTL preserves the expiry window and that
+// the key disappears after the TTL elapses.
+func TestJetStreamKV_IncrementOnTTLKey_PreservesExpiry(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping TTL sleep test in -short mode")
+	}
+	s := newTestJSStore(t)
+	ctx := context.Background()
+	agent := jsAgent()
+
+	ttl := 3 * time.Second
+	if err := s.Set(ctx, agent, kv.ScopeGlobal, "rl-key", "0", "", "", ttl); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	v1, err := s.Increment(ctx, agent, kv.ScopeGlobal, "rl-key", "", "")
+	if err != nil {
+		t.Fatalf("Increment 1: %v", err)
+	}
+	if v1 != 1 {
+		t.Errorf("Increment 1: got %d, want 1", v1)
+	}
+
+	v2, err := s.Increment(ctx, agent, kv.ScopeGlobal, "rl-key", "", "")
+	if err != nil {
+		t.Fatalf("Increment 2: %v", err)
+	}
+	if v2 != 2 {
+		t.Errorf("Increment 2: got %d, want 2", v2)
+	}
+
+	// TTL should still be in effect — key must be present.
+	val, err := s.Get(ctx, agent, kv.ScopeGlobal, "rl-key", "", "")
+	if err != nil {
+		t.Fatalf("Get before expiry: %v", err)
+	}
+	if val != "2" {
+		t.Errorf("Get before expiry: got %q, want %q", val, "2")
+	}
+
+	// Wait for TTL to lapse.
+	time.Sleep(ttl + 500*time.Millisecond)
+
+	_, err = s.Get(ctx, agent, kv.ScopeGlobal, "rl-key", "", "")
+	if err == nil {
+		t.Error("expected ErrKeyNotFound after TTL, got nil")
+	}
+}
+
+// TestJetStreamKV_IncrementOnTTLKey_BetweenWindows verifies that after a TTL
+// expires, Increment starts a fresh counter at 1 (not continuing from the old
+// value) and the new entry carries no TTL wrapper (option A design).
+func TestJetStreamKV_IncrementOnTTLKey_BetweenWindows(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping TTL sleep test in -short mode")
+	}
+	s := newTestJSStore(t)
+	ctx := context.Background()
+	agent := jsAgent()
+
+	// Short TTL window.
+	ttl := 1 * time.Second
+	if err := s.Set(ctx, agent, kv.ScopeGlobal, "rl-win", "0", "", "", ttl); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// Three increments within the window.
+	for want := int64(1); want <= 3; want++ {
+		got, err := s.Increment(ctx, agent, kv.ScopeGlobal, "rl-win", "", "")
+		if err != nil {
+			t.Fatalf("Increment %d: %v", want, err)
+		}
+		if got != want {
+			t.Errorf("Increment %d: got %d, want %d", want, got, want)
+		}
+	}
+
+	// Wait for TTL to lapse.
+	time.Sleep(ttl + 500*time.Millisecond)
+
+	// Increment after expiry must start fresh at 1, NOT continue from 3.
+	got, err := s.Increment(ctx, agent, kv.ScopeGlobal, "rl-win", "", "")
+	if err != nil {
+		t.Fatalf("Increment after expiry: %v", err)
+	}
+	if got != 1 {
+		t.Errorf("Increment after expiry: got %d, want 1 (fresh window)", got)
+	}
+
+	// The new entry should be readable as "1".
+	val, err := s.Get(ctx, agent, kv.ScopeGlobal, "rl-win", "", "")
+	if err != nil {
+		t.Fatalf("Get after fresh increment: %v", err)
+	}
+	if val != "1" {
+		t.Errorf("Get after fresh increment: got %q, want %q", val, "1")
+	}
+}
+
+// TestJetStreamKV_IncrementIf_TTL_RespectsExpiry verifies that IncrementIf on
+// a TTL-wrapped key preserves the expiry and the key disappears afterward.
+func TestJetStreamKV_IncrementIf_TTL_RespectsExpiry(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping TTL sleep test in -short mode")
+	}
+	s := newTestJSStore(t)
+	ctx := context.Background()
+	agent := jsAgent()
+
+	ttl := 3 * time.Second
+	if err := s.Set(ctx, agent, kv.ScopeGlobal, "rl-if", "0", "", "", ttl); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// IncrementIf with ceiling 10.
+	v, applied, err := s.IncrementIf(ctx, agent, kv.ScopeGlobal, "rl-if", "", "", 1, 10)
+	if err != nil {
+		t.Fatalf("IncrementIf 1: %v", err)
+	}
+	if !applied || v != 1 {
+		t.Errorf("IncrementIf 1: got applied=%v v=%d, want applied=true v=1", applied, v)
+	}
+
+	v, applied, err = s.IncrementIf(ctx, agent, kv.ScopeGlobal, "rl-if", "", "", 1, 10)
+	if err != nil {
+		t.Fatalf("IncrementIf 2: %v", err)
+	}
+	if !applied || v != 2 {
+		t.Errorf("IncrementIf 2: got applied=%v v=%d, want applied=true v=2", applied, v)
+	}
+
+	// Wait for TTL to lapse.
+	time.Sleep(ttl + 500*time.Millisecond)
+
+	_, err = s.Get(ctx, agent, kv.ScopeGlobal, "rl-if", "", "")
+	if err == nil {
+		t.Error("expected ErrKeyNotFound after TTL, got nil")
+	}
+}
+
 // TestJetStreamKV_ScopeIsolation writes a key in global scope and confirms
 // it does not appear when listing workspace scope.
 func TestJetStreamKV_ScopeIsolation(t *testing.T) {

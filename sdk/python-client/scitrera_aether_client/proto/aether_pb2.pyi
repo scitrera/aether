@@ -323,21 +323,29 @@ class TaskHibernated(_message.Message):
     def __init__(self, task_id: _Optional[str] = ..., descriptor: _Optional[_Union[HibernationDescriptor, _Mapping]] = ...) -> None: ...
 
 class ConnectionAck(_message.Message):
-    __slots__ = ("session_id", "resumed", "assigned_id", "negotiated_extensions", "server_supported_extensions")
+    __slots__ = ("session_id", "resumed", "assigned_id", "negotiated_extensions", "server_supported_extensions", "server_version", "server_build_info", "initial_connection_unix_ms", "reconnection_count")
     SESSION_ID_FIELD_NUMBER: _ClassVar[int]
     RESUMED_FIELD_NUMBER: _ClassVar[int]
     ASSIGNED_ID_FIELD_NUMBER: _ClassVar[int]
     NEGOTIATED_EXTENSIONS_FIELD_NUMBER: _ClassVar[int]
     SERVER_SUPPORTED_EXTENSIONS_FIELD_NUMBER: _ClassVar[int]
+    SERVER_VERSION_FIELD_NUMBER: _ClassVar[int]
+    SERVER_BUILD_INFO_FIELD_NUMBER: _ClassVar[int]
+    INITIAL_CONNECTION_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    RECONNECTION_COUNT_FIELD_NUMBER: _ClassVar[int]
     session_id: str
     resumed: bool
     assigned_id: str
     negotiated_extensions: _containers.RepeatedCompositeFieldContainer[NegotiatedExtension]
     server_supported_extensions: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, session_id: _Optional[str] = ..., resumed: bool = ..., assigned_id: _Optional[str] = ..., negotiated_extensions: _Optional[_Iterable[_Union[NegotiatedExtension, _Mapping]]] = ..., server_supported_extensions: _Optional[_Iterable[str]] = ...) -> None: ...
+    server_version: str
+    server_build_info: BuildInfo
+    initial_connection_unix_ms: int
+    reconnection_count: int
+    def __init__(self, session_id: _Optional[str] = ..., resumed: bool = ..., assigned_id: _Optional[str] = ..., negotiated_extensions: _Optional[_Iterable[_Union[NegotiatedExtension, _Mapping]]] = ..., server_supported_extensions: _Optional[_Iterable[str]] = ..., server_version: _Optional[str] = ..., server_build_info: _Optional[_Union[BuildInfo, _Mapping]] = ..., initial_connection_unix_ms: _Optional[int] = ..., reconnection_count: _Optional[int] = ...) -> None: ...
 
 class InitConnection(_message.Message):
-    __slots__ = ("agent", "task", "user", "orchestrator", "workflow_engine", "metrics_bridge", "bridge", "service", "credentials", "resume_session_id", "extensions")
+    __slots__ = ("agent", "task", "user", "orchestrator", "workflow_engine", "metrics_bridge", "bridge", "service", "credentials", "resume_session_id", "extensions", "client_version", "client_sdk", "client_build_info")
     class CredentialsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -356,6 +364,9 @@ class InitConnection(_message.Message):
     CREDENTIALS_FIELD_NUMBER: _ClassVar[int]
     RESUME_SESSION_ID_FIELD_NUMBER: _ClassVar[int]
     EXTENSIONS_FIELD_NUMBER: _ClassVar[int]
+    CLIENT_VERSION_FIELD_NUMBER: _ClassVar[int]
+    CLIENT_SDK_FIELD_NUMBER: _ClassVar[int]
+    CLIENT_BUILD_INFO_FIELD_NUMBER: _ClassVar[int]
     agent: AgentIdentity
     task: TaskIdentity
     user: UserIdentity
@@ -367,7 +378,22 @@ class InitConnection(_message.Message):
     credentials: _containers.ScalarMap[str, str]
     resume_session_id: str
     extensions: _containers.RepeatedCompositeFieldContainer[ExtensionDeclaration]
-    def __init__(self, agent: _Optional[_Union[AgentIdentity, _Mapping]] = ..., task: _Optional[_Union[TaskIdentity, _Mapping]] = ..., user: _Optional[_Union[UserIdentity, _Mapping]] = ..., orchestrator: _Optional[_Union[OrchestratorIdentity, _Mapping]] = ..., workflow_engine: _Optional[_Union[WorkflowEngineIdentity, _Mapping]] = ..., metrics_bridge: _Optional[_Union[MetricsBridgeIdentity, _Mapping]] = ..., bridge: _Optional[_Union[BridgeIdentity, _Mapping]] = ..., service: _Optional[_Union[ServiceIdentity, _Mapping]] = ..., credentials: _Optional[_Mapping[str, str]] = ..., resume_session_id: _Optional[str] = ..., extensions: _Optional[_Iterable[_Union[ExtensionDeclaration, _Mapping]]] = ...) -> None: ...
+    client_version: str
+    client_sdk: str
+    client_build_info: BuildInfo
+    def __init__(self, agent: _Optional[_Union[AgentIdentity, _Mapping]] = ..., task: _Optional[_Union[TaskIdentity, _Mapping]] = ..., user: _Optional[_Union[UserIdentity, _Mapping]] = ..., orchestrator: _Optional[_Union[OrchestratorIdentity, _Mapping]] = ..., workflow_engine: _Optional[_Union[WorkflowEngineIdentity, _Mapping]] = ..., metrics_bridge: _Optional[_Union[MetricsBridgeIdentity, _Mapping]] = ..., bridge: _Optional[_Union[BridgeIdentity, _Mapping]] = ..., service: _Optional[_Union[ServiceIdentity, _Mapping]] = ..., credentials: _Optional[_Mapping[str, str]] = ..., resume_session_id: _Optional[str] = ..., extensions: _Optional[_Iterable[_Union[ExtensionDeclaration, _Mapping]]] = ..., client_version: _Optional[str] = ..., client_sdk: _Optional[str] = ..., client_build_info: _Optional[_Union[BuildInfo, _Mapping]] = ...) -> None: ...
+
+class BuildInfo(_message.Message):
+    __slots__ = ("commit", "built_at", "runtime", "os")
+    COMMIT_FIELD_NUMBER: _ClassVar[int]
+    BUILT_AT_FIELD_NUMBER: _ClassVar[int]
+    RUNTIME_FIELD_NUMBER: _ClassVar[int]
+    OS_FIELD_NUMBER: _ClassVar[int]
+    commit: str
+    built_at: str
+    runtime: str
+    os: str
+    def __init__(self, commit: _Optional[str] = ..., built_at: _Optional[str] = ..., runtime: _Optional[str] = ..., os: _Optional[str] = ...) -> None: ...
 
 class ExtensionDeclaration(_message.Message):
     __slots__ = ("uri", "version", "required", "json_schema")

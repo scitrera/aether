@@ -2,6 +2,8 @@ package orchestration
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -787,6 +789,155 @@ func TestCancelTask_RetiresQueueRow(t *testing.T) {
 	}
 	if stub.failedByTaskID[0].errorMsg != "task cancelled" {
 		t.Errorf("FailTaskByTaskID errorMsg = %q, want %q", stub.failedByTaskID[0].errorMsg, "task cancelled")
+	}
+}
+
+// =============================================================================
+// Dispatcher publish tests (Change 1 — wire JetStream notification publish)
+// =============================================================================
+
+// stubNotifyPublisher implements taskNotificationPublisher and records every
+// PublishTask call. Used by TestTaskAssignment_CreateOrchestrated_PublishesViaDispatcher
+// to assert createOrchestratedStartupTask wakes the dispatcher after the SQL
+// row insert.
+type stubNotifyPublisher struct {
+	mu       sync.Mutex
+	calls    []*OrchestrationTaskNotification
+	returnFn func(*OrchestrationTaskNotification) error // optional injected error
+}
+
+func (s *stubNotifyPublisher) PublishTask(_ context.Context, n *OrchestrationTaskNotification) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, n)
+	if s.returnFn != nil {
+		return s.returnFn(n)
+	}
+	return nil
+}
+
+func (s *stubNotifyPublisher) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.calls)
+}
+
+func (s *stubNotifyPublisher) last() *OrchestrationTaskNotification {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.calls) == 0 {
+		return nil
+	}
+	return s.calls[len(s.calls)-1]
+}
+
+// TestTaskAssignment_CreateOrchestrated_PublishesViaDispatcher is the regression
+// guard for the orchestration delivery gap (Phase 5 tracer report): when a
+// dispatcher (e.g. JetStreamTaskDispatcher) is installed via SetDispatcher,
+// createOrchestratedStartupTask MUST publish a notification after the SQL row
+// insert. Without this publish, JetStream consumers never see the task and
+// orchestration stalls invisibly.
+func TestTaskAssignment_CreateOrchestrated_PublishesViaDispatcher(t *testing.T) {
+	service, implementation, workspace := newTestTaskService(t)
+	ctx := context.Background()
+
+	pub := &stubNotifyPublisher{}
+	service.SetDispatcher(pub)
+
+	targetIdentity := models.Identity{
+		Type:           models.PrincipalAgent,
+		Workspace:      workspace,
+		Implementation: implementation,
+		Specifier:      "frank@example.com",
+	}
+
+	startupTaskID, err := service.createOrchestratedStartupTask(
+		ctx, targetIdentity, workspace, nil, models.Identity{}, nil,
+	)
+	if err != nil {
+		t.Fatalf("createOrchestratedStartupTask() error = %v", err)
+	}
+
+	if got := pub.count(); got != 1 {
+		t.Fatalf("PublishTask call count = %d, want 1", got)
+	}
+	got := pub.last()
+	if got.TaskID != startupTaskID {
+		t.Errorf("PublishTask TaskID = %q, want %q", got.TaskID, startupTaskID)
+	}
+	if got.QueueID == "" {
+		t.Errorf("PublishTask QueueID is empty; expected a non-empty queue id")
+	}
+	if got.TargetImplementation != implementation {
+		t.Errorf("PublishTask TargetImplementation = %q, want %q", got.TargetImplementation, implementation)
+	}
+	if got.Workspace != workspace {
+		t.Errorf("PublishTask Workspace = %q, want %q", got.Workspace, workspace)
+	}
+	if got.Profile != "docker" {
+		t.Errorf("PublishTask Profile = %q, want %q", got.Profile, "docker")
+	}
+}
+
+// TestTaskAssignment_CreateOrchestrated_NoDispatcher_NoPublish confirms the
+// polling/notify topology default: no SetDispatcher call means
+// createOrchestratedStartupTask completes successfully without attempting any
+// publish (preserves single-node lite-mode behavior).
+func TestTaskAssignment_CreateOrchestrated_NoDispatcher_NoPublish(t *testing.T) {
+	service, implementation, workspace := newTestTaskService(t)
+	ctx := context.Background()
+	// Intentionally NOT calling service.SetDispatcher(...)
+
+	targetIdentity := models.Identity{
+		Type:           models.PrincipalAgent,
+		Workspace:      workspace,
+		Implementation: implementation,
+		Specifier:      "grace@example.com",
+	}
+
+	if _, err := service.createOrchestratedStartupTask(
+		ctx, targetIdentity, workspace, nil, models.Identity{}, nil,
+	); err != nil {
+		t.Fatalf("createOrchestratedStartupTask() without dispatcher error = %v", err)
+	}
+	// No assertion needed beyond "no panic / no error" — the absence of a
+	// dispatcher must be silently tolerated.
+}
+
+// TestTaskAssignment_CreateOrchestrated_PublishFailureNonFatal verifies that a
+// dispatcher publish error does NOT propagate up — the task creation still
+// succeeds because the queue row is the authoritative artifact. Failure is
+// logged at WARN and recovery falls to the next dispatcher reconciliation
+// pass.
+func TestTaskAssignment_CreateOrchestrated_PublishFailureNonFatal(t *testing.T) {
+	service, implementation, workspace := newTestTaskService(t)
+	ctx := context.Background()
+
+	pub := &stubNotifyPublisher{
+		returnFn: func(*OrchestrationTaskNotification) error {
+			return fmt.Errorf("simulated jetstream publish failure")
+		},
+	}
+	service.SetDispatcher(pub)
+
+	targetIdentity := models.Identity{
+		Type:           models.PrincipalAgent,
+		Workspace:      workspace,
+		Implementation: implementation,
+		Specifier:      "henry@example.com",
+	}
+
+	startupTaskID, err := service.createOrchestratedStartupTask(
+		ctx, targetIdentity, workspace, nil, models.Identity{}, nil,
+	)
+	if err != nil {
+		t.Fatalf("createOrchestratedStartupTask should swallow publish error, got = %v", err)
+	}
+	if startupTaskID == "" {
+		t.Fatalf("expected non-empty startup task id even on publish failure")
+	}
+	if pub.count() != 1 {
+		t.Errorf("PublishTask call count = %d, want 1", pub.count())
 	}
 }
 

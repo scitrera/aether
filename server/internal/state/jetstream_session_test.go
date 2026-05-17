@@ -93,7 +93,7 @@ func TestJetStreamSession_LockAcquireRelease_HappyPath(t *testing.T) {
 	ctx := context.Background()
 
 	id := testAgentIdentity("ws", "impl", "spec")
-	acquired, resumed, forced, err := s.AcquireOrResumeLock(ctx, id, "sess-1", "", 0)
+	acquired, resumed, forced, err := acquireLegacy(s, ctx, id, "sess-1", "", 0)
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -131,11 +131,11 @@ func TestJetStreamSession_LockAcquire_Duplicate_Rejected(t *testing.T) {
 	ctx := context.Background()
 
 	id := testAgentIdentity("ws", "impl", "dup")
-	if acquired, _, _, err := s.AcquireOrResumeLock(ctx, id, "sess-A", "", 0); err != nil || !acquired {
+	if acquired, _, _, err := acquireLegacy(s, ctx, id, "sess-A", "", 0); err != nil || !acquired {
 		t.Fatalf("first acquire must succeed: acquired=%v err=%v", acquired, err)
 	}
 
-	acquired, resumed, forced, err := s.AcquireOrResumeLock(ctx, id, "sess-B", "", 0)
+	acquired, resumed, forced, err := acquireLegacy(s, ctx, id, "sess-B", "", 0)
 	if err != nil {
 		t.Fatalf("second acquire returned error: %v", err)
 	}
@@ -153,12 +153,12 @@ func TestJetStreamSession_LockResume_SameSessionID(t *testing.T) {
 	ctx := context.Background()
 
 	id := testAgentIdentity("ws", "impl", "resume")
-	if acquired, _, _, err := s.AcquireOrResumeLock(ctx, id, "sess-orig", "", 0); err != nil || !acquired {
+	if acquired, _, _, err := acquireLegacy(s, ctx, id, "sess-orig", "", 0); err != nil || !acquired {
 		t.Fatalf("initial acquire: acquired=%v err=%v", acquired, err)
 	}
 
 	// Caller "remembers" sess-orig and reconnects with a new sessionID.
-	acquired, resumed, forced, err := s.AcquireOrResumeLock(ctx, id, "sess-new", "sess-orig", 0)
+	acquired, resumed, forced, err := acquireLegacy(s, ctx, id, "sess-new", "sess-orig", 0)
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -176,14 +176,14 @@ func TestJetStreamSession_LockForceTakeover_BelowThreshold(t *testing.T) {
 	ctx := context.Background()
 
 	id := testAgentIdentity("ws", "impl", "force")
-	if acquired, _, _, err := s.AcquireOrResumeLock(ctx, id, "sess-orig", "", 0); err != nil || !acquired {
+	if acquired, _, _, err := acquireLegacy(s, ctx, id, "sess-orig", "", 0); err != nil || !acquired {
 		t.Fatalf("initial acquire: acquired=%v err=%v", acquired, err)
 	}
 
 	// LockTTL is 30s; pass a threshold larger than the remaining TTL to trigger
 	// the force-takeover branch deterministically without sleeping.
 	thresholdMs := LockTTL.Milliseconds() + 5000
-	acquired, resumed, forced, err := s.AcquireOrResumeLock(ctx, id, "sess-new", "", thresholdMs)
+	acquired, resumed, forced, err := acquireLegacy(s, ctx, id, "sess-new", "", thresholdMs)
 	if err != nil {
 		t.Fatalf("force takeover: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestJetStreamSession_RefreshLock_PreservesIdentity_ExtendsTTL(t *testing.T)
 	ctx := context.Background()
 
 	id := testAgentIdentity("ws", "impl", "refresh")
-	if acquired, _, _, err := s.AcquireOrResumeLock(ctx, id, "sess-r", "", 0); err != nil || !acquired {
+	if acquired, _, _, err := acquireLegacy(s, ctx, id, "sess-r", "", 0); err != nil || !acquired {
 		t.Fatalf("acquire: acquired=%v err=%v", acquired, err)
 	}
 
@@ -261,7 +261,7 @@ func TestJetStreamSession_ReleaseLock_WrongOwner_Rejected(t *testing.T) {
 	ctx := context.Background()
 
 	id := testAgentIdentity("ws", "impl", "rel-wrong")
-	if acquired, _, _, err := s.AcquireOrResumeLock(ctx, id, "sess-owner", "", 0); err != nil || !acquired {
+	if acquired, _, _, err := acquireLegacy(s, ctx, id, "sess-owner", "", 0); err != nil || !acquired {
 		t.Fatalf("acquire: acquired=%v err=%v", acquired, err)
 	}
 
@@ -296,7 +296,7 @@ func TestJetStreamSession_RegisterSession_LookupRoundTrip(t *testing.T) {
 	id := testAgentIdentity("ws-a", "implX", "spec1")
 
 	// Acquire lock so GetSessionGateway can resolve.
-	if _, _, _, err := s.AcquireOrResumeLock(ctx, id, "sess-1", "", 0); err != nil {
+	if _, _, _, err := acquireLegacy(s, ctx, id, "sess-1", "", 0); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 
@@ -455,7 +455,7 @@ func TestJetStreamSession_FindHealthyServiceInstances_FiltersExpired(t *testing.
 	agent := testAgentIdentity("ws", "worker", "agent-1")
 
 	for _, id := range []models.Identity{sv1, sv2, other, agent} {
-		if acq, _, _, err := s.AcquireOrResumeLock(ctx, id, id.String(), "", 0); err != nil || !acq {
+		if acq, _, _, err := acquireLegacy(s, ctx, id, id.String(), "", 0); err != nil || !acq {
 			t.Fatalf("acquire %s: acquired=%v err=%v", id.String(), acq, err)
 		}
 	}
@@ -539,7 +539,7 @@ func TestJetStreamSession_ConcurrentLockRace_ExactlyOneWinner(t *testing.T) {
 			for _, c := range []byte{byte('0' + (i / 10)), byte('0' + (i % 10))} {
 				sessionID += string(c)
 			}
-			acquired, _, _, err := s.AcquireOrResumeLock(ctx, id, sessionID, "", 0)
+			acquired, _, _, err := acquireLegacy(s, ctx, id, sessionID, "", 0)
 			if err != nil {
 				errs.Add(1)
 				return

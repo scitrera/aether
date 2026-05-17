@@ -1,6 +1,8 @@
 // Original file: aether.proto
 
 import type { NegotiatedExtension as _aether_v1_NegotiatedExtension, NegotiatedExtension__Output as _aether_v1_NegotiatedExtension__Output } from '../../aether/v1/NegotiatedExtension';
+import type { BuildInfo as _aether_v1_BuildInfo, BuildInfo__Output as _aether_v1_BuildInfo__Output } from '../../aether/v1/BuildInfo';
+import type { Long } from '@grpc/proto-loader';
 
 /**
  * ConnectionAck is sent immediately after successful connection.
@@ -33,6 +35,26 @@ export interface ConnectionAck {
    * client already declared every server-supported URI.
    */
   'serverSupportedExtensions'?: (string)[];
+  /**
+   * Server build metadata, returned so the client can log/observe the
+   * gateway version it negotiated with. Optional/additive — older
+   * gateways simply omit these fields.
+   */
+  'serverVersion'?: (string);
+  /**
+   * commit / built_at / runtime / os
+   */
+  'serverBuildInfo'?: (_aether_v1_BuildInfo | null);
+  /**
+   * Session-lifetime metadata. The gateway populates these so the SDK can
+   * surface accurate "connected since" semantics even across reconnect
+   * takeovers via resume_session_id.
+   */
+  'initialConnectionUnixMs'?: (number | string | Long);
+  /**
+   * bumped on each successful resume
+   */
+  'reconnectionCount'?: (number);
 }
 
 /**
@@ -66,4 +88,24 @@ export interface ConnectionAck__Output {
    * client already declared every server-supported URI.
    */
   'serverSupportedExtensions': (string)[];
+  /**
+   * Server build metadata, returned so the client can log/observe the
+   * gateway version it negotiated with. Optional/additive — older
+   * gateways simply omit these fields.
+   */
+  'serverVersion': (string);
+  /**
+   * commit / built_at / runtime / os
+   */
+  'serverBuildInfo': (_aether_v1_BuildInfo__Output | null);
+  /**
+   * Session-lifetime metadata. The gateway populates these so the SDK can
+   * surface accurate "connected since" semantics even across reconnect
+   * takeovers via resume_session_id.
+   */
+  'initialConnectionUnixMs': (string);
+  /**
+   * bumped on each successful resume
+   */
+  'reconnectionCount': (number);
 }

@@ -66,11 +66,22 @@ type JetStreamSessionConfig struct {
 // lockValue is the JSON payload stored under each identity lock key.
 // expiresUnixMs is the logical expiry — readers MUST treat the entry as
 // absent when the current wall clock is past this value.
+//
+// The Client* and Initial*/Reconnection* fields are session-lifetime
+// metadata added per the InitConnection versioning spec; they are
+// preserved across resume_session_id takeovers so admin observers see
+// the original connect time and accumulated reconnect count.
 type lockValue struct {
 	GatewayID      string `json:"gateway_id"`
 	SessionID      string `json:"session_id"`
 	AcquiredUnixMs int64  `json:"acquired_unix_ms"`
 	ExpiresUnixMs  int64  `json:"expires_unix_ms"`
+
+	ClientVersion           string         `json:"client_version,omitempty"`
+	ClientSDK               string         `json:"client_sdk,omitempty"`
+	ClientBuildInfo         *BuildInfoMeta `json:"client_build_info,omitempty"`
+	InitialConnectionUnixMs int64          `json:"initial_connection_unix_ms,omitempty"`
+	ReconnectionCount       int32          `json:"reconnection_count,omitempty"`
 }
 
 // sessionValue is the JSON payload stored under each session_id key.
@@ -251,6 +262,16 @@ func newLockValue(gatewayID, sessionID string) lockValue {
 	}
 }
 
+// applyConnectMeta copies the per-connect client metadata fields from meta
+// onto lv. Lifetime fields (InitialConnectionUnixMs, ReconnectionCount)
+// are computed by the caller per the resume/fresh/force semantics — this
+// helper only fans out the per-version metadata.
+func (lv *lockValue) applyConnectMeta(meta ConnectMeta) {
+	lv.ClientVersion = meta.ClientVersion
+	lv.ClientSDK = meta.ClientSDK
+	lv.ClientBuildInfo = meta.ClientBuildInfo
+}
+
 func encodeLockValue(lv lockValue) ([]byte, error) { return json.Marshal(lv) }
 
 func decodeLockValue(raw []byte) (lockValue, error) {
@@ -286,30 +307,38 @@ func (s *JetStreamSession) AcquireOrResumeLock(
 	identity models.Identity,
 	sessionID, resumeSessionID string,
 	forceTakeoverThresholdMs int64,
-) (acquired bool, resumed bool, forced bool, err error) {
+	meta ConnectMeta,
+) (ConnectResult, error) {
 	key := encodeKVKey(identity.String())
 
 	for attempt := 0; attempt < jsMaxCASAttempts; attempt++ {
 		entry, getErr := s.locks.Get(ctx, key)
 		if getErr != nil && !errors.Is(getErr, jetstream.ErrKeyNotFound) {
-			return false, false, false, fmt.Errorf("jetstream AcquireOrResumeLock: get: %w", getErr)
+			return ConnectResult{}, fmt.Errorf("jetstream AcquireOrResumeLock: get: %w", getErr)
 		}
 
 		// Path 1: lock absent — try fresh Create.
 		if getErr != nil { // ErrKeyNotFound
 			lv := newLockValue(sessionID, sessionID)
+			lv.applyConnectMeta(meta)
+			lv.InitialConnectionUnixMs = lv.AcquiredUnixMs
+			lv.ReconnectionCount = 0
 			encoded, encErr := encodeLockValue(lv)
 			if encErr != nil {
-				return false, false, false, encErr
+				return ConnectResult{}, encErr
 			}
 			if _, createErr := s.locks.Create(ctx, key, encoded); createErr != nil {
 				if isRevisionConflictJS(createErr) {
 					// Another writer beat us — retry.
 					continue
 				}
-				return false, false, false, fmt.Errorf("jetstream AcquireOrResumeLock: create: %w", createErr)
+				return ConnectResult{}, fmt.Errorf("jetstream AcquireOrResumeLock: create: %w", createErr)
 			}
-			return true, false, false, nil
+			return ConnectResult{
+				Acquired:                true,
+				InitialConnectionUnixMs: lv.InitialConnectionUnixMs,
+				ReconnectionCount:       lv.ReconnectionCount,
+			}, nil
 		}
 
 		// Existing entry — decode and assess.
@@ -317,53 +346,83 @@ func (s *JetStreamSession) AcquireOrResumeLock(
 		if decErr != nil {
 			// Corrupt entry: take ownership via CAS overwrite.
 			lv := newLockValue(sessionID, sessionID)
+			lv.applyConnectMeta(meta)
+			lv.InitialConnectionUnixMs = lv.AcquiredUnixMs
+			lv.ReconnectionCount = 0
 			encoded, encErr := encodeLockValue(lv)
 			if encErr != nil {
-				return false, false, false, encErr
+				return ConnectResult{}, encErr
 			}
 			if _, updErr := s.locks.Update(ctx, key, encoded, entry.Revision()); updErr != nil {
 				if isRevisionConflictJS(updErr) {
 					continue
 				}
-				return false, false, false, fmt.Errorf("jetstream AcquireOrResumeLock: cas overwrite corrupt: %w", updErr)
+				return ConnectResult{}, fmt.Errorf("jetstream AcquireOrResumeLock: cas overwrite corrupt: %w", updErr)
 			}
 			logging.Logger.Warn().
 				Str("identity", identity.String()).
 				Msg("jetstream session: corrupt lock entry — took ownership via CAS overwrite")
-			return true, false, true, nil
+			return ConnectResult{
+				Acquired:                true,
+				Forced:                  true,
+				InitialConnectionUnixMs: lv.InitialConnectionUnixMs,
+				ReconnectionCount:       lv.ReconnectionCount,
+			}, nil
 		}
 
 		// Logically expired → treat as absent. Take ownership via CAS update
 		// (Update needs the current revision; we have it from Get).
 		if isLockExpired(current) {
 			lv := newLockValue(sessionID, sessionID)
+			lv.applyConnectMeta(meta)
+			lv.InitialConnectionUnixMs = lv.AcquiredUnixMs
+			lv.ReconnectionCount = 0
 			encoded, encErr := encodeLockValue(lv)
 			if encErr != nil {
-				return false, false, false, encErr
+				return ConnectResult{}, encErr
 			}
 			if _, updErr := s.locks.Update(ctx, key, encoded, entry.Revision()); updErr != nil {
 				if isRevisionConflictJS(updErr) {
 					continue
 				}
-				return false, false, false, fmt.Errorf("jetstream AcquireOrResumeLock: cas expired: %w", updErr)
+				return ConnectResult{}, fmt.Errorf("jetstream AcquireOrResumeLock: cas expired: %w", updErr)
 			}
-			return true, false, false, nil
+			return ConnectResult{
+				Acquired:                true,
+				InitialConnectionUnixMs: lv.InitialConnectionUnixMs,
+				ReconnectionCount:       lv.ReconnectionCount,
+			}, nil
 		}
 
 		// Path 2: resume — caller advertises a prior session ID matching the holder.
 		if resumeSessionID != "" && current.SessionID == resumeSessionID {
 			lv := newLockValue(sessionID, sessionID)
+			lv.applyConnectMeta(meta)
+			// Preserve original connect time; fall back to the new acquire
+			// time if the predecessor predates the lifetime fields (legacy
+			// JSON without InitialConnectionUnixMs).
+			if current.InitialConnectionUnixMs > 0 {
+				lv.InitialConnectionUnixMs = current.InitialConnectionUnixMs
+			} else {
+				lv.InitialConnectionUnixMs = lv.AcquiredUnixMs
+			}
+			lv.ReconnectionCount = current.ReconnectionCount + 1
 			encoded, encErr := encodeLockValue(lv)
 			if encErr != nil {
-				return false, false, false, encErr
+				return ConnectResult{}, encErr
 			}
 			if _, updErr := s.locks.Update(ctx, key, encoded, entry.Revision()); updErr != nil {
 				if isRevisionConflictJS(updErr) {
 					continue
 				}
-				return false, false, false, fmt.Errorf("jetstream AcquireOrResumeLock: cas resume: %w", updErr)
+				return ConnectResult{}, fmt.Errorf("jetstream AcquireOrResumeLock: cas resume: %w", updErr)
 			}
-			return true, true, false, nil
+			return ConnectResult{
+				Acquired:                true,
+				Resumed:                 true,
+				InitialConnectionUnixMs: lv.InitialConnectionUnixMs,
+				ReconnectionCount:       lv.ReconnectionCount,
+			}, nil
 		}
 
 		// Path 3: force takeover — holder TTL has decayed below threshold.
@@ -371,28 +430,38 @@ func (s *JetStreamSession) AcquireOrResumeLock(
 			remainingMs := current.ExpiresUnixMs - nowUnixMs()
 			if remainingMs > 0 && remainingMs < forceTakeoverThresholdMs {
 				lv := newLockValue(sessionID, sessionID)
+				lv.applyConnectMeta(meta)
+				// Force-takeover semantics: prior holder was dead, so we
+				// treat this as a fresh connect (counter resets).
+				lv.InitialConnectionUnixMs = lv.AcquiredUnixMs
+				lv.ReconnectionCount = 0
 				encoded, encErr := encodeLockValue(lv)
 				if encErr != nil {
-					return false, false, false, encErr
+					return ConnectResult{}, encErr
 				}
 				if _, updErr := s.locks.Update(ctx, key, encoded, entry.Revision()); updErr != nil {
 					if isRevisionConflictJS(updErr) {
 						continue
 					}
-					return false, false, false, fmt.Errorf("jetstream AcquireOrResumeLock: cas force: %w", updErr)
+					return ConnectResult{}, fmt.Errorf("jetstream AcquireOrResumeLock: cas force: %w", updErr)
 				}
 				logging.Logger.Warn().
 					Str("identity", identity.String()).
 					Int64("remaining_ms", remainingMs).
 					Msg("jetstream session: forced lock takeover — previous holder missed refresh cycles")
-				return true, false, true, nil
+				return ConnectResult{
+					Acquired:                true,
+					Forced:                  true,
+					InitialConnectionUnixMs: lv.InitialConnectionUnixMs,
+					ReconnectionCount:       lv.ReconnectionCount,
+				}, nil
 			}
 		}
 
 		// Lock is healthy and held by a different session — reject.
-		return false, false, false, nil
+		return ConnectResult{}, nil
 	}
-	return false, false, false, fmt.Errorf("jetstream AcquireOrResumeLock: too much contention after %d attempts", jsMaxCASAttempts)
+	return ConnectResult{}, fmt.Errorf("jetstream AcquireOrResumeLock: too much contention after %d attempts", jsMaxCASAttempts)
 }
 
 // ReleaseLock releases the identity lock when the caller still owns it

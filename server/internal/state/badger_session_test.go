@@ -35,7 +35,7 @@ func TestBadgerSession_AcquireAndRelease(t *testing.T) {
 	id := testIdentity()
 
 	// Fresh acquire — should succeed.
-	acquired, resumed, forced, err := reg.AcquireOrResumeLock(ctx, id, "sess1", "", 0)
+	acquired, resumed, forced, err := acquireLegacy(reg, ctx, id, "sess1", "", 0)
 	if err != nil {
 		t.Fatalf("AcquireOrResumeLock: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestBadgerSession_AcquireAndRelease(t *testing.T) {
 	}
 
 	// Same identity, different sessionID — lock already held, should fail.
-	acquired2, _, _, err := reg.AcquireOrResumeLock(ctx, id, "sess2", "", 0)
+	acquired2, _, _, err := acquireLegacy(reg, ctx, id, "sess2", "", 0)
 	if err != nil {
 		t.Fatalf("AcquireOrResumeLock second: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestBadgerSession_AcquireAndRelease(t *testing.T) {
 	}
 
 	// Acquire again — lock released, should succeed.
-	acquired3, _, _, err := reg.AcquireOrResumeLock(ctx, id, "sess3", "", 0)
+	acquired3, _, _, err := acquireLegacy(reg, ctx, id, "sess3", "", 0)
 	if err != nil {
 		t.Fatalf("AcquireOrResumeLock after release: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestBadgerSession_Resume(t *testing.T) {
 	id := testIdentity()
 
 	// Acquire with sess1.
-	acquired, _, _, err := reg.AcquireOrResumeLock(ctx, id, "sess1", "", 0)
+	acquired, _, _, err := acquireLegacy(reg, ctx, id, "sess1", "", 0)
 	if err != nil {
 		t.Fatalf("AcquireOrResumeLock: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestBadgerSession_Resume(t *testing.T) {
 	}
 
 	// Resume with same identity and resumeSessionID="sess1".
-	acquired2, resumed, _, err := reg.AcquireOrResumeLock(ctx, id, "sess2", "sess1", 0)
+	acquired2, resumed, _, err := acquireLegacy(reg, ctx, id, "sess2", "sess1", 0)
 	if err != nil {
 		t.Fatalf("AcquireOrResumeLock resume: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBadgerSession_IsActive(t *testing.T) {
 	}
 
 	// Acquire — now active.
-	if _, _, _, err := reg.AcquireOrResumeLock(ctx, id, "sess1", "", 0); err != nil {
+	if _, _, _, err := acquireLegacy(reg, ctx, id, "sess1", "", 0); err != nil {
 		t.Fatalf("AcquireOrResumeLock: %v", err)
 	}
 	active, err = reg.IsActive(ctx, idStr)
@@ -146,7 +146,7 @@ func TestBadgerSession_RefreshLock(t *testing.T) {
 	id := testIdentity()
 
 	// Acquire lock.
-	if _, _, _, err := reg.AcquireOrResumeLock(ctx, id, "sess1", "", 0); err != nil {
+	if _, _, _, err := acquireLegacy(reg, ctx, id, "sess1", "", 0); err != nil {
 		t.Fatalf("AcquireOrResumeLock: %v", err)
 	}
 

@@ -9,6 +9,7 @@ import (
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/internal/checkpoint"
 	"github.com/scitrera/aether/internal/kv"
+	"github.com/scitrera/aether/internal/state"
 	"github.com/scitrera/aether/pkg/models"
 )
 
@@ -78,11 +79,15 @@ func newMockSessionManager() *mockSessionManager {
 	}
 }
 
-func (m *mockSessionManager) AcquireOrResumeLock(_ context.Context, identity models.Identity, sessionID, resumeSessionID string, _ int64) (bool, bool, bool, error) {
+func (m *mockSessionManager) AcquireOrResumeLock(_ context.Context, identity models.Identity, sessionID, resumeSessionID string, _ int64, _ state.ConnectMeta) (state.ConnectResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.acquireCalls = append(m.acquireCalls, acquireCall{identity, sessionID, resumeSessionID})
-	return m.acquireResult, m.acquireResumed, m.acquireForced, m.acquireErr
+	return state.ConnectResult{
+		Acquired: m.acquireResult,
+		Resumed:  m.acquireResumed,
+		Forced:   m.acquireForced,
+	}, m.acquireErr
 }
 
 func (m *mockSessionManager) ReleaseLock(_ context.Context, identity models.Identity, sessionID string) error {

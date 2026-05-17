@@ -114,7 +114,8 @@ func TestJetStreamStackSmoke(t *testing.T) {
 			Specifier:      fmt.Sprintf("smoke-%d", time.Now().UnixNano()),
 		}
 
-		acquired, resumed, forced, err := sess.AcquireOrResumeLock(ctx, id, "sess-smoke-1", "", 0)
+		r, err := sess.AcquireOrResumeLock(ctx, id, "sess-smoke-1", "", 0, state.ConnectMeta{})
+		acquired, resumed, forced := r.Acquired, r.Resumed, r.Forced
 		if err != nil {
 			t.Fatalf("AcquireOrResumeLock: %v", err)
 		}

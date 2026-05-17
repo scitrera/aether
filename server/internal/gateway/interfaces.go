@@ -6,12 +6,13 @@ import (
 
 	"github.com/scitrera/aether/internal/checkpoint"
 	"github.com/scitrera/aether/internal/kv"
+	"github.com/scitrera/aether/internal/state"
 	"github.com/scitrera/aether/pkg/models"
 )
 
 // SessionManager abstracts session registry operations used by the gateway.
 type SessionManager interface {
-	AcquireOrResumeLock(ctx context.Context, identity models.Identity, sessionID, resumeSessionID string, forceTakeoverThresholdMs int64) (acquired bool, resumed bool, forced bool, err error)
+	AcquireOrResumeLock(ctx context.Context, identity models.Identity, sessionID, resumeSessionID string, forceTakeoverThresholdMs int64, meta state.ConnectMeta) (state.ConnectResult, error)
 	ReleaseLock(ctx context.Context, identity models.Identity, sessionID string) error
 	RefreshLock(ctx context.Context, identity models.Identity, sessionID string) (bool, error)
 	RefreshLockAndSession(ctx context.Context, identity models.Identity, sessionID string) (bool, error)

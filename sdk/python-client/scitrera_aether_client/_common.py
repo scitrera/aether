@@ -1,12 +1,70 @@
 """
 Common constants, types, and helper functions shared between sync and async clients.
 """
+import logging
+import platform
 from typing import Dict, List, Optional
 
-import os
 import grpc
+import sys
 
 from .proto import aether_pb2
+
+# =============================================================================
+# Client version metadata (InitConnection versioning spec)
+# =============================================================================
+
+# Identifies this SDK in audit rows. Fixed at "python" — distinct from
+# user-supplied version strings so the gateway can group connections by
+# language without parsing the version string.
+_CLIENT_SDK_NAME = "python"
+
+
+def _resolve_client_version() -> str:
+    """Best-effort version lookup.
+
+    Prefers the package distribution version (set at build/install time)
+    so editable installs report the real shipping version; falls back to
+    the ``__version__`` constant when the distribution metadata is
+    unavailable (e.g. running from a source checkout without an install).
+    """
+    try:
+        from importlib.metadata import version, PackageNotFoundError  # type: ignore
+        try:
+            return version("scitrera_aether_client")
+        except PackageNotFoundError:
+            pass
+    except ImportError:
+        pass
+    try:
+        from . import __version__ as fallback_version
+        return fallback_version
+    except ImportError:
+        return "unknown"
+
+
+# Memoized so every InitConnection construction is cheap.
+_CLIENT_VERSION = _resolve_client_version()
+_CLIENT_RUNTIME = (
+    f"python{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+)
+_CLIENT_OS = f"{platform.system().lower()}/{platform.machine()}"
+
+
+def _apply_client_version_meta(init_msg: "aether_pb2.InitConnection") -> "aether_pb2.InitConnection":
+    """Populate the SDK version + build-info fields on an InitConnection.
+
+    Called from every ``create_*_init`` helper so the gateway always
+    receives consistent version metadata regardless of which client
+    type is connecting. Idempotent: re-applying does not change the
+    encoded value.
+    """
+    init_msg.client_version = _CLIENT_VERSION
+    init_msg.client_sdk = _CLIENT_SDK_NAME
+    init_msg.client_build_info.runtime = _CLIENT_RUNTIME
+    init_msg.client_build_info.os = _CLIENT_OS
+    return init_msg
+
 
 # =============================================================================
 # Error codes that should not trigger reconnection
@@ -43,7 +101,7 @@ def create_agent_init(workspace: str, implementation: str, specifier: str,
             describing Phase 6 extensions the client wants negotiated at
             connect time. Pass values built via :func:`make_extension`.
     """
-    return aether_pb2.InitConnection(
+    return _apply_client_version_meta(aether_pb2.InitConnection(
         agent=aether_pb2.AgentIdentity(
             workspace=workspace,
             implementation=implementation,
@@ -52,7 +110,7 @@ def create_agent_init(workspace: str, implementation: str, specifier: str,
         credentials=credentials or {},
         resume_session_id=resume_session_id,
         extensions=list(extensions) if extensions else [],
-    )
+    ))
 
 
 def create_task_init(workspace: str, implementation: str, unique_specifier: str = "",
@@ -64,7 +122,7 @@ def create_task_init(workspace: str, implementation: str, unique_specifier: str 
 
     See :func:`create_agent_init` for the ``extensions`` argument shape.
     """
-    return aether_pb2.InitConnection(
+    return _apply_client_version_meta(aether_pb2.InitConnection(
         task=aether_pb2.TaskIdentity(
             workspace=workspace,
             implementation=implementation,
@@ -73,7 +131,7 @@ def create_task_init(workspace: str, implementation: str, unique_specifier: str 
         credentials=credentials or {},
         resume_session_id=resume_session_id,
         extensions=list(extensions) if extensions else [],
-    )
+    ))
 
 
 def create_user_init(user_id: str, window_id: str,
@@ -82,12 +140,12 @@ def create_user_init(user_id: str, window_id: str,
                      extensions: Optional[List["aether_pb2.ExtensionDeclaration"]] = None,
                      ) -> aether_pb2.InitConnection:
     """Create an InitConnection message for a user."""
-    return aether_pb2.InitConnection(
+    return _apply_client_version_meta(aether_pb2.InitConnection(
         user=aether_pb2.UserIdentity(user_id=user_id, window_id=window_id),
         credentials=credentials or {},
         resume_session_id=resume_session_id,
         extensions=list(extensions) if extensions else [],
-    )
+    ))
 
 
 def create_orchestrator_init(implementation: str, specifier: str,
@@ -97,7 +155,7 @@ def create_orchestrator_init(implementation: str, specifier: str,
                              extensions: Optional[List["aether_pb2.ExtensionDeclaration"]] = None,
                              ) -> aether_pb2.InitConnection:
     """Create an InitConnection message for an orchestrator."""
-    return aether_pb2.InitConnection(
+    return _apply_client_version_meta(aether_pb2.InitConnection(
         orchestrator=aether_pb2.OrchestratorIdentity(
             implementation=implementation,
             specifier=specifier,
@@ -106,7 +164,7 @@ def create_orchestrator_init(implementation: str, specifier: str,
         credentials=credentials or {},
         resume_session_id=resume_session_id,
         extensions=list(extensions) if extensions else [],
-    )
+    ))
 
 
 def create_workflow_engine_init(credentials: Optional[Dict[str, str]] = None,
@@ -114,12 +172,12 @@ def create_workflow_engine_init(credentials: Optional[Dict[str, str]] = None,
                                 extensions: Optional[List["aether_pb2.ExtensionDeclaration"]] = None,
                                 ) -> aether_pb2.InitConnection:
     """Create an InitConnection message for a workflow engine."""
-    return aether_pb2.InitConnection(
+    return _apply_client_version_meta(aether_pb2.InitConnection(
         workflow_engine=aether_pb2.WorkflowEngineIdentity(),
         credentials=credentials or {},
         resume_session_id=resume_session_id,
         extensions=list(extensions) if extensions else [],
-    )
+    ))
 
 
 def create_metrics_bridge_init(credentials: Optional[Dict[str, str]] = None,
@@ -127,12 +185,12 @@ def create_metrics_bridge_init(credentials: Optional[Dict[str, str]] = None,
                                extensions: Optional[List["aether_pb2.ExtensionDeclaration"]] = None,
                                ) -> aether_pb2.InitConnection:
     """Create an InitConnection message for a metrics bridge."""
-    return aether_pb2.InitConnection(
+    return _apply_client_version_meta(aether_pb2.InitConnection(
         metrics_bridge=aether_pb2.MetricsBridgeIdentity(),
         credentials=credentials or {},
         resume_session_id=resume_session_id,
         extensions=list(extensions) if extensions else [],
-    )
+    ))
 
 
 def create_service_init(implementation: str, specifier: str,
@@ -148,7 +206,7 @@ def create_service_init(implementation: str, specifier: str,
 
     Canonical identity string: ``sv::{implementation}::{specifier}``.
     """
-    return aether_pb2.InitConnection(
+    return _apply_client_version_meta(aether_pb2.InitConnection(
         service=aether_pb2.ServiceIdentity(
             implementation=implementation,
             specifier=specifier,
@@ -156,7 +214,7 @@ def create_service_init(implementation: str, specifier: str,
         credentials=credentials or {},
         resume_session_id=resume_session_id,
         extensions=list(extensions) if extensions else [],
-    )
+    ))
 
 
 # =============================================================================
@@ -365,7 +423,8 @@ def _to_bytes_pem(data) -> Optional[bytes]:
     return None
 
 
-def _resolve_cert(explicit: Optional[bytes], path: Optional[str], env_var: str) -> tuple[Optional[bytes], Optional[str]]:
+def _resolve_cert(explicit: Optional[bytes], path: Optional[str], env_var: str) -> tuple[
+    Optional[bytes], Optional[str]]:
     """Resolve a certificate from explicit bytes, a file path, or an env var.
 
     The env var value is treated as a file path if it exists on disk,
@@ -453,3 +512,9 @@ def _env_tls_kwargs_filter(
         'tls_client_key': key_bytes,
         'tls_client_key_path': key_path,
     }
+
+
+def _logging_lite_hook():
+    """ Limit gRPC cython internal logging to INFO level """
+    # limit logging from grpc internals to INFO level to avoid noisy DEBUG logs
+    logging.getLogger('grpc._cython.cygrpc').setLevel(logging.INFO)
