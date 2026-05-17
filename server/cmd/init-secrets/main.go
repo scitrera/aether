@@ -21,6 +21,13 @@ import (
 
 const defaultSecretsPath = "/etc/aether/generated-secrets.yaml"
 
+// cnFilename returns a filesystem-safe form of an aether canonical name
+// for use in cert/key filenames. The on-disk filename replaces "::" with
+// "." so existing SDK clients (which historically resolved paths like
+// sv.{impl}.{spec}-cert.pem) keep working after the topic-separator
+// standardization. The CN inside the X.509 certificate is unchanged.
+func cnFilename(cn string) string { return strings.ReplaceAll(cn, "::", ".") }
+
 func main() {
 	configFile := flag.String("config", "", "Path to main config file")
 	output := flag.String("output", defaultSecretsPath, "Path to write generated secrets")
@@ -239,8 +246,8 @@ func handleClientCert(clientType, tlsDir string, validity time.Duration, workspa
 		if genErr != nil {
 			return fmt.Errorf("generating agent client cert: %w", genErr)
 		}
-		certPath := filepath.Join(clientsDir, fmt.Sprintf("%s-cert.pem", cn))
-		keyPath := filepath.Join(clientsDir, fmt.Sprintf("%s-key.pem", cn))
+		certPath := filepath.Join(clientsDir, fmt.Sprintf("%s-cert.pem", cnFilename(cn)))
+		keyPath := filepath.Join(clientsDir, fmt.Sprintf("%s-key.pem", cnFilename(cn)))
 		if err := bundle.SaveToFiles(certPath, keyPath); err != nil {
 			return err
 		}
@@ -262,8 +269,8 @@ func handleClientCert(clientType, tlsDir string, validity time.Duration, workspa
 		if genErr != nil {
 			return fmt.Errorf("generating task client cert: %w", genErr)
 		}
-		certPath := filepath.Join(clientsDir, fmt.Sprintf("%s-cert.pem", cn))
-		keyPath := filepath.Join(clientsDir, fmt.Sprintf("%s-key.pem", cn))
+		certPath := filepath.Join(clientsDir, fmt.Sprintf("%s-cert.pem", cnFilename(cn)))
+		keyPath := filepath.Join(clientsDir, fmt.Sprintf("%s-key.pem", cnFilename(cn)))
 		if err := bundle.SaveToFiles(certPath, keyPath); err != nil {
 			return err
 		}
@@ -282,8 +289,8 @@ func handleClientCert(clientType, tlsDir string, validity time.Duration, workspa
 		if genErr != nil {
 			return fmt.Errorf("generating user client cert: %w", genErr)
 		}
-		certPath := filepath.Join(clientsDir, fmt.Sprintf("%s-cert.pem", cn))
-		keyPath := filepath.Join(clientsDir, fmt.Sprintf("%s-key.pem", cn))
+		certPath := filepath.Join(clientsDir, fmt.Sprintf("%s-cert.pem", cnFilename(cn)))
+		keyPath := filepath.Join(clientsDir, fmt.Sprintf("%s-key.pem", cnFilename(cn)))
 		if err := bundle.SaveToFiles(certPath, keyPath); err != nil {
 			return err
 		}
@@ -305,8 +312,8 @@ func handleClientCert(clientType, tlsDir string, validity time.Duration, workspa
 		if genErr != nil {
 			return fmt.Errorf("generating orchestrator client cert: %w", genErr)
 		}
-		certPath := filepath.Join(clientsDir, fmt.Sprintf("%s-cert.pem", cn))
-		keyPath := filepath.Join(clientsDir, fmt.Sprintf("%s-key.pem", cn))
+		certPath := filepath.Join(clientsDir, fmt.Sprintf("%s-cert.pem", cnFilename(cn)))
+		keyPath := filepath.Join(clientsDir, fmt.Sprintf("%s-key.pem", cnFilename(cn)))
 		if err := bundle.SaveToFiles(certPath, keyPath); err != nil {
 			return err
 		}
@@ -359,8 +366,8 @@ func handleClientCert(clientType, tlsDir string, validity time.Duration, workspa
 		if genErr != nil {
 			return fmt.Errorf("generating service client cert: %w", genErr)
 		}
-		certPath := filepath.Join(clientsDir, fmt.Sprintf("%s-cert.pem", cn))
-		keyPath := filepath.Join(clientsDir, fmt.Sprintf("%s-key.pem", cn))
+		certPath := filepath.Join(clientsDir, fmt.Sprintf("%s-cert.pem", cnFilename(cn)))
+		keyPath := filepath.Join(clientsDir, fmt.Sprintf("%s-key.pem", cnFilename(cn)))
 		if err := bundle.SaveToFiles(certPath, keyPath); err != nil {
 			return err
 		}
