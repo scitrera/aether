@@ -97,7 +97,18 @@ func runLogEventSyncRoundTrip(t *testing.T, store audit.Store) {
 }
 
 // runLogEventAsyncRoundTrip verifies that an event enqueued via LogEvent
-// becomes visible after the batched writer flushes.
+// becomes visible once the batched writer drains.
+//
+// We force the drain by calling Close() explicitly — Close is idempotent
+// (sync.Once-guarded) and only closes the writer goroutine + entries channel,
+// not the underlying DB, so QueryAuditLog still works afterward and the
+// factory cleanup's own Close call is a safe no-op.
+//
+// Earlier versions of this test polled QueryAuditLog for up to 8 s waiting on
+// the writer's tick-based flush; that flaked on slow CI runners (a SQLite
+// write taking >8 s, or a goroutine startup race) and added 8 s to every
+// pass run. The deterministic drain proves the same contract — "events
+// enqueued via LogEvent become queryable after a drain" — in O(1 commit).
 func runLogEventAsyncRoundTrip(t *testing.T, store audit.Store) {
 	t.Helper()
 	ctx := context.Background()
@@ -106,22 +117,15 @@ func runLogEventAsyncRoundTrip(t *testing.T, store audit.Store) {
 	ev := newTestEvent(tag, "conformance-async")
 	store.LogEvent(ctx, ev)
 
-	// Poll for visibility — the async writer flushes either when the batch
-	// fills or after FlushPeriod (default 5s). Calling Close() forces a
-	// drain, which is faster and deterministic for tests. We can't call
-	// Close here because the factory's cleanup will, and Close is one-shot
-	// per the contract; so poll with a generous deadline.
-	deadline := time.Now().Add(8 * time.Second)
-	var got []*audit.Event
-	for time.Now().Before(deadline) {
-		got = queryByActorID(t, store, tag)
-		if len(got) >= 1 {
-			break
-		}
-		time.Sleep(150 * time.Millisecond)
+	// Force the async writer to drain. Idempotent: factory cleanup will Close
+	// again, which is a no-op.
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close (forcing drain): %v", err)
 	}
+
+	got := queryByActorID(t, store, tag)
 	if len(got) != 1 {
-		t.Fatalf("expected 1 async event for actor %s after poll window, got %d", tag, len(got))
+		t.Fatalf("expected 1 async event for actor %s after drain, got %d", tag, len(got))
 	}
 	if got[0].Operation != "conformance-async" {
 		t.Fatalf("unexpected operation: got %q want %q", got[0].Operation, "conformance-async")
