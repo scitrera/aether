@@ -354,7 +354,7 @@ func startClusterACLRuleWatch(ctx context.Context, kv jetstream.KeyValue, aclSvc
 		return
 	}
 	go func() {
-		defer watcher.Stop()
+		defer func() { _ = watcher.Stop() }()
 		logging.Logger.Info().
 			Str("bucket", aclstore.ACLRulesKVBucket).
 			Msg("ACL rules JetStream watch started (cluster mode)")

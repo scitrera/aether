@@ -121,11 +121,24 @@ func (r *Relay) Run(ctx context.Context) error {
 	// memory-exhaustion DoS from an untrusted sandbox process. Values are
 	// intentionally identical to the gateway defaults so a sandbox cannot
 	// induce different framing characteristics by talking to the sidecar.
+	//
+	// ConnectionTimeout bounds the HTTP/2 handshake (preface + SETTINGS) on
+	// freshly accepted raw connections. The grpc default is 120s, which means
+	// a peer that opens a TCP/UDS socket but never sends the HTTP/2 preface
+	// pins a handleRawConn goroutine for two minutes. Crucially, that goroutine
+	// is tracked in the server's serveWG, so BOTH GracefulStop AND Stop block
+	// on serveWG.Wait() until either the preface arrives or this deadline
+	// fires — Stop does NOT force-close mid-handshake rawConns. A short
+	// handshake deadline is therefore load-bearing for shutdown latency, not
+	// just a DoS knob. 10s is well above any legitimate handshake time over
+	// UDS / localhost TCP while still letting shutdown complete within the
+	// test's 30s budget on a heavily loaded CI runner.
 	server := grpc.NewServer(
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			Time:    30 * time.Second,
 			Timeout: 15 * time.Second,
 		}),
+		grpc.ConnectionTimeout(10*time.Second),
 		grpc.MaxRecvMsgSize(10*1024*1024),
 		grpc.MaxSendMsgSize(10*1024*1024),
 		grpc.MaxHeaderListSize(16*1024),

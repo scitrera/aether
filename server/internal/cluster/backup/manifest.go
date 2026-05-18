@@ -2,8 +2,6 @@ package backup
 
 import (
 	"encoding/json"
-	"hash"
-	"io"
 )
 
 // Manifest is the sidecar JSON document written alongside every snapshot.
@@ -24,30 +22,3 @@ func (m *Manifest) MarshalJSON() ([]byte, error) {
 	type alias Manifest
 	return json.MarshalIndent((*alias)(m), "", "  ")
 }
-
-// hashingCountingReader wraps an io.Reader so that:
-//   - every byte read is also fed to a sha256.Hash
-//   - a running byte count is maintained for the manifest's SizeBytes field
-type hashingCountingReader struct {
-	r io.Reader
-	h hash.Hash
-	n int64
-}
-
-func newHashingCountingReader(r io.Reader, h hash.Hash) *hashingCountingReader {
-	return &hashingCountingReader{r: r, h: h}
-}
-
-func (r *hashingCountingReader) Read(p []byte) (int, error) {
-	n, err := r.r.Read(p)
-	if n > 0 {
-		// hash.Hash.Write never errors per the io.Writer contract for
-		// hash implementations in the stdlib, so we ignore its return.
-		_, _ = r.h.Write(p[:n])
-		r.n += int64(n)
-	}
-	return n, err
-}
-
-// Count returns the total number of bytes observed by Read so far.
-func (r *hashingCountingReader) Count() int64 { return r.n }

@@ -142,14 +142,6 @@ func Unescape(s string) string {
 	return b.String()
 }
 
-// escapeToken is preserved as a thin alias for EscapeForSubject for backward
-// compatibility with older intra-package callers.
-func escapeToken(s string) string { return EscapeForSubject(s) }
-
-// unescapeToken is preserved as a thin alias for Unescape for backward
-// compatibility with older intra-package callers.
-func unescapeToken(s string) string { return Unescape(s) }
-
 // escapeBytes is the single source of truth for per-namespace escaping.
 // allow(c) returns true for bytes that pass through literally; everything
 // else is encoded as _XX_ (two upper-case hex digits). The _ byte is

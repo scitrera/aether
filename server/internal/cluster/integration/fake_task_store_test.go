@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	taskstore "github.com/scitrera/aether/internal/storage/tasks"
@@ -21,18 +20,10 @@ import (
 // helper is in an internal test package and integration tests cannot
 // import _test.go files.
 type fakeTaskStore struct {
-	mu    sync.Mutex
 	queue map[string]*fakeQueueRow
 }
 
-type fakeQueueRow struct {
-	taskID     string
-	workspace  string
-	retryCount int
-	maxRetries int
-	status     string
-	claimedBy  string
-}
+type fakeQueueRow struct{}
 
 func newFakeTaskStore() *fakeTaskStore {
 	return &fakeTaskStore{queue: make(map[string]*fakeQueueRow)}

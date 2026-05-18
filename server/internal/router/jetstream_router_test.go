@@ -39,43 +39,6 @@ func newTestJetStreamRouter(t *testing.T) (*JetStreamRouter, func()) {
 	return r, func() { es.Stop() }
 }
 
-// collect subscribes to topic and collects up to n messages, returning them
-// in order. Times out after timeout if fewer than n arrive.
-func collect(t *testing.T, r *JetStreamRouter, topic string, n int, timeout time.Duration) [][]byte {
-	t.Helper()
-	var (
-		mu   sync.Mutex
-		msgs [][]byte
-		done = make(chan struct{})
-	)
-	var once sync.Once
-
-	unsub, err := r.Subscribe(topic, func(data []byte) {
-		cp := make([]byte, len(data))
-		copy(cp, data)
-		mu.Lock()
-		msgs = append(msgs, cp)
-		if len(msgs) >= n {
-			once.Do(func() { close(done) })
-		}
-		mu.Unlock()
-	})
-	if err != nil {
-		t.Fatalf("Subscribe(%q): %v", topic, err)
-	}
-	t.Cleanup(unsub)
-
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		t.Errorf("timeout waiting for %d messages on %q", n, topic)
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	return msgs
-}
-
 // TestJetStreamRouter_PublishSubscribe_RoundTrip verifies that a message
 // published to an aether topic is received with the original payload, and that
 // the handler does NOT see the NATS-escaped subject (codec is applied correctly).

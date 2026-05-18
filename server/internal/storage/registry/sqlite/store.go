@@ -158,9 +158,9 @@ var _ internalregistry.KVSetter = (*Store)(nil)
 // KV propagation (the default). Safe to call after construction and
 // concurrently with Register/Delete.
 func (s *Store) SetRegistryKV(kv jetstream.KeyValue) {
-	s.agentRegistry.kvMu.Lock()
-	defer s.agentRegistry.kvMu.Unlock()
-	s.agentRegistry.kv = kv
+	s.kvMu.Lock()
+	defer s.kvMu.Unlock()
+	s.kv = kv
 }
 
 // New constructs a native-sqlite registry Store. The caller provides:

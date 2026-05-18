@@ -21,10 +21,7 @@ var kvKeyRe = regexp.MustCompile(`^[A-Za-z0-9_\-=./]*$`)
 var consumerNameRe = regexp.MustCompile(`^[A-Za-z0-9_\-]*$`)
 
 func isNATSLegal(s string) bool {
-	if !natsSubjectRe.MatchString(s) {
-		return false
-	}
-	return true
+	return natsSubjectRe.MatchString(s)
 }
 
 var roundTripFixtures = []struct {

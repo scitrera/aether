@@ -271,7 +271,7 @@ func consumeOneEvent(t *testing.T, ctx context.Context, js jetstream.JetStream, 
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
-	for msg := range batch.Messages() {
+	if msg, ok := <-batch.Messages(); ok {
 		var evt AuthorityRequestLifecycleEvent
 		if err := json.Unmarshal(msg.Data(), &evt); err != nil {
 			t.Fatalf("unmarshal event: %v", err)

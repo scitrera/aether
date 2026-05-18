@@ -122,25 +122,6 @@ func parseTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unrecognized timestamp format: %q", s)
 }
 
-// parseTimePtr parses a nullable TEXT timestamp column.
-func parseTimePtr(v interface{}) (*time.Time, error) {
-	if v == nil {
-		return nil, nil
-	}
-	s, ok := v.(string)
-	if !ok {
-		return nil, fmt.Errorf("expected string for timestamp, got %T", v)
-	}
-	if s == "" {
-		return nil, nil
-	}
-	t, err := parseTime(s)
-	if err != nil {
-		return nil, err
-	}
-	return &t, nil
-}
-
 // nowUTC returns the current time in UTC, stripped of monotonic clock.
 func nowUTC() string {
 	return formatTime(time.Now())

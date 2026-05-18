@@ -87,7 +87,7 @@ func TestClusterIntegration_MessageRouting_CrossNode(t *testing.T) {
 	// Both subscribers must receive within a generous timeout.
 	timeout := time.After(3 * time.Second)
 	receivedB, receivedC := false, false
-	for !(receivedB && receivedC) {
+	for !receivedB || !receivedC {
 		select {
 		case got := <-gotB:
 			if string(got) != string(payload) {

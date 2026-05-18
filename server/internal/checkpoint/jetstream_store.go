@@ -288,7 +288,7 @@ func (s *JetStreamCheckpointStore) List(ctx context.Context, identity models.Ide
 	if err != nil {
 		return nil, fmt.Errorf("checkpoint: index watch: %w", err)
 	}
-	defer watcher.Stop()
+	defer func() { _ = watcher.Stop() }()
 
 	var keys []string
 	for entry := range watcher.Updates() {
@@ -328,7 +328,7 @@ func (s *JetStreamCheckpointStore) pruneOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("checkpoint: pruner watch: %w", err)
 	}
-	defer watcher.Stop()
+	defer func() { _ = watcher.Stop() }()
 
 	now := time.Now().UnixMilli()
 	for entry := range watcher.Updates() {

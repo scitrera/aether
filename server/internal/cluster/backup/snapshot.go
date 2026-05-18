@@ -105,7 +105,7 @@ func snapshotKV(ctx context.Context, js jetstream.JetStream, bucket string, w io
 	if err != nil {
 		return 0, fmt.Errorf("list keys: %w", err)
 	}
-	defer lister.Stop()
+	defer func() { _ = lister.Stop() }()
 
 	var maxRev uint64
 	for key := range lister.Keys() {

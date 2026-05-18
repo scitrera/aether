@@ -957,7 +957,6 @@ func (s *TaskStore) ListTasksPage(ctx context.Context, filter *TaskFilter) ([]*T
 	}
 	query += fmt.Sprintf(" LIMIT $%d", argNum)
 	args = append(args, limit)
-	argNum++
 
 	rows, err := s.queryTasks(ctx, query, args...)
 	if err != nil {

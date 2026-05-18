@@ -86,18 +86,6 @@ func newFakeTaskStore() *fakeTaskStore {
 	return &fakeTaskStore{queue: make(map[string]*fakeQueueRow)}
 }
 
-func (f *fakeTaskStore) insertFakeEntry(queueID, taskID, workspace string, retryCount, maxRetries int, status string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.queue[queueID] = &fakeQueueRow{
-		taskID:     taskID,
-		workspace:  workspace,
-		retryCount: retryCount,
-		maxRetries: maxRetries,
-		status:     status,
-	}
-}
-
 // --- Methods used by JetStreamTaskDispatcher ---
 
 func (f *fakeTaskStore) ClaimQueueEntry(ctx context.Context, queueID, claimedBy string) (bool, error) {

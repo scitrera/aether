@@ -90,15 +90,6 @@ func (r *recordingTaskWakerService) lastResume() (resumeCall, bool) {
 	return r.resume[len(r.resume)-1], true
 }
 
-func (r *recordingTaskWakerService) lastFail() (failCall, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.fail) == 0 {
-		return failCall{}, false
-	}
-	return r.fail[len(r.fail)-1], true
-}
-
 // ensureJSWakerStreams provisions the "authreq" and "tk" streams the way
 // JetStreamAuthorityLifecycle and JetStreamRouter do in production. The
 // waker assumes both exist; in tests we replicate the minimal config.

@@ -30,23 +30,6 @@ func waitReasonToStatus(reason pb.WaitReason) tasks.TaskStatus {
 	}
 }
 
-// taskStatusToWaitReason is the inverse of waitReasonToStatus. Returns
-// WAIT_REASON_UNSPECIFIED for any non-waiting state.
-func taskStatusToWaitReason(status tasks.TaskStatus) pb.WaitReason {
-	switch status {
-	case tasks.TaskStatusWaitingInput:
-		return pb.WaitReason_WAIT_REASON_INPUT
-	case tasks.TaskStatusWaitingAuthority:
-		return pb.WaitReason_WAIT_REASON_AUTHORITY
-	case tasks.TaskStatusWaitingDependency:
-		return pb.WaitReason_WAIT_REASON_DEPENDENCY
-	case tasks.TaskStatusHibernated:
-		return pb.WaitReason_WAIT_REASON_HIBERNATION
-	default:
-		return pb.WaitReason_WAIT_REASON_UNSPECIFIED
-	}
-}
-
 // protoWaitSpecToTasks converts a wire-level *pb.WaitSpec into the internal
 // *tasks.WaitSpec form persisted by the task store. A nil input yields nil.
 func protoWaitSpecToTasks(spec *pb.WaitSpec) *tasks.WaitSpec {

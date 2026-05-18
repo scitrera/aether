@@ -1,3 +1,4 @@
+//nolint:staticcheck // SA1019: aws-sdk-go-v2 manager.Uploader/Downloader are deprecated in favour of feature/s3/transfermanager; migration is a separate follow-up task.
 package backup
 
 import (

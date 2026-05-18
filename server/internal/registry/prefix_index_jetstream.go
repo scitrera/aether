@@ -325,7 +325,7 @@ func (p *PrefixIndex) bootstrapFromKV(ctx context.Context, kv jetstream.KeyValue
 		}
 		return err
 	}
-	defer lister.Stop()
+	defer func() { _ = lister.Stop() }()
 
 	fresh := make(map[string]string, 16)
 	for key := range lister.Keys() {
@@ -441,7 +441,7 @@ func (p *PrefixIndex) watchOnce(ctx context.Context, kv jetstream.KeyValue) erro
 	if err != nil {
 		return err
 	}
-	defer watcher.Stop()
+	defer func() { _ = watcher.Stop() }()
 
 	initDone := false
 	for {

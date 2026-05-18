@@ -360,7 +360,7 @@ func (s *Store) QueryAuditLog(ctx context.Context, filter audit.EventFilter) ([]
 			ev.SessionID = parsed
 		}
 
-		if metadataJSON != nil && len(metadataJSON) > 0 {
+		if len(metadataJSON) > 0 {
 			if err := json.Unmarshal(metadataJSON, &ev.Metadata); err != nil {
 				return nil, fmt.Errorf("unmarshal metadata: %w", err)
 			}

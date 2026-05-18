@@ -77,17 +77,13 @@ func TestJetStreamACLRuleStore_GrantAccess_WritesToKV(t *testing.T) {
 	defer cancel()
 
 	inner := newFakeInnerStore()
-	decorator, err := aclstore.NewJetStreamACLRuleStore(ctx, inner, js, 1, nil)
-	if err != nil {
-		t.Fatalf("new decorator: %v", err)
-	}
 
 	// The fake's GrantAccess returns &aclstore.Rule{} with zero fields, so
 	// to get a meaningful KV key we wrap the fake here with an override
 	// that returns a rule echoing the inputs. We do this inline rather
 	// than touching the shared fake so other tests stay unaffected.
 	echoInner := &echoingGrantInner{Store: inner}
-	decorator, err = aclstore.NewJetStreamACLRuleStore(ctx, echoInner, js, 1, nil)
+	decorator, err := aclstore.NewJetStreamACLRuleStore(ctx, echoInner, js, 1, nil)
 	if err != nil {
 		t.Fatalf("new decorator (echo): %v", err)
 	}
