@@ -206,14 +206,22 @@ jobs:
           # aetherlite is a development-only image (hardcodes AETHER_ALLOW_DEV_MODE=true
           # and --insecure-admin); tag with a `dev-` prefix so it can never be mistaken
           # for a production-grade release artifact.
+          #
+          # `flavor.latest=false` disables docker/metadata-action's default behavior
+          # of auto-injecting an UNPREFIXED `latest` tag on default-branch pushes /
+          # semver matches. Without this, the auto-`latest` from this dev build would
+          # overwrite the production aetherlite:latest produced by the build-aetherlite
+          # job above. The explicit `dev-latest` tags below cover the latest semantic
+          # for the dev image.
+          flavor: |
+            latest=false
           tags: |
             type=sha,prefix=dev-
-            type=raw,value=dev-latest,enable={{is_default_branch}}
+            type=raw,value=dev-latest
             type=semver,pattern={{version}},prefix=dev-
             type=semver,pattern={{major}}.{{minor}},prefix=dev-
             type=raw,value=dev-${{ steps.ver.outputs.version }},enable=${{ steps.ver.outputs.version != '' }}
             type=raw,value=dev-${{ steps.ver.outputs.major_minor }},enable=${{ steps.ver.outputs.major_minor != '' }}
-            type=raw,value=dev-latest,enable=${{ steps.ver.outputs.version != '' }}
 
       - name: Build and push aetherlite
         uses: docker/build-push-action@v6
