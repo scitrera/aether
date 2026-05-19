@@ -405,7 +405,10 @@ func (s *relaySession) applyClampToProxyHttp(req *pb.ProxyHttpRequest) bool {
 	res := s.relay.clamp.evaluate(req.GetTargetTopic())
 	if !res.Allowed {
 		_ = s.sandbox.Send(relayErrorDownstream("RELAY_TARGET_DENIED", res.Reason))
-		log.Debug().
+		// Logged at INFO so silent target-clamp drops are visible at the
+		// default sidecar log level — debugging an in-sandbox request that
+		// "just times out" was prohibitive when this lived at DEBUG.
+		log.Info().
 			Str("target_topic", req.GetTargetTopic()).
 			Str("reason", res.Reason).
 			Msg("relay: dropped ProxyHttpRequest (target clamp)")
@@ -428,7 +431,8 @@ func (s *relaySession) applyClampToTunnelOpen(open *pb.TunnelOpen) bool {
 	res := s.relay.clamp.evaluate(open.GetTargetTopic())
 	if !res.Allowed {
 		_ = s.sandbox.Send(relayErrorDownstream("RELAY_TARGET_DENIED", res.Reason))
-		log.Debug().
+		// Same visibility rationale as the ProxyHttp drop above.
+		log.Info().
 			Str("target_topic", open.GetTargetTopic()).
 			Str("reason", res.Reason).
 			Msg("relay: dropped TunnelOpen (target clamp)")
