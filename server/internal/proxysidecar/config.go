@@ -151,6 +151,14 @@ type RelayConfig struct {
 	// TargetTopicClamp constrains the target_topic on outbound proxy/tunnel
 	// envelopes the sandbox is permitted to address.
 	TargetTopicClamp TargetClampConfig `yaml:"target_topic_clamp"`
+
+	// MaxSessions caps the number of concurrent sandbox-side relay
+	// sessions multiplexed onto the sidecar's single upstream gateway
+	// connection. Defaulted in validateRelay() when unset. Use a small
+	// cap (a sandbox typically needs <5 concurrent clients) to bound
+	// memory and tracking-table size; storms above the cap surface as
+	// session-attach rejections rather than per-stream creation churn.
+	MaxSessions int `yaml:"max_sessions"`
 }
 
 // AllowedOpsConfig is a YAML union: either a profile name or a literal
@@ -452,6 +460,9 @@ func (c *Config) validateRelay() []string {
 	default:
 		errs = append(errs, fmt.Sprintf("relay.target_topic_clamp.mode=%q: must be %q or %q",
 			c.Relay.TargetTopicClamp.Mode, TargetClampReject, TargetClampRewriteFirstMatch))
+	}
+	if c.Relay.MaxSessions <= 0 {
+		c.Relay.MaxSessions = 8
 	}
 	return errs
 }

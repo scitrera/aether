@@ -173,9 +173,24 @@ func loadConfig() (*proxysidecar.Config, error) {
 			return nil, fmt.Errorf("config file not found: %s (pass -dev for defaults)", *configFile)
 		}
 		log.Warn().Str("path", *configFile).Msg("config file not found, using development defaults")
-		return devDefaults(), nil
+		cfg := devDefaults()
+		log.Info().
+			Str("path", "<dev-defaults>").
+			Str("log_level", cfg.Logging.Level).
+			Strs("surfaces", cfg.EnabledSurfaces()).
+			Msg("proxy sidecar: config loaded")
+		return cfg, nil
 	}
-	return proxysidecar.LoadConfig(*configFile)
+	cfg, err := proxysidecar.LoadConfig(*configFile)
+	if err != nil {
+		return nil, err
+	}
+	log.Info().
+		Str("path", *configFile).
+		Str("log_level", cfg.Logging.Level).
+		Strs("surfaces", cfg.EnabledSurfaces()).
+		Msg("proxy sidecar: config loaded")
+	return cfg, nil
 }
 
 func devDefaults() *proxysidecar.Config {
