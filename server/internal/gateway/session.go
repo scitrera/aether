@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,8 @@ import (
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/sdk/go/aether"
+	bp "github.com/scitrera/go-backpressure"
 	"golang.org/x/time/rate"
 )
 
@@ -22,6 +25,33 @@ const defaultDeliveryBufferSize = 256
 // deliveryBufferSize is kept for backward compatibility with existing test helpers.
 // Production code uses s.deliveryBufferSize (set from config or WithDeliveryBufferSize option).
 const deliveryBufferSize = defaultDeliveryBufferSize
+
+// Default per-client delivery-backpressure parameters. Override via
+// WithDeliveryBackpressure(capacity, target, interval).
+const (
+	// defaultDeliveryBackpressureCapacity is the number of concurrent
+	// admissions allowed into the per-session delivery path. The token is
+	// held only for the duration of the push onto deliveryCh, so capacity
+	// effectively measures admission concurrency rather than queue depth.
+	defaultDeliveryBackpressureCapacity = 16
+
+	// defaultDeliveryBackpressureTarget is the CoDel target latency. Sheds
+	// when sustained acquire latency exceeds this.
+	defaultDeliveryBackpressureTarget = 50 * time.Millisecond
+
+	// defaultDeliveryBackpressureInterval is the CoDel sampling interval.
+	defaultDeliveryBackpressureInterval = 100 * time.Millisecond
+
+	// defaultDeliverAcquireTimeout caps the admission wait per Deliver call
+	// so a wedged downstream consumer can't block the publisher forever.
+	// Matches the SDK-side sendUpstreamTimeout used in the sidecar.
+	defaultDeliverAcquireTimeout = 30 * time.Second
+)
+
+// deliveryPriorityCount is the number of priorities used by the per-session
+// delivery Semaphore. Must be >= the highest aether.Priority constant used by
+// callers + 1. See sdk/go/aether/priority.go.
+const deliveryPriorityCount = 5
 
 // ClientSession represents an active client connection to the gateway.
 type ClientSession struct {
@@ -66,7 +96,28 @@ type ClientSession struct {
 
 	// deliveryCh buffers outbound messages so that a slow client cannot block
 	// the shared fan-out goroutine. Messages are drained by startDeliveryLoop.
+	// With the priority-aware admission queue this is a narrow staging buffer:
+	// deliverySem (below) is the actual back-pressure gate; deliveryCh just
+	// hands the admitted message to the delivery loop.
 	deliveryCh chan *pb.DownstreamMessage
+
+	// deliverySem is a CoDel-managed Semaphore that admits Deliver* callers
+	// by priority and sheds low-priority traffic first when the gRPC writer
+	// can't keep up. Nil-safe: when nil, Deliver* fall back to the legacy
+	// non-blocking select-default behavior so existing test scaffolding that
+	// constructs ClientSession by hand keeps working.
+	deliverySem *bp.Semaphore
+
+	// deliverAcquireTimeout caps the Semaphore.Acquire wait per Deliver call,
+	// so a wedged consumer can't pin a Deliver caller forever. Zero falls
+	// back to defaultDeliverAcquireTimeout.
+	deliverAcquireTimeout time.Duration
+
+	// sessionCtx is the session-lifetime context. Used to derive admission
+	// deadlines for Deliver* calls (so admission unblocks promptly when the
+	// session is closing) and for the delivery-loop. May be nil for unit
+	// tests that hand-roll ClientSession.
+	sessionCtx context.Context
 
 	// activeExtensions captures the set of extension URIs (mapped to their
 	// negotiated version, "" when unpinned) that the gateway agreed to on
@@ -127,32 +178,135 @@ func (c *ClientSession) startDeliveryLoop(ctx context.Context) {
 	}()
 }
 
-// Deliver enqueues a message for delivery to the client. If the delivery buffer
-// is full the message is dropped, a warning is logged, and a backpressure signal
-// is sent to the client to avoid silently losing messages.
+// Deliver enqueues a message for delivery to the client at the default
+// PriorityRequest. It is a thin wrapper around DeliverWithPriority; callers
+// that have a more specific priority signal (response header, control,
+// chunk, best-effort) should call DeliverWithPriority directly so the
+// CoDel-driven Semaphore sheds the right traffic first under sustained load.
+//
+// On admission failure (CoDel shed, ctx deadline, or full staging buffer
+// with no Semaphore) the message is dropped, a warning is logged, and a
+// BACKPRESSURE notice is emitted on the same session so the client can
+// distinguish "your stream lost a frame" from a clean disconnect.
 func (c *ClientSession) Deliver(msg *pb.DownstreamMessage) {
+	c.DeliverWithPriority(c.deriveDeliverCtx(), aether.PriorityRequest, msg)
+}
+
+// DeliverWithPriority is the primary delivery path. It acquires one token
+// from the per-session deliverySem at the given priority, then pushes the
+// envelope onto the staging buffer drained by startDeliveryLoop. The token
+// is released as soon as the envelope is handed off; Semaphore capacity
+// therefore measures admission concurrency, not queue depth.
+//
+// On Acquire failure (CoDel-driven shed because sustained acquire latency
+// exceeded target, or because ctx expired before admission), the BACKPRESSURE
+// notice path fires so the receiving SDK can surface a retryable signal
+// rather than seeing a silently truncated stream. When deliverySem is nil
+// (hand-rolled test ClientSession) we fall back to a non-blocking enqueue
+// matching the legacy Deliver semantics so test scaffolding keeps working.
+func (c *ClientSession) DeliverWithPriority(ctx context.Context, prio bp.Priority, msg *pb.DownstreamMessage) {
+	if c.deliverySem == nil {
+		// Legacy / hand-rolled session (test scaffolding). Mirror the
+		// historical non-blocking select-default behaviour.
+		select {
+		case c.deliveryCh <- msg:
+		default:
+			c.emitBackpressureNotice()
+		}
+		return
+	}
+
+	timeout := c.deliverAcquireTimeout
+	if timeout <= 0 {
+		timeout = defaultDeliverAcquireTimeout
+	}
+
+	parent := ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	acquireCtx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+
+	if err := c.deliverySem.Acquire(acquireCtx, prio, 1); err != nil {
+		c.handleDeliverShed(prio, err)
+		return
+	}
+	// Non-blocking enqueue with immediate token release. Holding the
+	// Semaphore token while waiting on a blocked deliveryCh push (the
+	// previous shape) caused tokens to wedge whenever the gRPC consumer
+	// fell behind: held tokens exhausted the Semaphore, every subsequent
+	// Acquire CoDel-shed, and the BACKPRESSURE notice hit the same full
+	// channel and got silently dropped. Releasing immediately after the
+	// push attempt keeps the Semaphore healthy and gives CoDel a clean
+	// dwell-time signal driven by Acquire contention.
+	pushed := false
 	select {
 	case c.deliveryCh <- msg:
+		pushed = true
 	default:
-		c.identityMu.RLock()
-		identStr := c.Identity.String()
-		c.identityMu.RUnlock()
-		logging.Logger.Warn().Str("identity", identStr).Msg("delivery buffer full, dropping message for slow client")
-		// Notify the client that messages are being dropped due to backpressure.
-		// Use a non-blocking send to avoid deadlock if the buffer is still full.
-		backpressureNotice := &pb.DownstreamMessage{
-			Payload: &pb.DownstreamMessage_Error{
-				Error: &pb.ErrorResponse{
-					Code:    "BACKPRESSURE",
-					Message: "delivery buffer full — messages are being dropped; consider reducing send rate or processing messages faster",
-				},
+		// Staging buffer full despite admission — treat as shed.
+	}
+	c.deliverySem.Release(1)
+	if !pushed {
+		c.handleDeliverShed(prio, nil)
+	}
+}
+
+// deriveDeliverCtx returns the parent context used by Deliver's
+// admission-deadline derivation. We prefer the session-lifetime ctx so
+// admission unblocks promptly when the session is shutting down, but fall
+// back to a background ctx for hand-rolled test sessions that never wire
+// sessionCtx.
+func (c *ClientSession) deriveDeliverCtx() context.Context {
+	if c.sessionCtx != nil {
+		return c.sessionCtx
+	}
+	return context.Background()
+}
+
+// handleDeliverShed logs the shed and emits a BACKPRESSURE notice on the
+// session. Used by both the Semaphore-driven and staging-buffer paths so
+// the observable behaviour is identical.
+func (c *ClientSession) handleDeliverShed(prio bp.Priority, cause error) {
+	c.identityMu.RLock()
+	identStr := c.Identity.String()
+	c.identityMu.RUnlock()
+	// Don't spam at warn level for genuine context cancellation (session
+	// teardown) — that path is expected and already audited elsewhere.
+	if cause != nil && errors.Is(cause, context.Canceled) {
+		logging.Logger.Debug().Err(cause).Str("identity", identStr).Int("priority", int(prio)).Msg("delivery shed: session context cancelled")
+	} else {
+		logging.Logger.Warn().Err(cause).Str("identity", identStr).Int("priority", int(prio)).Msg("delivery shed by backpressure; dropping message")
+	}
+	c.emitBackpressureNotice()
+}
+
+// emitBackpressureNotice writes a single BACKPRESSURE DownstreamMessage_Error
+// onto the staging buffer if there is room. This preserves the original
+// drop-on-full semantics for the notice itself: a severely backed-up consumer
+// will silently lose the notice rather than block the publisher.
+func (c *ClientSession) emitBackpressureNotice() {
+	backpressureNotice := &pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Error{
+			Error: &pb.ErrorResponse{
+				Code:    "BACKPRESSURE",
+				Message: "delivery buffer full — messages are being dropped; consider reducing send rate or processing messages faster",
 			},
-		}
-		select {
-		case c.deliveryCh <- backpressureNotice:
-		default:
-			// Buffer still full — client is severely behind, notice also dropped
-		}
+		},
+	}
+	select {
+	case c.deliveryCh <- backpressureNotice:
+	default:
+		// Buffer still full — client is severely behind, notice also dropped.
+	}
+}
+
+// closeDeliverySemaphore releases the Semaphore's background reaper. Safe to
+// call on a session that never had a Semaphore.
+func (c *ClientSession) closeDeliverySemaphore() {
+	if c.deliverySem != nil {
+		c.deliverySem.Close()
 	}
 }
 

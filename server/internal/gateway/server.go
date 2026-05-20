@@ -88,6 +88,17 @@ type GatewayServer struct {
 	// deliveryBufferSize is the capacity of each client's outbound message channel.
 	// Defaults to the package-level defaultDeliveryBufferSize constant.
 	deliveryBufferSize int
+	// deliveryBackpressureCapacity is the Semaphore admission concurrency
+	// budget for each ClientSession's downstream delivery path. Defaults to
+	// defaultDeliveryBackpressureCapacity. See WithDeliveryBackpressure.
+	deliveryBackpressureCapacity int
+	// deliveryBackpressureTarget is the CoDel target latency for the
+	// per-session delivery Semaphore. Sustained acquire latency above this
+	// triggers shedding of low-priority traffic.
+	deliveryBackpressureTarget time.Duration
+	// deliveryBackpressureInterval is the CoDel sampling interval used by
+	// the per-session delivery Semaphore.
+	deliveryBackpressureInterval time.Duration
 	// stopOnce ensures Stop() is idempotent (safe to call multiple times).
 	stopOnce sync.Once
 	// activeTunnels holds the per-workspace live-tunnel counter for proxy quota
@@ -222,6 +233,30 @@ func WithDeliveryBufferSize(size int) GatewayOption {
 	}
 }
 
+// WithDeliveryBackpressure configures the per-client delivery Semaphore that
+// admits Deliver* callers by priority and sheds low-priority traffic first
+// when sustained acquire latency exceeds target. Defaults: capacity=16,
+// target=50ms, interval=100ms. Pass 0 for any value to keep its default.
+//
+// Capacity measures admission concurrency, not queue depth: the Semaphore
+// token is held only for the duration of the push onto the staging channel
+// (sized off WithDeliveryBufferSize / defaultDeliveryBufferSize). Together
+// they cap the burst absorption window before the next outbound write must
+// complete.
+func WithDeliveryBackpressure(capacity int, target, interval time.Duration) GatewayOption {
+	return func(s *GatewayServer) {
+		if capacity > 0 {
+			s.deliveryBackpressureCapacity = capacity
+		}
+		if target > 0 {
+			s.deliveryBackpressureTarget = target
+		}
+		if interval > 0 {
+			s.deliveryBackpressureInterval = interval
+		}
+	}
+}
+
 // WithMaxTaskPayloadSize sets the maximum allowed size (in bytes) for task payloads.
 // Default is 512KB if not set or zero.
 func WithMaxTaskPayloadSize(size int) GatewayOption {
@@ -334,24 +369,27 @@ func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVR
 	}
 
 	s := &GatewayServer{
-		sessions:                sessions,
-		router:                  router,
-		kv:                      kvStore,
-		checkpoints:             checkpointStore,
-		taskStore:               taskStore,
-		timerSeq:                ts,
-		timeoutHdlr:             th,
-		auditLogger:             auditLogger,
-		gatewayID:               gatewayID,
-		implementationIndex:     make(map[string][]*ClientSession),
-		orchestratorIndex:       make(map[string][]*ClientSession),
-		kvHandler:               newKVHandlerFromService(kvStore, auditLogger, nil),
-		redisBreaker:            circuitbreaker.New("redis", circuitbreaker.WithMaxFailures(5), circuitbreaker.WithResetTimeout(30*time.Second)),
-		publishBreaker:          circuitbreaker.New("rabbitmq-publish", circuitbreaker.WithMaxFailures(10), circuitbreaker.WithResetTimeout(15*time.Second)),
-		authHandler:             newAuthHandler(nil, cfg.Required, cfg.Mode, nil, auditLogger),
-		quotaEnforcer:           newQuotaEnforcer(100, 200),
-		deliveryBufferSize:      defaultDeliveryBufferSize,
-		proxyLocalBypassEnabled: true,
+		sessions:                     sessions,
+		router:                       router,
+		kv:                           kvStore,
+		checkpoints:                  checkpointStore,
+		taskStore:                    taskStore,
+		timerSeq:                     ts,
+		timeoutHdlr:                  th,
+		auditLogger:                  auditLogger,
+		gatewayID:                    gatewayID,
+		implementationIndex:          make(map[string][]*ClientSession),
+		orchestratorIndex:            make(map[string][]*ClientSession),
+		kvHandler:                    newKVHandlerFromService(kvStore, auditLogger, nil),
+		redisBreaker:                 circuitbreaker.New("redis", circuitbreaker.WithMaxFailures(5), circuitbreaker.WithResetTimeout(30*time.Second)),
+		publishBreaker:               circuitbreaker.New("rabbitmq-publish", circuitbreaker.WithMaxFailures(10), circuitbreaker.WithResetTimeout(15*time.Second)),
+		authHandler:                  newAuthHandler(nil, cfg.Required, cfg.Mode, nil, auditLogger),
+		quotaEnforcer:                newQuotaEnforcer(100, 200),
+		deliveryBufferSize:           defaultDeliveryBufferSize,
+		deliveryBackpressureCapacity: defaultDeliveryBackpressureCapacity,
+		deliveryBackpressureTarget:   defaultDeliveryBackpressureTarget,
+		deliveryBackpressureInterval: defaultDeliveryBackpressureInterval,
+		proxyLocalBypassEnabled:      true,
 	}
 	// Apply options first — WithACLService may inject a pre-built ACL service,
 	// in which case we must not create a second one from db below.

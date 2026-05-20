@@ -14,6 +14,14 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// chunkedFinDispatchTimeout caps how long the goroutine spawned by
+// handleChunkedRequestFrame on a fin chunk is allowed to run before its
+// context is canceled. Mirrors aether.DefaultAsyncHandlerTimeout (3 min)
+// so the budget for fin-dispatch matches the budget aether.Async gives a
+// non-chunked OnProxyHttpRequest handler — the work after assembly is the
+// same backend dispatch.
+const chunkedFinDispatchTimeout = 3 * time.Minute
+
 // proxyResponseChunkSize is the maximum body size emitted inline in the
 // header ProxyHttpResponse frame. Larger bodies are streamed as
 // ProxyHttpBodyChunk frames. Mirrors the SDK's caller-side proxyChunkSize so
@@ -179,6 +187,16 @@ func (t *Terminator) beginChunkedRequest(req *pb.ProxyHttpRequest, transport tun
 // uploads are short-circuited with a PAYLOAD_TOO_LARGE response and the
 // accumulator is freed; the terminator does NOT continue buffering past the
 // cap.
+//
+// Accumulation (non-fin chunks) is synchronous so frames keep their
+// receive-loop order — the per-request accumulator is not safe to write
+// out-of-order. On fin, however, the assembled-body dispatch goes through
+// dispatchAndRespond which can block for the full backend response lifetime
+// (streaming SSE, slow HTTP backends). To keep the SDK's single-goroutine
+// receiveLoop free for other envelopes (loopback responses, follow-on
+// requests on other request_ids), the fin-dispatch is spawned on its own
+// goroutine bounded by chunkedFinDispatchTimeout, mirroring the
+// aether.Async wrap on OnProxyHttpRequest.
 func (t *Terminator) handleChunkedRequestFrame(ctx context.Context, chunk *pb.ProxyHttpBodyChunk, transport tunnelTransport) error {
 	requestID := chunk.GetRequestId()
 	if requestID == "" {
@@ -214,7 +232,80 @@ func (t *Terminator) handleChunkedRequestFrame(ctx context.Context, chunk *pb.Pr
 	// Mark the request as having an inline body now that we've reassembled
 	// it, so downstream backend dispatch sees a self-contained envelope.
 	req.BodyChunked = false
-	return t.dispatchAndRespond(ctx, req, body, transport)
+
+	// Hand off the assembled-body dispatch to a goroutine so the receive
+	// loop is freed immediately. dispatchAndRespond may block for the full
+	// backend response lifetime (streaming SSE, slow HTTP backends); doing
+	// it inline would wedge the loop the same way the OnProxyHttpRequest
+	// streaming handler did before aether.Async was added there. The new
+	// context is independent of the receive-loop ctx (which the SDK may
+	// cancel under its own pressure) so a slow backend doesn't get
+	// arbitrarily clipped, capped instead at chunkedFinDispatchTimeout.
+	go runChunkedFinDispatch(t, req, body, transport)
+	return nil
+}
+
+// runChunkedFinDispatch is the goroutine body for the fin-chunk dispatch
+// hand-off. Errors are logged at warn level (same shape as aether.Async's
+// internal logger) instead of bubbled, since the receive loop has already
+// returned by the time this runs and there's no caller waiting on err.
+// Panics are recovered so one buggy backend dispatch doesn't kill the
+// process.
+func runChunkedFinDispatch(t *Terminator, req *pb.ProxyHttpRequest, body []byte, transport tunnelTransport) {
+	ctx, cancel := context.WithTimeout(context.Background(), chunkedFinDispatchTimeout)
+	defer cancel()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error().
+				Interface("panic", r).
+				Str("request_id", req.GetRequestId()).
+				Str("path", req.GetPath()).
+				Msg("terminator: chunked fin-dispatch panicked")
+		}
+	}()
+	if err := t.dispatchAndRespond(ctx, req, body, transport); err != nil {
+		log.Warn().
+			Err(err).
+			Str("request_id", req.GetRequestId()).
+			Str("path", req.GetPath()).
+			Msg("terminator: chunked fin-dispatch returned error")
+	}
+}
+
+// tunnelOpenDispatchTimeout caps how long the goroutine spawned by the
+// OnTunnelDataIn TunnelOpen branch is allowed to run before its context is
+// canceled. HandleTunnelOpen dials TCP/WS/UDP upstreams and registers the
+// tunnel; the dial itself is the slow path. 3 minutes mirrors
+// aether.DefaultAsyncHandlerTimeout so the budget matches what
+// aether.Async would give an OnProxyHttpRequest handler.
+const tunnelOpenDispatchTimeout = 3 * time.Minute
+
+// runTunnelOpenDispatch is the goroutine body for the TunnelOpen hand-off
+// from OnTunnelDataIn. Calls HandleTunnelOpen and emits the synchronous
+// reject TunnelClose (if any) on transport. Errors / rejects log at debug
+// level; panics are recovered. Mirrors runChunkedFinDispatch.
+func runTunnelOpenDispatch(t *Terminator, open *pb.TunnelOpen, transport tunnelTransport) {
+	ctx, cancel := context.WithTimeout(context.Background(), tunnelOpenDispatchTimeout)
+	defer cancel()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error().
+				Interface("panic", r).
+				Str("tunnel_id", open.GetTunnelId()).
+				Msg("terminator: tunnel-open dispatch panicked")
+		}
+	}()
+	if cm := t.HandleTunnelOpen(ctx, open, transport); cm != nil {
+		// Open rejected synchronously — propagate the close to the peer.
+		// SendTunnelClose itself rides the SDK's CoDel-managed send path
+		// so an upstream that's already shedding won't wedge us here.
+		if err := transport.SendTunnelClose(cm); err != nil {
+			log.Debug().
+				Err(err).
+				Str("tunnel_id", open.GetTunnelId()).
+				Msg("terminator: send TunnelClose for rejected open failed")
+		}
+	}
 }
 
 // dispatchAndRespond runs the configured backend for a fully-assembled
@@ -485,7 +576,13 @@ func (t *Terminator) RegisterHandlers(client *aether.ServiceClient, transport tu
 
 	// Wire the service-side proxy/tunnel hooks so envelopes the gateway
 	// publishes to our sv:: topic land in the right backend dispatcher.
-	client.OnProxyHttpRequest(func(reqCtx context.Context, req *pb.ProxyHttpRequest) error {
+	//
+	// Wrapped with aether.Async so a long-running response (streaming SSE,
+	// chunked file dispatch) doesn't hold the SDK's single-goroutine
+	// receiveLoop and starve other envelopes on the same connection. See
+	// runner.go for the same wrap in composite mode and async_handler.go
+	// for the rationale.
+	client.OnProxyHttpRequest(aether.Async(func(reqCtx context.Context, req *pb.ProxyHttpRequest) error {
 		// Chunked-request: register accumulator, wait for body chunks. Dispatch
 		// happens on fin. The header envelope carries no body bytes by spec.
 		if req.GetBodyChunked() {
@@ -493,7 +590,7 @@ func (t *Terminator) RegisterHandlers(client *aether.ServiceClient, transport tu
 		}
 		// Inline body: dispatch immediately, stream large responses.
 		return t.dispatchAndRespond(reqCtx, req, req.GetBody(), transport)
-	})
+	}))
 	client.OnProxyHttpBodyChunk(func(chunkCtx context.Context, chunk *pb.ProxyHttpBodyChunk) error {
 		if !chunk.GetIsRequest() {
 			// Service principals only receive request-direction chunks
@@ -507,12 +604,19 @@ func (t *Terminator) RegisterHandlers(client *aether.ServiceClient, transport tu
 		// Seq=0 with a payload that decodes as a TunnelOpen is the
 		// gateway's "open" signal (T4 wire format); all other frames are
 		// follow-on data.
+		//
+		// TunnelOpen dispatch dials the upstream backend (TCP / WS / UDP)
+		// which can block on slow or unreachable hosts. Hand it to a
+		// goroutine so the receive loop stays free for subsequent
+		// envelopes — including tunnel data frames for other tunnels
+		// multiplexed onto the same connection. Data frames for an
+		// already-open tunnel stay sync because they route into the
+		// tunnel's existing per-connection goroutine where ordering is
+		// preserved by the tunnel manager.
 		if frame.GetSeq() == 0 && len(frame.GetData()) > 0 {
 			open := &pb.TunnelOpen{}
 			if err := proto.Unmarshal(frame.GetData(), open); err == nil && open.GetTunnelId() != "" {
-				if cm := t.HandleTunnelOpen(dataCtx, open, transport); cm != nil {
-					_ = transport.SendTunnelClose(cm)
-				}
+				go runTunnelOpenDispatch(t, open, transport)
 				return nil
 			}
 		}

@@ -323,21 +323,58 @@ func (c *capturingTransport) SendProxyHttpBodyChunk(ch *pb.ProxyHttpBodyChunk) e
 // assembledResponse returns the header + reassembled body from the captured
 // frames. Mirrors what the gateway would deliver to a caller after
 // re-assembling chunked-response frames.
+//
+// The fin-chunk dispatch in handleChunkedRequestFrame now spawns a goroutine
+// to run dispatchAndRespond (so the SDK receive loop isn't held for the
+// backend response lifetime). Tests that drive chunked uploads observe the
+// response asynchronously; this helper polls for the header for up to 5
+// seconds before returning so the harness keeps its synchronous test
+// ergonomics without leaking the production async shape.
 func (c *capturingTransport) assembledResponse() (*pb.ProxyHttpResponse, []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.resps) == 0 {
-		return nil, nil
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c.mu.Lock()
+		if len(c.resps) > 0 {
+			header := c.resps[0]
+			if !header.GetBodyChunked() {
+				body := header.GetBody()
+				c.mu.Unlock()
+				return header, body
+			}
+			// For chunked responses, wait until the final body chunk has
+			// fin=true so we don't return a half-assembled body.
+			lastFin := len(c.chunks) > 0 && c.chunks[len(c.chunks)-1].GetFin()
+			if header.GetError() != nil || lastFin {
+				var body []byte
+				for _, ch := range c.chunks {
+					body = append(body, ch.GetData()...)
+				}
+				c.mu.Unlock()
+				return header, body
+			}
+		}
+		c.mu.Unlock()
+		if time.Now().After(deadline) {
+			// Return whatever we have rather than blocking forever — the
+			// caller's assertions will surface the timeout as a real
+			// test failure.
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if len(c.resps) == 0 {
+				return nil, nil
+			}
+			header := c.resps[0]
+			if !header.GetBodyChunked() {
+				return header, header.GetBody()
+			}
+			var body []byte
+			for _, ch := range c.chunks {
+				body = append(body, ch.GetData()...)
+			}
+			return header, body
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
-	header := c.resps[0]
-	if !header.GetBodyChunked() {
-		return header, header.GetBody()
-	}
-	var body []byte
-	for _, ch := range c.chunks {
-		body = append(body, ch.GetData()...)
-	}
-	return header, body
 }
 
 // errResp builds a synthetic ProxyHttpResponse that carries an error. Used by

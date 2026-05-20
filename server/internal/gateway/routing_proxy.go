@@ -14,6 +14,8 @@ import (
 	"github.com/scitrera/aether/internal/audit"
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/sdk/go/aether"
+	bp "github.com/scitrera/go-backpressure"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -240,7 +242,11 @@ func (s *GatewayServer) publishProxyEnvelope(ctx context.Context, target string,
 // ProxyHttpResponse header, ProxyError) MUST NOT use this helper: they are
 // the only path that emits audit events for routed proxy traffic, so they
 // always take the RMQ route. Callers ensure that invariant.
-func (s *GatewayServer) deliverDataPlaneLocal(targetIdentity, envelopeType string, downstream *pb.DownstreamMessage) bool {
+//
+// The prio parameter is the per-envelope priority used by the per-session
+// delivery Semaphore so that high-priority frames (TunnelAck, response
+// headers) jump ahead of bulk chunks under sustained load.
+func (s *GatewayServer) deliverDataPlaneLocal(targetIdentity, envelopeType string, prio bp.Priority, downstream *pb.DownstreamMessage) bool {
 	if !s.proxyLocalBypassEnabled {
 		proxyLocalBypassTotal.WithLabelValues(envelopeType, "disabled").Inc()
 		return false
@@ -265,10 +271,17 @@ func (s *GatewayServer) deliverDataPlaneLocal(targetIdentity, envelopeType strin
 		proxyLocalBypassTotal.WithLabelValues(envelopeType, "rmq_fallback").Inc()
 		return false
 	}
-	// Non-blocking enqueue. On a full buffer we deliberately fall through to
-	// the RMQ path rather than emitting a BACKPRESSURE error: the RMQ fan-out
-	// is already prepared to absorb a slow reader without taking the caller
-	// out of routing. This mirrors the trade-off documented in T31.
+	// Non-blocking enqueue. On a full staging buffer we deliberately fall
+	// through to the RMQ path rather than emitting a BACKPRESSURE error: the
+	// RMQ fan-out is already prepared to absorb a slow reader without taking
+	// the caller out of routing. This mirrors the trade-off documented in T31.
+	//
+	// Note: we do NOT route this through DeliverWithPriority because that
+	// would emit a BACKPRESSURE notice on staging-buffer full, but the
+	// bypass contract is "silent fall-back to RMQ" — the RMQ path will
+	// itself reach Deliver* via createMessageHandler and trigger the proper
+	// shed semantics there if the consumer is still backed up.
+	_ = prio
 	select {
 	case client.deliveryCh <- downstream:
 		proxyLocalBypassTotal.WithLabelValues(envelopeType, "hit").Inc()
@@ -507,10 +520,21 @@ func (s *GatewayServer) routeProxyHttpBodyChunk(ctx context.Context, client *Cli
 	downstream := &pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_ProxyHttpBodyChunk{ProxyHttpBodyChunk: chunk},
 	}
+	// Per-envelope priority: request-direction chunks ride at PriorityRequest
+	// (caller has a deadline + retry budget); response-direction chunks at
+	// PriorityResponseChunk; the terminal frame (fin=true) is promoted to
+	// PriorityResponseHeader so the close marker doesn't get shed mid-stream.
+	chunkPrio := aether.PriorityResponseChunk
+	if chunk.GetIsRequest() {
+		chunkPrio = aether.PriorityRequest
+	}
+	if chunk.GetFin() {
+		chunkPrio = aether.PriorityResponseHeader
+	}
 	// Single-node fast path: body chunks are bytes-only payload that follow a
 	// ProxyHttpRequest header (already audited via the RMQ path). Audit fires
 	// on the request/response headers, not per chunk, so the bypass is safe.
-	if s.deliverDataPlaneLocal(dest, "proxy_http_body_chunk", downstream) {
+	if s.deliverDataPlaneLocal(dest, "proxy_http_body_chunk", chunkPrio, downstream) {
 		// Mirror the RMQ-success post-actions: refresh / fin handling below.
 	} else if pubErr := s.publishProxyEnvelope(ctx, dest, downstream); pubErr != nil {
 		logging.Logger.Warn().Err(pubErr).Str("request_id", requestID).Str("target", dest).Msg("ProxyHttpBodyChunk forward failed")
@@ -759,7 +783,9 @@ func (s *GatewayServer) routeTunnelData(ctx context.Context, client *ClientSessi
 	// Single-node fast path: when the pinned sidecar is connected to this
 	// gateway, deliver directly. TunnelData is a data-plane envelope and is
 	// not audited per-frame, so bypassing RMQ does not lose observability.
-	if s.deliverDataPlaneLocal(concrete, "tunnel_data", downstream) {
+	// TunnelData rides at PriorityResponseChunk: it carries bulk bytes,
+	// gets shed before control / response-header frames under pressure.
+	if s.deliverDataPlaneLocal(concrete, "tunnel_data", aether.PriorityResponseChunk, downstream) {
 		return
 	}
 	if err := s.publishProxyEnvelope(ctx, concrete, downstream); err != nil {
@@ -843,8 +869,10 @@ func (s *GatewayServer) routeTunnelAck(ctx context.Context, client *ClientSessio
 		Payload: &pb.DownstreamMessage_TunnelAck{TunnelAck: ack},
 	}
 	// Single-node fast path: TunnelAck is a flow-control hint, not audited.
-	// If the destination peer is locally connected, deliver directly.
-	if s.deliverDataPlaneLocal(destTopic, "tunnel_ack", downstream) {
+	// If the destination peer is locally connected, deliver directly. Acks
+	// ride at PriorityResponseHeader — the sender is waiting for window
+	// updates, so they must jump ahead of bulk data chunks under pressure.
+	if s.deliverDataPlaneLocal(destTopic, "tunnel_ack", aether.PriorityResponseHeader, downstream) {
 		return
 	}
 	if err := s.publishProxyEnvelope(ctx, destTopic, downstream); err != nil {

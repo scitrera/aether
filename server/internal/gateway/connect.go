@@ -18,6 +18,7 @@ import (
 	"github.com/scitrera/aether/internal/tracing"
 	aerrors "github.com/scitrera/aether/pkg/errors"
 	"github.com/scitrera/aether/pkg/models"
+	bp "github.com/scitrera/go-backpressure"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
@@ -170,16 +171,34 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 	}
 
 	sessionUUID, _ := uuid.Parse(sessionID)
+	// Construct the per-session delivery Semaphore. Capacity, target, and
+	// interval come from server-level config (WithDeliveryBackpressure).
+	// The staging buffer is sized to max(8, deliveryBufferSize/4): the
+	// Semaphore is the actual admission gate, deliveryCh is just the brief
+	// hand-off to startDeliveryLoop.
+	stagingCap := s.deliveryBufferSize / 4
+	if stagingCap < 8 {
+		stagingCap = 8
+	}
+	deliverySem := bp.NewSemaphore(
+		deliveryPriorityCount,
+		s.deliveryBackpressureCapacity,
+		bp.SemaphoreShortTimeout(s.deliveryBackpressureTarget),
+		bp.SemaphoreLongTimeout(s.deliveryBackpressureInterval),
+	)
 	client := &ClientSession{
-		ID:               sessionID,
-		SessionUUID:      sessionUUID,
-		Identity:         identity,
-		AssociatedTaskID: associatedTaskID,
-		Stream:           stream,
-		Cancel:           sessionCancel,
-		ConnectedAt:      time.Now(),
-		rateLimiter:      rate.NewLimiter(rate.Limit(s.quotaEnforcer.messageRateLimit), s.quotaEnforcer.messageRateBurst),
-		deliveryCh:       make(chan *pb.DownstreamMessage, s.deliveryBufferSize),
+		ID:                    sessionID,
+		SessionUUID:           sessionUUID,
+		Identity:              identity,
+		AssociatedTaskID:      associatedTaskID,
+		Stream:                stream,
+		Cancel:                sessionCancel,
+		ConnectedAt:           time.Now(),
+		rateLimiter:           rate.NewLimiter(rate.Limit(s.quotaEnforcer.messageRateLimit), s.quotaEnforcer.messageRateBurst),
+		deliveryCh:            make(chan *pb.DownstreamMessage, stagingCap),
+		deliverySem:           deliverySem,
+		deliverAcquireTimeout: defaultDeliverAcquireTimeout,
+		sessionCtx:            sessionCtx,
 	}
 	client.startDeliveryLoop(sessionCtx)
 	cs.client = client
@@ -943,6 +962,13 @@ func (s *GatewayServer) cleanupSession(cs *connectionState, gracefulExit bool) {
 
 	// Clean up any pending workflow requests for this client
 	s.cleanupPendingWorkflowRequests(cs.client)
+
+	// Release the per-session delivery Semaphore's background reaper so
+	// the goroutine doesn't outlive the session. Safe to call when no
+	// Semaphore was attached (legacy / unit-test scaffold).
+	if cs.client != nil {
+		cs.client.closeDeliverySemaphore()
+	}
 
 	// Unsubscribe from all topics
 	cs.client.UnsubscribeAll()

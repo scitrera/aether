@@ -54,18 +54,37 @@ type ConnectionOptions struct {
 	// KeepAliveInterval is the interval for keepalive pings.
 	// Default: 30 seconds.
 	KeepAliveInterval time.Duration
+
+	// BackpressureCapacity is the number of concurrent in-flight upstream
+	// sends the SDK admits before queueing or shedding. The Semaphore is
+	// sized for in-flight to the gRPC stream, not for the queue itself —
+	// throughput is roughly capacity × per-send wall time. Values
+	// 8–32 fit most workloads. Default: 16.
+	BackpressureCapacity int
+
+	// BackpressureTarget is the CoDel target dwell time. When the
+	// admission queue's measured dwell exceeds this for an entire
+	// interval window, lower-priority entries are shed. Default: 50ms.
+	BackpressureTarget time.Duration
+
+	// BackpressureInterval is the CoDel control-loop window over which
+	// dwell-time excess is measured. Default: 100ms.
+	BackpressureInterval time.Duration
 }
 
 // DefaultConnectionOptions returns ConnectionOptions with sensible defaults.
 func DefaultConnectionOptions() ConnectionOptions {
 	return ConnectionOptions{
-		MaxRetries:        5,
-		InitialBackoff:    1 * time.Second,
-		MaxBackoff:        30 * time.Second,
-		BackoffMultiplier: 2.0,
-		AutoReconnect:     true,
-		ConnectTimeout:    30 * time.Second,
-		KeepAliveInterval: 30 * time.Second,
+		MaxRetries:           5,
+		InitialBackoff:       1 * time.Second,
+		MaxBackoff:           30 * time.Second,
+		BackoffMultiplier:    2.0,
+		AutoReconnect:        true,
+		ConnectTimeout:       30 * time.Second,
+		KeepAliveInterval:    30 * time.Second,
+		BackpressureCapacity: 16,
+		BackpressureTarget:   50 * time.Millisecond,
+		BackpressureInterval: 100 * time.Millisecond,
 	}
 }
 
@@ -787,6 +806,23 @@ func WithConnectTimeout(d time.Duration) ConnectionOption {
 func WithKeepAliveInterval(d time.Duration) ConnectionOption {
 	return func(o *ConnectionOptions) {
 		o.KeepAliveInterval = d
+	}
+}
+
+// WithBackpressure tunes the SDK's prioritized admission queue.
+// capacity sets the in-flight Semaphore size; target/interval drive the
+// CoDel shedding window. Any zero argument keeps the current value.
+func WithBackpressure(capacity int, target, interval time.Duration) ConnectionOption {
+	return func(o *ConnectionOptions) {
+		if capacity > 0 {
+			o.BackpressureCapacity = capacity
+		}
+		if target > 0 {
+			o.BackpressureTarget = target
+		}
+		if interval > 0 {
+			o.BackpressureInterval = interval
+		}
 	}
 }
 

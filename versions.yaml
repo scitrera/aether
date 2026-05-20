@@ -11,7 +11,7 @@
 
 aether-gateway: 0.2.1
 
-aether-sdk-go: 0.2.0          # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
+aether-sdk-go: 0.2.1          # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
 aether-sdk-python: 0.2.0      # scitrera-aether-client
 aether-sdk-typescript: 0.2.0  # @scitrera/aether-client
 

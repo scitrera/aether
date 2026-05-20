@@ -617,63 +617,87 @@ func TestComposite_ShutdownClosesBothSurfaces(t *testing.T) {
 	}
 }
 
-// TestComposite_RejectsConcurrentSandboxSessions asserts that with the
-// shared-runtime constraint (one identity, one lock), a second concurrent
-// sandbox stream is rejected. Standalone relay mode permits multiple
-// because each opens its own upstream stream; the shared-runtime
-// configuration cannot.
-func TestComposite_RejectsConcurrentSandboxSessions(t *testing.T) {
+// TestComposite_AcceptsConcurrentSandboxSessions verifies that the
+// shared-runtime relay sink multiplexes multiple concurrent sandbox
+// sessions onto the sidecar's single upstream gateway connection.
+// Previously this rejected any second concurrent session — which caused
+// a reconnect storm when the sidecar's own RPC client occupied the slot
+// and the in-sandbox SDK then tried to attach (cf. the v0.2.x bug).
+//
+// The complementary "cap exceeded" path is covered by
+// TestSharedRelaySink_AttachRejectsBeyondMaxSessions (no full Runner
+// needed for that property).
+func TestComposite_AcceptsConcurrentSandboxSessions(t *testing.T) {
 	t.Parallel()
 
 	h := newCompositeHarness(t, nil)
 
-	// First sandbox session attaches successfully.
-	first, err := h.sandboxCli.Connect(context.Background())
-	if err != nil {
-		t.Fatalf("first sandbox connect: %v", err)
-	}
-	if err := first.Send(&pb.UpstreamMessage{
-		Payload: &pb.UpstreamMessage_Init{
-			Init: &pb.InitConnection{
-				ClientType: &pb.InitConnection_Agent{
-					Agent: &pb.AgentIdentity{Workspace: "ws", Implementation: "i", Specifier: "s1"},
+	open := func(specifier string) pb.AetherGateway_ConnectClient {
+		stream, err := h.sandboxCli.Connect(context.Background())
+		if err != nil {
+			t.Fatalf("sandbox dial (%s): %v", specifier, err)
+		}
+		if err := stream.Send(&pb.UpstreamMessage{
+			Payload: &pb.UpstreamMessage_Init{
+				Init: &pb.InitConnection{
+					ClientType: &pb.InitConnection_Agent{
+						Agent: &pb.AgentIdentity{Workspace: "ws", Implementation: "i", Specifier: specifier},
+					},
 				},
 			},
-		},
-	}); err != nil {
-		t.Fatalf("first init: %v", err)
-	}
-	if _, err := first.Recv(); err != nil {
-		t.Fatalf("first recv ack: %v", err)
+		}); err != nil {
+			t.Fatalf("init send (%s): %v", specifier, err)
+		}
+		// Each session synthesises its own ConnectionAck on attach.
+		ack, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("ack recv (%s): %v", specifier, err)
+		}
+		if _, ok := ack.GetPayload().(*pb.DownstreamMessage_ConnectionAck); !ok {
+			t.Fatalf("ack (%s): expected ConnectionAck, got %T", specifier, ack.GetPayload())
+		}
+		return stream
 	}
 
-	// Second concurrent sandbox session must fail (the relay's Connect
-	// returns an error from sharedRuntimeClient.Connect when a session is
-	// already active).
-	second, err := h.sandboxCli.Connect(context.Background())
-	if err != nil {
-		t.Fatalf("second sandbox dial: %v", err)
-	}
-	if err := second.Send(&pb.UpstreamMessage{
-		Payload: &pb.UpstreamMessage_Init{
-			Init: &pb.InitConnection{
-				ClientType: &pb.InitConnection_Agent{
-					Agent: &pb.AgentIdentity{Workspace: "ws", Implementation: "i", Specifier: "s2"},
-				},
-			},
-		},
-	}); err != nil {
-		// CloseSend / Send may already error here — that's fine.
-		_ = err
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := second.Recv(); err != nil {
-			return
+	first := open("s1")
+	second := open("s2")
+
+	// Tidy: close both. Defer would also work; explicit is clearer for
+	// the assertion that BOTH were live concurrently above.
+	_ = first.CloseSend()
+	_ = second.CloseSend()
+}
+
+// TestSharedRelaySink_AttachRejectsBeyondMaxSessions exercises the
+// per-sink session cap directly so we don't need to spin up a full
+// Runner + grpc transport just to count attaches. attachSession returns
+// false once the cap is reached; detachSession reclaims slots.
+func TestSharedRelaySink_AttachRejectsBeyondMaxSessions(t *testing.T) {
+	t.Parallel()
+
+	const cap = 3
+	sink := newSharedRelaySink(nil, cap)
+	sessions := make([]*sharedRuntimeSession, 0, cap)
+
+	for i := 0; i < cap; i++ {
+		sess := &sharedRuntimeSession{owner: sink}
+		if !sink.attachSession(sess) {
+			t.Fatalf("attach %d/%d unexpectedly rejected", i+1, cap)
 		}
-		time.Sleep(50 * time.Millisecond)
+		sessions = append(sessions, sess)
 	}
-	t.Fatal("second sandbox session was accepted; shared-runtime should reject concurrent sessions")
+
+	overflow := &sharedRuntimeSession{owner: sink}
+	if sink.attachSession(overflow) {
+		t.Fatalf("attach beyond cap=%d should have been rejected", cap)
+	}
+
+	// Detaching a slot frees room for one more attach.
+	sink.detachSession(sessions[0])
+	replacement := &sharedRuntimeSession{owner: sink}
+	if !sink.attachSession(replacement) {
+		t.Fatalf("attach after detach unexpectedly rejected")
+	}
 }
 
 // TestRunner_RejectsConfigWithNoSurfacesEnabled covers the validation rule

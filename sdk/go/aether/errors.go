@@ -8,6 +8,7 @@ package aether
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -227,6 +228,49 @@ func NewTimeoutError(operation string, timeoutSeconds float64) *TimeoutError {
 		Operation:      operation,
 		TimeoutSeconds: timeoutSeconds,
 	}
+}
+
+// BackpressureError indicates an upstream send was shed by the SDK's
+// admission queue rather than handed to the gRPC stream.
+//
+// Returned by BaseClient.SendWithPriority (and SendCtx, transitively) when
+// CoDel-driven shedding determines that admitting this envelope would
+// exceed sustained-latency targets, or when the caller's context expires
+// before admission. Callers should treat this as a transient/retryable
+// signal — surface a backpressure response upstream rather than tearing
+// down the connection.
+type BackpressureError struct {
+	AetherError
+	// RetryAfter is an advisory delay before retrying. Zero means no hint.
+	RetryAfter time.Duration
+}
+
+// NewBackpressureError wraps the underlying shedding cause (typically
+// context deadline, context cancellation, or a backpressure.Semaphore
+// rejection) into a BackpressureError.
+func NewBackpressureError(cause error) *BackpressureError {
+	return &BackpressureError{
+		AetherError: AetherError{
+			Message: "send shed by backpressure",
+			Code:    "BACKPRESSURE",
+			cause:   cause,
+		},
+	}
+}
+
+// WithRetryAfter sets the advisory retry delay on a BackpressureError.
+func (e *BackpressureError) WithRetryAfter(d time.Duration) *BackpressureError {
+	e.RetryAfter = d
+	return e
+}
+
+// IsBackpressureError returns true if err is or wraps a BackpressureError.
+func IsBackpressureError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var bp *BackpressureError
+	return errors.As(err, &bp)
 }
 
 // =============================================================================

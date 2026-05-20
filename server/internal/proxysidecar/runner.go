@@ -26,15 +26,43 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/sdk/go/aether"
+	"github.com/scitrera/go-backpressure"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 )
+
+// sharedRuntimeSessionDeliverCapacity bounds the concurrent in-flight
+// downstream envelopes a single relay session can have queued toward its
+// in-sandbox SDK reader. Sized at 8 to match the per-session inbox cap
+// historically used here (64) divided down to a value that gives CoDel
+// room to schedule across priorities. The Semaphore itself does the
+// queue-length management via its CoDel queues; the staging chan below
+// only buffers admitted envelopes for the Recv side.
+const sharedRuntimeSessionDeliverCapacity = 8
+
+// sharedRuntimeSessionDeliverShortTimeout / LongTimeout configure the
+// CoDel target/interval for the per-session admission queue. 50ms target
+// matches the SDK's BaseClient backpressure target; 100ms interval gives
+// enough sample window to differentiate persistent overload from a brief
+// burst.
+const (
+	sharedRuntimeSessionDeliverShortTimeout = 50 * time.Millisecond
+	sharedRuntimeSessionDeliverLongTimeout  = 100 * time.Millisecond
+)
+
+// sharedRuntimeSessionDeliverAcquireTimeout caps how long deliver() will
+// block trying to acquire a delivery-Semaphore token. Sized small so a
+// wedged in-sandbox reader can't permanently block the runtime's
+// downstream dispatcher: on shed, deliver synthesizes a BACKPRESSURE
+// error frame into the inbox so the in-sandbox SDK observes the failure.
+const sharedRuntimeSessionDeliverAcquireTimeout = 30 * time.Second
 
 // Runner owns the shared gateway connection and the enabled surfaces.
 type Runner struct {
@@ -81,7 +109,7 @@ func NewRunner(cfg *Config, cfgPath string) (*Runner, error) {
 		// envelopes through it so both surfaces ride one gateway lock.
 		// Otherwise the relay keeps its default per-session dialer.
 		if r.runtime != nil {
-			sink := newSharedRelaySink(r.runtime)
+			sink := newSharedRelaySink(r.runtime, cfg.Relay.MaxSessions)
 			r.router.relay = sink
 			relay.SetUpstreamDialer(sink.dial)
 		}
@@ -172,6 +200,10 @@ func (r *Runner) Run(ctx context.Context) error {
 // Currently only the terminator's backends respond; surface enable/disable
 // flips are not reloadable.
 func (r *Runner) Reload() {
+	log.Info().
+		Str("path", r.cfgPath).
+		Strs("surfaces", r.cfg.EnabledSurfaces()).
+		Msg("proxy sidecar: config reload requested")
 	if r.term != nil {
 		r.term.Reload()
 	}
@@ -214,17 +246,65 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 	// Inbound HTTP request: terminator handles. Relay never receives this
 	// (the gateway never publishes ProxyHttpRequest as a *response* to an
 	// outbound caller).
-	client.OnProxyHttpRequest(func(reqCtx context.Context, req *pb.ProxyHttpRequest) error {
+	//
+	// Wrapped with aether.Async because the SDK's receiveLoop dispatches
+	// handlers synchronously on a single goroutine. A streaming dispatch
+	// (stream_response_indefinitely=true /slow SSE, Jupyter /code) holds
+	// the loop for the entire response lifetime, starving every other
+	// envelope multiplexed onto the same shared runtime — including
+	// loopback ProxyHttpResponses for relay-mediated fast calls, and
+	// follow-on ProxyHttpRequests for additional streams. Async frees
+	// the loop per inbound request; sequencing of an individual request's
+	// own response chunks is preserved inside dispatchAndRespond.
+	client.OnProxyHttpRequest(aether.Async(func(reqCtx context.Context, req *pb.ProxyHttpRequest) error {
+		if log.Debug().Enabled() {
+			log.Debug().
+				Str("dir", "terminator-in").
+				Str("op", "ProxyHttpRequest").
+				Str("request_id", req.GetRequestId()).
+				Str("method", req.GetMethod()).
+				Str("path", req.GetPath()).
+				Str("backend", req.GetBackendName()).
+				Int("body_bytes", len(req.GetBody())).
+				Bool("body_chunked", req.GetBodyChunked()).
+				Bool("stream_indef", req.GetStreamResponseIndefinitely()).
+				Msg("terminator: envelope")
+		}
 		if req.GetBodyChunked() {
 			return r.term.beginChunkedRequest(req, transport)
 		}
 		return r.term.dispatchAndRespond(reqCtx, req, req.GetBody(), transport)
+	}))
+
+	// ProxyHttpResponse: only fires here when the SDK's caller-side
+	// inflight resolver missed — i.e. the response is for a request the
+	// relay forwarded on someone else's behalf. Route it via the relay
+	// sink so the originating sandbox session sees it on its inbox.
+	// Without this the response would silently drop and the in-sandbox
+	// proxy_http_async call would hang until its 30s deadline.
+	client.OnProxyHttpResponse(func(_ context.Context, resp *pb.ProxyHttpResponse) error {
+		if r.relay != nil {
+			r.relay.routeMessage(&pb.DownstreamMessage{
+				Payload: &pb.DownstreamMessage_ProxyHttpResponse{ProxyHttpResponse: resp},
+			})
+		}
+		return nil
 	})
 
 	// ProxyHttpBodyChunk: is_request=true → terminator (chunked inbound
 	// body); is_request=false → relay (chunked response to a sandbox-issued
 	// outbound request) when relay is co-enabled, otherwise drop.
 	client.OnProxyHttpBodyChunk(func(chunkCtx context.Context, chunk *pb.ProxyHttpBodyChunk) error {
+		if log.Debug().Enabled() && chunk.GetIsRequest() {
+			log.Debug().
+				Str("dir", "terminator-in").
+				Str("op", "ProxyHttpBodyChunk").
+				Str("request_id", chunk.GetRequestId()).
+				Uint32("seq", chunk.GetSeq()).
+				Bool("fin", chunk.GetFin()).
+				Int("data_bytes", len(chunk.GetData())).
+				Msg("terminator: envelope")
+		}
 		if chunk.GetIsRequest() {
 			return r.term.handleChunkedRequestFrame(chunkCtx, chunk, transport)
 		}
@@ -241,13 +321,21 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 	// by-id, so consult the terminator's tunnel manager first; unknown ids
 	// fall to the relay (composite mode) or to terminator's default
 	// PEER_RESET path (standalone).
+	//
+	// TunnelOpen dispatch goes through a goroutine because HandleTunnelOpen
+	// dials the upstream backend (TCP/WS/UDP) and that dial is slow on
+	// unreachable or backpressured hosts. Without the hand-off, a single
+	// slow dial would wedge the receive loop and starve every other surface
+	// multiplexed onto this connection (loopback ProxyHttpResponses for
+	// relay-mediated fast calls, follow-on ProxyHttpRequests, peer data
+	// frames for other already-open tunnels). Data frames for an already-
+	// open tunnel stay sync because they route into the tunnel's existing
+	// per-connection goroutine where the tunnel manager owns ordering.
 	client.OnTunnelDataIn(func(dataCtx context.Context, frame *pb.TunnelData) error {
 		if frame.GetSeq() == 0 && len(frame.GetData()) > 0 {
 			open := &pb.TunnelOpen{}
 			if err := tunnelDataIsOpen(frame, open); err == nil {
-				if cm := r.term.HandleTunnelOpen(dataCtx, open, transport); cm != nil {
-					_ = transport.SendTunnelClose(cm)
-				}
+				go runTunnelOpenDispatch(r.term, open, transport)
 				return nil
 			}
 		}
@@ -306,18 +394,42 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 // dial); under the hood, every accepted sandbox session is funnelled through
 // the same gateway connection that the terminator surface uses.
 //
-// Only one sandbox session is active at a time in this configuration: the
-// runtime owns one gateway lock under one identity, so two parallel sandbox
-// sessions would each try to drive the same upstream stream.
+// Up to MaxSessions sandbox sessions can be attached concurrently. Their
+// upstream envelopes all go through the runtime's single send queue (gRPC
+// streams already multiplex). Downstream envelopes are routed back to the
+// originating session via per-request_id and per-tunnel_id tables populated
+// when the session emits the corresponding ProxyHttpRequest or TunnelOpen.
+// Envelopes without a routable id (signals, config) are broadcast to all
+// sessions.
 type sharedRelaySink struct {
-	runtime *gatewayRuntime
+	runtime     *gatewayRuntime
+	maxSessions int
 
-	mu            sync.Mutex
-	activeSession *sharedRuntimeSession
+	mu             sync.Mutex
+	activeSessions map[*sharedRuntimeSession]struct{}
+	// requestRoutes maps a ProxyHttpRequest's request_id to the session
+	// that originated it. Populated on Send(ProxyHttpRequest), consulted
+	// on incoming ProxyHttpResponse / ProxyHttpBodyChunk(!is_request),
+	// released on the terminal frame (non-chunked response, or fin chunk).
+	requestRoutes map[string]*sharedRuntimeSession
+	// tunnelRoutes maps a TunnelOpen's tunnel_id to the originating
+	// session. Released on TunnelClose or on session detach.
+	tunnelRoutes map[string]*sharedRuntimeSession
 }
 
-func newSharedRelaySink(runtime *gatewayRuntime) *sharedRelaySink {
-	return &sharedRelaySink{runtime: runtime}
+func newSharedRelaySink(runtime *gatewayRuntime, maxSessions int) *sharedRelaySink {
+	if maxSessions < 1 {
+		// Validation in config.go enforces this, but guard direct
+		// test callers that may pass 0.
+		maxSessions = 1
+	}
+	return &sharedRelaySink{
+		runtime:        runtime,
+		maxSessions:    maxSessions,
+		activeSessions: make(map[*sharedRuntimeSession]struct{}),
+		requestRoutes:  make(map[string]*sharedRuntimeSession),
+		tunnelRoutes:   make(map[string]*sharedRuntimeSession),
+	}
 }
 
 // dial is the relay's upstreamDialer in the shared-runtime configuration.
@@ -329,43 +441,131 @@ func (s *sharedRelaySink) dial(_ context.Context) (pb.AetherGatewayClient, func(
 	return &sharedRuntimeClient{owner: s}, func() error { return nil }, nil
 }
 
-// routeMessage enqueues msg on the active relay session's inbox. With no
-// active session, the message is dropped (no sandbox cares about it) and a
-// debug line is emitted so operators can spot stray traffic.
+// routeMessage delivers msg to whichever session owns the request_id or
+// tunnel_id it references. Envelopes without a routable id (signals,
+// config, errors without request_id) broadcast to every active session.
+// On terminal frames (non-chunked ProxyHttpResponse, fin ProxyHttpBodyChunk,
+// TunnelClose) the corresponding route entry is released so the table
+// doesn't grow unbounded.
 func (s *sharedRelaySink) routeMessage(msg *pb.DownstreamMessage) {
+	var (
+		sess     *sharedRuntimeSession
+		fanout   []*sharedRuntimeSession
+		category string
+	)
+
 	s.mu.Lock()
-	sess := s.activeSession
+	switch p := msg.GetPayload().(type) {
+	case *pb.DownstreamMessage_ProxyHttpResponse:
+		rid := p.ProxyHttpResponse.GetRequestId()
+		sess = s.requestRoutes[rid]
+		// Non-chunked response carries the body inline and ends the
+		// exchange; chunked responses stay routed until a body chunk
+		// arrives with fin=true.
+		if !p.ProxyHttpResponse.GetBodyChunked() {
+			delete(s.requestRoutes, rid)
+		}
+		category = "request_id"
+	case *pb.DownstreamMessage_ProxyHttpBodyChunk:
+		rid := p.ProxyHttpBodyChunk.GetRequestId()
+		sess = s.requestRoutes[rid]
+		if p.ProxyHttpBodyChunk.GetFin() {
+			delete(s.requestRoutes, rid)
+		}
+		category = "request_id"
+	case *pb.DownstreamMessage_TunnelData:
+		sess = s.tunnelRoutes[p.TunnelData.GetTunnelId()]
+		category = "tunnel_id"
+	case *pb.DownstreamMessage_TunnelAck:
+		sess = s.tunnelRoutes[p.TunnelAck.GetTunnelId()]
+		category = "tunnel_id"
+	case *pb.DownstreamMessage_TunnelClose:
+		tid := p.TunnelClose.GetTunnelId()
+		sess = s.tunnelRoutes[tid]
+		delete(s.tunnelRoutes, tid)
+		category = "tunnel_id"
+	default:
+		// Session-level envelopes (Signal/Config/ConnectionAck/...) —
+		// broadcast so every attached session sees things like
+		// FORCE_DISCONNECT.
+		fanout = make([]*sharedRuntimeSession, 0, len(s.activeSessions))
+		for ss := range s.activeSessions {
+			fanout = append(fanout, ss)
+		}
+	}
 	s.mu.Unlock()
+
+	if len(fanout) > 0 {
+		for _, ss := range fanout {
+			ss.deliver(msg)
+		}
+		return
+	}
 	if sess == nil {
 		log.Debug().
 			Str("payload_type", fmt.Sprintf("%T", msg.GetPayload())).
-			Msg("runner: dropping downstream envelope, no active relay session")
+			Str("route_key", category).
+			Msg("runner: dropping downstream envelope, no matching session")
 		return
 	}
 	sess.deliver(msg)
 }
 
-// attachSession registers a new active relay session. Returns false when
-// another session is already attached so the caller can reject the
-// concurrent open.
+// attachSession registers sess as an active relay session, capped at
+// MaxSessions. A false return tells the caller to reject the open so the
+// sandbox SDK's auto_reconnect surfaces a real error rather than
+// spinning (the storm we saw with the old single-slot design).
 func (s *sharedRelaySink) attachSession(sess *sharedRuntimeSession) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.activeSession != nil {
+	if len(s.activeSessions) >= s.maxSessions {
 		return false
 	}
-	s.activeSession = sess
+	s.activeSessions[sess] = struct{}{}
 	return true
 }
 
-// detachSession clears the active session pointer when sess matches the
-// currently-attached session.
+// detachSession removes the session from the active set and drops any
+// in-flight route entries it still owned. Without this cleanup a long-
+// lived sidecar would accumulate stale request_id / tunnel_id entries
+// pointing at freed sessions — deliver() no-ops on a closed session, but
+// the maps would grow unbounded.
 func (s *sharedRelaySink) detachSession(sess *sharedRuntimeSession) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.activeSession == sess {
-		s.activeSession = nil
+	delete(s.activeSessions, sess)
+	for rid, owner := range s.requestRoutes {
+		if owner == sess {
+			delete(s.requestRoutes, rid)
+		}
 	}
+	for tid, owner := range s.tunnelRoutes {
+		if owner == sess {
+			delete(s.tunnelRoutes, tid)
+		}
+	}
+}
+
+// registerRequest claims request_id for sess so downstream
+// ProxyHttpResponse / ProxyHttpBodyChunk frames for that id route back to
+// it. Called from sharedRuntimeSession.Send on the originating envelope.
+func (s *sharedRelaySink) registerRequest(sess *sharedRuntimeSession, requestID string) {
+	if requestID == "" {
+		return
+	}
+	s.mu.Lock()
+	s.requestRoutes[requestID] = sess
+	s.mu.Unlock()
+}
+
+// registerTunnel mirrors registerRequest for TunnelOpen-initiated tunnels.
+func (s *sharedRelaySink) registerTunnel(sess *sharedRuntimeSession, tunnelID string) {
+	if tunnelID == "" {
+		return
+	}
+	s.mu.Lock()
+	s.tunnelRoutes[tunnelID] = sess
+	s.mu.Unlock()
 }
 
 // =============================================================================
@@ -388,9 +588,16 @@ func (c *sharedRuntimeClient) Connect(ctx context.Context, _ ...grpc.CallOption)
 		ctx:    sessCtx,
 		cancel: cancel,
 		inbox:  make(chan *pb.DownstreamMessage, 64),
+		deliverSem: backpressure.NewSemaphore(
+			5, // 5 priorities (PriorityControl..PriorityBestEffort)
+			sharedRuntimeSessionDeliverCapacity,
+			backpressure.SemaphoreShortTimeout(sharedRuntimeSessionDeliverShortTimeout),
+			backpressure.SemaphoreLongTimeout(sharedRuntimeSessionDeliverLongTimeout),
+		),
 	}
 	if !c.owner.attachSession(sess) {
 		cancel()
+		sess.deliverSem.Close()
 		return nil, fmt.Errorf("runner: relay session already attached (one sandbox per sidecar)")
 	}
 	// Synthesise a ConnectionAck so the sandbox sees the same wire shape it
@@ -419,6 +626,14 @@ type sharedRuntimeSession struct {
 	cancel context.CancelFunc
 	inbox  chan *pb.DownstreamMessage
 
+	// deliverSem gates downstream envelope admission onto the inbox with
+	// priority-aware CoDel shedding. Without this, a wedged in-sandbox SDK
+	// reader could fill the inbox and the runtime's downstream dispatcher
+	// would either block (stalling every other surface) or drop blindly
+	// (corrupting whichever envelope happens to arrive next, regardless of
+	// importance).
+	deliverSem *backpressure.Semaphore
+
 	closeOnce sync.Once
 	closed    atomic.Bool
 
@@ -431,15 +646,120 @@ type sharedRuntimeSession struct {
 // emits. The first envelope is always Init (relay.Connect already rewrote
 // it); we drop it because the runtime's BaseClient sent its own Init when it
 // dialled the real gateway.
+//
+// For outbound proxy/tunnel envelopes we also record session-ownership of
+// the request_id / tunnel_id on the sink's routing tables so the matching
+// downstream response (which arrives on the runtime's single gateway
+// connection, shared across N sessions) finds its way back to THIS
+// session's inbox rather than getting broadcast or dropped.
 func (s *sharedRuntimeSession) Send(msg *pb.UpstreamMessage) error {
 	if s.closed.Load() {
 		return io.ErrClosedPipe
 	}
-	if _, ok := msg.GetPayload().(*pb.UpstreamMessage_Init); ok {
+	switch p := msg.GetPayload().(type) {
+	case *pb.UpstreamMessage_Init:
 		log.Debug().Msg("runner: dropping relay-rewritten Init (runtime owns identity)")
 		return nil
+	case *pb.UpstreamMessage_ProxyHttpRequest:
+		s.owner.registerRequest(s, p.ProxyHttpRequest.GetRequestId())
+	case *pb.UpstreamMessage_TunnelOpen:
+		s.owner.registerTunnel(s, p.TunnelOpen.GetTunnelId())
 	}
-	return s.owner.runtime.Client().Send(msg)
+	prio := priorityForSharedRelayUpstream(msg)
+	// SendWithPriority feeds the SDK's CoDel-managed admission queue.
+	// Relay-mediated envelopes share the runtime's upstream send path
+	// with terminator chunked-response writes and sidecar admin traffic;
+	// per-envelope priority lets the SDK shed bulk best-effort traffic
+	// first when persistent latency exceeds the CoDel target, rather
+	// than letting every blocked send fail at the 30s deadline at once.
+	ctx, cancel := context.WithTimeout(s.ctx, sendUpstreamTimeout)
+	defer cancel()
+	return s.owner.runtime.Client().SendWithPriority(ctx, prio, msg)
+}
+
+// priorityForSharedRelayUpstream classifies an UpstreamMessage emitted by a
+// relay-mediated sandbox session. The mapping intentionally mirrors
+// tunnel_transport.go's terminator-side classification so the SDK's
+// admission queue treats both surfaces consistently.
+//
+// Extracted as a free function so the test in runner_test.go can pin the
+// per-payload-type mapping without spinning up a full session.
+func priorityForSharedRelayUpstream(msg *pb.UpstreamMessage) backpressure.Priority {
+	switch p := msg.GetPayload().(type) {
+	case *pb.UpstreamMessage_ProxyHttpRequest:
+		return aether.PriorityRequest
+	case *pb.UpstreamMessage_ProxyHttpBodyChunk:
+		// Relay sessions typically only emit request-direction chunks
+		// (sandbox sending a chunked body to a downstream HTTP target).
+		// Response-direction chunks are emitted by the terminator
+		// surface, not the relay — defensive case for unexpected
+		// envelopes that shouldn't occur in practice.
+		if p.ProxyHttpBodyChunk.GetIsRequest() {
+			return aether.PriorityRequest
+		}
+		return aether.PriorityResponseChunk
+	case *pb.UpstreamMessage_TunnelOpen:
+		return aether.PriorityRequest
+	case *pb.UpstreamMessage_TunnelData:
+		return aether.PriorityResponseChunk
+	case *pb.UpstreamMessage_TunnelClose:
+		return aether.PriorityControl
+	case *pb.UpstreamMessage_TunnelAck:
+		return aether.PriorityResponseHeader
+	case *pb.UpstreamMessage_Send,
+		*pb.UpstreamMessage_Progress,
+		*pb.UpstreamMessage_KvOp,
+		*pb.UpstreamMessage_SubmitAuditEvent:
+		return aether.PriorityBestEffort
+	default:
+		// Unknown / new payload types default to PriorityRequest:
+		// safer than best-effort (won't be shed first) but doesn't
+		// claim a higher priority than the request payload type
+		// without an explicit classification.
+		return aether.PriorityRequest
+	}
+}
+
+// priorityForSharedRelayDownstream classifies a DownstreamMessage destined for
+// the in-sandbox SDK reader on this session. Used by deliver() to gate
+// admission via the session's deliverSem; on shed, deliver synthesizes a
+// BACKPRESSURE error frame into the inbox so the in-sandbox SDK observes the
+// failure (instead of silent drop).
+func priorityForSharedRelayDownstream(msg *pb.DownstreamMessage) backpressure.Priority {
+	switch p := msg.GetPayload().(type) {
+	case *pb.DownstreamMessage_Error:
+		return aether.PriorityControl
+	case *pb.DownstreamMessage_ProxyHttpResponse:
+		return aether.PriorityResponseHeader
+	case *pb.DownstreamMessage_ProxyHttpRequest:
+		// Relay's perspective: the gateway is asking the in-sandbox
+		// SDK to honor an inbound HTTP request. Caller has a deadline.
+		return aether.PriorityRequest
+	case *pb.DownstreamMessage_ProxyHttpBodyChunk:
+		if p.ProxyHttpBodyChunk.GetIsRequest() {
+			return aether.PriorityRequest
+		}
+		return aether.PriorityResponseChunk
+	case *pb.DownstreamMessage_TunnelData:
+		return aether.PriorityResponseChunk
+	case *pb.DownstreamMessage_TunnelClose:
+		return aether.PriorityControl
+	case *pb.DownstreamMessage_TunnelAck:
+		return aether.PriorityResponseHeader
+	case *pb.DownstreamMessage_ConnectionAck,
+		*pb.DownstreamMessage_Signal,
+		*pb.DownstreamMessage_Config:
+		return aether.PriorityControl
+	case *pb.DownstreamMessage_ProgressUpdate,
+		*pb.DownstreamMessage_Msg,
+		*pb.DownstreamMessage_Kv:
+		// Progress/best-effort delivery: callers don't block on these
+		// and lost events are recoverable from the next update / KV
+		// read. First class to be shed under sustained inbox pressure.
+		return aether.PriorityBestEffort
+	default:
+		return aether.PriorityRequest
+	}
 }
 
 // Recv blocks until the next downstream envelope is delivered to this
@@ -457,28 +777,111 @@ func (s *sharedRuntimeSession) Recv() (*pb.DownstreamMessage, error) {
 }
 
 // CloseSend tears the session down so subsequent Recv calls unblock.
+// Releases the deliverSem's background reaper so the session doesn't leak
+// goroutines under churn (sandbox reconnect storms, idle session reaping).
 func (s *sharedRuntimeSession) CloseSend() error {
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
 		s.cancel()
 		s.owner.detachSession(s)
+		if s.deliverSem != nil {
+			s.deliverSem.Close()
+		}
 	})
 	return nil
 }
 
-// deliver enqueues msg onto the inbox. Drops with a warning when the inbox
-// is full so a wedged sandbox can't permanently block the runtime's
-// dispatcher goroutine.
+// deliver admits msg onto the inbox via the session's priority-aware
+// deliverSem. On admission the envelope is forwarded; on CoDel-driven shed
+// or acquire-timeout the original envelope is dropped and a BACKPRESSURE
+// DownstreamMessage_Error frame is synthesized in its place so the
+// in-sandbox SDK observes a clean signal instead of a silent drop.
+//
+// The deliverSem keeps a wedged in-sandbox reader from permanently blocking
+// the runtime's downstream dispatcher: bounded acquire timeout (30s) +
+// non-blocking error-frame enqueue means deliver always returns promptly.
 func (s *sharedRuntimeSession) deliver(msg *pb.DownstreamMessage) {
 	if s.closed.Load() {
 		return
 	}
+	if s.deliverSem == nil {
+		// Defensive: sessions constructed via the production Connect path
+		// always wire a Semaphore. Older callers (or tests bypassing
+		// Connect) fall back to the legacy drop-on-full behaviour so
+		// behaviour stays predictable.
+		select {
+		case s.inbox <- msg:
+		default:
+			log.Warn().
+				Str("payload_type", fmt.Sprintf("%T", msg.GetPayload())).
+				Msg("runner: relay session inbox full (no semaphore), dropping downstream envelope")
+		}
+		return
+	}
+
+	prio := priorityForSharedRelayDownstream(msg)
+	acqCtx, cancel := context.WithTimeout(s.ctx, sharedRuntimeSessionDeliverAcquireTimeout)
+	defer cancel()
+	if err := s.deliverSem.Acquire(acqCtx, prio, 1); err != nil {
+		// CoDel-shed or ctx deadline.
+		s.emitDeliverBackpressureNotice(msg, prio, err)
+		return
+	}
+	// Non-blocking enqueue with immediate token release. Holding the
+	// Semaphore token while waiting on a blocked inbox push (the previous
+	// shape) caused tokens to wedge whenever the relay consumer fell
+	// behind: held tokens exhausted the Semaphore, every subsequent
+	// Acquire CoDel-shed, and the synthesised BACKPRESSURE notice then
+	// hit the same full inbox and got silently dropped. Releasing the
+	// token immediately after the push attempt — success or fail —
+	// keeps the Semaphore healthy and gives CoDel a clean dwell-time
+	// signal driven by Acquire contention rather than chan back-pressure.
+	pushed := false
 	select {
 	case s.inbox <- msg:
+		pushed = true
+	default:
+		// Inbox full despite admission. Treat as shed.
+	}
+	s.deliverSem.Release(1)
+	if !pushed {
+		s.emitDeliverBackpressureNotice(msg, prio, nil)
+	}
+}
+
+// emitDeliverBackpressureNotice synthesises a BACKPRESSURE error frame
+// into the inbox in place of a shed envelope so the in-sandbox SDK sees
+// a clean failure on its next Recv. cause is non-nil when the shed came
+// from Acquire (CoDel or acquire-deadline) and nil when the inbox push
+// failed after admission. Best-effort non-blocking push — if the inbox
+// is itself wedged, both the original envelope and the notice are
+// dropped and we warn so operators see the cascade.
+func (s *sharedRuntimeSession) emitDeliverBackpressureNotice(orig *pb.DownstreamMessage, prio backpressure.Priority, cause error) {
+	if log.Debug().Enabled() {
+		evt := log.Debug().
+			Str("payload_type", fmt.Sprintf("%T", orig.GetPayload())).
+			Int("priority", int(prio))
+		if cause != nil {
+			evt = evt.Err(cause).Str("trigger", "acquire-shed")
+		} else {
+			evt = evt.Str("trigger", "inbox-full")
+		}
+		evt.Msg("runner: relay deliver shed, synthesising BACKPRESSURE error")
+	}
+	notice := &pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Error{
+			Error: &pb.ErrorResponse{
+				Code:    "BACKPRESSURE",
+				Message: "relay session inbox shed by backpressure; reduce send rate or process messages faster",
+			},
+		},
+	}
+	select {
+	case s.inbox <- notice:
 	default:
 		log.Warn().
-			Str("payload_type", fmt.Sprintf("%T", msg.GetPayload())).
-			Msg("runner: relay session inbox full, dropping downstream envelope")
+			Str("payload_type", fmt.Sprintf("%T", orig.GetPayload())).
+			Msg("runner: relay session inbox full, dropping both envelope and BACKPRESSURE notice")
 	}
 }
 

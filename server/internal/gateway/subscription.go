@@ -11,6 +11,8 @@ import (
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/internal/tracing"
 	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/sdk/go/aether"
+	bp "github.com/scitrera/go-backpressure"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/protobuf/proto"
 )
@@ -212,13 +214,18 @@ func (s *GatewayServer) createMessageHandler(client *ClientSession) func([]byte)
 				logging.Logger.Error().Err(err).Str("identity", identityStr).Msg("failed to unmarshal proxy frame inner DownstreamMessage")
 				return
 			}
-			client.Deliver(&inner)
+			// Pick a priority by payload type so control-plane frames
+			// (TunnelClose, ProxyError) jump ahead of response chunks.
+			client.DeliverWithPriority(client.deriveDeliverCtx(), proxyFramePriority(&inner), &inner)
 			return
 		}
 
 		// Finding #1: use Deliver (non-blocking) instead of SafeSend to avoid stalling
 		// the shared consumer goroutine when this client's delivery buffer is full.
-		client.Deliver(&pb.DownstreamMessage{
+		// Regular SendMessage / IncomingMessage publishes ride at
+		// PriorityRequest so they are shed before best-effort progress/metrics
+		// but after control-plane and response-header envelopes.
+		client.DeliverWithPriority(client.deriveDeliverCtx(), aether.PriorityRequest, &pb.DownstreamMessage{
 			Payload: &pb.DownstreamMessage_Msg{
 				Msg: &pb.IncomingMessage{
 					SourceTopic: parsed.env.Source,
@@ -228,6 +235,38 @@ func (s *GatewayServer) createMessageHandler(client *ClientSession) func([]byte)
 			},
 		})
 	}
+}
+
+// proxyFramePriority classifies an unwrapped proxy/tunnel DownstreamMessage
+// by its payload variant so the per-session delivery Semaphore sheds the
+// right traffic first under sustained load. Mirrors the upstream taxonomy:
+// errors and close-marker → control, response/header/ack → response-header,
+// chunks/data → response-chunk (fin chunks promoted to header), tunnel-open
+// (downstream synthesized) → request.
+func proxyFramePriority(msg *pb.DownstreamMessage) bp.Priority {
+	switch p := msg.Payload.(type) {
+	case *pb.DownstreamMessage_Error:
+		return aether.PriorityControl
+	case *pb.DownstreamMessage_TunnelClose:
+		return aether.PriorityControl
+	case *pb.DownstreamMessage_ProxyHttpResponse:
+		return aether.PriorityResponseHeader
+	case *pb.DownstreamMessage_TunnelAck:
+		return aether.PriorityResponseHeader
+	case *pb.DownstreamMessage_ProxyHttpBodyChunk:
+		if p.ProxyHttpBodyChunk.GetIsRequest() {
+			return aether.PriorityRequest
+		}
+		if p.ProxyHttpBodyChunk.GetFin() {
+			return aether.PriorityResponseHeader
+		}
+		return aether.PriorityResponseChunk
+	case *pb.DownstreamMessage_TunnelData:
+		return aether.PriorityResponseChunk
+	case *pb.DownstreamMessage_ProxyHttpRequest:
+		return aether.PriorityRequest
+	}
+	return aether.PriorityRequest
 }
 
 // setupClientSubscriptions sets up the appropriate topic subscriptions for a client

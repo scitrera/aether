@@ -207,7 +207,11 @@ func (r *Relay) Connect(stream pb.AetherGateway_ConnectServer) error {
 
 	// First message MUST be InitConnection. We rewrite it before opening
 	// the upstream stream so we never leak the sandbox's claimed
-	// credentials.
+	// credentials. No per-accept log line: gRPC opens a stream per call
+	// (health-check probes, reconnects, IPv4+IPv6 dual-dial, etc.) and
+	// logging here floods the channel without adding signal. The
+	// "relay: session opened" INFO line below marks every accept that
+	// completes init; failure paths log their own errors.
 	first, err := stream.Recv()
 	if err != nil {
 		if errors.Is(err, io.EOF) {
@@ -324,6 +328,7 @@ func (s *relaySession) pumpUpstream(ctx context.Context) error {
 		}
 
 		op := upstreamOpName(msg)
+		s.logUpstreamEnvelope(op, msg)
 		if op == OpInitConnection {
 			// Sandbox tried to reinitialise mid-stream; the upstream
 			// gateway would reject this anyway, but we drop it here so
@@ -377,6 +382,7 @@ func (s *relaySession) pumpDownstream(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		s.logDownstreamEnvelope(msg)
 
 		switch payload := msg.Payload.(type) {
 		case *pb.DownstreamMessage_ProxyHttpRequest:
@@ -599,5 +605,118 @@ func relayErrorDownstream(code, msg string) *pb.DownstreamMessage {
 				Retryable: false,
 			},
 		},
+	}
+}
+
+// logUpstreamEnvelope emits a DEBUG line for every envelope the relay
+// pulls off the sandbox stream — used to trace per-request flow when an
+// in-sandbox call hangs. Per-payload-type key fields (request_id,
+// target_topic, method/path, body lengths) are included so a hang can
+// be correlated with the upstream gateway log line. Zerolog's level
+// filter short-circuits before formatting when DEBUG is off, so the
+// hot-path cost is just the level check.
+func (s *relaySession) logUpstreamEnvelope(op string, msg *pb.UpstreamMessage) {
+	if !log.Debug().Enabled() {
+		return
+	}
+	ev := log.Debug().Str("dir", "upstream").Str("op", op)
+	if msg == nil {
+		ev.Msg("relay: envelope (nil)")
+		return
+	}
+	switch p := msg.Payload.(type) {
+	case *pb.UpstreamMessage_ProxyHttpRequest:
+		req := p.ProxyHttpRequest
+		ev.Str("request_id", req.GetRequestId()).
+			Str("target_topic", req.GetTargetTopic()).
+			Str("method", req.GetMethod()).
+			Str("path", req.GetPath()).
+			Int("body_bytes", len(req.GetBody())).
+			Bool("body_chunked", req.GetBodyChunked()).
+			Msg("relay: envelope")
+	case *pb.UpstreamMessage_ProxyHttpBodyChunk:
+		ch := p.ProxyHttpBodyChunk
+		ev.Str("request_id", ch.GetRequestId()).
+			Uint32("seq", ch.GetSeq()).
+			Bool("fin", ch.GetFin()).
+			Int("data_bytes", len(ch.GetData())).
+			Msg("relay: envelope")
+	case *pb.UpstreamMessage_ProxyHttpResponse:
+		resp := p.ProxyHttpResponse
+		ev.Str("request_id", resp.GetRequestId()).
+			Int32("status", resp.GetStatusCode()).
+			Msg("relay: envelope")
+	case *pb.UpstreamMessage_TunnelOpen:
+		t := p.TunnelOpen
+		ev.Str("tunnel_id", t.GetTunnelId()).
+			Str("target_topic", t.GetTargetTopic()).
+			Str("remote_hint", t.GetRemoteHint()).
+			Msg("relay: envelope")
+	case *pb.UpstreamMessage_TunnelData:
+		t := p.TunnelData
+		ev.Str("tunnel_id", t.GetTunnelId()).
+			Int("data_bytes", len(t.GetData())).
+			Bool("fin", t.GetFin()).
+			Msg("relay: envelope")
+	case *pb.UpstreamMessage_TunnelClose:
+		ev.Str("tunnel_id", p.TunnelClose.GetTunnelId()).Msg("relay: envelope")
+	case *pb.UpstreamMessage_TunnelAck:
+		ev.Str("tunnel_id", p.TunnelAck.GetTunnelId()).Msg("relay: envelope")
+	default:
+		ev.Msg("relay: envelope")
+	}
+}
+
+// logDownstreamEnvelope is the inverse of logUpstreamEnvelope. Crucial
+// for the timeout-debug story: if the sandbox sees a ProxyHttpRequest go
+// out (logged by logUpstreamEnvelope) and then never observes the
+// matching ProxyHttpResponse (would-be logged here), the gap pins the
+// failure to the gateway or upstream service rather than to the
+// in-sandbox SDK.
+func (s *relaySession) logDownstreamEnvelope(msg *pb.DownstreamMessage) {
+	if !log.Debug().Enabled() {
+		return
+	}
+	op := downstreamOpName(msg)
+	ev := log.Debug().Str("dir", "downstream").Str("op", op)
+	if msg == nil {
+		ev.Msg("relay: envelope (nil)")
+		return
+	}
+	switch p := msg.Payload.(type) {
+	case *pb.DownstreamMessage_ProxyHttpResponse:
+		resp := p.ProxyHttpResponse
+		ev.Str("request_id", resp.GetRequestId()).
+			Int32("status", resp.GetStatusCode()).
+			Int("body_bytes", len(resp.GetBody())).
+			Bool("body_chunked", resp.GetBodyChunked()).
+			Msg("relay: envelope")
+	case *pb.DownstreamMessage_ProxyHttpBodyChunk:
+		ch := p.ProxyHttpBodyChunk
+		ev.Str("request_id", ch.GetRequestId()).
+			Uint32("seq", ch.GetSeq()).
+			Bool("fin", ch.GetFin()).
+			Int("data_bytes", len(ch.GetData())).
+			Msg("relay: envelope")
+	case *pb.DownstreamMessage_ProxyHttpRequest:
+		req := p.ProxyHttpRequest
+		ev.Str("request_id", req.GetRequestId()).
+			Str("target_topic", req.GetTargetTopic()).
+			Str("method", req.GetMethod()).
+			Str("path", req.GetPath()).
+			Msg("relay: envelope")
+	case *pb.DownstreamMessage_TunnelData:
+		t := p.TunnelData
+		ev.Str("tunnel_id", t.GetTunnelId()).
+			Int("data_bytes", len(t.GetData())).
+			Bool("fin", t.GetFin()).
+			Msg("relay: envelope")
+	case *pb.DownstreamMessage_Error:
+		e := p.Error
+		ev.Str("code", e.GetCode()).
+			Str("message", e.GetMessage()).
+			Msg("relay: envelope")
+	default:
+		ev.Msg("relay: envelope")
 	}
 }

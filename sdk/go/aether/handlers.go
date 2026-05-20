@@ -550,6 +550,13 @@ type WorkflowOperationHandler func(ctx context.Context, op *pb.WorkflowOperation
 type (
 	ProxyHttpRequestHandler   func(ctx context.Context, req *pb.ProxyHttpRequest) error
 	ProxyHttpBodyChunkHandler func(ctx context.Context, chunk *pb.ProxyHttpBodyChunk) error
+	// ProxyHttpResponseHandler is a FALLBACK for proxy responses whose
+	// request_id is not in the caller-side inflight map. Mediators (e.g.
+	// the proxy-sidecar relay) register this to claim responses for
+	// requests forwarded on behalf of an external originator. Caller-side
+	// clients leave it nil; their own ProxyHTTP calls populate the
+	// inflight map and never reach this handler.
+	ProxyHttpResponseHandler  func(ctx context.Context, resp *pb.ProxyHttpResponse) error
 	TunnelDataInboundHandler  func(ctx context.Context, frame *pb.TunnelData) error
 	TunnelAckInboundHandler   func(ctx context.Context, ack *pb.TunnelAck) error
 	TunnelCloseInboundHandler func(ctx context.Context, cm *pb.TunnelClose) error
@@ -809,9 +816,14 @@ type Handlers struct {
 	// tunnel-dialer state.
 	OnProxyHttpRequest   ProxyHttpRequestHandler
 	OnProxyHttpBodyChunk ProxyHttpBodyChunkHandler
-	OnTunnelDataIn       TunnelDataInboundHandler
-	OnTunnelAckIn        TunnelAckInboundHandler
-	OnTunnelCloseIn      TunnelCloseInboundHandler
+	// OnProxyHttpResponse runs only when the inflight resolver misses —
+	// i.e. the response is for a request the LOCAL client did not initiate
+	// (relay-mediated traffic). Default-nil keeps the unchanged-drop
+	// behaviour for caller-side principals that don't expect strays.
+	OnProxyHttpResponse ProxyHttpResponseHandler
+	OnTunnelDataIn      TunnelDataInboundHandler
+	OnTunnelAckIn       TunnelAckInboundHandler
+	OnTunnelCloseIn     TunnelCloseInboundHandler
 }
 
 // NewHandlers creates a new Handlers instance with no-op defaults.

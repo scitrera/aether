@@ -11,6 +11,7 @@ import (
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/internal/tracing"
 	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/sdk/go/aether"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/protobuf/proto"
 )
@@ -273,7 +274,10 @@ func (s *GatewayServer) createProgressFilterHandler(client *ClientSession) func(
 			}
 		}
 
-		client.Deliver(&pb.DownstreamMessage{
+		// Progress updates ride at PriorityBestEffort — they are the first
+		// to be shed when the per-session delivery Semaphore is saturated
+		// by request / response chunk traffic.
+		client.DeliverWithPriority(client.deriveDeliverCtx(), aether.PriorityBestEffort, &pb.DownstreamMessage{
 			Payload: &pb.DownstreamMessage_ProgressUpdate{
 				ProgressUpdate: &update,
 			},

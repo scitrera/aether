@@ -19,6 +19,7 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
+	backpressure "github.com/scitrera/go-backpressure"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -58,9 +59,21 @@ type BaseClient struct {
 	client pb.AetherGatewayClient
 	stream pb.AetherGateway_ConnectClient
 
-	// Request queue for outgoing messages
-	requestQueue chan *pb.UpstreamMessage
-	queueSize    int
+	// Prioritized admission queue for outgoing messages.
+	//
+	// sendSem is a CoDel-managed Semaphore that admits producers by
+	// priority (see priority.go). Lower-priority sends are shed first
+	// when persistent latency exceeds the configured CoDel target,
+	// preventing best-effort traffic from starving control envelopes
+	// and response headers under load.
+	//
+	// sendCh is the wide staging buffer drained by sendLoop and handed
+	// to the gRPC stream. Producers hold a Semaphore token only while
+	// pushing to sendCh, so token capacity reflects the in-flight-to-
+	// staging budget rather than the staging buffer itself.
+	sendSem   *backpressure.Semaphore
+	sendCh    chan *pb.UpstreamMessage
+	queueSize int
 
 	// Handler registry for callbacks
 	handlers *Handlers
@@ -184,9 +197,18 @@ func NewBaseClient(cfg BaseClientConfig) (*BaseClient, error) {
 		return nil, NewInvalidArgumentError("server address is required", "ServerAddr")
 	}
 
-	// Apply defaults
+	// Apply defaults.
+	//
+	// QueueSize sizing rationale: 100 was too tight under streaming
+	// workloads (multiple concurrent chunked ProxyHttp responses
+	// from the proxy-sidecar's terminator can transiently exceed
+	// 100 in-flight upstream envelopes, at which point Send()
+	// returns errQueueFull and the corrupted streams ultimately
+	// take down the gateway runtime). 1024 gives an order of
+	// magnitude more headroom at the cost of ~1 MiB worst-case
+	// per-client buffering — acceptable.
 	if cfg.QueueSize <= 0 {
-		cfg.QueueSize = 100
+		cfg.QueueSize = 1024
 	}
 
 	connOpts := cfg.Connection
@@ -194,13 +216,39 @@ func NewBaseClient(cfg BaseClientConfig) (*BaseClient, error) {
 		connOpts = DefaultConnectionOptions()
 	}
 
+	// Fill in any backpressure defaults that the caller left zeroed when
+	// they constructed ConnectionOptions directly rather than going
+	// through DefaultConnectionOptions(). The Semaphore panics on
+	// negative capacity and behaves degenerately at zero capacity.
+	if connOpts.BackpressureCapacity <= 0 {
+		connOpts.BackpressureCapacity = 16
+	}
+	if connOpts.BackpressureTarget <= 0 {
+		connOpts.BackpressureTarget = 50 * time.Millisecond
+	}
+	if connOpts.BackpressureInterval <= 0 {
+		connOpts.BackpressureInterval = 100 * time.Millisecond
+	}
+
+	// Five priorities: PriorityControl..PriorityBestEffort (see
+	// priority.go). The CoDel short/long timeouts map to BackpressureTarget
+	// (per-request target dwell) and BackpressureInterval (window over
+	// which sustained excess triggers shedding).
+	sendSem := backpressure.NewSemaphore(
+		5,
+		connOpts.BackpressureCapacity,
+		backpressure.SemaphoreShortTimeout(connOpts.BackpressureTarget),
+		backpressure.SemaphoreLongTimeout(connOpts.BackpressureInterval),
+	)
+
 	bc := &BaseClient{
 		serverAddr:              cfg.ServerAddr,
 		options:                 connOpts,
 		tlsConfig:               cfg.TLS,
 		creds:                   cfg.Credentials,
 		queueSize:               cfg.QueueSize,
-		requestQueue:            make(chan *pb.UpstreamMessage, cfg.QueueSize),
+		sendSem:                 sendSem,
+		sendCh:                  make(chan *pb.UpstreamMessage, cfg.QueueSize),
 		handlers:                NewHandlers(),
 		kvResponseQueue:         make(chan *KVResponse, 10),
 		checkpointResponseQueue: make(chan *CheckpointResponse, 10),
@@ -498,6 +546,14 @@ func (c *BaseClient) Close() error {
 	c.client = nil
 	c.stream = nil
 
+	// Release CoDel background goroutine + reap ticker. Safe to call
+	// repeatedly — Semaphore.Close is idempotent. Done after the gRPC
+	// teardown so in-flight Send callers see ConnectionClosedError
+	// before the Semaphore starts returning errAlreadyClosed.
+	if c.sendSem != nil {
+		c.sendSem.Close()
+	}
+
 	return nil
 }
 
@@ -703,6 +759,16 @@ func (c *BaseClient) OnProxyHttpBodyChunk(handler ProxyHttpBodyChunkHandler) {
 	c.handlers.OnProxyHttpBodyChunk = handler
 }
 
+// OnProxyHttpResponse registers a FALLBACK handler for ProxyHttpResponse
+// envelopes whose request_id misses the caller-side inflight resolver —
+// i.e. the response belongs to a request the local client did not
+// originate (relay-mediated traffic). The default inflight resolver
+// always runs first; the handler only fires when no local pending
+// matches, so caller-side ProxyHTTP semantics are unchanged.
+func (c *BaseClient) OnProxyHttpResponse(handler ProxyHttpResponseHandler) {
+	c.handlers.OnProxyHttpResponse = handler
+}
+
 // OnTunnelDataIn registers a service-side handler for inbound TunnelData
 // frames. Used by service principals to override the default caller-side
 // dispatch (which assumes the tunnel-dialer state map).
@@ -727,18 +793,100 @@ func (c *BaseClient) OnTunnelCloseIn(handler TunnelCloseInboundHandler) {
 // Message Sending
 // =============================================================================
 
-// Send queues an upstream message to be sent to the gateway.
-// Returns an error if the client is not connected or the queue is full.
+// Send queues an upstream message to be sent to the gateway. Non-blocking:
+// returns immediately with a *MessageError when either the prioritized
+// admission Semaphore would have to wait or the staging buffer is full.
+//
+// Best-effort callers (progress reports, fire-and-forget metrics) use
+// this; streaming-response and control-plane callers should prefer
+// SendCtx / SendWithPriority which respect the caller's deadline and
+// participate in CoDel-driven shedding under sustained load.
+//
+// Send routes through PriorityRequest. Use SendWithPriority directly when
+// the envelope should classify as control / response-header / chunk /
+// best-effort (see priority.go).
 func (c *BaseClient) Send(msg *pb.UpstreamMessage) error {
 	if !c.running.Load() {
 		return NewConnectionClosedError("client is not running")
 	}
 
+	// Non-blocking admission: cancelled-up-front ctx makes Acquire
+	// short-circuit without queueing a waiter, preserving the prior
+	// drop-on-full observable behavior. The Semaphore still updates
+	// per-priority debt, which is what we want — observed pressure
+	// from best-effort senders should still penalize lower priorities.
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := c.sendSem.Acquire(cancelledCtx, PriorityRequest, 1); err != nil {
+		return NewMessageError("request queue is full")
+	}
+
+	// Hold the token only while pushing to the staging buffer. If the
+	// buffer is full we treat it the same as a Semaphore rejection so
+	// that the old `select { default: drop }` semantics are preserved
+	// from the caller's perspective.
 	select {
-	case c.requestQueue <- msg:
+	case c.sendCh <- msg:
+		c.sendSem.Release(1)
 		return nil
 	default:
+		c.sendSem.Release(1)
 		return NewMessageError("request queue is full")
+	}
+}
+
+// SendCtx queues an upstream message at PriorityRequest, blocking when
+// the prioritized admission queue is at capacity until either room
+// becomes available, ctx is cancelled, or the client shuts down. This
+// is the right call for streaming-response chunks and control-plane
+// envelopes where dropping mid-stream corrupts the caller's response
+// (e.g., the proxy-sidecar's terminator sending ProxyHttpBodyChunk
+// frames for a chunked HTTP response). Callers should pass a
+// deadline-bearing ctx so a wedged consumer can't block them forever.
+//
+// Returns a *BackpressureError when the Semaphore sheds this send
+// (sustained latency exceeded the CoDel target window). The caller
+// should treat this as a retryable signal — surface a backpressure
+// response upstream rather than tearing down the connection.
+func (c *BaseClient) SendCtx(ctx context.Context, msg *pb.UpstreamMessage) error {
+	return c.SendWithPriority(ctx, PriorityRequest, msg)
+}
+
+// SendWithPriority is the primary blocking send path. It acquires one
+// token from the prioritized Semaphore on behalf of prio, then pushes
+// the envelope onto the staging buffer drained by sendLoop. The token
+// is released as soon as the envelope is handed off; Semaphore capacity
+// therefore measures admission concurrency rather than queue depth.
+//
+// Returns:
+//   - nil on successful admission.
+//   - *ConnectionClosedError if the client is not running.
+//   - *BackpressureError if CoDel-driven shedding rejects this send
+//     because the Semaphore's sustained acquire latency exceeded the
+//     configured target. Callers should propagate this as a retryable
+//     signal rather than treating it as a fatal error.
+//   - ctx.Err() if the caller's context expires while pushing the
+//     admitted envelope onto the staging buffer.
+func (c *BaseClient) SendWithPriority(ctx context.Context, prio backpressure.Priority, msg *pb.UpstreamMessage) error {
+	if !c.running.Load() {
+		return NewConnectionClosedError("client is not running")
+	}
+	if err := c.sendSem.Acquire(ctx, prio, 1); err != nil {
+		// Distinguish a caller-cancelled ctx from a CoDel shed by
+		// returning the raw ctx error in the former case so existing
+		// deadline-aware callers don't see a spurious BackpressureError.
+		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+			return ctxErr
+		}
+		return NewBackpressureError(err)
+	}
+	defer c.sendSem.Release(1)
+
+	select {
+	case c.sendCh <- msg:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -894,12 +1042,15 @@ func LoadTLSConfigFromFiles(rootCAPath, clientCertPath, clientKeyPath string) (*
 // Request Queue Processing
 // =============================================================================
 
-// RequestQueue returns the request queue channel for the message loop.
+// RequestQueue returns the staging buffer drained by the send loop.
 //
-// This is primarily used internally by the Run() method's send loop.
-// Most users should use Send() instead of accessing the queue directly.
+// This is primarily used internally by the Run() method's send loop and
+// by tests that drain enqueued envelopes. Most users should use Send()
+// or SendWithPriority() instead of accessing the buffer directly. The
+// prioritized admission Semaphore is intentionally not exposed — read
+// from this channel only.
 func (c *BaseClient) RequestQueue() <-chan *pb.UpstreamMessage {
-	return c.requestQueue
+	return c.sendCh
 }
 
 // Stream returns the current gRPC stream for the message loop.
@@ -1123,15 +1274,17 @@ func (c *BaseClient) ResolvePendingAuditSubmitRequest(clientRequestID string, re
 	return c.pendingAuditSubmitRequests.Resolve(clientRequestID, resp)
 }
 
-// ClearRequestQueue drains the request queue.
+// ClearRequestQueue drains the staging buffer.
 //
 // This is called internally during reconnection to discard pending messages.
-// Use with caution as this may result in message loss.
+// Use with caution as this may result in message loss. The prioritized
+// admission Semaphore is unaffected — outstanding token holders complete
+// their Release calls normally.
 func (c *BaseClient) ClearRequestQueue() {
 	for {
 		select {
-		case <-c.requestQueue:
-			// Drain the queue
+		case <-c.sendCh:
+			// Drain the staging buffer
 		default:
 			return
 		}
@@ -1430,12 +1583,12 @@ func (c *BaseClient) Run(ctx context.Context) error {
 	return loopErr
 }
 
-// sendLoop continuously reads from the request queue and sends to the stream.
+// sendLoop continuously reads from the staging buffer and sends to the stream.
 //
 // The loop exits when:
 //   - The context is canceled
 //   - The client is no longer running
-//   - The stream is closed
+//   - The staging channel is closed
 func (c *BaseClient) sendLoop(ctx context.Context) {
 	for {
 		select {
@@ -1447,12 +1600,12 @@ func (c *BaseClient) sendLoop(ctx context.Context) {
 			}
 		}
 
-		// Try to get a message from the queue with a timeout
-		// This allows us to periodically check the context and running state
+		// Try to get a message from the staging buffer.
+		// The outer select lets us periodically check context cancellation.
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-c.requestQueue:
+		case msg, ok := <-c.sendCh:
 			if !ok {
 				return // Channel closed
 			}
@@ -1661,7 +1814,17 @@ func (c *BaseClient) dispatchResponse(ctx context.Context, response *pb.Downstre
 		return c.handleCreateTaskResponse(ctx, payload.CreateTask)
 
 	case *pb.DownstreamMessage_ProxyHttpResponse:
-		c.handleProxyHttpResponse(payload.ProxyHttpResponse)
+		// Try the caller-side inflight resolver first (the local client's
+		// own ProxyHTTP calls). On miss the response belongs to a
+		// request a mediator forwarded on someone else's behalf (relay):
+		// fire OnProxyHttpResponse so the mediator can route it. Both
+		// nil-handler and unmatched-id paths are no-ops, preserving the
+		// drop-on-miss behaviour for principals that don't expect strays.
+		if !resolveProxyResponse(payload.ProxyHttpResponse.GetRequestId(), payload.ProxyHttpResponse) {
+			if c.handlers.OnProxyHttpResponse != nil {
+				return c.handlers.OnProxyHttpResponse(ctx, payload.ProxyHttpResponse)
+			}
+		}
 		return nil
 
 	case *pb.DownstreamMessage_ProxyHttpBodyChunk:

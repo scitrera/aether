@@ -48,6 +48,7 @@ import (
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/pkg/models"
 	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/sdk/go/aether"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -269,7 +270,10 @@ func (s *GatewayServer) createTaskEventHandler(client *ClientSession, subscripti
 		// receive. The payload itself was published without it (one publish
 		// fans out to N subscribers via the shared topic).
 		evt.SubscriptionId = subscriptionID
-		client.Deliver(&pb.DownstreamMessage{
+		// Task events are best-effort observability — they're useful but
+		// shouldn't crowd out request/response traffic when the per-session
+		// delivery Semaphore is saturated.
+		client.DeliverWithPriority(client.deriveDeliverCtx(), aether.PriorityBestEffort, &pb.DownstreamMessage{
 			Payload: &pb.DownstreamMessage_TaskEvent{
 				TaskEvent: &evt,
 			},

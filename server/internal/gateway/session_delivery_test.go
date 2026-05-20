@@ -1,11 +1,12 @@
 package gateway
 
-// Tests for ClientSession.Deliver() and startDeliveryLoop():
+// Tests for ClientSession.Deliver() / DeliverWithPriority() and startDeliveryLoop():
 //   - Deliver enqueues messages when buffer has space
 //   - Deliver drops messages (no block) when buffer is full
 //   - startDeliveryLoop forwards messages from channel to stream via SafeSend
 //   - startDeliveryLoop drains buffered messages after context cancellation
 //   - startDeliveryLoop exits cleanly when context is cancelled and buffer empty
+//   - DeliverWithPriority sheds lower priority before control when Semaphore-bound
 
 import (
 	"context"
@@ -15,10 +16,13 @@ import (
 
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/sdk/go/aether"
+	bp "github.com/scitrera/go-backpressure"
 )
 
 // newDeliveryClient creates a ClientSession with a delivery channel of the
-// given buffer size, wired to the provided mockStream.
+// given buffer size, wired to the provided mockStream. No Semaphore — uses
+// the legacy non-blocking select-default behavior for backwards-compat tests.
 func newDeliveryClient(stream *mockStream, bufSize int) *ClientSession {
 	return &ClientSession{
 		ID: "delivery-test-session",
@@ -29,6 +33,30 @@ func newDeliveryClient(stream *mockStream, bufSize int) *ClientSession {
 		Stream:        stream,
 		subscriptions: make(map[string]func()),
 		deliveryCh:    make(chan *pb.DownstreamMessage, bufSize),
+	}
+}
+
+// newDeliveryClientWithSem creates a ClientSession backed by a Semaphore
+// with the supplied capacity and CoDel target/interval. Used by tests that
+// exercise the priority-shed path.
+func newDeliveryClientWithSem(stream *mockStream, bufSize, semCap int, target, interval time.Duration) *ClientSession {
+	sem := bp.NewSemaphore(
+		deliveryPriorityCount,
+		semCap,
+		bp.SemaphoreShortTimeout(target),
+		bp.SemaphoreLongTimeout(interval),
+	)
+	return &ClientSession{
+		ID: "delivery-prio-test-session",
+		Identity: models.Identity{
+			Type:      models.PrincipalAgent,
+			Workspace: "ws1",
+		},
+		Stream:                stream,
+		subscriptions:         make(map[string]func()),
+		deliveryCh:            make(chan *pb.DownstreamMessage, bufSize),
+		deliverySem:           sem,
+		deliverAcquireTimeout: 200 * time.Millisecond,
 	}
 }
 
@@ -210,5 +238,125 @@ func TestStartDeliveryLoop_EmptyBufferOnCancel_NoMessagesSent(t *testing.T) {
 
 	if stream.sentCount() != 0 {
 		t.Errorf("expected 0 messages sent when buffer empty at cancel, got %d", stream.sentCount())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DeliverWithPriority – sheds lower priorities first under saturation
+// ---------------------------------------------------------------------------
+
+// countBackpressureNotices returns the number of BACKPRESSURE error notices
+// observed on the staging channel without draining other messages.
+func countBackpressureNotices(ch <-chan *pb.DownstreamMessage, deadline time.Time) int {
+	notices := 0
+	for time.Now().Before(deadline) {
+		select {
+		case msg := <-ch:
+			if errPayload, ok := msg.Payload.(*pb.DownstreamMessage_Error); ok {
+				if errPayload.Error.GetCode() == "BACKPRESSURE" {
+					notices++
+				}
+			}
+		case <-time.After(20 * time.Millisecond):
+			return notices
+		}
+	}
+	return notices
+}
+
+// TestDeliverWithPriority_ShedsLowerFirst configures a small-capacity
+// Semaphore, holds a high-priority slot to keep the gate near saturation,
+// then floods best-effort traffic. The expectation: control-priority sends
+// admit cleanly while best-effort sends get shed and emit a BACKPRESSURE
+// notice on the same session.
+func TestDeliverWithPriority_ShedsLowerFirst(t *testing.T) {
+	stream := &mockStream{}
+	// Aggressive CoDel parameters so the test doesn't have to run for a
+	// real-world second-scale interval. Capacity=1: every send must drain
+	// before the next can admit.
+	client := newDeliveryClientWithSem(stream, 4, 1,
+		5*time.Millisecond, 10*time.Millisecond)
+	defer client.closeDeliverySemaphore()
+
+	// Hold the only Semaphore slot at the highest priority for a long enough
+	// window that subsequent best-effort acquires either queue and shed or
+	// time out via the per-Deliver acquire timeout.
+	holdAcquired := make(chan struct{})
+	holdRelease := make(chan struct{})
+	go func() {
+		if err := client.deliverySem.Acquire(context.Background(), aether.PriorityControl, 1); err != nil {
+			t.Errorf("hold acquire failed: %v", err)
+			close(holdAcquired)
+			return
+		}
+		close(holdAcquired)
+		<-holdRelease
+		client.deliverySem.Release(1)
+	}()
+	<-holdAcquired
+
+	// Hammer best-effort with several concurrent sends. With capacity=1
+	// and the high-prio holder still in flight, these should accumulate
+	// in the CoDel queue and be shed within the long-timeout window.
+	const bestEffortBlast = 12
+	var wg sync.WaitGroup
+	wg.Add(bestEffortBlast)
+	for i := 0; i < bestEffortBlast; i++ {
+		go func() {
+			defer wg.Done()
+			client.DeliverWithPriority(context.Background(), aether.PriorityBestEffort, &pb.DownstreamMessage{
+				Payload: &pb.DownstreamMessage_Signal{
+					Signal: &pb.Signal{Type: pb.Signal_GRACEFUL_DISCONNECT, Reason: "best-effort blast"},
+				},
+			})
+		}()
+	}
+	wg.Wait()
+
+	// At least some best-effort sends must have been shed and emitted a
+	// BACKPRESSURE notice on the staging channel.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	notices := countBackpressureNotices(client.deliveryCh, deadline)
+	if notices == 0 {
+		t.Fatalf("expected at least one BACKPRESSURE notice from shed best-effort sends, got 0")
+	}
+
+	// Release the high-prio holder so subsequent control sends can admit.
+	close(holdRelease)
+
+	// Give the Semaphore a brief moment to reflect the release in its
+	// internal queues before the next admission attempt.
+	time.Sleep(20 * time.Millisecond)
+
+	// A control-priority Deliver must succeed cleanly once the holder is
+	// gone. Drain the staging channel and assert the control envelope made
+	// it through.
+	controlMsg := &pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Signal{
+			Signal: &pb.Signal{Type: pb.Signal_GRACEFUL_DISCONNECT, Reason: "control envelope"},
+		},
+	}
+	client.DeliverWithPriority(context.Background(), aether.PriorityControl, controlMsg)
+
+	// Drain the staging channel for up to 250ms and look for the control
+	// envelope's signature reason.
+	foundControl := false
+	drainDeadline := time.Now().Add(250 * time.Millisecond)
+	for time.Now().Before(drainDeadline) {
+		select {
+		case msg := <-client.deliveryCh:
+			if sig, ok := msg.Payload.(*pb.DownstreamMessage_Signal); ok {
+				if sig.Signal.GetReason() == "control envelope" {
+					foundControl = true
+				}
+			}
+		case <-time.After(10 * time.Millisecond):
+		}
+		if foundControl {
+			break
+		}
+	}
+	if !foundControl {
+		t.Errorf("expected control envelope to admit cleanly after holder released")
 	}
 }

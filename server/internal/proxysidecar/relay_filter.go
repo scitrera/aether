@@ -139,6 +139,49 @@ func (s *allowedOpsSet) list() []string {
 	return out
 }
 
+// downstreamOpName returns the op identifier for a DownstreamMessage payload.
+// Used by the relay's debug logging — there is no allowed_ops filter on the
+// downstream direction, so unlike upstreamOpName an unrecognised variant
+// here is informational only.
+func downstreamOpName(msg *pb.DownstreamMessage) string {
+	if msg == nil {
+		return ""
+	}
+	switch msg.Payload.(type) {
+	case *pb.DownstreamMessage_Msg:
+		return "Msg"
+	case *pb.DownstreamMessage_Config:
+		return "Config"
+	case *pb.DownstreamMessage_Signal:
+		return "Signal"
+	case *pb.DownstreamMessage_Error:
+		return "Error"
+	case *pb.DownstreamMessage_Kv:
+		return "KVResponse"
+	case *pb.DownstreamMessage_Checkpoint:
+		return "CheckpointResponse"
+	case *pb.DownstreamMessage_ConnectionAck:
+		return "ConnectionAck"
+	case *pb.DownstreamMessage_TaskAssignment:
+		return "TaskAssignment"
+	case *pb.DownstreamMessage_ProgressUpdate:
+		return "ProgressUpdate"
+	case *pb.DownstreamMessage_ProxyHttpRequest:
+		return OpProxyHttpRequest
+	case *pb.DownstreamMessage_ProxyHttpBodyChunk:
+		return OpProxyHttpBodyChunk
+	case *pb.DownstreamMessage_ProxyHttpResponse:
+		return OpProxyHttpResponse
+	case *pb.DownstreamMessage_TunnelData:
+		return OpTunnelData
+	case *pb.DownstreamMessage_TunnelClose:
+		return OpTunnelClose
+	case *pb.DownstreamMessage_TunnelAck:
+		return OpTunnelAck
+	}
+	return ""
+}
+
 // upstreamOpName returns the op identifier for an UpstreamMessage payload.
 // Returns "" when the payload is nil or unrecognised; callers treat that as
 // "deny" so unknown variants cannot slip through.
