@@ -16,7 +16,15 @@ logger = logging.getLogger(__name__)
 
 
 def get_client_tools(sender: Any) -> list[dict[str, Any]]:
-    """Return ag2 tool dicts the LLM should see (function-schema form)."""
+    """Return ag2 tool dicts the LLM should see (function-schema form).
+
+    Discovery order (first non-empty wins):
+      1. ``sender.tools`` — modern ag2 Tool objects with ``tool_schema``/``function_schema``.
+      2. ``sender.client_tools`` — pre-built tool dicts.
+      3. ``sender.llm_config["tools"]`` — modern openai-tools form.
+      4. ``sender.llm_config["functions"]`` — legacy openai-functions form, auto-wrapped
+         into ``{"type": "function", "function": {...}}``.
+    """
     tools_attr = getattr(sender, "tools", None)
     out: list[dict[str, Any]] = []
     if tools_attr:
@@ -32,12 +40,23 @@ def get_client_tools(sender: Any) -> list[dict[str, Any]]:
             return out
     raw = getattr(sender, "client_tools", None)
     if isinstance(raw, list):
-        return [t for t in raw if isinstance(t, dict)]
+        filtered = [t for t in raw if isinstance(t, dict)]
+        if filtered:
+            return filtered
     llm_cfg = getattr(sender, "llm_config", None)
     if isinstance(llm_cfg, dict):
         raw_tools = llm_cfg.get("tools")
         if isinstance(raw_tools, list):
-            return [t for t in raw_tools if isinstance(t, dict)]
+            filtered = [t for t in raw_tools if isinstance(t, dict)]
+            if filtered:
+                return filtered
+        raw_functions = llm_cfg.get("functions")
+        if isinstance(raw_functions, list):
+            return [
+                {"type": "function", "function": dict(f)}
+                for f in raw_functions
+                if isinstance(f, dict) and f.get("name")
+            ]
     return []
 
 

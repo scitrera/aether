@@ -148,6 +148,46 @@ def test_get_client_tool_names_returns_set() -> None:
     assert get_client_tool_names(tools) == {"add", "sub"}
 
 
+def test_get_client_tools_legacy_functions_fallback() -> None:
+    """A sender exposing only llm_config['functions'] yields wrapped tool dicts."""
+    from scitrera_aether_ag2.remote.tool_loop import get_client_tools
+
+    class LegacySender:
+        llm_config = {
+            "functions": [
+                {"name": "add", "description": "Add two ints", "parameters": {"type": "object"}},
+                {"name": "sub", "parameters": {"type": "object"}},
+                {"description": "no name should be skipped"},  # filtered
+                "not-a-dict",  # filtered
+            ]
+        }
+
+    tools = get_client_tools(LegacySender())
+    assert [t["function"]["name"] for t in tools] == ["add", "sub"]
+    assert all(t["type"] == "function" for t in tools)
+    # the original llm_config dict must not be mutated
+    assert LegacySender.llm_config["functions"][0] == {
+        "name": "add",
+        "description": "Add two ints",
+        "parameters": {"type": "object"},
+    }
+
+
+def test_get_client_tools_modern_tools_takes_precedence_over_legacy_functions() -> None:
+    """When both llm_config['tools'] and llm_config['functions'] are set, modern wins."""
+    from scitrera_aether_ag2.remote.tool_loop import get_client_tools
+
+    class HybridSender:
+        llm_config = {
+            "tools": [_tool_dict("modern")],
+            "functions": [{"name": "legacy", "parameters": {}}],
+        }
+
+    tools = get_client_tools(HybridSender())
+    assert len(tools) == 1
+    assert tools[0]["function"]["name"] == "modern"
+
+
 def test_detect_client_tool_calls_filters_correctly() -> None:
     msg = {
         "role": "assistant",
@@ -506,6 +546,63 @@ async def test_streaming_buffer_does_not_overwrite_existing_content() -> None:
     sender = FakeSender()
     await proxy.a_receive("hi", sender)
     assert sender.sent[-1].get("content") == "explicit"
+
+
+@pytest.mark.asyncio
+async def test_proxy_threads_one_conversation_id_across_continuations() -> None:
+    """All envelopes for a single a_receive call share one conversation_id."""
+    tool_call_msg = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [_tool_call("c1", "add", '{"a":1,"b":2}')],
+    }
+    final_msg = {"role": "assistant", "content": "result is 3"}
+    transport = FakeTransport(
+        [
+            [
+                _resp_env(0, done=False, response=ServiceResponse(message=tool_call_msg)),
+                _resp_env(1, done=True, response=None),
+            ],
+            [
+                _resp_env(0, done=False, response=ServiceResponse(message=final_msg)),
+                _resp_env(1, done=True, response=None),
+            ],
+        ]
+    )
+    proxy = _make_proxy(transport)
+    sender = FakeSender(tools=[_tool_dict("add")], tool_replies={"add": "3"})
+    await proxy.a_receive("compute 1+2", sender)
+    assert len(transport.submitted) == 2
+    cids = [e.conversation_id for e in transport.submitted]
+    assert cids[0] is not None
+    assert cids[0] == cids[1], (
+        f"continuation envelopes must share conversation_id; got {cids}"
+    )
+    # And correlation_ids must still be unique per envelope
+    correlation_ids = [e.correlation_id for e in transport.submitted]
+    assert len(set(correlation_ids)) == len(correlation_ids)
+
+
+@pytest.mark.asyncio
+async def test_proxy_assigns_distinct_conversation_id_per_receive_call() -> None:
+    """Separate a_receive calls get separate conversation_ids."""
+    def _script() -> list[ResponseEnvelope]:
+        return [
+            _resp_env(
+                0,
+                done=False,
+                response=ServiceResponse(message={"role": "assistant", "content": "hi"}),
+            ),
+            _resp_env(1, done=True, response=None),
+        ]
+
+    transport = FakeTransport([_script(), _script()])
+    proxy = _make_proxy(transport)
+    sender = FakeSender()
+    await proxy.a_receive("hi 1", sender)
+    await proxy.a_receive("hi 2", sender)
+    cids = [e.conversation_id for e in transport.submitted]
+    assert len(cids) == 2 and cids[0] != cids[1]
 
 
 @pytest.mark.asyncio

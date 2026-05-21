@@ -244,3 +244,69 @@ async def test_successful_sends_do_not_increment_dropped_counters() -> None:
     await tel.emit_event("evt", payload={})
     await tel.emit_metric("m", qty=2.0)
     assert tel.dropped_count == 0
+
+
+@pytest.mark.asyncio
+async def test_on_request_received_includes_conversation_id_when_set() -> None:
+    send_event = AsyncMock()
+    client = _make_client(send_event_mock=send_event)
+    tel = AetherTelemetry(client, agent_name="test-agent")
+
+    await tel.on_request_received("corr-1", _make_request(), conversation_id="conv-abc")
+
+    payload = _decode_event(send_event.call_args[0][0])
+    assert payload["conversation_id"] == "conv-abc"
+
+
+@pytest.mark.asyncio
+async def test_on_request_received_omits_conversation_id_when_none() -> None:
+    send_event = AsyncMock()
+    client = _make_client(send_event_mock=send_event)
+    tel = AetherTelemetry(client, agent_name="test-agent")
+
+    await tel.on_request_received("corr-1", _make_request())
+
+    payload = _decode_event(send_event.call_args[0][0])
+    assert "conversation_id" not in payload
+
+
+@pytest.mark.asyncio
+async def test_on_request_completed_includes_conversation_id_when_set() -> None:
+    send_event = AsyncMock()
+    client = _make_client(send_event_mock=send_event)
+    tel = AetherTelemetry(client, agent_name="test-agent")
+
+    await tel.on_request_completed("corr-2", total_chunks=3, conversation_id="conv-xyz")
+
+    payload = _decode_event(send_event.call_args[0][0])
+    assert payload["conversation_id"] == "conv-xyz"
+
+
+@pytest.mark.asyncio
+async def test_on_request_failed_includes_conversation_id_when_set() -> None:
+    send_event = AsyncMock()
+    client = _make_client(send_event_mock=send_event)
+    tel = AetherTelemetry(client, agent_name="test-agent")
+
+    await tel.on_request_failed(
+        "corr-3",
+        {"error_code": "boom", "retryable": False},
+        conversation_id="conv-fail",
+    )
+
+    payload = _decode_event(send_event.call_args[0][0])
+    assert payload["conversation_id"] == "conv-fail"
+    assert payload["error_code"] == "boom"
+
+
+@pytest.mark.asyncio
+async def test_on_response_chunk_attaches_conversation_id_tag_when_set() -> None:
+    send_metric = AsyncMock()
+    client = _make_client(send_metric_mock=send_metric)
+    tel = AetherTelemetry(client, agent_name="test-agent")
+
+    await tel.on_response_chunk("corr-4", _make_response(), conversation_id="conv-tag")
+
+    metric_arg = send_metric.call_args[0][0]
+    assert metric_arg.metadata["conversation_id"] == "conv-tag"
+    assert metric_arg.metadata["agent"] == "test-agent"

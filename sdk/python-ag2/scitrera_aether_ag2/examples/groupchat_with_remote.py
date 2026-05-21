@@ -3,6 +3,9 @@
 Spawns its own aetherlite gateway. Uses a manual round-robin loop instead of
 ag2's GroupChatManager so no LLM-based speaker selection is required.
 
+Depends on ``scitrera_aether_ag2.examples._aetherlite`` for the spawn/terminate
+boilerplate shared with the other example scripts in this package.
+
 # illustrative GroupChat-equivalent: manual loop used because ag2 GroupChatManager
 # requires an LLM to select the next speaker; a deterministic round-robin avoids
 # that dependency for a key-free demo.
@@ -12,13 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import shutil
-import signal
-import socket
-import subprocess
 import tempfile
-import time
 from pathlib import Path
 from typing import Any
 
@@ -31,77 +29,16 @@ from scitrera_aether_ag2 import (
     AetherRemoteAgent,
     AetherTransport,
 )
+from scitrera_aether_ag2.examples._aetherlite import (
+    READY_TIMEOUT_S,
+    ensure_binary_executable,
+    spawn_aetherlite,
+    terminate_aetherlite,
+    wait_for_tcp,
+)
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
-
-REPO_ROOT = Path(__file__).resolve().parents[4]
-AETHERLITE_BIN = Path(os.environ.get("AETHERLITE_BIN", str(REPO_ROOT / "server" / "aetherlite")))
-READY_TIMEOUT_S = 20.0
-
-
-# ---------------------------------------------------------------------------
-# Aetherlite helpers (self-contained; not imported from conftest)
-# ---------------------------------------------------------------------------
-
-def _pick_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _wait_for_tcp(host: str, port: int, timeout: float, proc: subprocess.Popen) -> None:
-    deadline = time.monotonic() + timeout
-    last_err: Exception | None = None
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            raise RuntimeError(f"aetherlite exited early with rc={proc.returncode}")
-        try:
-            with socket.create_connection((host, port), timeout=0.5):
-                return
-        except OSError as exc:
-            last_err = exc
-            time.sleep(0.1)
-    raise TimeoutError(f"aetherlite at {host}:{port} not ready after {timeout}s: {last_err}")
-
-
-def _spawn_aetherlite(data_dir: Path) -> tuple[subprocess.Popen, int]:
-    grpc_port = _pick_free_port()
-    admin_port = _pick_free_port()
-    workflow_admin_port = _pick_free_port()
-    env = {**os.environ, "AETHER_ALLOW_DEV_MODE": "true"}
-    cmd = [
-        str(AETHERLITE_BIN),
-        "--dev",
-        "--insecure-admin",
-        "--port", str(grpc_port),
-        "--admin-port", str(admin_port),
-        "--workflow-admin-port", str(workflow_admin_port),
-        "--data-dir", str(data_dir),
-    ]
-    log_file = (data_dir / "aetherlite.log").open("w")
-    proc = subprocess.Popen(
-        cmd, stdout=log_file, stderr=subprocess.STDOUT,
-        env=env, start_new_session=True,
-    )
-    proc._log_file = log_file  # type: ignore[attr-defined]
-    return proc, grpc_port
-
-
-def _terminate_aetherlite(proc: subprocess.Popen) -> None:
-    if proc.poll() is None:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            proc.wait(timeout=5.0)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            proc.wait(timeout=5.0)
-    log_file = getattr(proc, "_log_file", None)
-    if log_file is not None:
-        log_file.close()
 
 
 # ---------------------------------------------------------------------------
@@ -165,18 +102,14 @@ class RecordingSender:
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    if not AETHERLITE_BIN.is_file() or not os.access(AETHERLITE_BIN, os.X_OK):
-        raise SystemExit(
-            f"aetherlite binary not found at {AETHERLITE_BIN}; "
-            "build it with: cd <repo>/server && go build -o aetherlite ./cmd/aetherlite"
-        )
+    ensure_binary_executable()
 
     data_dir = Path(tempfile.mkdtemp(prefix="aether-groupchat-"))
-    proc, grpc_port = _spawn_aetherlite(data_dir)
+    proc, grpc_port = spawn_aetherlite(data_dir)
     endpoint = f"127.0.0.1:{grpc_port}"
 
     try:
-        _wait_for_tcp("127.0.0.1", grpc_port, READY_TIMEOUT_S, proc)
+        wait_for_tcp("127.0.0.1", grpc_port, READY_TIMEOUT_S, proc)
 
         # Identities
         remote_identity = AetherIdentity("default", "echo", "carol")
@@ -257,7 +190,7 @@ async def main() -> None:
                 host_task.cancel()
 
     finally:
-        _terminate_aetherlite(proc)
+        terminate_aetherlite(proc)
         shutil.rmtree(data_dir, ignore_errors=True)
 
 

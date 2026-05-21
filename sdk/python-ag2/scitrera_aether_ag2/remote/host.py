@@ -107,7 +107,11 @@ class AetherAgentHost:
             self._seen_correlations.popitem(last=False)
         if self._telemetry is not None:
             try:
-                await self._telemetry.on_request_received(envelope.correlation_id, envelope.request)
+                await self._telemetry.on_request_received(
+                    envelope.correlation_id,
+                    envelope.request,
+                    conversation_id=envelope.conversation_id,
+                )
             except Exception:  # noqa: BLE001
                 logger.exception("telemetry.on_request_received failed; continuing")
 
@@ -122,7 +126,11 @@ class AetherAgentHost:
             async for service_response in service(envelope.request):
                 if self._telemetry is not None:
                     try:
-                        await self._telemetry.on_response_chunk(envelope.correlation_id, service_response)
+                        await self._telemetry.on_response_chunk(
+                            envelope.correlation_id,
+                            service_response,
+                            conversation_id=envelope.conversation_id,
+                        )
                     except Exception:  # noqa: BLE001
                         logger.exception("telemetry.on_response_chunk failed; continuing")
                 if service_response.message is not None:
@@ -152,7 +160,11 @@ class AetherAgentHost:
                     logger.exception("checkpoint save_history failed; continuing")
             if self._telemetry is not None:
                 try:
-                    await self._telemetry.on_request_completed(envelope.correlation_id, sequence)
+                    await self._telemetry.on_request_completed(
+                        envelope.correlation_id,
+                        sequence,
+                        conversation_id=envelope.conversation_id,
+                    )
                 except Exception:  # noqa: BLE001
                     logger.exception("telemetry.on_request_completed failed; continuing")
             await self._transport.send_response(
@@ -175,6 +187,7 @@ class AetherAgentHost:
                     await self._telemetry.on_request_failed(
                         envelope.correlation_id,
                         {"error_code": "deadline_exceeded", "retryable": False},
+                        conversation_id=envelope.conversation_id,
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception("telemetry.on_request_failed failed; continuing")
@@ -198,6 +211,7 @@ class AetherAgentHost:
                     await self._telemetry.on_request_failed(
                         envelope.correlation_id,
                         {"error_code": "internal", "retryable": False},
+                        conversation_id=envelope.conversation_id,
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception("telemetry.on_request_failed failed; continuing")

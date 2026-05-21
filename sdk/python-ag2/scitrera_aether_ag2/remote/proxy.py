@@ -117,6 +117,7 @@ class AetherRemoteAgent:
         known_names = get_client_tool_names(client_tools)
         last_assistant: dict[str, Any] | None = None
         completed_naturally = False
+        conversation_id = str(uuid.uuid4())
 
         for _ in range(self._max_continuations):
             request_messages = [
@@ -131,6 +132,7 @@ class AetherRemoteAgent:
                     context=None,
                     client_tools=client_tools,
                 ),
+                conversation_id=conversation_id,
             )
             hitl_injected: str | None = None
             last_assistant_this_pass: dict[str, Any] | None = None

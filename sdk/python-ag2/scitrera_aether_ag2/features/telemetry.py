@@ -78,14 +78,19 @@ class AetherTelemetry:
         self,
         correlation_id: str,
         request: "RequestMessage",
+        *,
+        conversation_id: str | None = None,
     ) -> None:
         """Emit EVENT ag2.request.received with message count."""
+        payload: dict[str, Any] = {
+            "correlation_id": correlation_id,
+            "message_count": len(request.messages),
+        }
+        if conversation_id is not None:
+            payload["conversation_id"] = conversation_id
         await self.emit_event(
             name="ag2.request.received",
-            payload={
-                "correlation_id": correlation_id,
-                "message_count": len(request.messages),
-            },
+            payload=payload,
             trace_id=correlation_id,
         )
 
@@ -93,6 +98,8 @@ class AetherTelemetry:
         self,
         correlation_id: str,
         response: "ServiceResponse",
+        *,
+        conversation_id: str | None = None,
     ) -> None:
         """Emit METRIC ag2.response.chunks += 1.
 
@@ -100,11 +107,14 @@ class AetherTelemetry:
         ``message``, ``context``, ``input_required``, ``streaming_text``).
         See tech-debt entry for the resolution path.
         """
+        tags: dict[str, str] = {"agent": self._agent_name}
+        if conversation_id is not None:
+            tags["conversation_id"] = conversation_id
         await self.emit_metric(
             name="ag2.response.chunks",
             qty=1.0,
             kind="counter",
-            tags={"agent": self._agent_name},
+            tags=tags,
             trace_id=correlation_id,
         )
 
@@ -112,14 +122,19 @@ class AetherTelemetry:
         self,
         correlation_id: str,
         total_chunks: int,
+        *,
+        conversation_id: str | None = None,
     ) -> None:
         """Emit EVENT ag2.request.completed with total chunk count."""
+        payload: dict[str, Any] = {
+            "correlation_id": correlation_id,
+            "total_chunks": total_chunks,
+        }
+        if conversation_id is not None:
+            payload["conversation_id"] = conversation_id
         await self.emit_event(
             name="ag2.request.completed",
-            payload={
-                "correlation_id": correlation_id,
-                "total_chunks": total_chunks,
-            },
+            payload=payload,
             trace_id=correlation_id,
         )
 
@@ -127,20 +142,27 @@ class AetherTelemetry:
         self,
         correlation_id: str,
         error: dict[str, Any],
+        *,
+        conversation_id: str | None = None,
     ) -> None:
         """Emit EVENT ag2.request.failed with error details.
 
         Args:
             correlation_id: Request trace identifier.
             error: Dict with at minimum ``error_code`` (str) and ``retryable`` (bool).
+            conversation_id: Optional group id stitching multiple correlation_ids
+                into a single logical caller turn.
         """
+        payload: dict[str, Any] = {
+            "correlation_id": correlation_id,
+            "error_code": error.get("error_code", "unknown"),
+            "retryable": error.get("retryable", False),
+        }
+        if conversation_id is not None:
+            payload["conversation_id"] = conversation_id
         await self.emit_event(
             name="ag2.request.failed",
-            payload={
-                "correlation_id": correlation_id,
-                "error_code": error.get("error_code", "unknown"),
-                "retryable": error.get("retryable", False),
-            },
+            payload=payload,
             trace_id=correlation_id,
         )
 
