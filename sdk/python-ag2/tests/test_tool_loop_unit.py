@@ -477,6 +477,96 @@ async def test_hitl_sender_mode_mirrors_into_sender_chat_messages() -> None:
     )
 
 
+# ---------- sync receive() bridge (Y1) ----------
+
+
+def test_sync_receive_bridges_to_transport_loop_from_another_thread() -> None:
+    """Sync receive() from a different thread schedules a_receive on the transport's loop."""
+    import asyncio
+    import threading
+
+    loop_holder: dict[str, Any] = {}
+    ready = threading.Event()
+
+    def run_loop() -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop_holder["loop"] = loop
+        loop_holder["tid"] = threading.get_ident()
+        ready.set()
+        loop.run_forever()
+
+    thread = threading.Thread(target=run_loop, daemon=True)
+    thread.start()
+    ready.wait()
+
+    try:
+        transport = FakeTransport(
+            [
+                [
+                    _resp_env(
+                        0,
+                        done=False,
+                        response=ServiceResponse(message={"role": "assistant", "content": "hi back"}),
+                    ),
+                    _resp_env(1, done=True, response=None),
+                ]
+            ]
+        )
+        transport._loop = loop_holder["loop"]  # type: ignore[attr-defined]
+        transport._loop_thread_id = loop_holder["tid"]  # type: ignore[attr-defined]
+
+        proxy = _make_proxy(transport)
+        sender = FakeSender()
+
+        proxy.receive("hi", sender)  # sync call from main thread
+
+        assert sender.sent, "sender should have received the assistant reply"
+        assert sender.sent[-1]["content"] == "hi back"
+    finally:
+        loop_holder["loop"].call_soon_threadsafe(loop_holder["loop"].stop)
+        thread.join(timeout=2.0)
+
+
+def test_sync_receive_refuses_to_run_on_transport_loop_thread() -> None:
+    """Calling receive() from the transport's own loop thread raises (deadlock prevention)."""
+    import threading
+
+    transport = FakeTransport([])
+    # Pretend this thread IS the transport's loop thread.
+    transport._loop = None  # type: ignore[attr-defined]
+    transport._loop_thread_id = threading.get_ident()  # type: ignore[attr-defined]
+
+    proxy = _make_proxy(transport)
+    sender = FakeSender()
+
+    with pytest.raises(RuntimeError, match="transport's event loop thread"):
+        proxy.receive("hi", sender)
+
+
+def test_sync_receive_falls_back_to_asyncio_run_when_no_loop_captured() -> None:
+    """When the transport has never connected (no _loop), receive() uses asyncio.run."""
+    transport = FakeTransport(
+        [
+            [
+                _resp_env(
+                    0,
+                    done=False,
+                    response=ServiceResponse(message={"role": "assistant", "content": "fallback"}),
+                ),
+                _resp_env(1, done=True, response=None),
+            ]
+        ]
+    )
+    # Defaults: _loop is None, _loop_thread_id is None
+    proxy = _make_proxy(transport)
+    sender = FakeSender()
+
+    proxy.receive("hi", sender)
+
+    assert sender.sent[-1]["content"] == "fallback"
+
+
 @pytest.mark.asyncio
 async def test_streaming_chunks_do_not_break_flow() -> None:
     transport = FakeTransport(

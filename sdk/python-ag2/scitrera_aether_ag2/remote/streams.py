@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
@@ -31,6 +32,7 @@ class AetherTransport:
         self.client = client
         self.local_identity = local_identity
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_thread_id: int | None = None
         self._response_queues: dict[str, asyncio.Queue[ResponseEnvelope]] = {}
         self._host_handlers: dict[str, RequestHandler] = {}
         self._connected = asyncio.Event()
@@ -39,6 +41,7 @@ class AetherTransport:
 
     async def _on_connect(self) -> None:
         self._loop = asyncio.get_running_loop()
+        self._loop_thread_id = threading.get_ident()
         self._connected.set()
 
     async def _on_message(self, msg: Any) -> None:

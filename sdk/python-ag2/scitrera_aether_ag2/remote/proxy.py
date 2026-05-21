@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import threading
 import uuid
 from typing import Any, Literal
 
@@ -90,16 +91,37 @@ class AetherRemoteAgent:
         request_reply: bool | None = None,
         silent: bool | None = False,
     ) -> None:
-        try:
-            running = asyncio.get_running_loop()
-        except RuntimeError:
-            running = None
-        if running is not None:
+        """Sync entry point.
+
+        Bridges to ``a_receive`` by submitting the coroutine to the transport's
+        existing event loop via ``run_coroutine_threadsafe`` and blocking on the
+        returned future. This avoids the cross-loop queue hazard that an
+        ``asyncio.run()`` fallback would create (the transport's response queues
+        belong to its connect-time loop).
+
+        Refuses to run from inside the transport's loop thread to prevent
+        deadlock; callers in that context must use ``a_receive`` directly.
+        Falls back to ``asyncio.run`` only when the transport has never
+        connected and there is no captured loop to bridge to.
+        """
+        transport_loop = getattr(self.transport, "_loop", None)
+        transport_thread_id = getattr(self.transport, "_loop_thread_id", None)
+
+        if transport_thread_id is not None and threading.get_ident() == transport_thread_id:
             raise RuntimeError(
                 "AetherRemoteAgent.receive() must not be called from inside the transport's "
-                "event loop; use a_receive() or call from a sync caller"
+                "event loop thread; use a_receive() instead"
             )
-        asyncio.run(self.a_receive(message, sender, request_reply, silent))
+
+        if transport_loop is None or not transport_loop.is_running():
+            asyncio.run(self.a_receive(message, sender, request_reply, silent))
+            return
+
+        future = asyncio.run_coroutine_threadsafe(
+            self.a_receive(message, sender, request_reply, silent),
+            transport_loop,
+        )
+        future.result()
 
     async def a_receive(
         self,

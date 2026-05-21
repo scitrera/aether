@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -47,7 +48,15 @@ def _wait_for_tcp(host: str, port: int, timeout: float, proc: subprocess.Popen) 
     raise TimeoutError(f"aetherlite at {host}:{port} not ready after {timeout}s: {last_err}")
 
 
-def _spawn_once(bin_path: Path, data_dir: Path) -> tuple[subprocess.Popen, int, Path]:
+@dataclass(frozen=True)
+class AetherliteEndpoints:
+    """Endpoint bundle exposed to tests for a single spawned aetherlite."""
+
+    grpc: str   # "127.0.0.1:<grpc_port>"
+    admin: str  # "127.0.0.1:<admin_port>"
+
+
+def _spawn_once(bin_path: Path, data_dir: Path) -> tuple[subprocess.Popen, int, int, Path]:
     grpc_port = _pick_free_port()
     admin_port = _pick_free_port()
     workflow_admin_port = _pick_free_port()
@@ -70,7 +79,7 @@ def _spawn_once(bin_path: Path, data_dir: Path) -> tuple[subprocess.Popen, int, 
     proc._omc_log_file = log_file  # type: ignore[attr-defined]
     logger.info("spawned aetherlite pid=%s gRPC=%s admin=%s data_dir=%s",
                 proc.pid, grpc_port, admin_port, data_dir)
-    return proc, grpc_port, log_path
+    return proc, grpc_port, admin_port, log_path
 
 
 def _terminate(proc: subprocess.Popen) -> None:
@@ -98,8 +107,8 @@ def _tail_log(log_path: Path, lines: int) -> str:
 
 
 @pytest.fixture(scope="session")
-def aetherlite_endpoint(request: pytest.FixtureRequest) -> Iterator[str]:
-    """Spawn a session-scoped aetherlite subprocess on an ephemeral port with a tempdir data-dir.
+def aetherlite_endpoints(request: pytest.FixtureRequest) -> Iterator[AetherliteEndpoints]:
+    """Spawn a session-scoped aetherlite subprocess and yield both gRPC and admin endpoints.
 
     Skips when AETHER_RUN_E2E != "1" so plain `pytest` works without infra.
     Honors AETHERLITE_BIN to override the binary path.
@@ -117,10 +126,11 @@ def aetherlite_endpoint(request: pytest.FixtureRequest) -> Iterator[str]:
     data_dir = Path(tempfile.mkdtemp(prefix="aether-ag2-test-"))
     proc: subprocess.Popen | None = None
     grpc_port = 0
+    admin_port = 0
     log_path = data_dir / "aetherlite.log"
     last_err: Exception | None = None
     for attempt in range(1, SPAWN_RETRIES + 1):
-        proc, grpc_port, log_path = _spawn_once(bin_path, data_dir)
+        proc, grpc_port, admin_port, log_path = _spawn_once(bin_path, data_dir)
         try:
             _wait_for_tcp("127.0.0.1", grpc_port, READY_TIMEOUT_S, proc)
             last_err = None
@@ -139,7 +149,10 @@ def aetherlite_endpoint(request: pytest.FixtureRequest) -> Iterator[str]:
         raise RuntimeError(f"aetherlite failed to spawn after {SPAWN_RETRIES} attempts: {last_err}")
 
     try:
-        yield f"127.0.0.1:{grpc_port}"
+        yield AetherliteEndpoints(
+            grpc=f"127.0.0.1:{grpc_port}",
+            admin=f"127.0.0.1:{admin_port}",
+        )
     finally:
         _terminate(proc)
         if request.session.testsfailed:
@@ -155,7 +168,19 @@ def aetherlite_endpoint(request: pytest.FixtureRequest) -> Iterator[str]:
                         data_dir, log_path)
 
 
+@pytest.fixture(scope="session")
+def aetherlite_endpoint(aetherlite_endpoints: AetherliteEndpoints) -> str:
+    """gRPC endpoint as ``host:port`` — backward-compatible string fixture."""
+    return aetherlite_endpoints.grpc
+
+
 @pytest.fixture
 def dev_gateway_endpoint(aetherlite_endpoint: str) -> str:
     """Alias kept for existing tests; resolves via aetherlite_endpoint."""
     return aetherlite_endpoint
+
+
+@pytest.fixture(scope="session")
+def dev_admin_endpoint(aetherlite_endpoints: AetherliteEndpoints) -> str:
+    """Admin REST endpoint as ``host:port`` (``--insecure-admin`` open in dev mode)."""
+    return aetherlite_endpoints.admin
