@@ -120,9 +120,13 @@ func TestE2E_PriorityShed_BestEffortShedFirst(t *testing.T) {
 	rootCtx, rootCancel := context.WithTimeout(context.Background(), blastDuration+10*time.Second)
 	defer rootCancel()
 
-	// Pre-blast send counters.
-	pre := h.gateway
-	_, preBE, _ := pre.SendStats()
+	// Sender-side accounting only. The legacy routing fake-gateway
+	// exposed a SendStats() method that returned (total, bestEffort,
+	// highPriority) message counts observed at the wire; the real
+	// aetherlite has no such counter. We instead count what the SDK
+	// itself reports (attempted, accepted, shed) on the send path —
+	// equivalent signal for the priority pipeline's load-shaping
+	// behaviour. Gateway-side absorption stats are no longer available.
 
 	var (
 		wg              sync.WaitGroup
@@ -229,12 +233,9 @@ func TestE2E_PriorityShed_BestEffortShedFirst(t *testing.T) {
 
 	wg.Wait()
 
-	_, postBE, _ := pre.SendStats()
-	beThroughGW := postBE - preBE
-
 	p50, p95, p99 := percentiles(fastLatencies)
-	t.Logf("be-attempted=%d  be-accepted=%d  be-shed=%d  be-other-err=%d  be-through-gw=%d",
-		beAttempted.Load(), beAccepted.Load(), beShed.Load(), beOtherErr.Load(), beThroughGW)
+	t.Logf("be-attempted=%d  be-accepted=%d  be-shed=%d  be-other-err=%d",
+		beAttempted.Load(), beAccepted.Load(), beShed.Load(), beOtherErr.Load())
 	t.Logf("hi-prio  succeeded=%d  errors=%d  p50=%s p95=%s p99=%s",
 		fastSucceeded.Load(), fastErrors.Load(), p50, p95, p99)
 
@@ -251,21 +252,19 @@ func TestE2E_PriorityShed_BestEffortShedFirst(t *testing.T) {
 	}
 
 	// Secondary observation: log whether the SDK sheds best-effort
-	// traffic OR the fake gateway absorbs it cleanly. Both outcomes
-	// are valid evidence — the priority pipeline is doing its job as
-	// long as the hi-prio p99 stays inside budget. We log the
-	// outcome but do NOT fail when shedding is absent; the in-process
-	// fake gateway is fast enough that CoDel's sustained-latency
-	// signal stays below the trigger threshold even at our blast
-	// rate, so the absence-of-shedding outcome is the more common
-	// path locally.
-	attemptedLoad := beAttempted.Load()
-	if beShed.Load() == 0 && beThroughGW >= attemptedLoad {
-		t.Logf("note: no explicit shedding observed (gw absorbed %d / %d). "+
+	// traffic OR the gateway absorbs it cleanly. Both outcomes are
+	// valid evidence — the priority pipeline is doing its job as long
+	// as the hi-prio p99 stays inside budget. With the real aetherlite
+	// we no longer have gateway-side absorption counters (the legacy
+	// fake exposed SendStats), so we report only the sender-side
+	// accounting and rely on the p99 assertion above as the load-
+	// shaping verdict.
+	if beShed.Load() == 0 {
+		t.Logf("note: no explicit shedding observed (be-accepted=%d / be-attempted=%d). "+
 			"Hi-prio p99 budget pass is the primary signal; shedding is "+
-			"an additional symptom that depends on the in-process gateway "+
+			"an additional symptom that depends on the aetherlite "+
 			"actually being slow enough to fill the SDK's send pipeline.",
-			beThroughGW, attemptedLoad)
+			beAccepted.Load(), beAttempted.Load())
 	}
 	// Silence unused-import for fmt across this file in some Go
 	// versions when the only fmt use is conditional.

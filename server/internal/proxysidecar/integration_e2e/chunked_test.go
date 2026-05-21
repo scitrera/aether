@@ -59,15 +59,16 @@ func TestE2E_LargeChunkedUpload_UnderStreamLoad(t *testing.T) {
 	rootCtx, rootCancel := context.WithTimeout(context.Background(), slowDur+15*time.Second)
 	defer rootCancel()
 
-	// Single client for both streams and upload. The fake gateway routes
-	// by request_id without scoping to the originating caller (TODO:
-	// match real-gateway (session, request_id) tracking), so multiple
-	// SDK clients each starting their NextRequestID at "req-1" collide
-	// in requestRoutes. Sharing one client gives a clean request_id
-	// namespace and still exercises the bug the test is validating:
-	// the sidecar's chunked-fin dispatch (task 15) and chunked-register
-	// race-fix path must coexist with active streaming responses on
-	// the same shared runtime.
+	// Single client shared for both streams and upload. Two-client
+	// variant hangs intermittently when one client does heavy
+	// concurrent upload + download (5 MiB up + 5 MiB echo'd back)
+	// on its single bidi gRPC stream — observed in this harness
+	// after the per-caller-id rewrite landed in harness.go. Likely a
+	// gRPC HTTP/2 flow-control interaction between send and receive on
+	// the same bidi when both directions saturate; needs investigation
+	// in the perf suite rather than the correctness suite.
+	// TODO(perf): exercise the two-client + large-bidirectional case
+	// once the perf suite lands and surfaces the actual bottleneck.
 	streamClient := dialAgentClient(t, h, "chunked-shared")
 	uploadClient := streamClient
 
