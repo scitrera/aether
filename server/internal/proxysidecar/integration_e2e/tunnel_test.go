@@ -30,7 +30,7 @@ import (
 // landed, this test may hang on TunnelOpen and time out; that is
 // documented in the task spec.
 func TestE2E_TunnelOpen_UnderStreamLoad(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel() — see chunked_test.go for the rationale.
 
 	const (
 		streamFanout = 2

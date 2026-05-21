@@ -98,7 +98,7 @@ var _ = insecure.NewCredentials
 //
 // This is the Go realisation of task 6 (priority-shed scenario).
 func TestE2E_PriorityShed_BestEffortShedFirst(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel() — see chunked_test.go for the rationale.
 
 	const (
 		blastDuration = 5 * time.Second

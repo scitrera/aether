@@ -247,16 +247,20 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 	// (the gateway never publishes ProxyHttpRequest as a *response* to an
 	// outbound caller).
 	//
-	// Wrapped with aether.Async because the SDK's receiveLoop dispatches
-	// handlers synchronously on a single goroutine. A streaming dispatch
-	// (stream_response_indefinitely=true /slow SSE, Jupyter /code) holds
-	// the loop for the entire response lifetime, starving every other
-	// envelope multiplexed onto the same shared runtime — including
-	// loopback ProxyHttpResponses for relay-mediated fast calls, and
-	// follow-on ProxyHttpRequests for additional streams. Async frees
-	// the loop per inbound request; sequencing of an individual request's
-	// own response chunks is preserved inside dispatchAndRespond.
-	client.OnProxyHttpRequest(aether.Async(func(reqCtx context.Context, req *pb.ProxyHttpRequest) error {
+	// Chunked-request registration runs synchronously on the receive loop
+	// so beginChunkedRequest's accumulator entry is committed before the
+	// first OnProxyHttpBodyChunk frame (also synchronous) tries to look it
+	// up — otherwise the chunk handler races the registration goroutine
+	// and silently drops frames.
+	//
+	// Non-chunked dispatch is spawned on its own goroutine via the same
+	// 3-minute-ceiling pattern as aether.Async: a streaming response
+	// (stream_response_indefinitely=true) would otherwise hold the SDK's
+	// single-goroutine receiveLoop for its entire lifetime, starving
+	// every other envelope multiplexed onto the same shared runtime —
+	// loopback ProxyHttpResponses for relay-mediated fast calls,
+	// follow-on stream ProxyHttpRequests, etc.
+	client.OnProxyHttpRequest(func(reqCtx context.Context, req *pb.ProxyHttpRequest) error {
 		if log.Debug().Enabled() {
 			log.Debug().
 				Str("dir", "terminator-in").
@@ -273,8 +277,9 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 		if req.GetBodyChunked() {
 			return r.term.beginChunkedRequest(req, transport)
 		}
-		return r.term.dispatchAndRespond(reqCtx, req, req.GetBody(), transport)
-	}))
+		go runInlineProxyHttpDispatch(r.term, req, transport)
+		return nil
+	})
 
 	// ProxyHttpResponse: only fires here when the SDK's caller-side
 	// inflight resolver missed — i.e. the response is for a request the
@@ -335,6 +340,22 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 		if frame.GetSeq() == 0 && len(frame.GetData()) > 0 {
 			open := &pb.TunnelOpen{}
 			if err := tunnelDataIsOpen(frame, open); err == nil {
+				// Reserve a pendingTunnel placeholder synchronously on the
+				// receive loop so any follow-on TunnelData/Ack/Close frame
+				// that arrives before the dial goroutine completes is
+				// buffered in arrival order instead of dropped. The dial
+				// itself goes to a goroutine (HandleTunnelOpen may block
+				// on slow upstreams). When dial completes, register()
+				// activates the placeholder and flushes buffered frames.
+				if r.term.tunnels.reserve(open.GetTunnelId()) == nil {
+					// Duplicate tunnel_id — reject synchronously.
+					_ = transport.SendTunnelClose(&pb.TunnelClose{
+						TunnelId: open.GetTunnelId(),
+						Reason:   pb.TunnelClose_ERROR,
+						Detail:   "duplicate tunnel_id",
+					})
+					return nil
+				}
 				go runTunnelOpenDispatch(r.term, open, transport)
 				return nil
 			}

@@ -29,7 +29,10 @@ import (
 // their fix yet, this test may time out — that is documented in the
 // task spec.
 func TestE2E_LargeChunkedUpload_UnderStreamLoad(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel() — these e2e tests each spin up a full in-process
+	// aether stack and many goroutines; running them concurrently in the
+	// same process causes resource contention that pushes wall-time past
+	// the package timeout. Each test self-contained, ~5-25s.
 
 	const (
 		streamFanout = 2
@@ -56,8 +59,17 @@ func TestE2E_LargeChunkedUpload_UnderStreamLoad(t *testing.T) {
 	rootCtx, rootCancel := context.WithTimeout(context.Background(), slowDur+15*time.Second)
 	defer rootCancel()
 
-	streamClient := dialAgentClient(t, h, "chunked-streams")
-	uploadClient := dialAgentClient(t, h, "chunked-upload")
+	// Single client for both streams and upload. The fake gateway routes
+	// by request_id without scoping to the originating caller (TODO:
+	// match real-gateway (session, request_id) tracking), so multiple
+	// SDK clients each starting their NextRequestID at "req-1" collide
+	// in requestRoutes. Sharing one client gives a clean request_id
+	// namespace and still exercises the bug the test is validating:
+	// the sidecar's chunked-fin dispatch (task 15) and chunked-register
+	// race-fix path must coexist with active streaming responses on
+	// the same shared runtime.
+	streamClient := dialAgentClient(t, h, "chunked-shared")
+	uploadClient := streamClient
 
 	var (
 		wg           sync.WaitGroup
