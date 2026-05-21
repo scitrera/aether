@@ -25,6 +25,17 @@ import (
 	"github.com/scitrera/aether/pkg/models"
 )
 
+// seedTunnelPinPair writes the production three-tuple tunnel pin (primary
+// wireID-keyed entry + per-caller forward index) directly into the session
+// store. Used by bypass tests to mimic what routeTunnelOpen sets up.
+func seedTunnelPinPair(s *GatewayServer, caller, service, originalID string, ttl time.Duration) string {
+	wireID := newWireID()
+	pinValue := encodeTunnelPin3(originalID, caller, service)
+	_ = s.sessions.SetTunnelPin(context.Background(), wireID, pinValue, ttl)
+	_ = s.sessions.SetTunnelPin(context.Background(), scopedPinID(caller, originalID), wireID, ttl)
+	return wireID
+}
+
 // newLocalSidecarSession registers a fake sidecar ClientSession in the
 // gateway's activeStreams + identityIndex with a deliveryCh of the requested
 // buffer size. The returned session can be drained to assert local delivery.
@@ -67,7 +78,7 @@ func TestTunnelData_LocalPin_TakesBypass(t *testing.T) {
 
 	const target = "sv::tcp-svc::pod-A"
 	sidecar := newLocalSidecarSession(s, target, 4)
-	_ = s.sessions.SetTunnelPin(context.Background(), "tun-local", target, time.Minute)
+	seedTunnelPinPair(s, sender.ToTopic(), target, "tun-local", time.Minute)
 
 	data := &pb.TunnelData{TunnelId: "tun-local", Seq: 1, Data: []byte("ping")}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{tunnelData: data})
@@ -102,9 +113,9 @@ func TestTunnelData_RemotePin_FallsBackToRMQ(t *testing.T) {
 	client := newProxyClient(sender, stream)
 
 	// Pin to a target that is NOT registered locally, but IS active in
-	// Redis (so followPin doesn't emit PEER_RESET).
+	// Redis (so the routing path treats the pinned principal as reachable).
 	const target = "sv::tcp-svc::remote-pod"
-	_ = s.sessions.SetTunnelPin(context.Background(), "tun-remote", target, time.Minute)
+	seedTunnelPinPair(s, sender.ToTopic(), target, "tun-remote", time.Minute)
 	s.sessions.(*mockSessionManager).isActiveResult = true
 
 	data := &pb.TunnelData{TunnelId: "tun-remote", Seq: 1, Data: []byte("via-rmq")}
@@ -136,10 +147,11 @@ func TestTunnelAck_LocalCaller_TakesBypass(t *testing.T) {
 	const serviceTopic = "sv::tcp-svc::pod-A"
 	caller := newLocalSidecarSession(s, callerTopic, 4)
 
-	pinValue := encodeTunnelPin(callerTopic, serviceTopic)
-	_ = s.sessions.SetTunnelPin(context.Background(), "tun-ack", pinValue, time.Minute)
+	// Pin from the caller's perspective; routeTunnelAck looks up wireID
+	// directly when the frame carries it (service-direction).
+	wireID := seedTunnelPinPair(s, callerTopic, serviceTopic, "tun-ack", time.Minute)
 
-	ack := &pb.TunnelAck{TunnelId: "tun-ack", AckSeq: 7, Credits: 42}
+	ack := &pb.TunnelAck{TunnelId: wireID, AckSeq: 7, Credits: 42}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{tunnelAck: ack})
 
 	router.mu.Lock()
@@ -174,8 +186,14 @@ func TestProxyHttpBodyChunk_LocalService_TakesBypass(t *testing.T) {
 	const serviceTopic = "sv::memorylayer::pod-A"
 	service := newLocalSidecarSession(s, serviceTopic, 4)
 
-	pinValue := encodeRequestPin(callerTopic, serviceTopic)
-	_ = s.sessions.SetRequestPin(context.Background(), "rid-local", pinValue, time.Minute)
+	// Production layout: primary wireID-keyed three-tuple + per-caller
+	// forward index. is_request=true chunks travel caller → service; the
+	// gateway translates "rid-local" (caller-side originalID) → wireID
+	// using the forward index.
+	wireID := newWireID()
+	pinValue := encodeRequestPin3("rid-local", callerTopic, serviceTopic)
+	_ = s.sessions.SetRequestPin(context.Background(), wireID, pinValue, time.Minute)
+	_ = s.sessions.SetRequestPin(context.Background(), scopedPinID(sender.ToTopic(), "rid-local"), wireID, time.Minute)
 
 	chunk := &pb.ProxyHttpBodyChunk{
 		RequestId: "rid-local",
@@ -215,7 +233,7 @@ func TestTunnelData_BypassDisabled_UsesRMQEvenLocally(t *testing.T) {
 
 	const target = "sv::tcp-svc::pod-A"
 	sidecar := newLocalSidecarSession(s, target, 4)
-	_ = s.sessions.SetTunnelPin(context.Background(), "tun-disabled", target, time.Minute)
+	seedTunnelPinPair(s, sender.ToTopic(), target, "tun-disabled", time.Minute)
 
 	data := &pb.TunnelData{TunnelId: "tun-disabled", Seq: 1, Data: []byte("rmq-only")}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{tunnelData: data})
@@ -250,7 +268,7 @@ func TestTunnelData_FullDeliveryBuffer_FallsBackToRMQ(t *testing.T) {
 	// Pre-fill the deliveryCh so the bypass select finds it full.
 	sidecar.deliveryCh <- &pb.DownstreamMessage{}
 
-	_ = s.sessions.SetTunnelPin(context.Background(), "tun-full", target, time.Minute)
+	seedTunnelPinPair(s, sender.ToTopic(), target, "tun-full", time.Minute)
 
 	data := &pb.TunnelData{TunnelId: "tun-full", Seq: 1, Data: []byte("overflow")}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{tunnelData: data})
@@ -312,7 +330,7 @@ func TestTunnelClose_LocalSidecar_StillGoesThroughRMQ(t *testing.T) {
 
 	const target = "sv::tcp-svc::pod-A"
 	sidecar := newLocalSidecarSession(s, target, 4)
-	_ = s.sessions.SetTunnelPin(context.Background(), "tun-close-audit", target, time.Minute)
+	seedTunnelPinPair(s, sender.ToTopic(), target, "tun-close-audit", time.Minute)
 	s.tunnelCounterFor("ws1").n.Store(1)
 
 	closeMsg := &pb.TunnelClose{TunnelId: "tun-close-audit", Reason: pb.TunnelClose_NORMAL}

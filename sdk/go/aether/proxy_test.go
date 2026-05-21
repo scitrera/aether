@@ -100,7 +100,7 @@ func injectProxyResponse(t *testing.T, client *BaseClient, statusCode int32, res
 		}
 
 		// Deliver the header frame.
-		resolveProxyResponse(requestID, hdr)
+		client.resolveProxyResponse(requestID, hdr)
 
 		// If body is chunked, deliver the chunks.
 		if chunkedResp {
@@ -110,7 +110,7 @@ func injectProxyResponse(t *testing.T, client *BaseClient, statusCode int32, res
 					end = len(respBody)
 				}
 				fin := end == len(respBody)
-				appendProxyChunk(requestID, respBody[offset:end], fin)
+				client.appendProxyChunk(requestID, respBody[offset:end], fin)
 				offset = end
 			}
 		}
@@ -374,7 +374,7 @@ func TestProxyHTTP_OBOInjection_MessageContainsAuth(t *testing.T) {
 	}
 
 	// Resolve to unblock the goroutine.
-	resolveProxyResponse(pr.GetRequestId(), &pb.ProxyHttpResponse{
+	client.resolveProxyResponse(pr.GetRequestId(), &pb.ProxyHttpResponse{
 		RequestId:  pr.GetRequestId(),
 		StatusCode: 200,
 	})
@@ -505,8 +505,8 @@ func TestDispatchResponse_ProxyHttpResponse(t *testing.T) {
 	client := newConnectedBaseClient(t)
 
 	requestID := "test-req-1"
-	inf := registerProxyInflight(requestID)
-	defer deleteProxyInflight(requestID)
+	inf := client.registerProxyInflight(requestID)
+	defer client.deleteProxyInflight(requestID)
 
 	downstream := &pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_ProxyHttpResponse{
@@ -536,8 +536,8 @@ func TestDispatchResponse_ProxyHttpBodyChunk(t *testing.T) {
 	client := newConnectedBaseClient(t)
 
 	requestID := "test-req-chunk-1"
-	inf := registerProxyInflight(requestID)
-	defer deleteProxyInflight(requestID)
+	inf := client.registerProxyInflight(requestID)
+	defer client.deleteProxyInflight(requestID)
 
 	// First deliver the header with body_chunked=true.
 	hdrMsg := &pb.DownstreamMessage{
@@ -648,7 +648,7 @@ func TestProxyHTTP_RequestFields(t *testing.T) {
 	}
 
 	// Resolve to unblock the goroutine.
-	resolveProxyResponse(pr.GetRequestId(), &pb.ProxyHttpResponse{
+	client.resolveProxyResponse(pr.GetRequestId(), &pb.ProxyHttpResponse{
 		RequestId:  pr.GetRequestId(),
 		StatusCode: 200,
 	})
@@ -692,7 +692,7 @@ func TestProxyHTTP_WithBackend(t *testing.T) {
 		t.Errorf("BackendName = %q, want %q", got, "admin")
 	}
 
-	resolveProxyResponse(pr.GetRequestId(), &pb.ProxyHttpResponse{
+	client.resolveProxyResponse(pr.GetRequestId(), &pb.ProxyHttpResponse{
 		RequestId:  pr.GetRequestId(),
 		StatusCode: 200,
 	})
@@ -733,7 +733,7 @@ func TestProxyHTTP_NoBackendOption(t *testing.T) {
 		t.Errorf("BackendName = %q, want empty", got)
 	}
 
-	resolveProxyResponse(pr.GetRequestId(), &pb.ProxyHttpResponse{
+	client.resolveProxyResponse(pr.GetRequestId(), &pb.ProxyHttpResponse{
 		RequestId:  pr.GetRequestId(),
 		StatusCode: 200,
 	})
@@ -773,7 +773,7 @@ func TestAetherRoundTripper_BackendField(t *testing.T) {
 		t.Errorf("BackendName = %q, want %q", got, "primary")
 	}
 
-	resolveProxyResponse(pr.GetRequestId(), &pb.ProxyHttpResponse{
+	client.resolveProxyResponse(pr.GetRequestId(), &pb.ProxyHttpResponse{
 		RequestId:  pr.GetRequestId(),
 		StatusCode: 200,
 	})

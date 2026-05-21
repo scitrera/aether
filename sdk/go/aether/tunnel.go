@@ -130,24 +130,35 @@ type tunnelState struct {
 	wDeadline  time.Time
 }
 
-// globalTunnelInflights maps tunnelID → *tunnelState for active tunnels.
-var globalTunnelInflights sync.Map
+// Per-client tunnel inflight registry — see BaseClient.tunnelInflights in
+// client.go. Maps tunnelID → *tunnelState for active tunnels owned by this
+// client. Must be per-client because two BaseClients in the same process
+// each generate tunnelIDs starting at "req-1" and would collide on slot keys
+// if the registry were package-global.
 
-// registerTunnelInflight registers a new in-flight tunnel and returns its state.
-func registerTunnelInflight(tunnelID string) *tunnelState {
+// newTunnelState constructs a tunnelState without touching any registry.
+// Used by registerTunnelInflight and by tests that exercise the state
+// machine in isolation.
+func newTunnelState(tunnelID string) *tunnelState {
 	ts := &tunnelState{
 		tunnelID: tunnelID,
 		closedCh: make(chan struct{}),
 	}
 	ts.inCond = sync.NewCond(&ts.inMu)
 	atomic.StoreInt32(&ts.outCredits, initialCredits)
-	globalTunnelInflights.Store(tunnelID, ts)
+	return ts
+}
+
+// registerTunnelInflight registers a new in-flight tunnel and returns its state.
+func (c *BaseClient) registerTunnelInflight(tunnelID string) *tunnelState {
+	ts := newTunnelState(tunnelID)
+	c.tunnelInflights.Store(tunnelID, ts)
 	return ts
 }
 
 // deleteTunnelInflight removes the tunnel state after it is done.
-func deleteTunnelInflight(tunnelID string) {
-	globalTunnelInflights.Delete(tunnelID)
+func (c *BaseClient) deleteTunnelInflight(tunnelID string) {
+	c.tunnelInflights.Delete(tunnelID)
 }
 
 // tunnelConn wraps tunnelState and implements net.Conn.
@@ -293,7 +304,7 @@ func (tc *tunnelConn) Close() error {
 	ts.inCond.Broadcast()
 	ts.inMu.Unlock()
 
-	deleteTunnelInflight(ts.tunnelID)
+	tc.client.deleteTunnelInflight(ts.tunnelID)
 	return nil
 }
 
@@ -395,7 +406,7 @@ func (a tunnelAddr) String() string  { return a.addr }
 
 // handleTunnelData delivers inbound data to the waiting tunnelConn.Read.
 func (c *BaseClient) handleTunnelData(td *pb.TunnelData) {
-	val, ok := globalTunnelInflights.Load(td.GetTunnelId())
+	val, ok := c.tunnelInflights.Load(td.GetTunnelId())
 	if !ok {
 		return
 	}
@@ -412,7 +423,7 @@ func (c *BaseClient) handleTunnelData(td *pb.TunnelData) {
 
 // handleTunnelAck replenishes the outbound credit window.
 func (c *BaseClient) handleTunnelAck(ack *pb.TunnelAck) {
-	val, ok := globalTunnelInflights.Load(ack.GetTunnelId())
+	val, ok := c.tunnelInflights.Load(ack.GetTunnelId())
 	if !ok {
 		return
 	}
@@ -422,7 +433,7 @@ func (c *BaseClient) handleTunnelAck(ack *pb.TunnelAck) {
 
 // handleTunnelClose signals a remote-initiated tunnel teardown.
 func (c *BaseClient) handleTunnelClose(tc *pb.TunnelClose) {
-	val, ok := globalTunnelInflights.Load(tc.GetTunnelId())
+	val, ok := c.tunnelInflights.Load(tc.GetTunnelId())
 	if !ok {
 		return
 	}
@@ -484,7 +495,7 @@ func (c *BaseClient) TunnelDial(ctx context.Context, target, proto, remoteHint s
 	}
 
 	tunnelID := c.NextRequestID()
-	ts := registerTunnelInflight(tunnelID)
+	ts := c.registerTunnelInflight(tunnelID)
 
 	openMsg := &pb.TunnelOpen{
 		TunnelId:     tunnelID,
@@ -505,7 +516,7 @@ func (c *BaseClient) TunnelDial(ctx context.Context, target, proto, remoteHint s
 	if err := c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_TunnelOpen{TunnelOpen: openMsg},
 	}); err != nil {
-		deleteTunnelInflight(tunnelID)
+		c.deleteTunnelInflight(tunnelID)
 		return nil, fmt.Errorf("aether tunnel: sending TunnelOpen: %w", err)
 	}
 

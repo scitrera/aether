@@ -26,3 +26,4 @@ build/
 /aether-lite-data/
 /server/proxy-sidecar
 /server/.proxy_load_logs/
+/RELEASING.md

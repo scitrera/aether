@@ -54,7 +54,7 @@ func TestProxyHTTP_StreamResponse_DrainsChunksIncrementally(t *testing.T) {
 
 	// Send the streaming header (body_chunked=true).
 	requestID := pr.GetRequestId()
-	resolveProxyResponse(requestID, &pb.ProxyHttpResponse{
+	client.resolveProxyResponse(requestID, &pb.ProxyHttpResponse{
 		RequestId:   requestID,
 		StatusCode:  200,
 		Headers:     map[string]string{"Content-Type": "text/event-stream"},
@@ -78,11 +78,11 @@ func TestProxyHTTP_StreamResponse_DrainsChunksIncrementally(t *testing.T) {
 	// Push three chunks and a fin frame; iterate the body and assert each
 	// chunk appears in order.
 	go func() {
-		appendProxyChunk(requestID, []byte("hello "), false)
+		client.appendProxyChunk(requestID, []byte("hello "), false)
 		time.Sleep(5 * time.Millisecond)
-		appendProxyChunk(requestID, []byte("world "), false)
+		client.appendProxyChunk(requestID, []byte("world "), false)
 		time.Sleep(5 * time.Millisecond)
-		appendProxyChunk(requestID, []byte("!"), true)
+		client.appendProxyChunk(requestID, []byte("!"), true)
 	}()
 
 	body, err := io.ReadAll(got.resp.Body)
@@ -134,7 +134,7 @@ func TestProxyHTTP_StreamResponse_MidStreamError(t *testing.T) {
 	}
 
 	requestID := pr.GetRequestId()
-	resolveProxyResponse(requestID, &pb.ProxyHttpResponse{
+	client.resolveProxyResponse(requestID, &pb.ProxyHttpResponse{
 		RequestId:   requestID,
 		StatusCode:  200,
 		BodyChunked: true,
@@ -147,9 +147,9 @@ func TestProxyHTTP_StreamResponse_MidStreamError(t *testing.T) {
 
 	// Deliver one chunk, then a mid-stream PAYLOAD_TOO_LARGE.
 	go func() {
-		appendProxyChunk(requestID, []byte("partial"), false)
+		client.appendProxyChunk(requestID, []byte("partial"), false)
 		time.Sleep(5 * time.Millisecond)
-		resolveProxyResponse(requestID, &pb.ProxyHttpResponse{
+		client.resolveProxyResponse(requestID, &pb.ProxyHttpResponse{
 			RequestId: requestID,
 			Error: &pb.ProxyError{
 				Kind:    pb.ProxyError_PAYLOAD_TOO_LARGE,

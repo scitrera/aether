@@ -46,8 +46,9 @@ func buildTestTunnel(t *testing.T) (*tunnelConn, *tunnelState, *fakeSender) {
 	bc := &testBaseClient{sender: fs}
 
 	tunnelID := "test-tunnel-" + t.Name()
-	ts := registerTunnelInflight(tunnelID)
-	t.Cleanup(func() { deleteTunnelInflight(tunnelID) })
+	// Build the state directly; this helper exists for the non-registry
+	// state-machine tests below.
+	ts := newTunnelState(tunnelID)
 
 	conn := &tunnelConn{
 		client: bc.BaseClient(),
@@ -111,8 +112,11 @@ func (s *stubClient) doSend(msg *pb.UpstreamMessage) error {
 func makeTestConn(t *testing.T) (*tunnelConnTest, *tunnelState) {
 	t.Helper()
 	tunnelID := "test-" + t.Name()
-	ts := registerTunnelInflight(tunnelID)
-	t.Cleanup(func() { deleteTunnelInflight(tunnelID) })
+	// State-machine tests don't exercise the per-client registry; build
+	// the state directly. Tests that need registry coverage (e.g.
+	// TestTunnelCloseError) populate the registry on a real BaseClient
+	// themselves.
+	ts := newTunnelState(tunnelID)
 
 	tc := &tunnelConnTest{
 		tunnelID: tunnelID,
@@ -425,7 +429,7 @@ func TestTunnelCloseError(t *testing.T) {
 	bc := &BaseClient{}
 
 	// Register ts under a known ID so handleTunnelClose can find it.
-	globalTunnelInflights.Store(ts.tunnelID, ts)
+	bc.tunnelInflights.Store(ts.tunnelID, ts)
 	bc.handleTunnelClose(&pb.TunnelClose{
 		TunnelId: ts.tunnelID,
 		Reason:   pb.TunnelClose_PEER_RESET,
@@ -442,7 +446,7 @@ func TestTunnelCloseError(t *testing.T) {
 	}
 
 	// Also test write returns error after remote close.
-	globalTunnelInflights.Store(ts2.tunnelID, ts2)
+	bc.tunnelInflights.Store(ts2.tunnelID, ts2)
 	bc.handleTunnelClose(&pb.TunnelClose{
 		TunnelId: ts2.tunnelID,
 		Reason:   pb.TunnelClose_ERROR,
@@ -493,7 +497,7 @@ func TestTunnelDial_WithBackend(t *testing.T) {
 	if got := open.GetRemoteHint(); got != "10.0.0.1:5000" {
 		t.Errorf("RemoteHint = %q, want 10.0.0.1:5000", got)
 	}
-	deleteTunnelInflight(open.GetTunnelId())
+	client.deleteTunnelInflight(open.GetTunnelId())
 }
 
 // TestTunnelDial_NoBackendOption verifies that omitting WithTunnelBackend
@@ -521,7 +525,7 @@ func TestTunnelDial_NoBackendOption(t *testing.T) {
 	if got := open.GetBackendName(); got != "" {
 		t.Errorf("BackendName = %q, want empty", got)
 	}
-	deleteTunnelInflight(open.GetTunnelId())
+	client.deleteTunnelInflight(open.GetTunnelId())
 }
 
 // testCtx is a small helper returning a 200ms context for tunnel-dial tests.
@@ -538,8 +542,8 @@ func TestTunnelDispatch(t *testing.T) {
 	bc := &BaseClient{}
 
 	tunnelID := "dispatch-test"
-	ts := registerTunnelInflight(tunnelID)
-	defer deleteTunnelInflight(tunnelID)
+	ts := bc.registerTunnelInflight(tunnelID)
+	defer bc.deleteTunnelInflight(tunnelID)
 
 	// Dispatch TunnelData.
 	bc.handleTunnelData(&pb.TunnelData{

@@ -405,20 +405,50 @@ func (s *GatewayServer) routeProxyHttpRequest(ctx context.Context, client *Clien
 	//    route to the correct counterparty without re-resolving wildcards.
 	//    Pin lifetime ≥ timeout_ms + slack so chunks arriving late still find
 	//    the binding; refreshed on each chunk that touches the gateway.
+	//
+	//    The caller-supplied request_id is per-BaseClient (NextRequestID()
+	//    restarts at "req-1" in every SDK instance), so two callers can
+	//    independently use the same wire id concurrently. Two collision-safe
+	//    indices keep both directions of the conversation routable:
+	//
+	//      - A unique wireID minted here is stamped onto the outbound envelope
+	//        (req.RequestId = wireID) and used to key the primary pin. The
+	//        service echoes wireID back on the response/echo leg, so the pin
+	//        lookup on that side is collision-free regardless of how many
+	//        callers reused "req-1".
+	//      - A caller-scoped forward index (scopedPinID(caller, originalID))
+	//        records wireID so request-direction body chunks emitted by the
+	//        caller (which still carry the caller-side originalID) can be
+	//        translated to wireID before publishing to the service.
+	//
+	//    Pin value: originalID|caller|service. Pin lifetime ≥ timeout_ms +
+	//    slack so chunks arriving late still find the binding; refreshed on
+	//    each chunk that touches the gateway.
 	pinTTL := requestPinTTL(req.GetTimeoutMs())
-	pinValue := encodeRequestPin(sender.ToTopic(), concrete)
-	if pinErr := s.sessions.SetRequestPin(ctx, requestID, pinValue, pinTTL); pinErr != nil {
+	callerTopic := sender.ToTopic()
+	wireID := newWireID()
+	pinValue := encodeRequestPin3(requestID, callerTopic, concrete)
+	forwardIndexKey := scopedPinID(callerTopic, requestID)
+	if pinErr := s.sessions.SetRequestPin(ctx, wireID, pinValue, pinTTL); pinErr != nil {
 		// Non-fatal: a missing pin only breaks chunked uploads/responses, not
 		// inline bodies. Log and continue so the inline path stays available.
-		logging.Logger.Warn().Err(pinErr).Str("request_id", requestID).Msg("routeProxyHttpRequest: SetRequestPin failed (non-fatal for inline bodies)")
+		logging.Logger.Warn().Err(pinErr).Str("request_id", requestID).Msg("routeProxyHttpRequest: SetRequestPin(wireID) failed (non-fatal for inline bodies)")
+	}
+	if pinErr := s.sessions.SetRequestPin(ctx, forwardIndexKey, wireID, pinTTL); pinErr != nil {
+		logging.Logger.Warn().Err(pinErr).Str("request_id", requestID).Msg("routeProxyHttpRequest: SetRequestPin(forward index) failed (non-fatal for inline bodies)")
 	}
 
-	// 5. Publish to the concrete target topic.
+	// 5. Publish to the concrete target topic. Override the wire request_id
+	// with the gateway-minted wireID so the service-side echo is collision-
+	// free; the response handler restores the caller-side originalID before
+	// delivering back to the caller.
+	req.RequestId = wireID
 	downstream := &pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_ProxyHttpRequest{ProxyHttpRequest: req},
 	}
 	if err := s.publishProxyEnvelope(ctx, concrete, downstream); err != nil {
-		_ = s.sessions.DeleteRequestPin(ctx, requestID)
+		_ = s.sessions.DeleteRequestPin(ctx, wireID)
+		_ = s.sessions.DeleteRequestPin(ctx, forwardIndexKey)
 		s.auditProxyHttpFailure(ctx, sender, concrete, requestID, client.SessionUUID, resolvedAuthority, err.Error())
 		sendProxyHttpError(client, requestID, pb.ProxyError_SIDECAR_UNAVAILABLE,
 			fmt.Sprintf("failed to deliver request: %v", err))
@@ -451,6 +481,27 @@ func requestPinTTL(timeoutMs int64) time.Duration {
 // Mirrors tunnelPinSep so the pin shape is consistent across primitives.
 const requestPinSep = "|"
 
+// pinScopeSep separates the scoping topic (caller or service identity) from
+// the request_id / tunnel_id portion of a pin-registry key. Two callers can
+// independently use the same request_id ("req-1") in parallel; without a
+// per-caller scope the second SetRequestPin would silently overwrite the
+// first. The chosen separator is "@" — not a legal character in any
+// canonical Aether identity topic, so a scoped key can never collide with
+// a legacy bare-id key.
+const pinScopeSep = "@"
+
+// scopedPinID returns the namespaced key used in the pin registry. The scope
+// is either the caller or the service identity topic — whichever side of the
+// conversation is doing the read/write knows itself. We dual-write at SET
+// time (under both the caller-scoped and service-scoped keys) so that both
+// directions of the follow-on traffic can find the pin from its own side.
+func scopedPinID(scope, id string) string {
+	if scope == "" {
+		return id
+	}
+	return scope + pinScopeSep + id
+}
+
 // encodeRequestPin returns the pin value used for SetRequestPin: caller and
 // service identities joined by requestPinSep.
 func encodeRequestPin(caller, service string) string {
@@ -469,6 +520,46 @@ func decodeRequestPin(value string) (caller, service string) {
 	return "", value
 }
 
+// encodeRequestPin3 packs the three-tuple (originalID, caller, service) used
+// as the primary pin value when the gateway mints a unique wire id. The
+// originalID is the caller-supplied request_id (per-BaseClient, may collide
+// across callers); caller and service are identity topics. Joined by
+// requestPinSep for storage compactness.
+func encodeRequestPin3(originalID, caller, service string) string {
+	return originalID + requestPinSep + caller + requestPinSep + service
+}
+
+// decodeRequestPin3 splits a three-tuple pin value into originalID, caller,
+// and service. Returns ("", caller, service) when the value lacks the
+// originalID prefix (legacy two-tuple value), preserving backward compatibility
+// with pins written by older code paths or unit tests.
+func decodeRequestPin3(value string) (originalID, caller, service string) {
+	parts := strings.SplitN(value, requestPinSep, 3)
+	switch len(parts) {
+	case 3:
+		return parts[0], parts[1], parts[2]
+	case 2:
+		// Legacy two-tuple value (caller|service) with no originalID.
+		return "", parts[0], parts[1]
+	default:
+		return "", "", parts[0]
+	}
+}
+
+// wireIDPrefix marks pin-registry keys minted by the gateway for wire-id
+// correlation. The prefix is not a legal character sequence in any caller-
+// supplied request_id (callers use per-client counters like "req-N" or
+// UUIDs), so a wire id can never collide with a caller-scoped forward-index
+// key (which uses pinScopeSep "@" between scope and id).
+const wireIDPrefix = "_aether/wire/"
+
+// newWireID returns a fresh gateway-minted correlation id used as the primary
+// pin key on the service-facing leg of a proxy/tunnel call. Uniqueness is
+// guaranteed by uuid.NewString(); the prefix is documentation/forensics only.
+func newWireID() string {
+	return wireIDPrefix + uuid.NewString()
+}
+
 // routeProxyHttpBodyChunk forwards body-chunk continuations using the
 // request-pin established by routeProxyHttpRequest. Direction is determined
 // by chunk.is_request: true = caller→service, false = service→caller. The
@@ -484,37 +575,78 @@ func (s *GatewayServer) routeProxyHttpBodyChunk(ctx context.Context, client *Cli
 		return
 	}
 
-	pinValue, err := s.sessions.GetRequestPin(ctx, requestID)
-	if err != nil {
-		logging.Logger.Warn().Err(err).Str("request_id", requestID).Msg("ProxyHttpBodyChunk pin lookup failed")
-		if chunk.GetIsRequest() {
+	// Resolve the chunk's primary pin (keyed by gateway-minted wireID). The
+	// chunk's request_id is the caller-side originalID when isRequest=true
+	// (we look up the per-caller forward index to translate originalID →
+	// wireID) and the wireID itself when isRequest=false (service echoes it
+	// back). The primary pin value is originalID|caller|service.
+	senderTopic := sender.ToTopic()
+	var (
+		wireID   string
+		pinValue string
+		err      error
+	)
+	if chunk.GetIsRequest() {
+		// caller → service: chunk.RequestId is the caller-side originalID.
+		// Use the per-caller forward index to translate to the gateway-
+		// minted wireID, then fetch the primary three-tuple pin.
+		forwardKey := scopedPinID(senderTopic, requestID)
+		wireID, err = s.sessions.GetRequestPin(ctx, forwardKey)
+		if err != nil {
+			logging.Logger.Warn().Err(err).Str("request_id", requestID).Msg("ProxyHttpBodyChunk forward-index lookup failed")
 			sendProxyHttpError(client, requestID, pb.ProxyError_SIDECAR_UNAVAILABLE, "request pin lookup failed")
+			return
 		}
-		return
+		if wireID == "" {
+			sendProxyHttpError(client, requestID, pb.ProxyError_SIDECAR_UNAVAILABLE, "request pin expired or unknown")
+			return
+		}
+		pinValue, err = s.sessions.GetRequestPin(ctx, wireID)
+		if err != nil {
+			logging.Logger.Warn().Err(err).Str("request_id", requestID).Msg("ProxyHttpBodyChunk primary pin lookup failed")
+			sendProxyHttpError(client, requestID, pb.ProxyError_SIDECAR_UNAVAILABLE, "request pin lookup failed")
+			return
+		}
+	} else {
+		// service → caller: chunk.RequestId is the gateway-minted wireID
+		// (service echoes whatever id was on the request).
+		wireID = requestID
+		pinValue, err = s.sessions.GetRequestPin(ctx, wireID)
+		if err != nil {
+			logging.Logger.Warn().Err(err).Str("request_id", requestID).Msg("ProxyHttpBodyChunk primary pin lookup failed")
+			return
+		}
 	}
 	if pinValue == "" {
 		// Pin expired or absent: caller-direction chunks have nowhere to go;
-		// reply with a transport error so the caller can fail fast.
+		// reply with a transport error so the caller can fail fast. Service-
+		// direction chunks with no pin are dropped silently — the caller has
+		// either disconnected or already received a fin.
 		if chunk.GetIsRequest() {
 			sendProxyHttpError(client, requestID, pb.ProxyError_SIDECAR_UNAVAILABLE, "request pin expired or unknown")
 		}
-		// Service-direction chunks with no pin are dropped silently — the
-		// caller has either disconnected or already received a fin.
 		return
 	}
-	caller, service := decodeRequestPin(pinValue)
+	originalID, caller, service := decodeRequestPin3(pinValue)
+	if originalID == "" || caller == "" || service == "" {
+		// Malformed pin value (missing one or more tuple parts). Drop
+		// quietly — there's nothing usable to route on.
+		return
+	}
 
 	var dest string
 	if chunk.GetIsRequest() {
-		// caller → service. Sender must be the caller (pin's caller side).
-		// Defence-in-depth: if sender doesn't match the pinned caller we
-		// still deliver — the pin is the source of truth.
+		// caller → service. Rewrite chunk.RequestId to the wireID so the
+		// service-side correlation succeeds even when multiple callers
+		// reused the same originalID.
 		dest = service
+		chunk.RequestId = wireID
 	} else {
+		// service → caller. Restore chunk.RequestId to the caller-side
+		// originalID so the SDK's per-client inflight map (keyed by
+		// originalID) resolves correctly.
 		dest = caller
-	}
-	if dest == "" {
-		return
+		chunk.RequestId = originalID
 	}
 
 	downstream := &pb.DownstreamMessage{
@@ -539,22 +671,50 @@ func (s *GatewayServer) routeProxyHttpBodyChunk(ctx context.Context, client *Cli
 	} else if pubErr := s.publishProxyEnvelope(ctx, dest, downstream); pubErr != nil {
 		logging.Logger.Warn().Err(pubErr).Str("request_id", requestID).Str("target", dest).Msg("ProxyHttpBodyChunk forward failed")
 		if chunk.GetIsRequest() {
-			sendProxyHttpError(client, requestID, pb.ProxyError_SIDECAR_UNAVAILABLE, fmt.Sprintf("failed to deliver chunk: %v", pubErr))
-			_ = s.sessions.DeleteRequestPin(ctx, requestID)
+			sendProxyHttpError(client, originalID, pb.ProxyError_SIDECAR_UNAVAILABLE, fmt.Sprintf("failed to deliver chunk: %v", pubErr))
+			s.deleteRequestPinAndIndex(ctx, wireID, caller, originalID)
 		}
 		return
 	}
 
-	// Refresh TTL so a still-streaming request doesn't lose its pin.
-	if rErr := s.sessions.RefreshRequestPin(ctx, requestID, requestPinTTL(0)); rErr != nil {
-		logging.Logger.Debug().Err(rErr).Str("request_id", requestID).Msg("ProxyHttpBodyChunk pin refresh failed (non-fatal)")
-	}
+	// Refresh TTLs on both the primary pin and the caller-scoped forward
+	// index so a still-streaming request doesn't lose its pin on either
+	// direction's lookup.
+	s.refreshRequestPinAndIndex(ctx, wireID, caller, originalID, requestPinTTL(0))
 
 	// On final response chunk, clear the pin: no more frames will use it.
 	// Final request chunks don't clear the pin yet — the response is still
 	// pending and we reuse the same pin for the response path.
 	if chunk.GetFin() && !chunk.GetIsRequest() {
-		_ = s.sessions.DeleteRequestPin(ctx, requestID)
+		s.deleteRequestPinAndIndex(ctx, wireID, caller, originalID)
+	}
+}
+
+// deleteRequestPinAndIndex drops the primary wireID pin and the caller-scoped
+// forward index in one shot. Idempotent: errors are swallowed (callers treat
+// pin cleanup as best-effort).
+func (s *GatewayServer) deleteRequestPinAndIndex(ctx context.Context, wireID, caller, originalID string) {
+	if wireID != "" {
+		_ = s.sessions.DeleteRequestPin(ctx, wireID)
+	}
+	if caller != "" && originalID != "" {
+		_ = s.sessions.DeleteRequestPin(ctx, scopedPinID(caller, originalID))
+	}
+}
+
+// refreshRequestPinAndIndex extends the TTL on both the primary wireID pin
+// and the caller-scoped forward index so an in-flight request doesn't lose
+// its routing slot on either direction's lookup.
+func (s *GatewayServer) refreshRequestPinAndIndex(ctx context.Context, wireID, caller, originalID string, ttl time.Duration) {
+	if wireID != "" {
+		if rErr := s.sessions.RefreshRequestPin(ctx, wireID, ttl); rErr != nil {
+			logging.Logger.Debug().Err(rErr).Str("wire_id", wireID).Msg("request pin refresh (wireID) failed (non-fatal)")
+		}
+	}
+	if caller != "" && originalID != "" {
+		if rErr := s.sessions.RefreshRequestPin(ctx, scopedPinID(caller, originalID), ttl); rErr != nil {
+			logging.Logger.Debug().Err(rErr).Str("request_id", originalID).Msg("request pin refresh (forward index) failed (non-fatal)")
+		}
 	}
 }
 
@@ -569,7 +729,13 @@ func (s *GatewayServer) routeProxyHttpResponse(ctx context.Context, client *Clie
 		return
 	}
 
-	pinValue, err := s.sessions.GetRequestPin(ctx, requestID)
+	// Responses come from the service echoing back whatever request_id the
+	// gateway stamped on the outbound envelope. Production traffic always
+	// carries a gateway-minted wireID (see routeProxyHttpRequest), so the
+	// primary pin lookup is collision-free regardless of how many callers
+	// reused the same caller-side originalID concurrently.
+	wireID := requestID
+	pinValue, err := s.sessions.GetRequestPin(ctx, wireID)
 	if err != nil {
 		logging.Logger.Warn().Err(err).Str("request_id", requestID).Msg("ProxyHttpResponse pin lookup failed")
 		return
@@ -580,17 +746,22 @@ func (s *GatewayServer) routeProxyHttpResponse(ctx context.Context, client *Clie
 		logging.Logger.Debug().Str("request_id", requestID).Msg("ProxyHttpResponse: no pin")
 		return
 	}
-	caller, _ := decodeRequestPin(pinValue)
-	if caller == "" {
+	originalID, caller, _ := decodeRequestPin3(pinValue)
+	if caller == "" || originalID == "" {
+		// Malformed pin value (missing caller or originalID portion). Drop
+		// quietly — there's nothing usable to route on.
 		return
 	}
+	// Restore the caller-side originalID so the SDK's per-client inflight
+	// map (keyed by NextRequestID() output) resolves the response correctly.
+	resp.RequestId = originalID
 
 	downstream := &pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_ProxyHttpResponse{ProxyHttpResponse: resp},
 	}
 	if pubErr := s.publishProxyEnvelope(ctx, caller, downstream); pubErr != nil {
 		logging.Logger.Warn().Err(pubErr).Str("request_id", requestID).Str("target", caller).Msg("ProxyHttpResponse forward failed")
-		_ = s.sessions.DeleteRequestPin(ctx, requestID)
+		s.deleteRequestPinAndIndex(ctx, wireID, caller, originalID)
 		return
 	}
 
@@ -598,14 +769,11 @@ func (s *GatewayServer) routeProxyHttpResponse(ctx context.Context, client *Clie
 	// error; chunked-body responses keep the pin alive until the final chunk
 	// arrives (handled in routeProxyHttpBodyChunk).
 	if resp.GetError() != nil || !resp.GetBodyChunked() {
-		_ = s.sessions.DeleteRequestPin(ctx, requestID)
+		s.deleteRequestPinAndIndex(ctx, wireID, caller, originalID)
 		return
 	}
 	// Chunked response in progress — refresh the pin so the chunks find it.
-	if rErr := s.sessions.RefreshRequestPin(ctx, requestID, requestPinTTL(0)); rErr != nil {
-		logging.Logger.Debug().Err(rErr).Str("request_id", requestID).Msg("ProxyHttpResponse pin refresh failed (non-fatal)")
-	}
-	_ = sender
+	s.refreshRequestPinAndIndex(ctx, wireID, caller, originalID, requestPinTTL(0))
 	_ = client
 }
 
@@ -663,14 +831,37 @@ func (s *GatewayServer) routeTunnelOpen(ctx context.Context, client *ClientSessi
 		return
 	}
 
-	// 3. Pin tunnel_id → caller|concrete with TTL ≥ idle_timeout_ms.
-	// Encoding both sides lets routeTunnelAck deliver acks to the correct
-	// counterparty regardless of which direction the credit grant flows.
+	// 3. Pin tunnel_id → originalID|caller|concrete with TTL ≥ idle_timeout_ms.
+	//
+	// Caller-supplied tunnel_id is per-BaseClient (NextRequestID() restarts
+	// at "req-1" in every SDK instance), so two callers can independently
+	// use the same wire id concurrently. Two collision-safe indices keep
+	// both directions of the tunnel routable:
+	//
+	//   - A unique wireID minted here is stamped onto the outbound envelope
+	//     (open.TunnelId = wireID, plus on all subsequent TunnelData/Ack/
+	//     Close frames the service emits). The service echoes wireID back,
+	//     so the pin lookup on that leg is collision-free regardless of
+	//     how many callers reused the same caller-side originalID.
+	//   - A caller-scoped forward index (scopedPinID(caller, originalID))
+	//     records wireID so caller-direction frames (which still carry the
+	//     caller-side originalID) can be translated to wireID before
+	//     forwarding to the service.
 	pinTTL := tunnelPinTTL(open.GetIdleTimeoutMs())
-	pinValue := encodeTunnelPin(sender.ToTopic(), concrete)
-	if pinErr := s.sessions.SetTunnelPin(ctx, tunnelID, pinValue, pinTTL); pinErr != nil {
+	callerTopic := sender.ToTopic()
+	wireID := newWireID()
+	pinValue := encodeTunnelPin3(tunnelID, callerTopic, concrete)
+	forwardIndexKey := scopedPinID(callerTopic, tunnelID)
+	if pinErr := s.sessions.SetTunnelPin(ctx, wireID, pinValue, pinTTL); pinErr != nil {
 		s.auditTunnelOpenFailure(ctx, sender, concrete, tunnelID, client.SessionUUID, resolvedAuthority,
-			fmt.Sprintf("failed to record tunnel pin: %v", pinErr))
+			fmt.Sprintf("failed to record tunnel pin (wireID): %v", pinErr))
+		sendTunnelClose(client, tunnelID, pb.TunnelClose_ERROR, "internal: pin failed")
+		return
+	}
+	if pinErr := s.sessions.SetTunnelPin(ctx, forwardIndexKey, wireID, pinTTL); pinErr != nil {
+		_ = s.sessions.DeleteTunnelPin(ctx, wireID)
+		s.auditTunnelOpenFailure(ctx, sender, concrete, tunnelID, client.SessionUUID, resolvedAuthority,
+			fmt.Sprintf("failed to record tunnel pin (forward index): %v", pinErr))
 		sendTunnelClose(client, tunnelID, pb.TunnelClose_ERROR, "internal: pin failed")
 		return
 	}
@@ -678,9 +869,14 @@ func (s *GatewayServer) routeTunnelOpen(ctx context.Context, client *ClientSessi
 	// 4. Publish. The downstream oneof has no TunnelOpen variant; sidecars
 	// receive the open as the seq=0 TunnelData frame whose payload is the
 	// marshaled TunnelOpen envelope (target rewritten to the concrete topic).
+	//
+	// Rewrite TunnelId to the gateway-minted wireID so the service-side
+	// correlates against a unique id; caller-side originalID is preserved
+	// in the pin value and restored on the response leg.
+	open.TunnelId = wireID
 	openBytes, marshErr := proto.Marshal(open)
 	if marshErr != nil {
-		_ = s.sessions.DeleteTunnelPin(ctx, tunnelID)
+		s.deleteTunnelPinAndIndex(ctx, wireID, callerTopic, tunnelID)
 		s.auditTunnelOpenFailure(ctx, sender, concrete, tunnelID, client.SessionUUID, resolvedAuthority,
 			fmt.Sprintf("marshal TunnelOpen: %v", marshErr))
 		sendTunnelClose(client, tunnelID, pb.TunnelClose_ERROR, "internal: marshal failed")
@@ -689,14 +885,14 @@ func (s *GatewayServer) routeTunnelOpen(ctx context.Context, client *ClientSessi
 	downstream := &pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_TunnelData{
 			TunnelData: &pb.TunnelData{
-				TunnelId: tunnelID,
+				TunnelId: wireID,
 				Seq:      0,
 				Data:     openBytes,
 			},
 		},
 	}
 	if err := s.publishProxyEnvelope(ctx, concrete, downstream); err != nil {
-		_ = s.sessions.DeleteTunnelPin(ctx, tunnelID)
+		s.deleteTunnelPinAndIndex(ctx, wireID, callerTopic, tunnelID)
 		s.auditTunnelOpenFailure(ctx, sender, concrete, tunnelID, client.SessionUUID, resolvedAuthority, err.Error())
 		sendTunnelClose(client, tunnelID, pb.TunnelClose_ERROR, "SIDECAR_UNAVAILABLE: "+err.Error())
 		return
@@ -704,6 +900,34 @@ func (s *GatewayServer) routeTunnelOpen(ctx context.Context, client *ClientSessi
 
 	counter.n.Add(1)
 	s.auditTunnelOpened(ctx, sender, concrete, tunnelID, client.SessionUUID, resolvedAuthority)
+}
+
+// deleteTunnelPinAndIndex drops the primary wireID-keyed tunnel pin and the
+// caller-scoped forward index in one shot. Idempotent: errors are swallowed
+// (callers treat pin cleanup as best-effort).
+func (s *GatewayServer) deleteTunnelPinAndIndex(ctx context.Context, wireID, caller, originalID string) {
+	if wireID != "" {
+		_ = s.sessions.DeleteTunnelPin(ctx, wireID)
+	}
+	if caller != "" && originalID != "" {
+		_ = s.sessions.DeleteTunnelPin(ctx, scopedPinID(caller, originalID))
+	}
+}
+
+// refreshTunnelPinAndIndex extends the TTL on both the primary wireID pin
+// and the caller-scoped forward index so an in-flight tunnel doesn't lose
+// its routing slot on either direction's lookup.
+func (s *GatewayServer) refreshTunnelPinAndIndex(ctx context.Context, wireID, caller, originalID string, ttl time.Duration) {
+	if wireID != "" {
+		if rErr := s.sessions.RefreshTunnelPin(ctx, wireID, ttl); rErr != nil {
+			logging.Logger.Debug().Err(rErr).Str("wire_id", wireID).Msg("tunnel pin refresh (wireID) failed (non-fatal)")
+		}
+	}
+	if caller != "" && originalID != "" {
+		if rErr := s.sessions.RefreshTunnelPin(ctx, scopedPinID(caller, originalID), ttl); rErr != nil {
+			logging.Logger.Debug().Err(rErr).Str("tunnel_id", originalID).Msg("tunnel pin refresh (forward index) failed (non-fatal)")
+		}
+	}
 }
 
 // tunnelPinTTL converts a TunnelOpen.idle_timeout_ms into a Redis TTL,
@@ -758,15 +982,16 @@ func (s *GatewayServer) routeTunnelData(ctx context.Context, client *ClientSessi
 	if tunnelID == "" {
 		return
 	}
-	// Look up the pin and pick the destination from the SENDER's
-	// direction — caller→service OR service→caller. The pin records
-	// both peer identities; without sender-vs-pin matching we'd
-	// re-route service-side echo data back to the same service,
-	// creating a silent loop where the originating caller never sees
-	// its response bytes. (Mirrors the same logic as routeTunnelAck.)
-	pinValue, err := s.sessions.GetTunnelPin(ctx, tunnelID)
-	if err != nil {
-		logging.Logger.Warn().Err(err).Str("tunnel_id", tunnelID).Msg("tunnel pin lookup failed")
+	// Resolve the frame's primary tunnel pin (keyed by gateway-minted
+	// wireID). routeTunnelOpen stamps wireID on the outbound envelope, so
+	// the service always echoes wireID back; the caller direction still
+	// uses the per-caller originalID and is translated via the caller-
+	// scoped forward index. The primary pin value is originalID|caller|
+	// service.
+	senderTopic := sender.ToTopic()
+	wireID, pinValue, lookupErr, isFromCaller := s.resolveTunnelPin(ctx, senderTopic, tunnelID)
+	if lookupErr != nil {
+		logging.Logger.Warn().Err(lookupErr).Str("tunnel_id", tunnelID).Msg("tunnel pin lookup failed")
 		sendTunnelClose(client, tunnelID, pb.TunnelClose_PEER_RESET, "pin lookup failed")
 		return
 	}
@@ -775,27 +1000,26 @@ func (s *GatewayServer) routeTunnelData(ctx context.Context, client *ClientSessi
 		s.tunnelCounterFor(sender.Workspace).n.Add(-1)
 		return
 	}
-	caller, service := decodeTunnelPin(pinValue)
-	if service == "" {
+	originalID, caller, service := decodeTunnelPin3(pinValue)
+	if service == "" || caller == "" || originalID == "" {
 		sendTunnelClose(client, tunnelID, pb.TunnelClose_PEER_RESET, "tunnel pin malformed")
 		return
 	}
 
-	senderTopic := sender.ToTopic()
-	var destTopic string
+	var destTopic, destFrameID string
 	switch {
-	case caller == "":
-		// Service-only pin (encodeTunnelPin's documented compact
-		// form when no caller half was bound at Open). Cannot
-		// disambiguate sender direction from a single-half pin,
-		// so route to the service — the only known peer. This is
-		// the production behaviour for pre-bidirectional Open
-		// callers and the shape unit tests use directly.
+	case isFromCaller:
+		// caller → service. Rewrite TunnelId to wireID so the service-side
+		// correlation succeeds even when multiple callers reused the same
+		// originalID.
 		destTopic = service
-	case senderTopic == caller:
-		destTopic = service
+		destFrameID = wireID
 	case senderTopic == service:
+		// service → caller. Restore TunnelId to the caller-side originalID
+		// so the SDK's per-client tunnel inflight map (keyed by the value
+		// returned from NextRequestID()) resolves correctly.
 		destTopic = caller
+		destFrameID = originalID
 	default:
 		// Sender isn't a known peer for this tunnel. Drop silently —
 		// emitting PEER_RESET to the wrong session would surprise an
@@ -811,30 +1035,32 @@ func (s *GatewayServer) routeTunnelData(ctx context.Context, client *ClientSessi
 	if _, locallyConnected := s.identityIndex.Load(destTopic); !locallyConnected {
 		active, _ := s.sessions.IsActive(ctx, destTopic)
 		if !active {
-			_ = s.sessions.DeleteTunnelPin(ctx, tunnelID)
+			s.deleteTunnelPinAndIndex(ctx, wireID, caller, originalID)
 			s.tunnelCounterFor(sender.Workspace).n.Add(-1)
 			sendTunnelClose(client, tunnelID, pb.TunnelClose_PEER_RESET, "tunnel peer disconnected")
 			return
 		}
 	}
 
-	// Quota: per-tunnel byte cap (counted across both directions).
+	// Quota: per-tunnel byte cap (counted across both directions). Key the
+	// byte counter by wireID so a caller reusing originalID for a new
+	// tunnel does not inherit a previous tunnel's byte count.
 	if cap := s.quotaEnforcer.getMaxTunnelBytes(); cap > 0 {
-		counter := s.tunnelByteCounterFor(tunnelID)
+		counter := s.tunnelByteCounterFor(wireID)
 		if total := counter.Add(int64(len(data.Data))); total > cap {
-			_ = s.sessions.DeleteTunnelPin(ctx, tunnelID)
+			s.deleteTunnelPinAndIndex(ctx, wireID, caller, originalID)
 			s.tunnelCounterFor(sender.Workspace).n.Add(-1)
-			s.deleteTunnelByteCounter(tunnelID)
+			s.deleteTunnelByteCounter(wireID)
 			sendTunnelClose(client, tunnelID, pb.TunnelClose_QUOTA,
 				fmt.Sprintf("per-tunnel byte cap %d exceeded", cap))
 			return
 		}
 	}
-	// Refresh the pin so an in-flight tunnel doesn't time out mid-stream.
-	if err := s.sessions.RefreshTunnelPin(ctx, tunnelID, defaultTunnelPinTTL); err != nil {
-		logging.Logger.Debug().Err(err).Str("tunnel_id", tunnelID).Msg("tunnel pin refresh failed (non-fatal)")
-	}
+	// Refresh both the primary pin and the forward index so an in-flight
+	// tunnel doesn't time out mid-stream on either direction's lookup.
+	s.refreshTunnelPinAndIndex(ctx, wireID, caller, originalID, defaultTunnelPinTTL)
 
+	data.TunnelId = destFrameID
 	downstream := &pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_TunnelData{TunnelData: data},
 	}
@@ -850,6 +1076,32 @@ func (s *GatewayServer) routeTunnelData(ctx context.Context, client *ClientSessi
 		logging.Logger.Warn().Err(err).Str("tunnel_id", tunnelID).Str("target", destTopic).Msg("failed to forward TunnelData")
 		// Don't auto-close on a single publish failure — caller may retry.
 	}
+}
+
+// resolveTunnelPin returns the primary tunnel-pin value (keyed by wireID)
+// given the sender's perspective. When the wire id on the frame is the
+// gateway-minted wireID (service-direction frames), the lookup is direct.
+// When the wire id is the caller-side originalID (caller-direction frames),
+// the per-caller forward index is consulted first to translate originalID →
+// wireID, then the primary pin is fetched. isFromCaller indicates which
+// direction the frame is travelling. The returned wireID is "" when no pin
+// could be located.
+func (s *GatewayServer) resolveTunnelPin(ctx context.Context, senderTopic, frameTunnelID string) (wireID, pinValue string, err error, isFromCaller bool) {
+	// Direct wireID lookup (service-direction frames). wireID values always
+	// carry the wireIDPrefix; this lookup is collision-free.
+	if strings.HasPrefix(frameTunnelID, wireIDPrefix) {
+		pinValue, err = s.sessions.GetTunnelPin(ctx, frameTunnelID)
+		return frameTunnelID, pinValue, err, false
+	}
+	// Caller-direction frame: translate originalID → wireID via the
+	// per-caller forward index, then fetch the primary pin.
+	forwardKey := scopedPinID(senderTopic, frameTunnelID)
+	wireID, err = s.sessions.GetTunnelPin(ctx, forwardKey)
+	if err != nil || wireID == "" {
+		return "", "", err, true
+	}
+	pinValue, err = s.sessions.GetTunnelPin(ctx, wireID)
+	return wireID, pinValue, err, true
 }
 
 // tunnelPinSep separates the caller and service portions of a tunnel pin
@@ -876,6 +1128,31 @@ func decodeTunnelPin(value string) (caller, service string) {
 	return "", value
 }
 
+// encodeTunnelPin3 packs the three-tuple (originalID, caller, service) used
+// as the primary tunnel-pin value when the gateway mints a unique wire id.
+// The originalID is the caller-supplied tunnel_id (per-BaseClient, may collide
+// across callers); caller and service are identity topics. Joined by
+// tunnelPinSep for storage compactness.
+func encodeTunnelPin3(originalID, caller, service string) string {
+	return originalID + tunnelPinSep + caller + tunnelPinSep + service
+}
+
+// decodeTunnelPin3 splits a three-tuple pin value into originalID, caller,
+// and service. Returns ("", caller, service) when the value lacks the
+// originalID prefix (legacy two-tuple value), preserving backward compatibility
+// with pins written by older code paths or unit tests.
+func decodeTunnelPin3(value string) (originalID, caller, service string) {
+	parts := strings.SplitN(value, tunnelPinSep, 3)
+	switch len(parts) {
+	case 3:
+		return parts[0], parts[1], parts[2]
+	case 2:
+		return "", parts[0], parts[1]
+	default:
+		return "", "", parts[0]
+	}
+}
+
 // routeTunnelAck forwards an upstream-bound TunnelAck from one peer (typically
 // the sidecar) to the *other* peer (the original caller) as a downstream
 // TunnelAck. The pin records both caller and service identities, so we deliver
@@ -890,29 +1167,32 @@ func (s *GatewayServer) routeTunnelAck(ctx context.Context, client *ClientSessio
 	if tunnelID == "" {
 		return
 	}
-	pinValue, err := s.sessions.GetTunnelPin(ctx, tunnelID)
-	if err != nil {
-		logging.Logger.Debug().Err(err).Str("tunnel_id", tunnelID).Msg("ack: tunnel pin lookup failed")
+	senderTopic := sender.ToTopic()
+	wireID, pinValue, lookupErr, isFromCaller := s.resolveTunnelPin(ctx, senderTopic, tunnelID)
+	if lookupErr != nil {
+		logging.Logger.Debug().Err(lookupErr).Str("tunnel_id", tunnelID).Msg("ack: tunnel pin lookup failed")
 		return
 	}
 	if pinValue == "" {
 		// Pin expired or unknown — ack has nowhere to land. Drop quietly.
 		return
 	}
-	caller, service := decodeTunnelPin(pinValue)
+	originalID, caller, service := decodeTunnelPin3(pinValue)
+	if originalID == "" || caller == "" || service == "" {
+		// Malformed pin — drop quietly (acks are best-effort).
+		return
+	}
 
-	// Pick the destination: whichever side is NOT the sender. If the pin
-	// lacks a caller (legacy/compat or pre-Open ack race), only forward
-	// caller→service direction.
-	senderTopic := sender.ToTopic()
-	var destTopic string
-	switch senderTopic {
-	case service:
-		destTopic = caller
-	case caller:
+	// Pick the destination: whichever side is NOT the sender.
+	var destTopic, destFrameID string
+	switch {
+	case isFromCaller:
 		destTopic = service
+		destFrameID = wireID
+	case senderTopic == service:
+		destTopic = caller
+		destFrameID = originalID
 	default:
-		// Sender isn't a known peer for this tunnel. Drop.
 		logging.Logger.Debug().Str("tunnel_id", tunnelID).Str("sender", senderTopic).
 			Str("caller", caller).Str("service", service).Msg("ack: sender not a known tunnel peer")
 		return
@@ -923,6 +1203,7 @@ func (s *GatewayServer) routeTunnelAck(ctx context.Context, client *ClientSessio
 		return
 	}
 
+	ack.TunnelId = destFrameID
 	downstream := &pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_TunnelAck{TunnelAck: ack},
 	}
@@ -941,25 +1222,40 @@ func (s *GatewayServer) routeTunnelAck(ctx context.Context, client *ClientSessio
 
 func (s *GatewayServer) routeTunnelClose(ctx context.Context, client *ClientSession, sender models.Identity, closeMsg *pb.TunnelClose) {
 	tunnelID := closeMsg.GetTunnelId()
-	pinValue, err := s.sessions.GetTunnelPin(ctx, tunnelID)
-	if err != nil {
-		logging.Logger.Warn().Err(err).Str("tunnel_id", tunnelID).Msg("close: tunnel pin lookup failed")
+	senderTopic := sender.ToTopic()
+	wireID, pinValue, lookupErr, isFromCaller := s.resolveTunnelPin(ctx, senderTopic, tunnelID)
+	if lookupErr != nil {
+		logging.Logger.Warn().Err(lookupErr).Str("tunnel_id", tunnelID).Msg("close: tunnel pin lookup failed")
 	}
-	_, concrete := decodeTunnelPin(pinValue)
+	originalID, caller, concrete := decodeTunnelPin3(pinValue)
+	// When the pin is missing entirely (close arrived after pin expiry),
+	// these fields are all empty; cleanup is still attempted under wireID
+	// (which will also be empty → no-op).
 
-	// Best-effort delivery to the pinned sidecar so it can release backend
-	// resources. Skip when we have no pin (likely already cleaned up).
-	if concrete != "" {
+	// Best-effort delivery of the TunnelClose to the *opposite* peer so it
+	// can release backend resources. Translate the wire id to whichever id
+	// the destination expects (originalID for the caller, wireID for the
+	// service). Skip when we have no pin (likely already cleaned up).
+	var destTopic, destFrameID string
+	if isFromCaller {
+		destTopic = concrete
+		destFrameID = wireID
+	} else {
+		destTopic = caller
+		destFrameID = originalID
+	}
+	if destTopic != "" {
+		closeMsg.TunnelId = destFrameID
 		downstream := &pb.DownstreamMessage{
 			Payload: &pb.DownstreamMessage_TunnelClose{TunnelClose: closeMsg},
 		}
-		if pubErr := s.publishProxyEnvelope(ctx, concrete, downstream); pubErr != nil {
+		if pubErr := s.publishProxyEnvelope(ctx, destTopic, downstream); pubErr != nil {
 			logging.Logger.Debug().Err(pubErr).Str("tunnel_id", tunnelID).Msg("close-frame forward failed (non-fatal)")
 		}
 	}
 
-	_ = s.sessions.DeleteTunnelPin(ctx, tunnelID)
-	s.deleteTunnelByteCounter(tunnelID)
+	s.deleteTunnelPinAndIndex(ctx, wireID, caller, originalID)
+	s.deleteTunnelByteCounter(wireID)
 	s.tunnelCounterFor(sender.Workspace).n.Add(-1)
 
 	s.auditTunnelClosed(ctx, sender, concrete, tunnelID, client.SessionUUID, closeMsg.GetReason(), closeMsg.GetDetail())

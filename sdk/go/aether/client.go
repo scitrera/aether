@@ -114,6 +114,14 @@ type BaseClient struct {
 	pendingAuditSubmitRequests    pendingRequests[*pb.SubmitAuditEventResponse]
 	requestIDCounter              atomic.Uint64
 
+	// Per-client inflight registries for proxy requests and tunnels. These
+	// must be per-BaseClient (not package-globals) because each BaseClient's
+	// NextRequestID() counter restarts at "req-1", so two clients in the same
+	// process would collide on registry keys otherwise. Zero-value sync.Map
+	// is ready to use — no init needed.
+	proxyInflights  sync.Map // requestID → *proxyInflight
+	tunnelInflights sync.Map // tunnelID → *tunnelState
+
 	// Registered authority-grant caches receive AuthorityGrantRevocation
 	// push events. Slice (not single field) so multiple caches per client
 	// stay supported; in practice a single cache is normal.
@@ -1820,7 +1828,7 @@ func (c *BaseClient) dispatchResponse(ctx context.Context, response *pb.Downstre
 		// fire OnProxyHttpResponse so the mediator can route it. Both
 		// nil-handler and unmatched-id paths are no-ops, preserving the
 		// drop-on-miss behaviour for principals that don't expect strays.
-		if !resolveProxyResponse(payload.ProxyHttpResponse.GetRequestId(), payload.ProxyHttpResponse) {
+		if !c.resolveProxyResponse(payload.ProxyHttpResponse.GetRequestId(), payload.ProxyHttpResponse) {
 			if c.handlers.OnProxyHttpResponse != nil {
 				return c.handlers.OnProxyHttpResponse(ctx, payload.ProxyHttpResponse)
 			}

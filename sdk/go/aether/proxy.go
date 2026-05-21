@@ -112,46 +112,44 @@ func (s *streamingBody) Close() error {
 }
 
 // =============================================================================
-// BaseClient additions — pending proxy request registry
+// BaseClient — pending proxy request registry (per-client)
 // =============================================================================
-
-// pendingProxyRequests is the registry for in-flight proxy requests.
-// It is a field on BaseClient (added via composition at compile time via the
-// pendingRequests generic type), but because we need the multi-frame chunk
-// accumulation we maintain a separate sync.Map here keyed by request_id.
-
-// proxyInflights holds in-flight proxy inflight state keyed by request_id.
-var globalProxyInflights sync.Map
+//
+// Each BaseClient owns its own sync.Map of in-flight proxy requests keyed by
+// request_id (see BaseClient.proxyInflights in client.go). This must be
+// per-client rather than package-global: two BaseClients in the same process
+// each start their NextRequestID() counter at "req-1", so a package-global
+// map would have them collide on slot keys.
 
 // registerProxyInflight stores inflight state for a new proxy call.
-func registerProxyInflight(requestID string) *proxyInflight {
+func (c *BaseClient) registerProxyInflight(requestID string) *proxyInflight {
 	inf := &proxyInflight{
 		headerCh: make(chan *pb.ProxyHttpResponse, 1),
 		done:     make(chan struct{}),
 	}
-	globalProxyInflights.Store(requestID, inf)
+	c.proxyInflights.Store(requestID, inf)
 	return inf
 }
 
 // registerStreamingProxyInflight is like registerProxyInflight but wires a
 // streamingBody so chunks flow into the SDK reader as they arrive.
-func registerStreamingProxyInflight(requestID string) *proxyInflight {
-	inf := registerProxyInflight(requestID)
+func (c *BaseClient) registerStreamingProxyInflight(requestID string) *proxyInflight {
+	inf := c.registerProxyInflight(requestID)
 	inf.streaming = newStreamingBody()
 	return inf
 }
 
 // deleteProxyInflight removes inflight state for a completed/aborted proxy call.
-func deleteProxyInflight(requestID string) {
-	globalProxyInflights.Delete(requestID)
+func (c *BaseClient) deleteProxyInflight(requestID string) {
+	c.proxyInflights.Delete(requestID)
 }
 
 // resolveProxyResponse delivers a response header frame to the waiting
 // ProxyHTTP call. Returns true if the request was found. Streaming inflights
 // can receive a second header frame mid-stream (carrying a terminal
 // ProxyError); in that case the streaming body is closed with the error.
-func resolveProxyResponse(requestID string, resp *pb.ProxyHttpResponse) bool {
-	val, ok := globalProxyInflights.Load(requestID)
+func (c *BaseClient) resolveProxyResponse(requestID string, resp *pb.ProxyHttpResponse) bool {
+	val, ok := c.proxyInflights.Load(requestID)
 	if !ok {
 		return false
 	}
@@ -192,8 +190,8 @@ func resolveProxyResponse(requestID string, resp *pb.ProxyHttpResponse) bool {
 
 // appendProxyChunk appends a response body chunk to the inflight state.
 // When fin=true it also signals that all chunks have arrived.
-func appendProxyChunk(requestID string, data []byte, fin bool) {
-	val, ok := globalProxyInflights.Load(requestID)
+func (c *BaseClient) appendProxyChunk(requestID string, data []byte, fin bool) {
+	val, ok := c.proxyInflights.Load(requestID)
 	if !ok {
 		return
 	}
@@ -228,7 +226,7 @@ func appendProxyChunk(requestID string, data []byte, fin bool) {
 
 // handleProxyHttpResponse processes a ProxyHttpResponse from the gateway.
 func (c *BaseClient) handleProxyHttpResponse(resp *pb.ProxyHttpResponse) {
-	resolveProxyResponse(resp.GetRequestId(), resp)
+	c.resolveProxyResponse(resp.GetRequestId(), resp)
 }
 
 // handleProxyHttpBodyChunk processes a ProxyHttpBodyChunk from the gateway.
@@ -236,7 +234,7 @@ func (c *BaseClient) handleProxyHttpBodyChunk(chunk *pb.ProxyHttpBodyChunk) {
 	if chunk.GetIsRequest() {
 		return // request-direction chunks are sent by us, not received
 	}
-	appendProxyChunk(chunk.GetRequestId(), chunk.GetData(), chunk.GetFin())
+	c.appendProxyChunk(chunk.GetRequestId(), chunk.GetData(), chunk.GetFin())
 }
 
 // =============================================================================
@@ -335,15 +333,15 @@ func (c *BaseClient) ProxyHTTP(ctx context.Context, target string, req *http.Req
 	requestID := c.NextRequestID()
 	var inf *proxyInflight
 	if o.streamResponse {
-		inf = registerStreamingProxyInflight(requestID)
+		inf = c.registerStreamingProxyInflight(requestID)
 	} else {
-		inf = registerProxyInflight(requestID)
+		inf = c.registerProxyInflight(requestID)
 	}
 	// For streaming responses we cannot delete the inflight on return: the
 	// caller still owns the body reader. The streaming body's Close() path
 	// arranges for cleanup on completion (see buildHTTPResponse below).
 	if !o.streamResponse {
-		defer deleteProxyInflight(requestID)
+		defer c.deleteProxyInflight(requestID)
 	}
 
 	chunked := len(body) > proxyChunkSize
@@ -420,7 +418,7 @@ func (c *BaseClient) buildHTTPResponse(ctx context.Context, req *http.Request, h
 	if pe := hdr.GetError(); pe != nil && pe.GetKind() != pb.ProxyError_UNKNOWN {
 		if inf.streaming != nil {
 			inf.streaming.closeWithErr(nil)
-			deleteProxyInflight(hdr.GetRequestId())
+			c.deleteProxyInflight(hdr.GetRequestId())
 		}
 		return nil, &ProxyTransportError{Kind: pe.GetKind().String(), Message: pe.GetMessage()}
 	}
@@ -436,6 +434,7 @@ func (c *BaseClient) buildHTTPResponse(ctx context.Context, req *http.Request, h
 	if inf.streaming != nil {
 		requestID := hdr.GetRequestId()
 		body := &streamingResponseReader{
+			client:    c,
 			body:      inf.streaming,
 			requestID: requestID,
 		}
@@ -494,9 +493,10 @@ func (c *BaseClient) buildHTTPResponse(ctx context.Context, req *http.Request, h
 
 // streamingResponseReader wraps a streamingBody and removes the proxy
 // inflight registration once the caller closes the body. This is the only
-// place where the streaming inflight is deleted from the global registry —
-// dropping it earlier would lose chunks still in transit.
+// place where the streaming inflight is deleted from the per-client
+// registry — dropping it earlier would lose chunks still in transit.
 type streamingResponseReader struct {
+	client    *BaseClient
 	body      *streamingBody
 	requestID string
 }
@@ -507,7 +507,7 @@ func (r *streamingResponseReader) Read(p []byte) (int, error) {
 
 func (r *streamingResponseReader) Close() error {
 	err := r.body.Close()
-	deleteProxyInflight(r.requestID)
+	r.client.deleteProxyInflight(r.requestID)
 	return err
 }
 

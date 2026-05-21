@@ -152,8 +152,14 @@ func TestRouteTunnelOpen_AgentTarget_Succeeds(t *testing.T) {
 	}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{tunnelOpen: open})
 
-	pinned, _ := s.sessions.GetTunnelPin(context.Background(), "tun-agent")
-	_, service := decodeTunnelPin(pinned)
+	// Production pin layout: forward index (caller, originalID) → wireID,
+	// then primary pin (wireID) holds (originalID|caller|service).
+	wireID, _ := s.sessions.GetTunnelPin(context.Background(), scopedPinID(sender.ToTopic(), "tun-agent"))
+	if wireID == "" {
+		t.Fatalf("expected forward index to point at a wireID after TunnelOpen")
+	}
+	pinned, _ := s.sessions.GetTunnelPin(context.Background(), wireID)
+	_, _, service := decodeTunnelPin3(pinned)
 	if service != "ag::ws1::worker::v1" {
 		t.Errorf("expected pin → ag::ws1::worker::v1, got %q (pin=%q)", service, pinned)
 	}
@@ -300,9 +306,14 @@ func TestRouteTunnelOpen_PinsToConcreteAndPublishes(t *testing.T) {
 	}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{tunnelOpen: open})
 
-	// Pin must be set; decode caller|service form.
-	pinned, _ := s.sessions.GetTunnelPin(context.Background(), "tun-1")
-	_, service := decodeTunnelPin(pinned)
+	// Production pin layout: forward index (caller, originalID) → wireID,
+	// then primary pin (wireID) holds (originalID|caller|service).
+	wireID, _ := s.sessions.GetTunnelPin(context.Background(), scopedPinID(sender.ToTopic(), "tun-1"))
+	if wireID == "" {
+		t.Fatalf("expected forward index to point at a wireID after TunnelOpen")
+	}
+	pinned, _ := s.sessions.GetTunnelPin(context.Background(), wireID)
+	_, _, service := decodeTunnelPin3(pinned)
 	if service != "sv::tcp-svc::pod-1" {
 		t.Errorf("expected pin service → sv::tcp-svc::pod-1, got pin=%q (service=%q)", pinned, service)
 	}
@@ -335,8 +346,11 @@ func TestRouteTunnelData_FollowsExistingPin(t *testing.T) {
 	sender := models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"}
 	client := newProxyClient(sender, stream)
 
-	// Pre-seed a pin and mark the pinned identity locally connected.
-	_ = s.sessions.SetTunnelPin(context.Background(), "tun-2", "sv::tcp-svc::pod-X", time.Minute)
+	// Pre-seed the production three-tuple pin (forward index + primary).
+	wireID := newWireID()
+	pinValue := encodeTunnelPin3("tun-2", sender.ToTopic(), "sv::tcp-svc::pod-X")
+	_ = s.sessions.SetTunnelPin(context.Background(), wireID, pinValue, time.Minute)
+	_ = s.sessions.SetTunnelPin(context.Background(), scopedPinID(sender.ToTopic(), "tun-2"), wireID, time.Minute)
 	s.identityIndex.Store("sv::tcp-svc::pod-X", "session-X")
 
 	data := &pb.TunnelData{TunnelId: "tun-2", Seq: 1, Data: []byte("hello")}
@@ -359,15 +373,23 @@ func TestRouteTunnelClose_DeletesPinAndDecrementsCounter(t *testing.T) {
 	sender := models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"}
 	client := newProxyClient(sender, stream)
 
-	_ = s.sessions.SetTunnelPin(context.Background(), "tun-3", "sv::svc::pod", time.Minute)
+	// Production pin layout: forward index + primary three-tuple.
+	wireID := newWireID()
+	pinValue := encodeTunnelPin3("tun-3", sender.ToTopic(), "sv::svc::pod")
+	_ = s.sessions.SetTunnelPin(context.Background(), wireID, pinValue, time.Minute)
+	_ = s.sessions.SetTunnelPin(context.Background(), scopedPinID(sender.ToTopic(), "tun-3"), wireID, time.Minute)
 	s.tunnelCounterFor("ws1").n.Store(1)
 
 	closeMsg := &pb.TunnelClose{TunnelId: "tun-3", Reason: pb.TunnelClose_NORMAL}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{tunnelClose: closeMsg})
 
-	got, _ := s.sessions.GetTunnelPin(context.Background(), "tun-3")
+	got, _ := s.sessions.GetTunnelPin(context.Background(), scopedPinID(sender.ToTopic(), "tun-3"))
 	if got != "" {
-		t.Errorf("expected pin deleted, got %q", got)
+		t.Errorf("expected forward index cleared, got %q", got)
+	}
+	primary, _ := s.sessions.GetTunnelPin(context.Background(), wireID)
+	if primary != "" {
+		t.Errorf("expected primary pin deleted, got %q", primary)
 	}
 	if s.tunnelCounterFor("ws1").n.Load() != 0 {
 		t.Errorf("expected tunnel count = 0, got %d", s.tunnelCounterFor("ws1").n.Load())
@@ -417,11 +439,15 @@ func TestRouteTunnelData_PinnedPrincipalDisconnected_EmitsPeerReset(t *testing.T
 	sender := models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"}
 	client := newProxyClient(sender, stream)
 
-	// Set a pin to a principal that is NOT in identityIndex AND not active in Redis.
-	_ = s.sessions.SetTunnelPin(context.Background(), "tun-stale", "sv::svc::ghost", time.Minute)
+	// Set a pin to a principal that is NOT in identityIndex AND not active
+	// in Redis. Production pin layout: forward index + primary three-tuple.
+	wireID := newWireID()
+	pinValue := encodeTunnelPin3("tun-stale", sender.ToTopic(), "sv::svc::ghost")
+	_ = s.sessions.SetTunnelPin(context.Background(), wireID, pinValue, time.Minute)
+	_ = s.sessions.SetTunnelPin(context.Background(), scopedPinID(sender.ToTopic(), "tun-stale"), wireID, time.Minute)
 	s.tunnelCounterFor("ws1").n.Store(1)
 	// mockSessionManager.IsActive defaults to true for all queries; flip it
-	// off so the followPin path treats the pinned principal as gone.
+	// off so the routing path treats the pinned principal as gone.
 	s.sessions.(*mockSessionManager).isActiveResult = false
 
 	data := &pb.TunnelData{TunnelId: "tun-stale", Seq: 1, Data: []byte("x")}
@@ -435,10 +461,14 @@ func TestRouteTunnelData_PinnedPrincipalDisconnected_EmitsPeerReset(t *testing.T
 	if stream.sent[0].GetTunnelClose().Reason != pb.TunnelClose_PEER_RESET {
 		t.Errorf("expected PEER_RESET, got %v", stream.sent[0].GetTunnelClose().Reason)
 	}
-	// Pin must be cleared.
-	got, _ := s.sessions.GetTunnelPin(context.Background(), "tun-stale")
+	// Pin must be cleared (forward index + primary).
+	got, _ := s.sessions.GetTunnelPin(context.Background(), scopedPinID(sender.ToTopic(), "tun-stale"))
 	if got != "" {
-		t.Errorf("expected pin cleared on PEER_RESET, got %q", got)
+		t.Errorf("expected forward index cleared on PEER_RESET, got %q", got)
+	}
+	primary, _ := s.sessions.GetTunnelPin(context.Background(), wireID)
+	if primary != "" {
+		t.Errorf("expected primary pin cleared on PEER_RESET, got %q", primary)
 	}
 }
 
@@ -485,7 +515,11 @@ func TestRouteTunnelData_PerTunnelByteCapExceeded_ClosesWithQuota(t *testing.T) 
 	sender := models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"}
 	client := newProxyClient(sender, stream)
 
-	_ = s.sessions.SetTunnelPin(context.Background(), "tun-bytes", "sv::svc::pod", time.Minute)
+	// Production pin layout: forward index + primary three-tuple.
+	wireID := newWireID()
+	pinValue := encodeTunnelPin3("tun-bytes", sender.ToTopic(), "sv::svc::pod")
+	_ = s.sessions.SetTunnelPin(context.Background(), wireID, pinValue, time.Minute)
+	_ = s.sessions.SetTunnelPin(context.Background(), scopedPinID(sender.ToTopic(), "tun-bytes"), wireID, time.Minute)
 	s.identityIndex.Store("sv::svc::pod", "session-1")
 	s.tunnelCounterFor("ws1").n.Store(1)
 

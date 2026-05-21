@@ -5,15 +5,58 @@ package gateway
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/pkg/models"
+	"google.golang.org/protobuf/proto"
 )
 
+// unwrapProxyDownstream decodes the published wire payload (a
+// MessageEnvelope wrapping an inner DownstreamMessage marshaled by
+// publishProxyEnvelope) so tests can inspect the inner frame's request_id /
+// tunnel_id rewrites.
+func unwrapProxyDownstream(t *testing.T, payload []byte) *pb.DownstreamMessage {
+	t.Helper()
+	var env pb.MessageEnvelope
+	if err := proto.Unmarshal(payload, &env); err != nil {
+		t.Fatalf("unmarshal MessageEnvelope: %v", err)
+	}
+	var inner pb.DownstreamMessage
+	if err := proto.Unmarshal(env.Payload, &inner); err != nil {
+		t.Fatalf("unmarshal DownstreamMessage: %v", err)
+	}
+	return &inner
+}
+
+// fetchPrimaryRequestPin looks up the primary (wireID-keyed) request pin
+// installed by routeProxyHttpRequest. It walks the per-caller forward index
+// (scopedPinID(caller, originalID) → wireID) to find the wireID, then fetches
+// the three-tuple pin value.
+func fetchPrimaryRequestPin(t *testing.T, s *GatewayServer, caller, originalID string) (wireID, pinValue string) {
+	t.Helper()
+	indirect, err := s.sessions.GetRequestPin(context.Background(), scopedPinID(caller, originalID))
+	if err != nil {
+		t.Fatalf("GetRequestPin(forward index): %v", err)
+	}
+	if indirect == "" {
+		return "", ""
+	}
+	wireID = indirect
+	pinValue, err = s.sessions.GetRequestPin(context.Background(), wireID)
+	if err != nil {
+		t.Fatalf("GetRequestPin(wireID): %v", err)
+	}
+	return wireID, pinValue
+}
+
 // TestRouteProxyHttpRequest_BodyChunked_InstallsPin asserts the gateway
-// installs a request-pin (caller|service) when the parent request announces
-// body_chunked=true, so follow-on chunks can find the destination.
+// installs a wireID-keyed three-tuple pin (originalID|caller|service) and a
+// per-caller forward index when the parent request announces body_chunked=
+// true. The wireID stamped on the outbound envelope must carry the
+// gateway-minted wireIDPrefix so the service-side echo lookup is
+// collision-free.
 func TestRouteProxyHttpRequest_BodyChunked_InstallsPin(t *testing.T) {
 	router := newMockMessageRouter()
 	s := newProxyTestServer(router)
@@ -32,24 +75,53 @@ func TestRouteProxyHttpRequest_BodyChunked_InstallsPin(t *testing.T) {
 	}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{httpReq: req})
 
-	got, err := s.sessions.GetRequestPin(context.Background(), "req-chunked")
-	if err != nil {
-		t.Fatalf("GetRequestPin: %v", err)
+	wireID, pinValue := fetchPrimaryRequestPin(t, s, sender.ToTopic(), "req-chunked")
+	if wireID == "" {
+		t.Fatalf("expected forward index to point at a wireID after chunked-request publish")
 	}
-	if got == "" {
-		t.Fatalf("expected request pin to be set after chunked-request publish")
+	if !strings.HasPrefix(wireID, wireIDPrefix) {
+		t.Errorf("forward-index value should be a wireID (prefix %q), got %q", wireIDPrefix, wireID)
 	}
-	caller, service := decodeRequestPin(got)
+	if pinValue == "" {
+		t.Fatalf("expected primary pin to be set under wireID %q", wireID)
+	}
+	originalID, caller, service := decodeRequestPin3(pinValue)
+	if originalID != "req-chunked" {
+		t.Errorf("pinned originalID: got %q, want %q", originalID, "req-chunked")
+	}
 	if service != "sv::memorylayer::p" {
 		t.Errorf("pinned service: got %q, want %q", service, "sv::memorylayer::p")
 	}
 	if caller != sender.ToTopic() {
 		t.Errorf("pinned caller: got %q, want %q", caller, sender.ToTopic())
 	}
+	// The published envelope must carry the wireID (the gateway rewrites
+	// req.RequestId before publishing so the service correlates against a
+	// unique id).
+	if req.GetRequestId() != wireID {
+		t.Errorf("published request_id: got %q, want %q", req.GetRequestId(), wireID)
+	}
+}
+
+// seedRequestPinPair writes the production three-tuple pin pair (primary
+// wireID-keyed entry + per-caller forward index) directly into the session
+// store. Returns the wireID for assertions.
+func seedRequestPinPair(t *testing.T, s *GatewayServer, caller, service, originalID string) string {
+	t.Helper()
+	wireID := newWireID()
+	pinValue := encodeRequestPin3(originalID, caller, service)
+	if err := s.sessions.SetRequestPin(context.Background(), wireID, pinValue, 0); err != nil {
+		t.Fatalf("SetRequestPin(wireID): %v", err)
+	}
+	if err := s.sessions.SetRequestPin(context.Background(), scopedPinID(caller, originalID), wireID, 0); err != nil {
+		t.Fatalf("SetRequestPin(forward index): %v", err)
+	}
+	return wireID
 }
 
 // TestRouteProxyHttpBodyChunk_RequestDirection_ForwardsToService asserts an
-// is_request=true chunk is published to the pinned service topic.
+// is_request=true chunk is published to the pinned service topic. The chunk's
+// caller-side originalID must be translated to the wireID before publish.
 func TestRouteProxyHttpBodyChunk_RequestDirection_ForwardsToService(t *testing.T) {
 	router := newMockMessageRouter()
 	s := newProxyTestServer(router)
@@ -57,10 +129,7 @@ func TestRouteProxyHttpBodyChunk_RequestDirection_ForwardsToService(t *testing.T
 	sender := models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"}
 	client := newProxyClient(sender, stream)
 
-	pinValue := encodeRequestPin(sender.ToTopic(), "sv::memorylayer::pinned")
-	if err := s.sessions.SetRequestPin(context.Background(), "rid-1", pinValue, 0); err != nil {
-		t.Fatalf("SetRequestPin: %v", err)
-	}
+	wireID := seedRequestPinPair(t, s, sender.ToTopic(), "sv::memorylayer::pinned", "rid-1")
 
 	chunk := &pb.ProxyHttpBodyChunk{
 		RequestId: "rid-1",
@@ -78,10 +147,21 @@ func TestRouteProxyHttpBodyChunk_RequestDirection_ForwardsToService(t *testing.T
 	if router.publishedMessages[0].topic != "sv::memorylayer::pinned" {
 		t.Errorf("expected publish to pinned service, got %q", router.publishedMessages[0].topic)
 	}
+	// The forwarded chunk must carry the wireID so the service-side
+	// correlation succeeds.
+	inner := unwrapProxyDownstream(t, router.publishedMessages[0].payload)
+	forwardedChunk := inner.GetProxyHttpBodyChunk()
+	if forwardedChunk == nil {
+		t.Fatalf("expected ProxyHttpBodyChunk payload, got %+v", inner)
+	}
+	if forwardedChunk.GetRequestId() != wireID {
+		t.Errorf("forwarded chunk request_id: got %q, want %q (wireID)", forwardedChunk.GetRequestId(), wireID)
+	}
 }
 
 // TestRouteProxyHttpBodyChunk_ResponseDirection_ForwardsToCaller asserts an
-// is_request=false chunk is routed back to the pinned caller topic.
+// is_request=false chunk (service-direction echo) is routed back to the
+// pinned caller topic with the caller-side originalID restored.
 func TestRouteProxyHttpBodyChunk_ResponseDirection_ForwardsToCaller(t *testing.T) {
 	router := newMockMessageRouter()
 	s := newProxyTestServer(router)
@@ -89,13 +169,11 @@ func TestRouteProxyHttpBodyChunk_ResponseDirection_ForwardsToCaller(t *testing.T
 	sender := models.Identity{Type: models.PrincipalService, Implementation: "memorylayer", Specifier: "p"}
 	client := newProxyClient(sender, stream)
 
-	pinValue := encodeRequestPin("ag::ws1::caller::v1", "sv::memorylayer::p")
-	if err := s.sessions.SetRequestPin(context.Background(), "rid-2", pinValue, 0); err != nil {
-		t.Fatalf("SetRequestPin: %v", err)
-	}
+	wireID := seedRequestPinPair(t, s, "ag::ws1::caller::v1", sender.ToTopic(), "rid-2")
 
+	// Service echoes whatever id was on the request — that's wireID.
 	chunk := &pb.ProxyHttpBodyChunk{
-		RequestId: "rid-2",
+		RequestId: wireID,
 		IsRequest: false,
 		Seq:       0,
 		Data:      []byte("response data"),
@@ -110,6 +188,15 @@ func TestRouteProxyHttpBodyChunk_ResponseDirection_ForwardsToCaller(t *testing.T
 	if router.publishedMessages[0].topic != "ag::ws1::caller::v1" {
 		t.Errorf("expected publish to pinned caller, got %q", router.publishedMessages[0].topic)
 	}
+	inner := unwrapProxyDownstream(t, router.publishedMessages[0].payload)
+	forwardedChunk := inner.GetProxyHttpBodyChunk()
+	if forwardedChunk == nil {
+		t.Fatalf("expected ProxyHttpBodyChunk payload, got %+v", inner)
+	}
+	// Caller-side originalID must be restored.
+	if forwardedChunk.GetRequestId() != "rid-2" {
+		t.Errorf("forwarded chunk request_id: got %q, want %q (originalID)", forwardedChunk.GetRequestId(), "rid-2")
+	}
 }
 
 // TestRouteProxyHttpBodyChunk_FinResponseClearsPin verifies the request pin
@@ -121,11 +208,10 @@ func TestRouteProxyHttpBodyChunk_FinResponseClearsPin(t *testing.T) {
 	sender := models.Identity{Type: models.PrincipalService, Implementation: "memorylayer", Specifier: "p"}
 	client := newProxyClient(sender, stream)
 
-	pinValue := encodeRequestPin("ag::ws1::caller::v1", "sv::memorylayer::p")
-	_ = s.sessions.SetRequestPin(context.Background(), "rid-fin", pinValue, 0)
+	wireID := seedRequestPinPair(t, s, "ag::ws1::caller::v1", sender.ToTopic(), "rid-fin")
 
 	finChunk := &pb.ProxyHttpBodyChunk{
-		RequestId: "rid-fin",
+		RequestId: wireID,
 		IsRequest: false,
 		Seq:       3,
 		Data:      []byte("last"),
@@ -133,9 +219,15 @@ func TestRouteProxyHttpBodyChunk_FinResponseClearsPin(t *testing.T) {
 	}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{httpBodyChunk: finChunk})
 
-	got, _ := s.sessions.GetRequestPin(context.Background(), "rid-fin")
-	if got != "" {
-		t.Errorf("expected pin cleared after fin response chunk, got %q", got)
+	// Both pin entries (primary wireID-keyed + forward index) should be
+	// cleared after the terminal response chunk.
+	primary, _ := s.sessions.GetRequestPin(context.Background(), wireID)
+	if primary != "" {
+		t.Errorf("expected primary pin cleared after fin response chunk, got %q", primary)
+	}
+	forward, _ := s.sessions.GetRequestPin(context.Background(), scopedPinID("ag::ws1::caller::v1", "rid-fin"))
+	if forward != "" {
+		t.Errorf("expected forward-index cleared after fin response chunk, got %q", forward)
 	}
 }
 
@@ -178,7 +270,8 @@ func TestRouteProxyHttpBodyChunk_PinMissing_RequestDirection_EmitsProxyError(t *
 }
 
 // TestRouteProxyHttpResponse_RoutesToPinnedCaller asserts an upstream
-// ProxyHttpResponse from a sidecar lands on the pinned caller's stream.
+// ProxyHttpResponse from a sidecar lands on the pinned caller's stream and
+// carries the caller-side originalID (not the wireID).
 func TestRouteProxyHttpResponse_RoutesToPinnedCaller(t *testing.T) {
 	router := newMockMessageRouter()
 	s := newProxyTestServer(router)
@@ -186,11 +279,10 @@ func TestRouteProxyHttpResponse_RoutesToPinnedCaller(t *testing.T) {
 	sender := models.Identity{Type: models.PrincipalService, Implementation: "memorylayer", Specifier: "p"}
 	client := newProxyClient(sender, stream)
 
-	pinValue := encodeRequestPin("ag::ws1::caller::v1", "sv::memorylayer::p")
-	_ = s.sessions.SetRequestPin(context.Background(), "rid-resp", pinValue, 0)
+	wireID := seedRequestPinPair(t, s, "ag::ws1::caller::v1", sender.ToTopic(), "rid-resp")
 
 	resp := &pb.ProxyHttpResponse{
-		RequestId:  "rid-resp",
+		RequestId:  wireID,
 		StatusCode: 200,
 		Body:       []byte("OK"),
 	}
@@ -204,10 +296,22 @@ func TestRouteProxyHttpResponse_RoutesToPinnedCaller(t *testing.T) {
 	if router.publishedMessages[0].topic != "ag::ws1::caller::v1" {
 		t.Errorf("expected publish to pinned caller, got %q", router.publishedMessages[0].topic)
 	}
-	// Single-shot response → pin cleared.
-	got, _ := s.sessions.GetRequestPin(context.Background(), "rid-resp")
-	if got != "" {
-		t.Errorf("expected pin cleared after single-shot response, got %q", got)
+	inner := unwrapProxyDownstream(t, router.publishedMessages[0].payload)
+	forwardedResp := inner.GetProxyHttpResponse()
+	if forwardedResp == nil {
+		t.Fatalf("expected ProxyHttpResponse payload, got %+v", inner)
+	}
+	if forwardedResp.GetRequestId() != "rid-resp" {
+		t.Errorf("forwarded response request_id: got %q, want %q (originalID)", forwardedResp.GetRequestId(), "rid-resp")
+	}
+	// Single-shot response → both pin entries cleared.
+	primary, _ := s.sessions.GetRequestPin(context.Background(), wireID)
+	if primary != "" {
+		t.Errorf("expected primary pin cleared after single-shot response, got %q", primary)
+	}
+	forward, _ := s.sessions.GetRequestPin(context.Background(), scopedPinID("ag::ws1::caller::v1", "rid-resp"))
+	if forward != "" {
+		t.Errorf("expected forward-index cleared after single-shot response, got %q", forward)
 	}
 }
 
@@ -221,19 +325,18 @@ func TestRouteProxyHttpResponse_BodyChunked_KeepsPin(t *testing.T) {
 	sender := models.Identity{Type: models.PrincipalService, Implementation: "memorylayer", Specifier: "p"}
 	client := newProxyClient(sender, stream)
 
-	pinValue := encodeRequestPin("ag::ws1::caller::v1", "sv::memorylayer::p")
-	_ = s.sessions.SetRequestPin(context.Background(), "rid-resp-chunk", pinValue, 0)
+	wireID := seedRequestPinPair(t, s, "ag::ws1::caller::v1", sender.ToTopic(), "rid-resp-chunk")
 
 	resp := &pb.ProxyHttpResponse{
-		RequestId:   "rid-resp-chunk",
+		RequestId:   wireID,
 		StatusCode:  200,
 		BodyChunked: true,
 	}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{httpResp: resp})
 
-	got, _ := s.sessions.GetRequestPin(context.Background(), "rid-resp-chunk")
+	got, _ := s.sessions.GetRequestPin(context.Background(), wireID)
 	if got == "" {
-		t.Errorf("expected pin retained for chunked response, got empty")
+		t.Errorf("expected primary pin retained for chunked response, got empty")
 	}
 }
 

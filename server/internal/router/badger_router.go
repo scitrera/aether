@@ -327,41 +327,63 @@ func offsetKey(topic, consumerName string) []byte {
 
 // appendMessage atomically increments the topic sequence and writes the
 // message payload. Returns the sequence number assigned to this message.
+//
+// Concurrent publishes to the same topic race on the per-topic sequence key
+// (read-then-write inside a single Update txn). Badger surfaces the conflict
+// as ErrConflict; we retry a bounded number of times with no backoff because
+// the transactions are sub-millisecond and the conflict resolves the moment
+// the winning writer commits. The retry cap protects against pathological
+// starvation but is intentionally generous — under heavy concurrent fan-in
+// to a single sidecar topic (the multicaller scenario) we routinely see 3-4
+// conflicts in a row before all writers commit.
+const appendMessageMaxRetries = 16
+
 func (r *BadgerRouter) appendMessage(topic string, payload []byte) (uint64, error) {
 	seqKey := sequenceKey(topic)
 
-	var seq uint64
-	err := r.db.Update(func(txn *badger.Txn) error {
-		// Read current sequence (default 0 if absent).
-		var cur uint64
-		item, err := txn.Get(seqKey)
-		if err != nil && err != badger.ErrKeyNotFound {
-			return err
-		}
-		if err == nil {
-			if err = item.Value(func(val []byte) error {
-				if len(val) == 8 {
-					cur = binary.BigEndian.Uint64(val)
-				}
-				return nil
-			}); err != nil {
+	var (
+		seq     uint64
+		lastErr error
+	)
+	for attempt := 0; attempt < appendMessageMaxRetries; attempt++ {
+		lastErr = r.db.Update(func(txn *badger.Txn) error {
+			// Read current sequence (default 0 if absent).
+			var cur uint64
+			item, err := txn.Get(seqKey)
+			if err != nil && err != badger.ErrKeyNotFound {
 				return err
 			}
+			if err == nil {
+				if err = item.Value(func(val []byte) error {
+					if len(val) == 8 {
+						cur = binary.BigEndian.Uint64(val)
+					}
+					return nil
+				}); err != nil {
+					return err
+				}
+			}
+
+			seq = cur + 1
+
+			// Write incremented sequence.
+			buf := make([]byte, 8)
+			binary.BigEndian.PutUint64(buf, seq)
+			if err = txn.Set(seqKey, buf); err != nil {
+				return err
+			}
+
+			// Write message.
+			return txn.Set(messageKey(topic, seq), payload)
+		})
+		if lastErr == nil {
+			return seq, nil
 		}
-
-		seq = cur + 1
-
-		// Write incremented sequence.
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, seq)
-		if err = txn.Set(seqKey, buf); err != nil {
-			return err
+		if lastErr != badger.ErrConflict {
+			return 0, lastErr
 		}
-
-		// Write message.
-		return txn.Set(messageKey(topic, seq), payload)
-	})
-	return seq, err
+	}
+	return 0, lastErr
 }
 
 // currentSequence returns the current (latest) sequence number for a topic.
