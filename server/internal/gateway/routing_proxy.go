@@ -755,12 +755,70 @@ func (s *GatewayServer) followPin(ctx context.Context, client *ClientSession, tu
 
 func (s *GatewayServer) routeTunnelData(ctx context.Context, client *ClientSession, sender models.Identity, data *pb.TunnelData) {
 	tunnelID := data.GetTunnelId()
-	concrete := s.followPin(ctx, client, tunnelID, sender.Workspace)
-	if concrete == "" {
+	if tunnelID == "" {
 		return
 	}
-	// Quota: per-tunnel byte cap. Tracked in a small in-memory map; we
-	// don't persist these counters across gateway restarts.
+	// Look up the pin and pick the destination from the SENDER's
+	// direction — caller→service OR service→caller. The pin records
+	// both peer identities; without sender-vs-pin matching we'd
+	// re-route service-side echo data back to the same service,
+	// creating a silent loop where the originating caller never sees
+	// its response bytes. (Mirrors the same logic as routeTunnelAck.)
+	pinValue, err := s.sessions.GetTunnelPin(ctx, tunnelID)
+	if err != nil {
+		logging.Logger.Warn().Err(err).Str("tunnel_id", tunnelID).Msg("tunnel pin lookup failed")
+		sendTunnelClose(client, tunnelID, pb.TunnelClose_PEER_RESET, "pin lookup failed")
+		return
+	}
+	if pinValue == "" {
+		sendTunnelClose(client, tunnelID, pb.TunnelClose_PEER_RESET, "tunnel pin expired or unknown")
+		s.tunnelCounterFor(sender.Workspace).n.Add(-1)
+		return
+	}
+	caller, service := decodeTunnelPin(pinValue)
+	if service == "" {
+		sendTunnelClose(client, tunnelID, pb.TunnelClose_PEER_RESET, "tunnel pin malformed")
+		return
+	}
+
+	senderTopic := sender.ToTopic()
+	var destTopic string
+	switch {
+	case caller == "":
+		// Service-only pin (encodeTunnelPin's documented compact
+		// form when no caller half was bound at Open). Cannot
+		// disambiguate sender direction from a single-half pin,
+		// so route to the service — the only known peer. This is
+		// the production behaviour for pre-bidirectional Open
+		// callers and the shape unit tests use directly.
+		destTopic = service
+	case senderTopic == caller:
+		destTopic = service
+	case senderTopic == service:
+		destTopic = caller
+	default:
+		// Sender isn't a known peer for this tunnel. Drop silently —
+		// emitting PEER_RESET to the wrong session would surprise an
+		// unrelated client.
+		logging.Logger.Debug().Str("tunnel_id", tunnelID).Str("sender", senderTopic).
+			Str("caller", caller).Str("service", service).Msg("tunnel_data: sender not a known tunnel peer")
+		return
+	}
+
+	// Verify the destination is still reachable. If neither local nor
+	// cluster-wide active, emit PEER_RESET back to the sender and
+	// clear the pin so the tunnel doesn't linger in a half-dead state.
+	if _, locallyConnected := s.identityIndex.Load(destTopic); !locallyConnected {
+		active, _ := s.sessions.IsActive(ctx, destTopic)
+		if !active {
+			_ = s.sessions.DeleteTunnelPin(ctx, tunnelID)
+			s.tunnelCounterFor(sender.Workspace).n.Add(-1)
+			sendTunnelClose(client, tunnelID, pb.TunnelClose_PEER_RESET, "tunnel peer disconnected")
+			return
+		}
+	}
+
+	// Quota: per-tunnel byte cap (counted across both directions).
 	if cap := s.quotaEnforcer.getMaxTunnelBytes(); cap > 0 {
 		counter := s.tunnelByteCounterFor(tunnelID)
 		if total := counter.Add(int64(len(data.Data))); total > cap {
@@ -780,16 +838,16 @@ func (s *GatewayServer) routeTunnelData(ctx context.Context, client *ClientSessi
 	downstream := &pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_TunnelData{TunnelData: data},
 	}
-	// Single-node fast path: when the pinned sidecar is connected to this
-	// gateway, deliver directly. TunnelData is a data-plane envelope and is
-	// not audited per-frame, so bypassing RMQ does not lose observability.
-	// TunnelData rides at PriorityResponseChunk: it carries bulk bytes,
-	// gets shed before control / response-header frames under pressure.
-	if s.deliverDataPlaneLocal(concrete, "tunnel_data", aether.PriorityResponseChunk, downstream) {
+	// Single-node fast path: when the pinned peer is connected to this
+	// gateway, deliver directly. TunnelData is a data-plane envelope
+	// not audited per-frame, so bypassing RMQ does not lose
+	// observability. Rides at PriorityResponseChunk — bulk bytes that
+	// shed before control / response-header frames under pressure.
+	if s.deliverDataPlaneLocal(destTopic, "tunnel_data", aether.PriorityResponseChunk, downstream) {
 		return
 	}
-	if err := s.publishProxyEnvelope(ctx, concrete, downstream); err != nil {
-		logging.Logger.Warn().Err(err).Str("tunnel_id", tunnelID).Str("target", concrete).Msg("failed to forward TunnelData")
+	if err := s.publishProxyEnvelope(ctx, destTopic, downstream); err != nil {
+		logging.Logger.Warn().Err(err).Str("tunnel_id", tunnelID).Str("target", destTopic).Msg("failed to forward TunnelData")
 		// Don't auto-close on a single publish failure — caller may retry.
 	}
 }
