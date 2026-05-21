@@ -78,26 +78,24 @@ async def _drive_one_turn(host_identity: AetherIdentity, endpoint: str, content:
 
 @pytest.mark.asyncio
 async def test_checkpoint_resume_across_host_restart(dev_gateway_endpoint: str) -> None:
-    # NOTE: ag2's AgentService does not populate agent._oai_messages during request
-    # handling (it carries state via RequestMessage.messages instead). To exercise
-    # the real cross-host checkpoint persistence path, we seed _oai_messages on
-    # host1 directly, drive one turn (so save_history fires), then verify host2
-    # picks up the same data on startup. The intermediate save/load goes through
-    # the live aetherlite CheckpointStore.
+    # The host now mirrors RequestMessage.messages + final assistant into
+    # agent._oai_messages after each successful turn, so save_history captures
+    # real conversation state without any manual seeding. We drive one turn on
+    # host1, then verify host2 picks up that turn from the checkpoint on startup.
     host_identity = AetherIdentity("default", "ckpt", "bob")
 
     agent1 = EchoAgent()
-    agent1._oai_messages["alice"] = [
-        {"role": "user", "content": "first", "name": "alice"},
-        {"role": "assistant", "content": "echo: first", "name": "ckpt-bob"},
-    ]
+    assert not agent1._oai_messages, "fresh agent should have empty _oai_messages"
     host1 = AetherAgentHost(agent1, host_identity, dev_gateway_endpoint, enable_checkpoints=True)
     host1_task = asyncio.create_task(host1.serve())
     await asyncio.sleep(1.5)
 
     try:
-        await _drive_one_turn(host_identity, dev_gateway_endpoint, "second")
+        await _drive_one_turn(host_identity, dev_gateway_endpoint, "hello-from-alice")
         await asyncio.sleep(0.5)  # let post-stream save_history land
+        assert agent1._oai_messages, (
+            "host1 mirror should have populated _oai_messages after the turn"
+        )
     finally:
         await host1.stop()
         try:
@@ -116,9 +114,13 @@ async def test_checkpoint_resume_across_host_restart(dev_gateway_endpoint: str) 
     try:
         assert agent2._oai_messages, "host2 agent _oai_messages was not restored from checkpoint"
         flat = [m for msgs in agent2._oai_messages.values() for m in msgs]
-        assert any("first" in (m.get("content") or "") for m in flat), (
-            f"restored history missing seeded user content: {agent2._oai_messages}"
+        assert any("hello-from-alice" in (m.get("content") or "") for m in flat), (
+            f"restored history missing the driven user content: {agent2._oai_messages}"
         )
+        assert any(
+            m.get("role") == "assistant" and "hello-from-alice" in (m.get("content") or "")
+            for m in flat
+        ), f"restored history missing the echoed assistant reply: {agent2._oai_messages}"
     finally:
         await host2.stop()
         try:

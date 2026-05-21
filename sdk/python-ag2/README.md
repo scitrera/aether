@@ -9,14 +9,14 @@ when a message arrives for an offline agent.
 
 ```bash
 # from the sdk/python-ag2 directory
-pip install -e ../python-client   # Aether Python client
-pip install -e ".[dev]"           # this package + dev deps
+pip install scitrera-aether-client   # Aether Python client
+pip install -e ".[dev]"              # this package + dev deps
 ```
 
 ## Build aetherlite
 
 The examples and E2E tests need the `aetherlite` binary (a single-binary
-all-in-one Aether gateway for local development):
+all-in-one Aether gateway for local development). You can get from the latest release, or build from source:
 
 ```bash
 cd ../../server

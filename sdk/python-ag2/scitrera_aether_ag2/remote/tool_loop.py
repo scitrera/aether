@@ -68,7 +68,17 @@ async def execute_client_tools(
     message: dict[str, Any],
     calls: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    """Run the named tool_calls via sender's tool executor; return a role='tool' message or None."""
+    """Run the named tool_calls via sender's tool executor.
+
+    Returns a role='tool' message keyed to the tool_call ids:
+    - on success: the executor's actual reply (one tool_response per call).
+    - on failure (exception, missing executor, or executor reported success=False): a
+      synthesized role='tool' message whose ``tool_responses`` carry an error string
+      for each requested call. This lets the remote LLM react to tool failures
+      instead of silently dropping the calls.
+
+    Returns None only when there are no calls to execute.
+    """
     if not calls:
         return None
     filtered = dict(message)
@@ -84,14 +94,35 @@ async def execute_client_tools(
                 res = await res
             success, result = res
         else:
-            logger.warning("sender %s has no generate_tool_calls_reply", getattr(sender, "name", sender))
-            return None
-    except Exception:  # noqa: BLE001
+            return _synthesize_tool_error(
+                calls,
+                f"sender {getattr(sender, 'name', sender)!r} has no generate_tool_calls_reply",
+            )
+    except Exception as exc:  # noqa: BLE001
         logger.exception("client tool execution failed")
-        return None
+        return _synthesize_tool_error(calls, f"tool execution raised: {exc!r}")
     if not success or not isinstance(result, dict):
-        return None
+        return _synthesize_tool_error(
+            calls, "tool executor returned no usable result (success=False or non-dict)"
+        )
     return result
+
+
+def _synthesize_tool_error(calls: list[dict[str, Any]], reason: str) -> dict[str, Any]:
+    """Build a role='tool' message with an error tool_response per requested call_id."""
+    tool_responses = [
+        {
+            "tool_call_id": tc.get("id", ""),
+            "role": "tool",
+            "content": f"error: {reason}",
+        }
+        for tc in calls
+    ]
+    return {
+        "role": "tool",
+        "tool_responses": tool_responses,
+        "content": "\n\n".join(t["content"] for t in tool_responses),
+    }
 
 
 __all__ = [

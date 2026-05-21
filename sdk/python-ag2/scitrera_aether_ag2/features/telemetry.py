@@ -10,6 +10,13 @@ ImportError tolerance:
   If scitrera_aether_client.new_metric is unavailable at runtime (unusual install), all
   metric calls degrade to no-ops.  A WARNING is emitted once at module import time.
   Events are unaffected (send_event takes raw bytes with no extra dependency).
+
+Dropped-counter caveat (chicken-and-egg):
+  ``AetherTelemetry`` exposes ``dropped_events`` / ``dropped_metrics`` counters that
+  increment whenever an underlying ``send_event`` / ``send_metric`` call raises.  We do
+  *not* try to emit a metric reporting the dropped count itself — that would just
+  re-enter the same broken path.  Observability of broken telemetry stays log-only,
+  with the counters available in-process for callers (and tests) to inspect.
 """
 
 from __future__ import annotations
@@ -55,6 +62,13 @@ class AetherTelemetry:
     def __init__(self, client: "AsyncAgentClient", agent_name: str) -> None:
         self._client = client
         self._agent_name = agent_name
+        self.dropped_events = 0
+        self.dropped_metrics = 0
+
+    @property
+    def dropped_count(self) -> int:
+        """Total telemetry sends that raised (events + metrics).  See module docstring."""
+        return self.dropped_events + self.dropped_metrics
 
     # ------------------------------------------------------------------
     # Lifecycle hooks (called by host at well-defined points)
@@ -162,6 +176,7 @@ class AetherTelemetry:
         try:
             await self._client.send_event(raw)
         except Exception:
+            self.dropped_events += 1
             logger.warning("AetherTelemetry: failed to emit event %r", name, exc_info=True)
 
     async def emit_metric(
@@ -195,4 +210,5 @@ class AetherTelemetry:
             metric = builder.build()
             await self._client.send_metric(metric)
         except Exception:
+            self.dropped_metrics += 1
             logger.warning("AetherTelemetry: failed to emit metric %r", name, exc_info=True)

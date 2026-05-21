@@ -185,6 +185,44 @@ async def test_execute_client_tools_no_calls_returns_none() -> None:
     assert out is None
 
 
+@pytest.mark.asyncio
+async def test_execute_client_tools_exception_synthesizes_error_message() -> None:
+    """When the tool executor raises, we synthesize a role=tool error keyed to the call_ids."""
+
+    class ExplodingSender(FakeSender):
+        async def a_generate_tool_calls_reply(
+            self, messages: list[dict[str, Any]]
+        ) -> tuple[bool, dict[str, Any] | None]:
+            raise RuntimeError("boom")
+
+    sender = ExplodingSender()
+    calls = [_tool_call("c1", "add"), _tool_call("c2", "add")]
+    msg = {"role": "assistant", "tool_calls": calls}
+    out = await execute_client_tools(sender, msg, calls)
+    assert out is not None
+    assert out["role"] == "tool"
+    ids = [tr["tool_call_id"] for tr in out["tool_responses"]]
+    assert ids == ["c1", "c2"]
+    assert all("error:" in tr["content"] for tr in out["tool_responses"])
+    assert "boom" in out["tool_responses"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_execute_client_tools_no_executor_synthesizes_error_message() -> None:
+    """No tool executor configured on sender → synthesize a tool-error rather than dropping silently."""
+
+    class BareSender:
+        name = "bare"
+
+    calls = [_tool_call("only", "add")]
+    msg = {"role": "assistant", "tool_calls": calls}
+    out = await execute_client_tools(BareSender(), msg, calls)
+    assert out is not None
+    assert out["role"] == "tool"
+    assert out["tool_responses"][0]["tool_call_id"] == "only"
+    assert "error:" in out["tool_responses"][0]["content"]
+
+
 # ---------- proxy tests ----------
 
 
@@ -311,6 +349,92 @@ async def test_max_continuations_cap_raises() -> None:
     with pytest.raises(RemoteAgentError):
         await proxy.a_receive("go", sender)
     assert len(transport.submitted) == 3
+
+
+@pytest.mark.asyncio
+async def test_max_continuations_return_last_delivers_partial() -> None:
+    """on_max_continuations='return_last' delivers the last assistant turn instead of raising."""
+    looping_msg = {
+        "role": "assistant",
+        "content": "partial answer",
+        "tool_calls": [_tool_call("loop", "spin")],
+    }
+    scripts = [
+        [
+            _resp_env(0, done=False, response=ServiceResponse(message=looping_msg)),
+            _resp_env(1, done=True, response=None),
+        ]
+        for _ in range(3)
+    ]
+    transport = FakeTransport(scripts)
+    proxy = _make_proxy(
+        transport, max_continuations=3, on_max_continuations="return_last"
+    )
+    sender = FakeSender(tools=[_tool_dict("spin")], tool_replies={"spin": "again"})
+    await proxy.a_receive("go", sender)  # must not raise
+    assert len(transport.submitted) == 3
+    assert sender.sent, "sender should have received the last_assistant delivery"
+    assert sender.sent[-1].get("content") == "partial answer"
+
+
+@pytest.mark.asyncio
+async def test_max_continuations_return_last_no_assistant_still_raises() -> None:
+    """return_last falls back to raising when there is no last_assistant to deliver."""
+    transport = FakeTransport(
+        [
+            [
+                _resp_env(0, done=False, response=ServiceResponse(input_required="who?")),
+                _resp_env(1, done=True, response=None),
+            ]
+            for _ in range(3)
+        ]
+    )
+    proxy = _make_proxy(
+        transport,
+        max_continuations=3,
+        on_max_continuations="return_last",
+        hitl_mode="auto_skip",
+    )
+    sender = FakeSender()
+    with pytest.raises(RemoteAgentError):
+        await proxy.a_receive("hi", sender)
+
+
+@pytest.mark.asyncio
+async def test_hitl_sender_mode_mirrors_into_sender_chat_messages() -> None:
+    """HITL sender mode appends the synthetic user reply to sender.chat_messages[proxy]."""
+
+    class SenderWithChatMessages(FakeSender):
+        def __init__(self, **kw: Any) -> None:
+            super().__init__(**kw)
+            self.chat_messages: dict[Any, list[dict[str, Any]]] = {}
+
+    transport = FakeTransport(
+        [
+            [
+                _resp_env(0, done=False, response=ServiceResponse(input_required="name?")),
+                _resp_env(1, done=True, response=None),
+            ],
+            [
+                _resp_env(
+                    0,
+                    done=False,
+                    response=ServiceResponse(message={"role": "assistant", "content": "hi drew"}),
+                ),
+                _resp_env(1, done=True, response=None),
+            ],
+        ]
+    )
+    proxy = _make_proxy(transport, hitl_mode="sender")
+    sender = SenderWithChatMessages(human_replies=["drew"])
+    await proxy.a_receive("hi", sender)
+    assert proxy in sender.chat_messages, (
+        f"sender.chat_messages missing proxy key: {list(sender.chat_messages)}"
+    )
+    mirrored = sender.chat_messages[proxy]
+    assert any(m.get("content") == "drew" for m in mirrored), (
+        f"sender.chat_messages did not include the human reply: {mirrored}"
+    )
 
 
 @pytest.mark.asyncio

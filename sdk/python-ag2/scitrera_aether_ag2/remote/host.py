@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import OrderedDict
+from typing import Any
 
 from autogen.agentchat import ConversableAgent
 from autogen.agentchat.remote.agent_service import AgentService
@@ -109,15 +110,23 @@ class AetherAgentHost:
                 await self._telemetry.on_request_received(envelope.correlation_id, envelope.request)
             except Exception:  # noqa: BLE001
                 logger.exception("telemetry.on_request_received failed; continuing")
+
         service = AgentService(self.agent)
         sequence = 0
-        try:
+        final_assistant: dict[str, Any] | None = None
+        deadline_s = envelope.deadline_ms / 1000.0 if envelope.deadline_ms else None
+
+        async def _stream() -> None:
+            nonlocal sequence, final_assistant
+            assert self._transport is not None
             async for service_response in service(envelope.request):
                 if self._telemetry is not None:
                     try:
                         await self._telemetry.on_response_chunk(envelope.correlation_id, service_response)
                     except Exception:  # noqa: BLE001
                         logger.exception("telemetry.on_response_chunk failed; continuing")
+                if service_response.message is not None:
+                    final_assistant = service_response.message
                 await self._transport.send_response(
                     envelope.reply_to,
                     ResponseEnvelope(
@@ -128,6 +137,14 @@ class AetherAgentHost:
                     ),
                 )
                 sequence += 1
+
+        try:
+            if deadline_s is not None:
+                async with asyncio.timeout(deadline_s):
+                    await _stream()
+            else:
+                await _stream()
+            self._mirror_into_oai_messages(envelope, final_assistant)
             if self._checkpointer is not None:
                 try:
                     await self._checkpointer.save_history(self.agent)
@@ -145,6 +162,33 @@ class AetherAgentHost:
                     sequence=sequence,
                     done=True,
                     response=None,
+                ),
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "deadline_exceeded for correlation_id=%s deadline_ms=%s",
+                envelope.correlation_id,
+                envelope.deadline_ms,
+            )
+            if self._telemetry is not None:
+                try:
+                    await self._telemetry.on_request_failed(
+                        envelope.correlation_id,
+                        {"error_code": "deadline_exceeded", "retryable": False},
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("telemetry.on_request_failed failed; continuing")
+            await self._transport.send_response(
+                envelope.reply_to,
+                ResponseEnvelope(
+                    correlation_id=envelope.correlation_id,
+                    sequence=sequence,
+                    done=True,
+                    error={
+                        "code": "deadline_exceeded",
+                        "message": f"deadline_ms={envelope.deadline_ms} exceeded",
+                        "retryable": False,
+                    },
                 ),
             )
         except Exception as exc:  # noqa: BLE001
@@ -166,3 +210,38 @@ class AetherAgentHost:
                     error={"code": "internal", "message": str(exc), "retryable": False},
                 ),
             )
+
+    def _mirror_into_oai_messages(
+        self,
+        envelope: RequestEnvelope,
+        final_assistant: dict[str, Any] | None,
+    ) -> None:
+        """Mirror the request/response transcript into agent._oai_messages so save_history persists it.
+
+        ag2's AgentService threads conversation state through RequestMessage.messages and never
+        populates _oai_messages itself. Without this mirror, a checkpoint save right after a turn
+        would persist an empty history.
+        """
+        peer_name = self._derive_peer_name(envelope)
+        if peer_name is None:
+            return
+        mirrored: list[dict[str, Any]] = [dict(m) for m in envelope.request.messages]
+        if final_assistant is not None:
+            mirrored.append(dict(final_assistant))
+        try:
+            self.agent._oai_messages[peer_name] = mirrored  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            logger.exception("failed to mirror messages into _oai_messages for peer=%r", peer_name)
+
+    @staticmethod
+    def _derive_peer_name(envelope: RequestEnvelope) -> str | None:
+        for m in reversed(envelope.request.messages):
+            if m.get("role") == "user":
+                name = m.get("name")
+                if name:
+                    return str(name)
+                break
+        try:
+            return AetherIdentity.from_topic(envelope.reply_to).specifier
+        except ValueError:
+            return None

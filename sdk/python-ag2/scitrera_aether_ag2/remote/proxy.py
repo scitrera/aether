@@ -25,6 +25,7 @@ from .tool_loop import (
 logger = logging.getLogger(__name__)
 
 HITLMode = Literal["raise", "sender", "auto_skip"]
+MaxContinuationsPolicy = Literal["raise", "return_last"]
 
 
 class AetherRemoteAgent:
@@ -40,6 +41,7 @@ class AetherRemoteAgent:
         hitl_mode: HITLMode = "raise",
         iostream_streaming: bool = True,
         max_continuations: int = 8,
+        on_max_continuations: MaxContinuationsPolicy = "raise",
     ) -> None:
         self._name = name
         self._description = description or name
@@ -49,6 +51,7 @@ class AetherRemoteAgent:
         self._hitl_mode: HITLMode = hitl_mode
         self._iostream_streaming = iostream_streaming
         self._max_continuations = max(1, max_continuations)
+        self._on_max_continuations: MaxContinuationsPolicy = on_max_continuations
 
     @property
     def name(self) -> str:
@@ -151,7 +154,9 @@ class AetherRemoteAgent:
                     break
 
             if hitl_injected is not None:
-                sender_history.append({"role": "user", "content": hitl_injected, "name": sender_name})
+                synthetic = {"role": "user", "content": hitl_injected, "name": sender_name}
+                sender_history.append(synthetic)
+                self._mirror_into_sender_history(sender, synthetic)
                 continue
 
             if last_assistant_this_pass is not None:
@@ -168,9 +173,15 @@ class AetherRemoteAgent:
             break
 
         if not completed_naturally:
-            raise RemoteAgentError(
-                f"continuation loop exceeded max_continuations={self._max_continuations}"
-            )
+            if self._on_max_continuations == "return_last" and last_assistant is not None:
+                logger.warning(
+                    "continuation loop exceeded max_continuations=%d; returning last assistant",
+                    self._max_continuations,
+                )
+            else:
+                raise RemoteAgentError(
+                    f"continuation loop exceeded max_continuations={self._max_continuations}"
+                )
 
         if request_reply is False:
             return
@@ -202,6 +213,22 @@ class AetherRemoteAgent:
 
     def unset_ui_tools(self, tools: list[Any]) -> None:
         pass
+
+    def _mirror_into_sender_history(self, sender: Agent, synthetic: dict[str, Any]) -> None:
+        """Best-effort: append a synthetic user message to the sender's view of the chat.
+
+        Used by HITL sender mode so the conversation transcript on the sender's side
+        reflects the human-input turn that the proxy collected on its behalf.
+        Senders that do not expose ``chat_messages`` (e.g. minimal test doubles) are
+        silently skipped.
+        """
+        chat = getattr(sender, "chat_messages", None)
+        if not isinstance(chat, dict):
+            return
+        try:
+            chat.setdefault(self, []).append(dict(synthetic))
+        except Exception:  # noqa: BLE001
+            logger.debug("failed to mirror HITL reply into sender.chat_messages", exc_info=True)
 
     def _forward_streaming(self, chunk: str) -> None:
         try:

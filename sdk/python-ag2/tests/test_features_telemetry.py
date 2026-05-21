@@ -204,3 +204,43 @@ async def test_emit_metric_no_op_when_metrics_unavailable() -> None:
         await tel.emit_metric("some.metric", qty=1.0)
 
     send_metric.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dropped_event_increments_counter() -> None:
+    """Each failed send_event bumps dropped_events; dropped_count reflects the sum."""
+    send_event = AsyncMock(side_effect=RuntimeError("network down"))
+    client = _make_client(send_event_mock=send_event)
+    tel = AetherTelemetry(client, agent_name="test-agent")
+
+    assert tel.dropped_count == 0
+    await tel.emit_event("evt", payload={})
+    await tel.emit_event("evt", payload={})
+    assert tel.dropped_events == 2
+    assert tel.dropped_metrics == 0
+    assert tel.dropped_count == 2
+
+
+@pytest.mark.asyncio
+async def test_dropped_metric_increments_counter() -> None:
+    """Each failed send_metric bumps dropped_metrics."""
+    send_metric = AsyncMock(side_effect=RuntimeError("metrics broken"))
+    client = _make_client(send_metric_mock=send_metric)
+    tel = AetherTelemetry(client, agent_name="test-agent")
+
+    assert tel.dropped_count == 0
+    await tel.emit_metric("m", qty=1.0)
+    assert tel.dropped_metrics == 1
+    assert tel.dropped_count == 1
+
+
+@pytest.mark.asyncio
+async def test_successful_sends_do_not_increment_dropped_counters() -> None:
+    send_event = AsyncMock()
+    send_metric = AsyncMock()
+    client = _make_client(send_event_mock=send_event, send_metric_mock=send_metric)
+    tel = AetherTelemetry(client, agent_name="test-agent")
+
+    await tel.emit_event("evt", payload={})
+    await tel.emit_metric("m", qty=2.0)
+    assert tel.dropped_count == 0
