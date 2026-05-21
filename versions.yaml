@@ -12,8 +12,11 @@
 aether-gateway: 0.2.1
 
 aether-sdk-go: 0.2.1          # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
-aether-sdk-python: 0.2.0      # scitrera-aether-client
+
 aether-sdk-typescript: 0.2.0  # @scitrera/aether-client
+
+aether-sdk-python: 0.2.0      # scitrera-aether-client
+aether-sdk-python-ag2: 0.0.1  # scitrera-aether-ag2
 
 go_toolchain:
   go: "1.25.10"
@@ -43,5 +46,8 @@ project_rules:
   aether-sdk-python:
     - { type: pyproject, path: sdk/python-client/pyproject.toml }
     - { type: init_py,   path: sdk/python-client/scitrera_aether_client/__init__.py }
+  aether-sdk-python-ag2:
+    - { type: pyproject, path: sdk/python-ag2/pyproject.toml }
+    - { type: init_py,   path: sdk/python-ag2/scitrera_aether_ag2/__init__.py }
   aether-sdk-typescript:
     - { type: package, path: sdk/typescript/package.json }
