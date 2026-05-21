@@ -88,11 +88,19 @@ func (s *Server) Run(ctx context.Context) error {
 				return
 			}
 			if err := s.client.Connect(ctx); err != nil {
-				log.Error().Err(err).Msg("aether connect error")
+				if ctx.Err() != nil {
+					log.Debug().Err(err).Msg("aether connect aborted by shutdown")
+				} else {
+					log.Error().Err(err).Msg("aether connect error")
+				}
 			} else {
 				backoff = 1 * time.Second // reset on successful connect
 				if err := s.client.Run(ctx); err != nil {
-					log.Error().Err(err).Msg("aether run error")
+					if ctx.Err() != nil {
+						log.Debug().Err(err).Msg("aether run aborted by shutdown")
+					} else {
+						log.Error().Err(err).Msg("aether run error")
+					}
 				}
 			}
 			if ctx.Err() != nil {

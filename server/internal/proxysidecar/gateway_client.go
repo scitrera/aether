@@ -118,11 +118,24 @@ func (r *gatewayRuntime) runConnectionLoop(ctx context.Context) {
 			return
 		}
 		if err := r.client.Connect(ctx); err != nil {
-			log.Error().Err(err).Msg("gateway runtime: connect error")
+			// On clean shutdown the SDK returns a context-cancelled error;
+			// the outer ctx.Err() check on the next iteration will exit the
+			// loop anyway, but logging at ERROR here makes shutdown look
+			// like a failure in callers' test/log output. Demote to Debug
+			// when the cancellation came from us.
+			if ctx.Err() != nil {
+				log.Debug().Err(err).Msg("gateway runtime: connect aborted by shutdown")
+			} else {
+				log.Error().Err(err).Msg("gateway runtime: connect error")
+			}
 		} else {
 			backoff = 1 * time.Second
 			if err := r.client.Run(ctx); err != nil {
-				log.Error().Err(err).Msg("gateway runtime: run error")
+				if ctx.Err() != nil {
+					log.Debug().Err(err).Msg("gateway runtime: run aborted by shutdown")
+				} else {
+					log.Error().Err(err).Msg("gateway runtime: run error")
+				}
 			}
 		}
 		if ctx.Err() != nil {
