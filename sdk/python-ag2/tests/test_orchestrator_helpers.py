@@ -294,3 +294,65 @@ class TestAetherAg2OrchestratorHandleAssignment:
     def test_get_implementation_returns_constructor_arg(self):
         orch = self._make_orch()
         assert orch.get_implementation() == "test-orch"
+
+
+# ---------------------------------------------------------------------------
+# 4. AetherAg2Orchestrator.shutdown
+# ---------------------------------------------------------------------------
+
+class TestAetherAg2OrchestratorShutdown:
+    """shutdown() terminates tracked processes, closes the client, and is idempotent."""
+
+    def _make_orch(self) -> AetherAg2Orchestrator:
+        with patch(
+            "scitrera_aether_client.client.OrchestratorClient",
+            return_value=MagicMock(),
+        ):
+            return AetherAg2Orchestrator(
+                implementation="shutdown-orch",
+                gateway="localhost:50051",
+            )
+
+    def test_shutdown_terminates_each_tracked_process_and_closes(self):
+        orch = self._make_orch()
+        proc_a = MagicMock(specifier="a")
+        proc_b = MagicMock(specifier="b")
+        with (
+            patch.object(orch, "get_all_processes", return_value={"a": proc_a, "b": proc_b}),
+            patch.object(orch, "terminate_process") as mock_term,
+            patch.object(orch, "close") as mock_close,
+        ):
+            orch.shutdown()
+        assert mock_term.call_count == 2
+        mock_close.assert_called_once()
+
+    def test_shutdown_is_idempotent(self):
+        orch = self._make_orch()
+        with (
+            patch.object(orch, "get_all_processes", return_value={}),
+            patch.object(orch, "close") as mock_close,
+        ):
+            orch.shutdown()
+            orch.shutdown()
+        mock_close.assert_called_once()
+
+    def test_shutdown_continues_after_terminate_failure(self):
+        orch = self._make_orch()
+        proc_a = MagicMock(specifier="a")
+        proc_b = MagicMock(specifier="b")
+        with (
+            patch.object(orch, "get_all_processes", return_value={"a": proc_a, "b": proc_b}),
+            patch.object(orch, "terminate_process", side_effect=[RuntimeError("boom"), None]) as mock_term,
+            patch.object(orch, "close") as mock_close,
+        ):
+            orch.shutdown()
+        assert mock_term.call_count == 2  # second call still happens after first raises
+        mock_close.assert_called_once()
+
+    def test_shutdown_swallows_close_failure(self):
+        orch = self._make_orch()
+        with (
+            patch.object(orch, "get_all_processes", return_value={}),
+            patch.object(orch, "close", side_effect=RuntimeError("client broken")),
+        ):
+            orch.shutdown()  # must not raise

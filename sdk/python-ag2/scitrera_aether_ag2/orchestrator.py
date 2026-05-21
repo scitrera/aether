@@ -117,5 +117,36 @@ class AetherAg2Orchestrator(MultiprocessOrchestrator):
             env=env,
         )
 
+    # -------------------------------------------------------------------------
+    # Lifecycle
+    # -------------------------------------------------------------------------
+
+    def shutdown(self) -> None:
+        """Terminate every tracked subprocess and close the orchestrator client.
+
+        Idempotent: safe to call multiple times. Each subprocess is terminated
+        independently — a failure on one does not stop the rest. The client is
+        closed last so subprocess teardown happens while the connection is still
+        usable for any cleanup signals the parent class may need.
+        """
+        if getattr(self, "_shutdown_called", False):
+            return
+        self._shutdown_called = True
+
+        for proc in list(self.get_all_processes().values()):
+            try:
+                self.terminate_process(proc)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "[AetherAg2Orchestrator] terminate_process failed for %s",
+                    getattr(proc, "specifier", proc),
+                    exc_info=True,
+                )
+
+        try:
+            self.close()
+        except Exception:  # noqa: BLE001
+            logger.warning("[AetherAg2Orchestrator] client.close() failed", exc_info=True)
+
 
 __all__ = ["AetherAg2Orchestrator"]

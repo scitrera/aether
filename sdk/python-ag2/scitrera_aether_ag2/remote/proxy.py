@@ -134,20 +134,26 @@ class AetherRemoteAgent:
             )
             hitl_injected: str | None = None
             last_assistant_this_pass: dict[str, Any] | None = None
+            streaming_buffer: list[str] = []
             async for env in self.transport.submit_request(self.remote_identity, envelope):
                 if env.error:
                     raise RemoteAgentError(env.error.get("message", "remote agent error"))
                 resp = env.response
                 if resp is not None:
-                    if resp.streaming_text and self._iostream_streaming:
-                        self._forward_streaming(resp.streaming_text)
+                    if resp.streaming_text:
+                        streaming_buffer.append(resp.streaming_text)
+                        if self._iostream_streaming:
+                            self._forward_streaming(resp.streaming_text)
                     if resp.input_required is not None:
                         injected = await self._handle_hitl(
                             resp.input_required, env.correlation_id, sender
                         )
                         hitl_injected = injected
                     elif resp.message is not None:
-                        out_msg = resp.message
+                        out_msg = dict(resp.message)
+                        if out_msg.get("content") in (None, "") and streaming_buffer:
+                            out_msg["content"] = "".join(streaming_buffer)
+                        streaming_buffer = []
                         sender_history.append(out_msg)
                         last_assistant_this_pass = out_msg
                 if env.done:

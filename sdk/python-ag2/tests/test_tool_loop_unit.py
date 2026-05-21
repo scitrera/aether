@@ -458,3 +458,81 @@ async def test_streaming_chunks_do_not_break_flow() -> None:
     sender = FakeSender()
     await proxy.a_receive("hi", sender)
     assert sender.sent[-1]["content"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_streaming_buffer_fills_empty_content() -> None:
+    """When the final message arrives with empty content, the buffered streaming text fills it."""
+    transport = FakeTransport(
+        [
+            [
+                _resp_env(0, done=False, response=ServiceResponse(streaming_text="he")),
+                _resp_env(1, done=False, response=ServiceResponse(streaming_text="llo")),
+                _resp_env(
+                    2,
+                    done=False,
+                    response=ServiceResponse(message={"role": "assistant", "content": None}),
+                ),
+                _resp_env(3, done=True, response=None),
+            ]
+        ]
+    )
+    proxy = _make_proxy(transport, iostream_streaming=False)
+    sender = FakeSender()
+    await proxy.a_receive("hi", sender)
+    assert sender.sent, "sender should have received the synthesized assistant message"
+    assert sender.sent[-1].get("content") == "hello", (
+        f"streaming buffer not synthesized into content: {sender.sent[-1]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_streaming_buffer_does_not_overwrite_existing_content() -> None:
+    """When the final message arrives with explicit content, the buffer is ignored."""
+    transport = FakeTransport(
+        [
+            [
+                _resp_env(0, done=False, response=ServiceResponse(streaming_text="chunk")),
+                _resp_env(
+                    1,
+                    done=False,
+                    response=ServiceResponse(message={"role": "assistant", "content": "explicit"}),
+                ),
+                _resp_env(2, done=True, response=None),
+            ]
+        ]
+    )
+    proxy = _make_proxy(transport, iostream_streaming=False)
+    sender = FakeSender()
+    await proxy.a_receive("hi", sender)
+    assert sender.sent[-1].get("content") == "explicit"
+
+
+@pytest.mark.asyncio
+async def test_streaming_buffer_resets_between_continuation_passes() -> None:
+    """The buffer is per-pass: a later pass with no streaming and explicit content is unaffected."""
+    tool_call_msg = {
+        "role": "assistant",
+        "content": None,  # tool-call passes typically have no content
+        "tool_calls": [_tool_call("c1", "add", '{"a":1,"b":2}')],
+    }
+    final_msg = {"role": "assistant", "content": "result is 3"}
+    transport = FakeTransport(
+        [
+            [
+                _resp_env(0, done=False, response=ServiceResponse(streaming_text="stale")),
+                _resp_env(1, done=False, response=ServiceResponse(message=tool_call_msg)),
+                _resp_env(2, done=True, response=None),
+            ],
+            [
+                _resp_env(0, done=False, response=ServiceResponse(message=final_msg)),
+                _resp_env(1, done=True, response=None),
+            ],
+        ]
+    )
+    proxy = _make_proxy(transport)
+    sender = FakeSender(tools=[_tool_dict("add")], tool_replies={"add": "3"})
+    await proxy.a_receive("compute 1+2", sender)
+    assert sender.sent[-1].get("content") == "result is 3", (
+        f"second-pass content must not include first-pass streaming buffer: {sender.sent[-1]}"
+    )

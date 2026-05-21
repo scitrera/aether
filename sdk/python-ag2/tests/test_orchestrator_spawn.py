@@ -106,14 +106,4 @@ async def test_orchestrator_spawn_delivers_message(dev_gateway_endpoint: str) ->
         assert "echo: ping" in (replies[-1].get("content") or ""), replies
     finally:
         await caller_client.close()
-        # Tear down the spawned subprocess
-        for proc in list(orch.get_all_processes().values()):
-            try:
-                orch.terminate_process(proc)
-            except Exception:  # noqa: BLE001
-                pass
-        # Close the orchestrator's client (it was never connected; close is best-effort)
-        try:
-            orch.client.close()
-        except Exception:  # noqa: BLE001
-            pass
+        orch.shutdown()
