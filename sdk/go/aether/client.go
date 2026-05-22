@@ -1582,6 +1582,20 @@ func (c *BaseClient) Run(ctx context.Context) error {
 		errMu.Lock()
 		loopErr = c.receiveLoop(ctx)
 		errMu.Unlock()
+		// Wake any callers blocked on proxy in-flight bodies/headers.
+		// On clean exit loopErr is nil (graceful shutdown); on disconnect
+		// or context cancel it carries the originating error. Either way,
+		// in-flight ProxyHTTP callers need to unblock so they don't sit on
+		// streamingBody.Read forever waiting for chunks that will never
+		// arrive. See proxy.go::failAllProxyInflights for rationale (H1/H2).
+		closeErr := loopErr
+		if closeErr == nil {
+			closeErr = &ProxyTransportError{
+				Kind:    "UNAVAILABLE",
+				Message: "aether connection closed",
+			}
+		}
+		c.failAllProxyInflights(closeErr)
 	}()
 
 	// Wait for the receive loop to finish

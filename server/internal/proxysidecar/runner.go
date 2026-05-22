@@ -283,11 +283,22 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 
 	// ProxyHttpResponse: only fires here when the SDK's caller-side
 	// inflight resolver missed — i.e. the response is for a request the
-	// relay forwarded on someone else's behalf. Route it via the relay
-	// sink so the originating sandbox session sees it on its inbox.
-	// Without this the response would silently drop and the in-sandbox
-	// proxy_http_async call would hang until its 30s deadline.
+	// relay forwarded on someone else's behalf, OR a peer-end
+	// notification from the gateway addressed at the terminator's own
+	// in-flight dispatch (H3 wakeup). Try the terminator's active
+	// dispatch table first: an error envelope keyed by a known dispatch
+	// requestID is a "your caller went away" wakeup and should cancel
+	// the dispatch immediately. Otherwise route to the relay sink so
+	// the originating sandbox session sees it on its inbox.
 	client.OnProxyHttpResponse(func(_ context.Context, resp *pb.ProxyHttpResponse) error {
+		if resp != nil && resp.GetError() != nil && r.term != nil {
+			if v, ok := r.term.activeDispatches.LoadAndDelete(resp.GetRequestId()); ok {
+				if cancel, ok := v.(context.CancelFunc); ok {
+					cancel()
+				}
+				return nil
+			}
+		}
 		if r.relay != nil {
 			r.relay.routeMessage(&pb.DownstreamMessage{
 				Payload: &pb.DownstreamMessage_ProxyHttpResponse{ProxyHttpResponse: resp},

@@ -960,6 +960,22 @@ func (s *GatewayServer) cleanupSession(cs *connectionState, gracefulExit bool) {
 		attribute.Bool("graceful_exit", gracefulExit),
 	)
 
+	// Wake any peer that has an in-flight ProxyHttpRequest pointed at this
+	// session. Done BEFORE the rest of the cleanup so the notification's
+	// publish path still has the session's topic indexes available — once
+	// activeStreams / identityIndex are cleared the local-bypass router
+	// can't find the surviving peer's session by identity. See
+	// proxy_inflight_tracker.go::notifyPeersOfSessionEnd for the H2/H3
+	// rationale.
+	if s.proxyInflights != nil {
+		notifyCtx, notifyCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		s.proxyInflights.notifyPeersOfSessionEnd(notifyCtx, cs.identity.ToTopic(),
+			func(pctx context.Context, peer string, msg *pb.DownstreamMessage) error {
+				return s.publishProxyEnvelope(pctx, peer, msg)
+			})
+		notifyCancel()
+	}
+
 	// Clean up any pending workflow requests for this client
 	s.cleanupPendingWorkflowRequests(cs.client)
 

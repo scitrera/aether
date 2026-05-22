@@ -67,6 +67,16 @@ type Terminator struct {
 	pendingMu sync.Mutex
 	pending   map[string]*pendingChunkedRequest
 
+	// activeDispatches tracks in-flight backend dispatches keyed by
+	// request_id. The value is a context.CancelFunc that aborts the
+	// backend http.Request when invoked. The gateway calls
+	// notifyPeersOfSessionEnd on caller cleanup, which pushes a
+	// ProxyHttpResponse{SIDECAR_UNAVAILABLE} envelope to this service;
+	// our OnProxyHttpResponse hook (RegisterHandlers) looks up the cancel
+	// func here and fires it so the backend's r.Context() cancellation
+	// path runs. Closes H3 (caller-disconnect → backend ctx cancel).
+	activeDispatches sync.Map // string requestID → context.CancelFunc
+
 	// resolver is reserved for future OBO authority resolution from a
 	// remote service. Set via WithAuthorityResolver; nil in v1.
 	resolver identityheaders.AuthorityResolver
@@ -423,7 +433,19 @@ func (t *Terminator) dispatchStreamingAndRespond(ctx context.Context, req *pb.Pr
 		return transport.SendProxyHttpResponse(errorResponse(req.GetRequestId(), perr.Kind, perr.Message))
 	}
 
-	resp, cancel, perr := backend.dispatchStreaming(ctx, req, body)
+	// Register a cancellable wrapper context so the gateway's caller-end
+	// session-cleanup hook can cancel our backend request out from under
+	// the http.Client (H3 propagation: caller disconnect → backend
+	// r.Context().Done()). The cancel func is removed on return.
+	dispatchCtx, cancelDispatch := context.WithCancel(ctx)
+	defer cancelDispatch()
+	requestID := req.GetRequestId()
+	if requestID != "" {
+		t.activeDispatches.Store(requestID, cancelDispatch)
+		defer t.activeDispatches.Delete(requestID)
+	}
+
+	resp, cancel, perr := backend.dispatchStreaming(dispatchCtx, req, body)
 	if perr != nil {
 		return transport.SendProxyHttpResponse(errorResponse(req.GetRequestId(), perr.Kind, perr.Message))
 	}
@@ -445,7 +467,6 @@ func (t *Terminator) dispatchStreamingAndRespond(ctx context.Context, req *pb.Pr
 		headers[k] = resp.Header.Get(k)
 	}
 
-	requestID := req.GetRequestId()
 	header := &pb.ProxyHttpResponse{
 		RequestId:   requestID,
 		StatusCode:  int32(resp.StatusCode),
@@ -464,7 +485,7 @@ func (t *Terminator) dispatchStreamingAndRespond(ctx context.Context, req *pb.Pr
 		err  error
 	}
 	chunkCh := make(chan readChunk, 1)
-	streamCtx, streamCancel := context.WithCancel(ctx)
+	streamCtx, streamCancel := context.WithCancel(dispatchCtx)
 	defer streamCancel()
 
 	go func() {
@@ -500,9 +521,14 @@ func (t *Terminator) dispatchStreamingAndRespond(ctx context.Context, req *pb.Pr
 
 	for {
 		select {
-		case <-ctx.Done():
-			// Caller cancelled — close the stream with a fin chunk so the
-			// peer knows we're done. Treat as clean close.
+		case <-dispatchCtx.Done():
+			// Caller cancelled (either via the original ctx, or via
+			// activeDispatches cancel from the gateway's peer-end
+			// session cleanup hook). Close the stream with a fin
+			// chunk so any surviving peer's reader unblocks. The
+			// http.Client request's context is derived from dispatchCtx
+			// via dispatchStreaming, so it cancels here too, which
+			// fires the backend handler's r.Context().Done() — H3.
 			_ = transport.SendProxyHttpBodyChunk(&pb.ProxyHttpBodyChunk{
 				RequestId: requestID,
 				IsRequest: false,
@@ -673,6 +699,35 @@ func (t *Terminator) RegisterHandlers(client *aether.ServiceClient, transport tu
 	})
 	client.OnTunnelCloseIn(func(_ context.Context, cm *pb.TunnelClose) error {
 		t.HandleTunnelClose(cm)
+		return nil
+	})
+
+	// OnProxyHttpResponse on a service-side principal only fires when the
+	// gateway pushes a response envelope to OUR sv:: topic. The only
+	// production path that does this is the in-flight peer-notification
+	// hook (gateway/proxy_inflight_tracker.go) firing on caller session
+	// cleanup. Wake any active dispatch keyed by the response's
+	// request_id so the backend handler's r.Context() cancels and the
+	// terminator's streaming loop returns promptly — H3 propagation.
+	client.OnProxyHttpResponse(func(_ context.Context, resp *pb.ProxyHttpResponse) error {
+		if resp == nil {
+			return nil
+		}
+		if resp.GetError() == nil {
+			// Only act on error envelopes (peer-end notifications).
+			// Normal responses on a service principal would be a
+			// routing bug elsewhere — log at debug and drop.
+			return nil
+		}
+		requestID := resp.GetRequestId()
+		if requestID == "" {
+			return nil
+		}
+		if v, ok := t.activeDispatches.LoadAndDelete(requestID); ok {
+			if cancel, ok := v.(context.CancelFunc); ok {
+				cancel()
+			}
+		}
 		return nil
 	})
 }

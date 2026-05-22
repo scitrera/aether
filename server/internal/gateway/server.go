@@ -113,6 +113,12 @@ type GatewayServer struct {
 	// Defaults to true; control-plane envelopes always take the RMQ path
 	// regardless so audit emission is preserved.
 	proxyLocalBypassEnabled bool
+	// proxyInflights tracks in-flight ProxyHttpRequests by (caller, service)
+	// topic so cleanupSession can synthesize an error to the surviving peer
+	// of every in-flight involving the departing session. Closes H2 + H3
+	// gaps documented in the e2e coverage matrix: gateway no longer leaves
+	// peers blocked on a stream the other side already abandoned.
+	proxyInflights *proxyInflightTracker
 }
 
 // MTLSConfig holds mTLS configuration for the gateway server
@@ -390,6 +396,7 @@ func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVR
 		deliveryBackpressureTarget:   defaultDeliveryBackpressureTarget,
 		deliveryBackpressureInterval: defaultDeliveryBackpressureInterval,
 		proxyLocalBypassEnabled:      true,
+		proxyInflights:               newProxyInflightTracker(),
 	}
 	// Apply options first — WithACLService may inject a pre-built ACL service,
 	// in which case we must not create a second one from db below.

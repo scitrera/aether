@@ -144,6 +144,40 @@ func (c *BaseClient) deleteProxyInflight(requestID string) {
 	c.proxyInflights.Delete(requestID)
 }
 
+// failAllProxyInflights closes every in-flight proxy request's streaming body
+// (and signals header waiters) with the supplied error. Called when the
+// underlying receive loop is about to exit without a reconnect, so callers
+// blocked on streamingBody.Read or inf.headerCh wake up with a structured
+// error instead of hanging until their own ctx deadline fires.
+//
+// The fix targets H1/H2 from the e2e coverage matrix: gateway shutdown and
+// service-side disconnect both manifest as "SDK stream dies and never wakes
+// in-flight body readers." Wiring this on receiveLoop exit means production
+// callers see a clean ProxyTransportError of kind UNAVAILABLE within an RTT
+// instead of waiting for their own per-request deadline.
+func (c *BaseClient) failAllProxyInflights(err error) {
+	if err == nil {
+		err = &ProxyTransportError{Kind: "UNAVAILABLE", Message: "aether connection closed"}
+	}
+	c.proxyInflights.Range(func(key, val any) bool {
+		inf, ok := val.(*proxyInflight)
+		if !ok {
+			return true
+		}
+		// Streaming inflights: wake any Read() blocked in streamingBody.
+		if inf.streaming != nil {
+			inf.streaming.closeWithErr(err)
+		}
+		// Header waiters: close done so the select{} in ProxyHTTP unblocks.
+		select {
+		case <-inf.done:
+		default:
+			close(inf.done)
+		}
+		return true
+	})
+}
+
 // resolveProxyResponse delivers a response header frame to the waiting
 // ProxyHTTP call. Returns true if the request was found. Streaming inflights
 // can receive a second header frame mid-stream (carrying a terminal

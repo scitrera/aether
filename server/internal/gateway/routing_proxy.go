@@ -455,6 +455,11 @@ func (s *GatewayServer) routeProxyHttpRequest(ctx context.Context, client *Clien
 		return
 	}
 
+	// Track the in-flight in the local tracker so cleanupSession can wake
+	// the surviving peer if either side disconnects mid-stream. See
+	// proxy_inflight_tracker.go for the H2/H3 rationale.
+	s.proxyInflights.register(wireID, requestID, callerTopic, concrete)
+
 	// Inline (non-chunked) requests with no chunked response are
 	// single-shot; the pin is only needed if the service emits chunked
 	// response frames. We keep it for the pin's TTL — well under a minute —
@@ -673,6 +678,7 @@ func (s *GatewayServer) routeProxyHttpBodyChunk(ctx context.Context, client *Cli
 		if chunk.GetIsRequest() {
 			sendProxyHttpError(client, originalID, pb.ProxyError_SIDECAR_UNAVAILABLE, fmt.Sprintf("failed to deliver chunk: %v", pubErr))
 			s.deleteRequestPinAndIndex(ctx, wireID, caller, originalID)
+			s.proxyInflights.unregister(wireID)
 		}
 		return
 	}
@@ -687,6 +693,7 @@ func (s *GatewayServer) routeProxyHttpBodyChunk(ctx context.Context, client *Cli
 	// pending and we reuse the same pin for the response path.
 	if chunk.GetFin() && !chunk.GetIsRequest() {
 		s.deleteRequestPinAndIndex(ctx, wireID, caller, originalID)
+		s.proxyInflights.unregister(wireID)
 	}
 }
 
@@ -770,6 +777,7 @@ func (s *GatewayServer) routeProxyHttpResponse(ctx context.Context, client *Clie
 	// arrives (handled in routeProxyHttpBodyChunk).
 	if resp.GetError() != nil || !resp.GetBodyChunked() {
 		s.deleteRequestPinAndIndex(ctx, wireID, caller, originalID)
+		s.proxyInflights.unregister(wireID)
 		return
 	}
 	// Chunked response in progress — refresh the pin so the chunks find it.

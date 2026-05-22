@@ -526,11 +526,18 @@ func TestE2E_Backend500_StatusForwarded(t *testing.T) {
 // Asserts the backend's request context is cancelled within a few
 // seconds.
 //
-// EXPECTED OUTCOME (current implementation): the caller-side disconnect
-// does NOT propagate as a context cancellation to the backend
-// http.Request.Context. The terminator keeps pumping body chunks until
-// natural fin. This is a real gap worth flagging — see the SKIP reason
-// for the propagation path the cancel signal needs to traverse.
+// FIX (this session): the cancel signal now propagates via:
+//
+//	SDK.CloseConnection → gateway sees caller bidi stream death
+//	→ cleanupSession → proxyInflights.notifyPeersOfSessionEnd
+//	→ publish ProxyHttpResponse{SIDECAR_UNAVAILABLE} to service sv:: topic
+//	→ terminator's downstreamRouter.OnProxyHttpResponse looks up
+//	  activeDispatches[requestID] → cancel() → dispatchCtx cancels
+//	→ http.Client request ctx cancels → backend handler r.Context().Done().
+//
+// See server/internal/gateway/proxy_inflight_tracker.go and
+// server/internal/proxysidecar/terminator.go (activeDispatches +
+// OnProxyHttpResponse handler) for the wiring.
 func TestE2E_CallerDisconnect_DuringStream_BackendCancellation(t *testing.T) {
 	cancelledCh := make(chan struct{}, 1)
 	// Hard handler deadline so t.Cleanup(srv.Close) doesn't block
@@ -610,66 +617,211 @@ func TestE2E_CallerDisconnect_DuringStream_BackendCancellation(t *testing.T) {
 		t.Logf("CloseConnection error (often expected): %v", err)
 	}
 
-	// Bounded wait. 3s is generous: production cancel-propagation
-	// through gRPC stream + sidecar dispatch normally completes inside
-	// a single RTT.
+	// Bounded wait. 5s is generous: production cancel-propagation
+	// through gateway cleanupSession + proxyInflights.notify +
+	// terminator dispatch cancel normally completes inside a single
+	// RTT, but session cleanup runs synchronously on the gateway and
+	// can take ~100ms under load.
 	select {
 	case <-cancelledCh:
-		// Pass — propagation path works.
-	case <-time.After(3 * time.Second):
-		// Real-bug: caller disconnect doesn't propagate. The cancel
-		// signal needs to traverse SDK Close → gRPC stream close →
-		// fake-gateway cleanupClient → service-side request-id
-		// dispatch eviction → terminator inflight cancel →
-		// http.Request.Context cancel. The terminator currently keeps
-		// pumping chunks until natural fin (observed at seq>1000 with
-		// no Done fired). Skip with the propagation path for the next
-		// pass.
-		t.Skip("real-bug: caller disconnect does not propagate to backend " +
-			"http.Request.Context within 3s. Cancel path SDK→gw→sidecar→" +
-			"terminator inflight is broken or missing. The terminator keeps " +
-			"pumping body chunks until natural fin instead of cancelling on " +
-			"caller-side stream tear-down.")
+		// Pass — propagation path works end-to-end.
+	case <-time.After(5 * time.Second):
+		t.Errorf("caller disconnect did not propagate to backend " +
+			"http.Request.Context within 5s. Expected path: " +
+			"SDK.CloseConnection → gateway cleanupSession → " +
+			"proxyInflights.notifyPeersOfSessionEnd → terminator " +
+			"OnProxyHttpResponse → activeDispatches cancel → backend " +
+			"r.Context().Done(). Check that proxy_inflight_tracker.go " +
+			"register was called and that the gateway's session " +
+			"cleanup actually fires the notify hook.")
 	}
 }
 
-// TestE2E_GatewayShutdownMidRequest_SDKReturnsError would start a
-// long-lived streaming request, tear down the gateway mid-flight, and
-// assert the SDK's body reader surfaces an error within a bounded
-// window. The current harness shares ONE aetherlite subprocess across
-// every test in the package (see aetherlite_proc.go); stopping it via
-// sharedAetherlite.stop() would break every other test that runs after
-// this one. Validating gateway-shutdown propagation cleanly requires a
-// dedicated aetherlite instance for this test (separate from the
-// package-shared one), which doubles the test's startup cost (~3-5s
-// build+launch) and adds harness scaffolding for a single scenario.
+// TestE2E_GatewayShutdownMidRequest_SDKReturnsError spawns a dedicated
+// per-test aetherlite, opens a long-lived streaming response, kills the
+// gateway mid-flight, and asserts the SDK's body reader surfaces an
+// error within a bounded window. Uses its own aetherlite (not the
+// package-shared one) so SIGKILLing the gateway doesn't break every
+// subsequent test.
+//
+// Production behaviour under test: when the SDK's underlying gRPC bidi
+// stream dies (gateway crash, network drop, kubernetes pod eviction)
+// any in-flight ProxyHTTP whose streamingBody is being drained should
+// wake with a structured ProxyTransportError instead of hanging until
+// the caller's per-request deadline fires. The SDK fix lives in
+// sdk/go/aether/client.go (Run loop) + sdk/go/aether/proxy.go
+// (failAllProxyInflights).
 func TestE2E_GatewayShutdownMidRequest_SDKReturnsError(t *testing.T) {
-	t.Skip("shared-instance limitation: every test in this package shares ONE " +
-		"aetherlite subprocess (aetherlite_proc.go). Stopping it mid-request " +
-		"would tear down every subsequent test's gateway too. Exercising " +
-		"gateway-shutdown propagation requires a dedicated aetherlite " +
-		"instance scoped to this test — not implemented here.")
+	// Drip handler — sends one event every 50ms forever. Bounded by the
+	// test budget so srv.Close() in t.Cleanup doesn't block when the
+	// gateway kill DOESN'T propagate (regression safety net).
+	const handlerHardDeadline = 20 * time.Second
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		flusher, _ := w.(http.Flusher)
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		hardDeadline := time.After(handlerHardDeadline)
+		for i := 0; ; i++ {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-hardDeadline:
+				return
+			case <-ticker.C:
+				if _, err := fmt.Fprintf(w, "data: tick %d\n\n", i); err != nil {
+					return
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	// Spawn a dedicated aetherlite — killing it mid-test must not break
+	// other tests that share sharedAetherlite.
+	proc, err := startAetherlite()
+	if err != nil {
+		t.Fatalf("start dedicated aetherlite: %v", err)
+	}
+	// Defensive cleanup if the kill below doesn't fire (e.g. early
+	// fatal). proc.stop() is idempotent on already-dead processes.
+	t.Cleanup(proc.stop)
+
+	// Attach a per-test sidecar to the dedicated aetherlite. We do NOT
+	// reuse newCustomSidecarHarness because that targets the shared
+	// aetherlite; replicate the minimal wiring inline.
+	uniqueSpec := fmt.Sprintf("gw-shutdown-%d", nextSidecarSpec.Add(1))
+	relayPath := filepath.Join(t.TempDir(), "relay.sock")
+	cfg := &proxysidecar.Config{
+		Gateway: proxysidecar.GatewayConfig{
+			Address:  proc.grpcAddr,
+			Insecure: true,
+		},
+		Service: proxysidecar.ServiceConfig{
+			Implementation: "bp-sidecar",
+			Specifier:      uniqueSpec,
+		},
+		Terminator: proxysidecar.TerminatorConfig{
+			Enabled: true,
+			Backends: []proxysidecar.BackendConfig{{
+				Name:          "drip",
+				Kind:          proxysidecar.BackendKindHTTP,
+				URL:           srv.URL,
+				AllowPaths:    []string{"/*"},
+				AllowMethods:  []string{"GET"},
+				MaxBodyBytes:  1 << 20,
+				IdleTimeoutMs: 60_000,
+				HeaderMode:    proxysidecar.HeaderModePassthrough,
+			}},
+		},
+		Relay: proxysidecar.RelayConfig{
+			Enabled: true,
+			Listen:  "unix://" + relayPath,
+			AllowedOps: proxysidecar.AllowedOpsConfig{
+				Profile: proxysidecar.AllowedOpsProfileSandboxTunnels,
+				Set:     true,
+			},
+		},
+		TenantID: "tenant-e2e",
+	}
+	runner, err := proxysidecar.NewRunner(cfg, "")
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	runCtx, runCancel := context.WithCancel(context.Background())
+	runnerDone := make(chan struct{})
+	go func() {
+		defer close(runnerDone)
+		_ = runner.Run(runCtx)
+	}()
+	t.Cleanup(func() {
+		runCancel()
+		// Best-effort wait; sidecar may already be dead because the
+		// gateway it's attached to died.
+		select {
+		case <-runnerDone:
+		case <-time.After(5 * time.Second):
+		}
+	})
+
+	serviceTopic := fmt.Sprintf("sv::bp-sidecar::%s", uniqueSpec)
+	if err := waitForSidecarReadyCustom(t, proc.grpcAddr, serviceTopic, "drip", srv.URL); err != nil {
+		t.Fatalf("dedicated-aetherlite sidecar never ready: %v", err)
+	}
+
+	client := dialAgentClientForAddr(t, proc.grpcAddr, "gw-shutdown-caller")
+
+	streamCtx, streamCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer streamCancel()
+
+	req, err := http.NewRequestWithContext(streamCtx, "GET", "http://ignored/anything", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	resp, err := client.ProxyHTTP(streamCtx, serviceTopic, req,
+		aether.WithBackend("drip"),
+		aether.WithStreamResponse(20_000, 0))
+	if err != nil {
+		t.Fatalf("ProxyHTTP: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Pull the first chunk so we know the stream is live.
+	buf := make([]byte, 256)
+	if _, err := resp.Body.Read(buf); err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+
+	// Reader goroutine — reports the first non-nil error and wall time.
+	type readResult struct {
+		err     error
+		elapsed time.Duration
+	}
+	resCh := make(chan readResult, 1)
+	go func() {
+		start := time.Now()
+		for {
+			_, rerr := resp.Body.Read(buf)
+			if rerr != nil {
+				resCh <- readResult{err: rerr, elapsed: time.Since(start)}
+				return
+			}
+		}
+	}()
+
+	// Kill the gateway mid-stream.
+	proc.stop()
+
+	select {
+	case res := <-resCh:
+		// Any non-nil error within the bounded window proves the SDK
+		// woke the streamingBody on connection death. The SDK fix
+		// surfaces a ProxyTransportError{UNAVAILABLE}; EOF (clean
+		// stream close before the kill landed) is also acceptable.
+		t.Logf("ProxyHTTP body read errored %s after gateway kill: %v",
+			res.elapsed, res.err)
+	case <-time.After(8 * time.Second):
+		t.Errorf("caller did not see an error within 8s of gateway shutdown")
+	}
 }
 
 // TestE2E_ServiceDisconnect_RouteEvictedCleanly tries to force the
 // sidecar runtime to disconnect mid-request by cancelling its runner
 // ctx, then asserts the caller-side ProxyHTTP surfaces an error
-// promptly. Real aetherlite does NOT propagate service-side
-// disconnect to in-flight callers within the bounded window — the
-// caller's body reader continues to drain already-delivered chunks
-// from the streamingBody pipe until natural fin, mirroring the
-// caller-disconnect propagation gap documented above. SKIP with a
-// real-aetherlite-limitation reason until the gateway's route
-// eviction signals upstream callers' in-flight inflights.
+// promptly.
+//
+// FIX (this session): the gateway's session cleanup now walks
+// proxyInflights for the dead service topic and emits a
+// ProxyHttpResponse{SIDECAR_UNAVAILABLE} + fin chunk to every caller
+// with an in-flight pointed at it. The SDK's resolveProxyResponse
+// closes the streamingBody with the error, so the caller's Read()
+// unblocks promptly instead of waiting for the stream's natural fin.
+// See server/internal/gateway/proxy_inflight_tracker.go.
 func TestE2E_ServiceDisconnect_RouteEvictedCleanly(t *testing.T) {
-	t.Skip("real-aetherlite limitation: cancelling the sidecar's runner " +
-		"context does not propagate route eviction to the caller's " +
-		"in-flight streamingBody within 8s. The streaming reader keeps " +
-		"draining already-buffered chunks until natural fin instead of " +
-		"erroring on service-side teardown. Fix requires either a " +
-		"gateway-side route-eviction signal to in-flight callers, or " +
-		"an SDK change to wake streamingBody on stream close.")
-
 	// Slow backend that drips for at least 6 seconds — long enough that
 	// the runner cancel happens well before natural fin.
 	const dripDur = 6 * time.Second

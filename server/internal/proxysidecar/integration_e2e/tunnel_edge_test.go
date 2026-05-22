@@ -304,21 +304,6 @@ func TestE2E_TCPTunnel_TwoConcurrentTunnelsIndependent(t *testing.T) {
 func TestE2E_TCPTunnel_TwoCallersIndependentTunnels(t *testing.T) {
 	// No t.Parallel() — see chunked_test.go for the rationale.
 
-	t.Skip("real-bug: the SDK's globalTunnelInflights is a process-global " +
-		"sync.Map keyed by tunnelID (e.g. \"req-1\"). When two AgentClients " +
-		"each call TunnelDial in the same process, both register the same " +
-		"tunnelID and the second registration silently overwrites the first's " +
-		"state entry, so all inbound TunnelData is delivered to whichever " +
-		"client registered last. Observed in this test: caller A's bytes " +
-		"(\"aaaa…\") arrived on caller B's tunnel, and caller A's read " +
-		"timed out. The harness-level per-caller-id rewrite verifies the " +
-		"GATEWAY routes correctly (the e2e-gw debug log shows correct " +
-		"per-caller wire-id rewriting both directions); the bug is on the " +
-		"caller SDK side in sdk/go/aether/tunnel.go::globalTunnelInflights. " +
-		"Fix: scope the tunnel registry to *BaseClient instead of using a " +
-		"package-global sync.Map, or include the caller's session id in the " +
-		"key. Reproduce by removing this Skip and running the test.")
-
 	h := NewE2EHarness(t)
 	clientA := dialAgentClient(t, h, "two-callers-A")
 	clientB := dialAgentClient(t, h, "two-callers-B")
