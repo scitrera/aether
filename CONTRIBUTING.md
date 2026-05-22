@@ -165,18 +165,6 @@ Example: `fix: handle ERR_CIRCUIT_OPEN retryable flag in Go SDK reconnect loop`
 
 ---
 
-## Development Dependencies
-
-| Tool | Version | Purpose |
-|------|---------|---------|
-| Go | 1.22+ | Server and Go SDK |
-| Python | 3.10+ | Python SDK |
-| Node.js | 22+ | TypeScript SDK |
-| Docker | any recent | Local infra scripts |
-| protoc + plugins | see `scripts/compile_protos.sh` | Proto codegen |
-
----
-
 ## Questions
 
 If you have questions about architecture or want to discuss a larger change before implementing it, open a GitHub Discussion or file an issue tagged `question`.
