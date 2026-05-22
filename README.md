@@ -1,7 +1,7 @@
-# Aether — an Agent Fabric
+# Aether (Agent Fabric)
 
 **Aether is the connective tissue for multi-agent systems.** It is the substrate that long-running agents, finite
-tasks, human users, workflow engines, and orchestrators all plug into — with typed identity, enforced routing
+tasks, human users, workflow engines, and orchestrators all plug into with typed identity, enforced routing
 permissions, durable task lifecycles, and on-demand compute, all with a clear audit trail and served over a single bidirectional gRPC stream per
 participant.
 
@@ -9,7 +9,7 @@ It is *not* a general-purpose message bus, a workflow engine, or an RPC framewor
 you on their own: a fabric where every participant is a known, addressable, authorized identity, where messages to
 offline agents lazily spin up the right compute, and where a task can pause, hibernate, request elevated authority
 ("sudo"), or be reclaimed by another worker without the surrounding application code knowing any of those mechanics
-exist.
+exist. (Ok but then yes... it is also all those things)
 
 ### Deployment tiers
 
