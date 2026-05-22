@@ -224,7 +224,7 @@ Aether defines the following principal types. Each maps to a dedicated client cl
 | **WorkflowEngine** | `WorkflowEngineClient` / `AsyncWorkflowEngineClient` | `wfe::shard0` | Singleton invariant; `Implementation` reserved for future multi-shard. Processes `EVENT`-type messages and triggers downstream automation. Has the broadest send permissions — can target any principal type. |
 | **MetricsBridge** | `MetricsBridgeClient` / `AsyncMetricsBridgeClient` | `metrics::shard0` | Singleton invariant matching WFE sharding model; `Implementation` reserved for future multi-shard. Receive-only telemetry sink. Collects `METRIC`-type messages from agents and tasks; cannot send messages. |
 | **Service** | `ServiceClient` / `AsyncServiceClient` | `sv::{impl}::{spec}` | Trusted backend intermediary. Workspace-less; authenticates as itself and performs privileged operations on behalf of users via `AuthorizationContext`. Use for app/WebSocket backends proxying user actions. |
-| **Bridge** | *(not yet in Python SDK)* | `br::{impl}::{spec}` | Cross-workspace messaging integration (e.g., Discord, Teams, Email). Has no workspace component and can send to any workspace. Implemented as a standalone server (`cmd/msgbridge`). |
+| **Bridge** | *(not yet in Python SDK)* | `br::{impl}::{spec}` | Cross-workspace messaging integration (e.g., Discord, Teams, Email). Has no workspace component and can send to any workspace. |
 
 ---
 

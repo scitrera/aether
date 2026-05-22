@@ -71,7 +71,7 @@ Client                         Gateway                        Redis / RabbitMQ
 
 ### Option A: AetherLite (no external dependencies)
 
-AetherLite bundles the gateway, workflow server, and messaging bridge into a single binary backed by embedded SQLite and
+AetherLite bundles the gateway and workflow server into a single binary backed by embedded SQLite and
 Badger. No Redis, RabbitMQ, or PostgreSQL required.
 
 ```bash

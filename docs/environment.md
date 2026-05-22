@@ -2,15 +2,14 @@
 
 This document is the canonical reference for every environment variable
 recognised by an Aether OSS deployment. It covers the gateway, AetherLite,
-the auth-proxy, the workflow server, the messaging bridge, and the proxy
-sidecar.
+the auth-proxy, the workflow server, and the proxy sidecar.
 
 Aether follows two naming conventions on purpose:
 
 - Aether-specific variables use an `AETHER_*` prefix (or service-scoped
-  prefixes such as `AETHERLITE_*`, `MSGBRIDGE_*`, `WORKFLOW_*`,
-  `AUTH_PROXY_*`, `PROXY_SIDECAR_*`). These are reserved by Aether and will
-  not collide with PaaS-injected variables.
+  prefixes such as `AETHERLITE_*`, `WORKFLOW_*`, `AUTH_PROXY_*`,
+  `PROXY_SIDECAR_*`). These are reserved by Aether and will not collide
+  with PaaS-injected variables.
 - Backing-service and ecosystem variables use the conventional unprefixed
   names (`PORT`, `POSTGRES_*`, `REDIS_*`, `STREAM_URL`, `AMQP_URL`,
   `DATABASE_URL`, `OTEL_*`). These are kept unprefixed for portability
@@ -31,13 +30,13 @@ For setup walkthroughs, see `docs/quickstart.md`,
   packages (auth, ACL, TLS, config validation, tracing knobs).
 - `AETHERLITE_*` — flag defaults for the AetherLite single-binary mode.
   Every CLI flag has a matching `AETHERLITE_*` env var.
-- `MSGBRIDGE_*`, `WORKFLOW_*`, `AUTH_PROXY_*`, `PROXY_SIDECAR_*` —
-  service-scoped overrides for the corresponding `cmd/*` binary.
+- `WORKFLOW_*`, `AUTH_PROXY_*`, `PROXY_SIDECAR_*` — service-scoped
+  overrides for the corresponding `cmd/*` binary.
 - `PORT`, `POSTGRES_*`, `REDIS_*`, `STREAM_URL`, `AMQP_URL`,
   `DATABASE_URL`, `OTEL_*` — cloud / ecosystem conventions, intentionally
   unprefixed so the same image runs cleanly on a PaaS.
 - `DISCORD_*`, `TEAMS_*`, `SMTP_*` — credentials for third-party
-  messaging-platform integrations consumed by the messaging bridge.
+  messaging-platform integrations. Reserved for bridge implementations.
 
 ## Quick Reference
 
@@ -56,9 +55,8 @@ For setup walkthroughs, see `docs/quickstart.md`,
 | [Auth Proxy](#auth-proxy-cmdauth-proxy) | `auth-proxy` | Reverse-proxy auth gateway |
 | [Auth Proxy — Login flow](#auth-proxy-browser-login-flow) | `auth-proxy` | Browser OIDC login + session cookies |
 | [Workflow](#workflow-cmdworkflow) | `workflow` | Workflow engine server |
-| [Msgbridge](#msgbridge-cmdmsgbridge) | `msgbridge` | Discord / Teams / Email bridge |
 | [Proxy Sidecar](#proxy-sidecar-cmdproxy-sidecar) | `proxy-sidecar` | Terminator / initiator / relay sidecar |
-| [Bridge Integrations](#bridge-integrations-discord--teams--smtp) | `msgbridge` | External platform credentials |
+| [Bridge Integrations](#bridge-integrations-discord--teams--smtp) | — | Reserved external-platform credentials |
 | [Reserved / Deprecated](#reserved--deprecated) | — | Renamed variable migration table |
 
 ## Gateway (`cmd/gateway`)
@@ -147,7 +145,7 @@ gateway image can drop straight into PaaS targets that inject
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
-| `AETHER_LOG_LEVEL` | enum (`debug`/`info`/`warn`/`error`) | `info` | Structured logger level. Applies to gateway, AetherLite, msgbridge, workflow, and proxy-sidecar. Renamed from `LOG_LEVEL`. |
+| `AETHER_LOG_LEVEL` | enum (`debug`/`info`/`warn`/`error`) | `info` | Structured logger level. Applies to gateway, AetherLite, workflow, and proxy-sidecar. Renamed from `LOG_LEVEL`. |
 | `AETHER_LOG_FORMAT` | enum (`json`/`console`) | TTY auto-detect | Forces structured (`json`) or human (`console`) log output, overriding the stderr TTY detection. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | URL | (unset) | Standard OpenTelemetry endpoint. When set, the gateway exports OTLP traces and the zerolog→OTLP log bridge is activated. Unprefixed per OpenTelemetry convention. |
 
@@ -159,8 +157,8 @@ gateway image can drop straight into PaaS targets that inject
 
 ## AetherLite (`cmd/aetherlite`)
 
-AetherLite is the single-binary mode (gateway + workflow + msgbridge in
-one process with embedded SQLite + Badger). It honours every gateway
+AetherLite is the single-binary mode (gateway + workflow in one process
+with embedded SQLite + Badger). It honours every gateway
 variable above (it embeds the same config object) and adds a parallel
 set of `AETHERLITE_*` variables that set the **default value of the
 matching CLI flag**. Precedence at the call site is therefore:
@@ -182,9 +180,6 @@ during `ApplyEnvOverrides()`.
 | `AETHERLITE_WORKFLOW` | bool | `true` | `--workflow` (toggles embedded workflow server) |
 | `AETHERLITE_WORKFLOW_CONFIG` | path | (empty) | `--workflow-config` |
 | `AETHERLITE_WORKFLOW_ADMIN_PORT` | int | `31881` | `--workflow-admin-port` |
-| `AETHERLITE_MSGBRIDGE` | bool | `false` | `--msgbridge` (toggles embedded messaging bridge) |
-| `AETHERLITE_MSGBRIDGE_CONFIG` | path | (empty) | `--msgbridge-config` |
-| `AETHERLITE_MSGBRIDGE_ADMIN_PORT` | int | `31882` | `--msgbridge-admin-port` |
 
 ## Migrate (`cmd/migrate`)
 
@@ -274,23 +269,6 @@ section) variables and adds workflow-specific knobs.
 | `WORKFLOW_ADMIN_PORT` | int | `31881` | Workflow admin port. |
 | `WORKFLOW_ADMIN_API_KEY` | string | (none) | API key for the workflow admin surface. |
 
-## Msgbridge (`cmd/msgbridge`)
-
-The messaging bridge connects Discord, Microsoft Teams, and SMTP-based
-email to Aether. It accepts the standard `AETHER_*` + `POSTGRES_*`
-connection variables plus its own admin and platform variables.
-
-| Variable | Type | Default | Description |
-|---|---|---|---|
-| `AETHER_ADDRESS` | host:port | `localhost:50051` (dev) | Gateway address. |
-| `AETHER_IMPLEMENTATION` | string | `aether-msgbridge` (dev) | Bridge implementation identifier. |
-| `AETHER_SPECIFIER` | string | `instance-1` (dev) | Bridge specifier (unique per instance). |
-| `AETHER_API_KEY` | string | (none) | API key for the gateway connection. |
-| `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DATABASE` | — | dev defaults match gateway | See gateway storage section. |
-| `MSGBRIDGE_ADMIN_ENABLED` | bool | `true` | Toggles the msgbridge admin REST surface. |
-| `MSGBRIDGE_ADMIN_PORT` | int | `31882` | Msgbridge admin port. |
-| `MSGBRIDGE_ADMIN_API_KEY` | string | (none) | API key for the msgbridge admin surface. |
-
 ## Proxy Sidecar (`cmd/proxy-sidecar`)
 
 The proxy sidecar runs one or more surfaces (terminator, initiator,
@@ -308,9 +286,11 @@ relay) that share a single gateway connection.
 
 ## Bridge Integrations (Discord / Teams / SMTP)
 
-Credentials for external platforms consumed by the messaging bridge.
-These names are intentionally unprefixed to match each vendor's standard
-ergonomics.
+Reserved naming conventions for third-party messaging-platform
+credentials. The previous in-tree bridge binary has been removed; these
+names are kept reserved so that future bridge implementations can use
+them. The names are intentionally unprefixed to match each vendor's
+standard ergonomics.
 
 ### Discord
 
@@ -354,7 +334,7 @@ path. Update your deployment manifests, Helm values, and `.env` files.
 | `ADMIN_TLS_KEY_FILE` | `AETHER_ADMIN_TLS_KEY_FILE` | Admin API section. |
 | `ACL_REQUIRED` | `AETHER_ACL_REQUIRED` | ACL section. |
 | `AUTH_MODES` | `AETHER_AUTH_MODES` | Authentication section. |
-| `LOG_LEVEL` | `AETHER_LOG_LEVEL` | Applies to gateway, msgbridge, workflow, proxy-sidecar. |
+| `LOG_LEVEL` | `AETHER_LOG_LEVEL` | Applies to gateway, workflow, proxy-sidecar. |
 | `AUDIT_ENABLED` | `AETHER_AUDIT_ENABLED` | Audit section. |
 | `AUDIT_BATCH_SIZE` | `AETHER_AUDIT_BATCH_SIZE` | Audit section. |
 | `AUDIT_CHANNEL_BUFFER` | `AETHER_AUDIT_CHANNEL_BUFFER` | Audit section. |

@@ -31,7 +31,7 @@ import (
 //	    ClientOptions: aether.ClientOptions{
 //	        ServerAddr: "localhost:50051",
 //	    },
-//	    Implementation: "aether-msgbridge",
+//	    Implementation: "example-bridge",
 //	    Specifier:      "instance-1",
 //	})
 //	if err != nil {

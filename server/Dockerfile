@@ -33,7 +33,6 @@ RUN cd server && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/auth-proxy ./cmd/auth-proxy && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/init-secrets ./cmd/init-secrets && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/workflow ./cmd/workflow && \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/msgbridge ./cmd/msgbridge && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/aetherlite ./cmd/aetherlite && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/proxy-sidecar ./cmd/proxy-sidecar
 
@@ -51,7 +50,6 @@ COPY --from=builder /out/migrate /usr/local/bin/migrate
 COPY --from=builder /out/auth-proxy /usr/local/bin/auth-proxy
 COPY --from=builder /out/init-secrets /usr/local/bin/init-secrets
 COPY --from=builder /out/workflow /usr/local/bin/workflow
-COPY --from=builder /out/msgbridge /usr/local/bin/msgbridge
 COPY --from=builder /out/aetherlite /usr/local/bin/aetherlite
 COPY --from=builder /out/proxy-sidecar /usr/local/bin/proxy-sidecar
 

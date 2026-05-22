@@ -22,7 +22,6 @@ build/
 /server/init-secrets
 /server/workflow
 /server/aetherlite
-/server/msgbridge
 /aether-lite-data/
 /server/proxy-sidecar
 /server/.proxy_load_logs/

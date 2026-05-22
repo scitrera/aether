@@ -93,6 +93,9 @@ var (
 	adminDevPath  = flag.String("admin-dev-path", "", "Path to admin static files in dev mode")
 	insecureAdmin = flag.Bool("insecure-admin", false, "Allow admin API to run without authentication when no AETHER_ADMIN_API_KEY is set (NOT FOR PRODUCTION)")
 
+	// Ops/metrics server options (override config)
+	opsPort = flag.Int("ops-port", config.EnvInt("AETHER_OPS_PORT", 0), "Override the ops/metrics server port (0 = use config default 9090) (env: AETHER_OPS_PORT)")
+
 	// Secrets options
 	secretsFile = flag.String("secrets-file", "/etc/aether/generated-secrets.yaml", "Path to generated secrets file")
 
@@ -177,6 +180,10 @@ func main() {
 	}
 	if *enableTLS && cfg.Gateway.TLS.ClientAuth == "" {
 		cfg.Gateway.TLS.ClientAuth = "require"
+	}
+
+	if *opsPort != 0 {
+		cfg.Gateway.OpsPort = *opsPort
 	}
 
 	// Auto-TLS: generate self-signed certificates if AETHER_AUTO_TLS=true

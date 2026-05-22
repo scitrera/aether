@@ -61,7 +61,7 @@ if [ -n "$GO" ]; then
 
     # --- Go: Server binaries ---
     step "Go: server binaries"
-    SERVER_CMDS=(gateway aetherlite auth-proxy cleanup migrate init-secrets workflow msgbridge)
+    SERVER_CMDS=(gateway aetherlite auth-proxy cleanup migrate init-secrets workflow)
     SERVER_FAIL=0
     for cmd in "${SERVER_CMDS[@]}"; do
         echo "  building $cmd..."

@@ -262,7 +262,7 @@ message OrchestratorIdentity {
 }
 
 message BridgeIdentity {
-  string implementation = 1;  // e.g., "aether-msgbridge", "webhook-bridge"
+  string implementation = 1;  // e.g., "example-bridge", "webhook-bridge"
   string specifier = 2;       // Instance identifier for uniqueness (e.g., "default", "discord-1")
 }
 

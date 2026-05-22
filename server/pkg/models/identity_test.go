@@ -555,11 +555,11 @@ func TestParseIdentity_Roundtrip(t *testing.T) {
 func TestBridgeIdentity_ToTopic(t *testing.T) {
 	identity := Identity{
 		Type:           PrincipalBridge,
-		Implementation: "aether-msgbridge",
+		Implementation: "example-bridge",
 		Specifier:      "default",
 	}
 	got := identity.ToTopic()
-	want := "br::aether-msgbridge::default"
+	want := "br::example-bridge::default"
 	if got != want {
 		t.Errorf("ToTopic() = %q, want %q", got, want)
 	}
@@ -568,26 +568,26 @@ func TestBridgeIdentity_ToTopic(t *testing.T) {
 func TestBridgeIdentity_String(t *testing.T) {
 	identity := Identity{
 		Type:           PrincipalBridge,
-		Implementation: "aether-msgbridge",
+		Implementation: "example-bridge",
 		Specifier:      "default",
 	}
 	got := identity.String()
-	want := "br::aether-msgbridge::default"
+	want := "br::example-bridge::default"
 	if got != want {
 		t.Errorf("String() = %q, want %q", got, want)
 	}
 }
 
 func TestParseBridgeIdentity(t *testing.T) {
-	got, err := ParseIdentity("br::aether-msgbridge::default")
+	got, err := ParseIdentity("br::example-bridge::default")
 	if err != nil {
 		t.Fatalf("ParseIdentity() unexpected error: %v", err)
 	}
 	if got.Type != PrincipalBridge {
 		t.Errorf("Type = %v, want %v", got.Type, PrincipalBridge)
 	}
-	if got.Implementation != "aether-msgbridge" {
-		t.Errorf("Implementation = %q, want %q", got.Implementation, "aether-msgbridge")
+	if got.Implementation != "example-bridge" {
+		t.Errorf("Implementation = %q, want %q", got.Implementation, "example-bridge")
 	}
 	if got.Specifier != "default" {
 		t.Errorf("Specifier = %q, want %q", got.Specifier, "default")

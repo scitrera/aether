@@ -103,7 +103,7 @@ func (r *gatewayRuntime) Transport() tunnelTransport {
 	return r.transport
 }
 
-// runConnectionLoop manages reconnection, mirroring the msgbridge pattern.
+// runConnectionLoop manages reconnection with exponential backoff.
 // Returns when ctx is cancelled.
 func (r *gatewayRuntime) runConnectionLoop(ctx context.Context) {
 	defer func() {

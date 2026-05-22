@@ -415,7 +415,7 @@ func TestResolveIdentity_Bridge_ReturnsBridgeIdentity(t *testing.T) {
 	init := &pb.InitConnection{
 		ClientType: &pb.InitConnection_Bridge{
 			Bridge: &pb.BridgeIdentity{
-				Implementation: "aether-msgbridge",
+				Implementation: "example-bridge",
 				Specifier:      "discord-1",
 			},
 		},
@@ -428,8 +428,8 @@ func TestResolveIdentity_Bridge_ReturnsBridgeIdentity(t *testing.T) {
 	if ident.Type != models.PrincipalBridge {
 		t.Errorf("expected PrincipalBridge, got %s", ident.Type)
 	}
-	if ident.Implementation != "aether-msgbridge" {
-		t.Errorf("expected Implementation='aether-msgbridge', got %q", ident.Implementation)
+	if ident.Implementation != "example-bridge" {
+		t.Errorf("expected Implementation='example-bridge', got %q", ident.Implementation)
 	}
 	if ident.Specifier != "discord-1" {
 		t.Errorf("expected Specifier='discord-1', got %q", ident.Specifier)

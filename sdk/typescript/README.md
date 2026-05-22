@@ -458,7 +458,7 @@ uniqueTaskTopic("prod", "report", "daily");         // "tu.prod.report.daily"
 taskBroadcastTopic("prod", "worker");               // "tb.prod.worker"
 globalAgentsTopic("prod");                          // "ga.prod"
 eventTopic("task.completed");                       // "event.task.completed"
-bridgeTopic("aether-msgbridge", "discord-1");       // "br.aether-msgbridge.discord-1"
+bridgeTopic("example-bridge", "instance-1");        // "br.example-bridge.instance-1"
 ```
 
 ## Principal Types
@@ -574,8 +574,8 @@ import { BridgeClient, MessageType } from "@scitrera/aether-client";
 
 const bridge = new BridgeClient({
   address: "localhost:50051",
-  implementation: "aether-msgbridge",
-  specifier: "discord-1",
+  implementation: "example-bridge",
+  specifier: "instance-1",
 });
 
 bridge.onMessage((msg) => {

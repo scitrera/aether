@@ -311,7 +311,6 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 // applyEnvOverrides applies environment variables that override YAML values.
-// Mirrors the convention used in server/internal/msgbridge/config.go.
 func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("AETHER_ADDRESS"); v != "" {
 		c.Gateway.Address = v

@@ -112,6 +112,7 @@ type BaseClient struct {
 	pendingAdminRequests          pendingRequests[*AdminResponse]
 	pendingSessionRequests        pendingRequests[*SessionOperationResponse]
 	pendingAuditSubmitRequests    pendingRequests[*pb.SubmitAuditEventResponse]
+	pendingAuditQueryRequests     pendingRequests[*pb.AuditQueryResponse]
 	requestIDCounter              atomic.Uint64
 
 	// Per-client inflight registries for proxy requests and tunnels. These
@@ -1817,6 +1818,9 @@ func (c *BaseClient) dispatchResponse(ctx context.Context, response *pb.Downstre
 
 	case *pb.DownstreamMessage_SubmitAuditEventResponse:
 		return c.handleSubmitAuditEventResponse(ctx, payload.SubmitAuditEventResponse)
+
+	case *pb.DownstreamMessage_AuditResponse:
+		return c.handleAuditQueryResponse(ctx, payload.AuditResponse)
 
 	case *pb.DownstreamMessage_CreateTask:
 		return c.handleCreateTaskResponse(ctx, payload.CreateTask)

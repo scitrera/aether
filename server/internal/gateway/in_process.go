@@ -17,8 +17,7 @@
 // This file owns the trust marker and the unary/stream interceptors that
 // apply it. cmd/aetherlite/main.go wires the bufconn listener and starts
 // the second grpc.Server; internal/gateway/auth_handler.go honors the
-// marker. msgbridge would reuse the same primitives if/when it gets the
-// same embedded-vs-network treatment — currently out of scope.
+// marker.
 
 package gateway
 

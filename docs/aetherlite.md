@@ -19,7 +19,7 @@ AetherLite is production-ready for single-node workloads. It is **not** a develo
 
 ### Option 1: Single binary (`cmd/aetherlite`)
 
-The `aetherlite` binary combines the gateway, workflow server, and messaging bridge in one process and always runs in lite mode. No flag is needed.
+The `aetherlite` binary combines the gateway and workflow server in one process and always runs in lite mode. No flag is needed.
 
 ```bash
 cd server
@@ -44,8 +44,6 @@ AETHER_ALLOW_DEV_MODE=true ./aetherlite --data-dir /var/lib/aether-lite --insecu
 | `--insecure-admin` | `false` | Allow admin API without auth key (requires `AETHER_ALLOW_DEV_MODE`) |
 | `--workflow` | `true` | Enable embedded workflow server |
 | `--workflow-admin-port <n>` | `31881` | Workflow admin API port |
-| `--msgbridge` | `false` | Enable embedded messaging bridge |
-| `--msgbridge-admin-port <n>` | `31882` | Msgbridge admin API port |
 | `--version` | — | Print version and exit |
 
 ### Option 2: Individual binaries with `--lite` flag
@@ -57,7 +55,7 @@ go build -o gateway ./cmd/gateway
 ./gateway --lite --data-dir ./aether-lite-data --insecure-admin
 ```
 
-This is useful when you want only the gateway component without workflow or msgbridge.
+This is useful when you want only the gateway component without the workflow server.
 
 ## Data Directory Layout
 
@@ -68,7 +66,6 @@ aether-lite-data/
   aether.db       — SQLite: tasks, ACL rules, audit log, agent registry, orchestration profiles
   badger/         — Badger: sessions, KV store, checkpoints, tokens, message log, consumer offsets
   workflow.db     — SQLite: workflow rules, definitions, executions, schedules, state machines
-  msgbridge.db    — SQLite: messaging bridge state (only present when msgbridge is enabled)
 ```
 
 The data directory is created automatically on first run. Back it up like any other database directory.
@@ -118,11 +115,11 @@ AetherLite uses the same gateway code as full Aether. The only difference is whi
 ┌───────────────────────────────────────────────┐
 │               AetherLite Process               │
 │                                                │
-│  ┌─────────────┐  ┌──────────┐  ┌──────────┐  │
-│  │   Gateway   │  │ Workflow │  │MsgBridge │  │
-│  │  gRPC :50051│  │ (opt-in) │  │(opt-in)  │  │
-│  └──────┬──────┘  └────┬─────┘  └────┬─────┘  │
-│         └──────────────┴──────────────┘         │
+│  ┌─────────────┐  ┌──────────┐                │
+│  │   Gateway   │  │ Workflow │                │
+│  │  gRPC :50051│  │ (opt-in) │                │
+│  └──────┬──────┘  └────┬─────┘                │
+│         └──────────────┘                       │
 │                        │                        │
 │           ┌────────────┴────────────┐           │
 │           │                         │           │

@@ -73,8 +73,8 @@ const (
 //
 // Example:
 //
-//	topic := aether.BridgeTopic("aether-msgbridge", "instance-1")
-//	// Returns: "br::aether-msgbridge::instance-1"
+//	topic := aether.BridgeTopic("example-bridge", "instance-1")
+//	// Returns: "br::example-bridge::instance-1"
 func BridgeTopic(implementation, specifier string) string {
 	return fmt.Sprintf("%s::%s::%s", TopicPrefixBridge, implementation, specifier)
 }

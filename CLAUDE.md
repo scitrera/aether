@@ -112,7 +112,6 @@ cd server
 | **Admin Server** | `server/internal/admin/server.go` | REST API + embedded UI; ops server for health probes + Prometheus metrics |
 | **Auth Proxy** | `server/cmd/auth-proxy/` + `server/internal/authproxy/` | Standalone auth gateway for external services (e.g., MemoryLayer) |
 | **Identity Model** | `server/pkg/models/identity.go` | Seven principal types (Agent, Task, User, Orchestrator, WorkflowEngine, MetricsBridge, Bridge), topic address derivation via `ToTopic()` |
-| **Messaging Bridge** | `server/cmd/msgbridge/` + `server/internal/msgbridge/` | Standalone server bridging Discord/Teams/Email ↔ Aether via `PrincipalBridge` type |
 
 ### Topic Schema and Routing
 

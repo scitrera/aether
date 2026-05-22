@@ -1,7 +1,7 @@
 // Package main implements the AetherLite single-binary server.
-// It runs the gateway, workflow server, and messaging bridge together in one
-// process using embedded SQLite and Badger backends — no external Redis,
-// RabbitMQ, or PostgreSQL required.
+// It runs the gateway and workflow server together in one process using
+// embedded SQLite and Badger backends — no external Redis, RabbitMQ, or
+// PostgreSQL required.
 package main
 
 import (
@@ -30,7 +30,6 @@ import (
 	"github.com/scitrera/aether/internal/kv"
 	"github.com/scitrera/aether/internal/lite"
 	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/msgbridge"
 	"github.com/scitrera/aether/internal/orchestration"
 	"github.com/scitrera/aether/internal/quota"
 	"github.com/scitrera/aether/internal/registry"
@@ -94,19 +93,16 @@ var (
 	enableWorkflow     = flag.Bool("workflow", config.EnvBool("AETHERLITE_WORKFLOW", true), "Enable embedded workflow server (env: AETHERLITE_WORKFLOW)")
 	workflowConfigFile = flag.String("workflow-config", config.EnvStr("AETHERLITE_WORKFLOW_CONFIG", ""), "Optional workflow config file (overrides auto-config) (env: AETHERLITE_WORKFLOW_CONFIG)")
 	workflowAdminPort  = flag.Int("workflow-admin-port", config.EnvInt("AETHERLITE_WORKFLOW_ADMIN_PORT", 31881), "Workflow admin API port (env: AETHERLITE_WORKFLOW_ADMIN_PORT)")
-	// Msgbridge options
-	enableMsgbridge     = flag.Bool("msgbridge", config.EnvBool("AETHERLITE_MSGBRIDGE", false), "Enable embedded messaging bridge server (env: AETHERLITE_MSGBRIDGE)")
-	msgbridgeConfigFile = flag.String("msgbridge-config", config.EnvStr("AETHERLITE_MSGBRIDGE_CONFIG", ""), "Optional msgbridge config file (overrides auto-config) (env: AETHERLITE_MSGBRIDGE_CONFIG)")
-	msgbridgeAdminPort  = flag.Int("msgbridge-admin-port", config.EnvInt("AETHERLITE_MSGBRIDGE_ADMIN_PORT", 31882), "Msgbridge admin API port (env: AETHERLITE_MSGBRIDGE_ADMIN_PORT)")
+	opsPort            = flag.Int("ops-port", config.EnvInt("AETHERLITE_OPS_PORT", 0), "Override the ops/metrics server port (0 = use config default 9090) (env: AETHERLITE_OPS_PORT)")
 )
 
 func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, banner, version)
 		fmt.Fprintf(os.Stderr, "\nUsage: %s [options]\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "AetherLite runs the gateway, workflow server, and messaging bridge\n")
-		fmt.Fprintf(os.Stderr, "together in a single process with embedded SQLite + Badger backends.\n")
-		fmt.Fprintf(os.Stderr, "No external Redis, RabbitMQ, or PostgreSQL is required.\n\n")
+		fmt.Fprintf(os.Stderr, "AetherLite runs the gateway and workflow server together in a\n")
+		fmt.Fprintf(os.Stderr, "single process with embedded SQLite + Badger backends. No\n")
+		fmt.Fprintf(os.Stderr, "external Redis, RabbitMQ, or PostgreSQL is required.\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 	}
@@ -693,10 +689,6 @@ func main() {
 	// (bytes never leave the process) and failing to wire TLS at all causes
 	// the workflow engine to fail handshake against an mTLS-required gateway
 	// and enter a reconnect loop. bufconn sidesteps both.
-	//
-	// Note: msgbridge is also embedded in lite mode. It still uses the
-	// network path (cfg.Aether.Address) for now — out of scope for this
-	// change but the primitives above are reusable when needed.
 	const inProcBufSize = 1024 * 1024
 	bufLis := bufconn.Listen(inProcBufSize)
 	inProcServer := grpc.NewServer(
@@ -906,34 +898,18 @@ func main() {
 		logging.Logger.Info().Msg("embedded workflow server starting (in-process gRPC)")
 	}
 
-	// ===== Start embedded msgbridge server (only if enabled) =====
-	if *enableMsgbridge {
-		mbCfg := buildMsgbridgeConfig()
-		mbSrv, err := msgbridge.NewServer(mbCfg)
-		if err != nil {
-			logging.Logger.Fatal().Err(err).Msg("failed to create msgbridge server")
-		}
-		go func() {
-			if err := mbSrv.Run(ctx); err != nil && ctx.Err() == nil {
-				logging.Logger.Error().Err(err).Msg("msgbridge server error")
-			}
-		}()
-		logging.Logger.Info().Str("gateway", mbCfg.Aether.Address).Msg("embedded msgbridge server starting")
-	}
-
 	logging.Logger.Info().
 		Int("grpc_port", cfg.Gateway.Port).
 		Int("admin_port", cfg.Admin.Port).
 		Str("data_dir", *dataDir).
 		Bool("workflow", *enableWorkflow).
-		Bool("msgbridge", *enableMsgbridge).
 		Msg("AetherLite is ready")
 
 	// Wait for shutdown signal.
 	<-sigChan
 	logging.Logger.Info().Msg("shutdown signal received, gracefully stopping")
 
-	cancel() // stop workflow and msgbridge goroutines
+	cancel() // stop workflow goroutines
 
 	gracefulTimeout := cfg.Shutdown.GetGracefulTimeout()
 
@@ -1008,6 +984,10 @@ func buildGatewayConfig() *config.Config {
 		cfg = &config.Config{}
 		cfg.LogLevel = "info"
 		cfg.Admin.CORSOrigin = "*"
+		// When no config file is provided, apply env var overrides so that
+		// AETHER_AUDIT_*, AETHER_ADMIN_*, etc. still take effect. Load() does
+		// this automatically; the bare-struct path must do it explicitly.
+		cfg.ApplyEnvOverrides()
 	}
 
 	// Always force lite mode.
@@ -1023,6 +1003,9 @@ func buildGatewayConfig() *config.Config {
 	}
 	if *adminPort != 0 {
 		cfg.Admin.Port = *adminPort
+	}
+	if *opsPort != 0 {
+		cfg.Gateway.OpsPort = *opsPort
 	}
 	if cfg.Admin.Port == 0 {
 		cfg.Admin.Port = 31880
@@ -1089,32 +1072,6 @@ func buildWorkflowConfig(inProcConn *grpc.ClientConn) *workflow.Config {
 	cfg.Aether.Workspace = "_system"
 	cfg.Admin.Enabled = true
 	cfg.Admin.Port = *workflowAdminPort
-	cfg.Logging.Level = "info"
-	return cfg
-}
-
-// buildMsgbridgeConfig constructs a msgbridge.Config for lite mode.
-// If --msgbridge-config is provided it is loaded and mode overridden to lite;
-// otherwise sensible defaults pointing at the local gateway are used.
-func buildMsgbridgeConfig() *msgbridge.Config {
-	if *msgbridgeConfigFile != "" {
-		cfg, err := msgbridge.LoadConfig(*msgbridgeConfigFile)
-		if err != nil {
-			logging.Logger.Fatal().Err(err).Str("file", *msgbridgeConfigFile).Msg("failed to load msgbridge config")
-		}
-		cfg.Mode = "sqlite"
-		cfg.SQLite.Path = filepath.Join(*dataDir, "msgbridge.db")
-		return cfg
-	}
-
-	cfg := &msgbridge.Config{}
-	cfg.Mode = "sqlite"
-	cfg.SQLite.Path = filepath.Join(*dataDir, "msgbridge.db")
-	cfg.Aether.Address = fmt.Sprintf("localhost:%d", *port)
-	cfg.Aether.Implementation = "aether-msgbridge"
-	cfg.Aether.Specifier = "instance-1"
-	cfg.Admin.Enabled = true
-	cfg.Admin.Port = *msgbridgeAdminPort
 	cfg.Logging.Level = "info"
 	return cfg
 }

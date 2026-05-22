@@ -303,37 +303,37 @@ func TestEnforceTopicPermissions(t *testing.T) {
 		// ----- Bridge: unrestricted send permissions (like agents), cross-workspace capable -----
 		{
 			name:        "bridge can send to agent topic in any workspace",
-			sender:      models.Identity{Type: models.PrincipalBridge, Implementation: "aether-msgbridge", Specifier: "default"},
+			sender:      models.Identity{Type: models.PrincipalBridge, Implementation: "example-bridge", Specifier: "default"},
 			targetTopic: "ag::prod::worker::1",
 			wantErr:     false,
 		},
 		{
 			name:        "bridge can send to user window topic",
-			sender:      models.Identity{Type: models.PrincipalBridge, Implementation: "aether-msgbridge", Specifier: "default"},
+			sender:      models.Identity{Type: models.PrincipalBridge, Implementation: "example-bridge", Specifier: "default"},
 			targetTopic: "us::alice::window1",
 			wantErr:     false,
 		},
 		{
 			name:        "bridge can send to global agent broadcast",
-			sender:      models.Identity{Type: models.PrincipalBridge, Implementation: "aether-msgbridge", Specifier: "default"},
+			sender:      models.Identity{Type: models.PrincipalBridge, Implementation: "example-bridge", Specifier: "default"},
 			targetTopic: "ga::prod",
 			wantErr:     false,
 		},
 		{
 			name:        "bridge can send cross-workspace (empty workspace bypasses check)",
-			sender:      models.Identity{Type: models.PrincipalBridge, Implementation: "aether-msgbridge", Specifier: "default"},
+			sender:      models.Identity{Type: models.PrincipalBridge, Implementation: "example-bridge", Specifier: "default"},
 			targetTopic: "ag::ws2::impl::spec",
 			wantErr:     false,
 		},
 		{
 			name:        "bridge can send to event topic",
-			sender:      models.Identity{Type: models.PrincipalBridge, Implementation: "aether-msgbridge", Specifier: "default"},
+			sender:      models.Identity{Type: models.PrincipalBridge, Implementation: "example-bridge", Specifier: "default"},
 			targetTopic: "event::prod",
 			wantErr:     false,
 		},
 		{
 			name:        "bridge can send to metric topic",
-			sender:      models.Identity{Type: models.PrincipalBridge, Implementation: "aether-msgbridge", Specifier: "default"},
+			sender:      models.Identity{Type: models.PrincipalBridge, Implementation: "example-bridge", Specifier: "default"},
 			targetTopic: "metric::prod",
 			wantErr:     false,
 		},
@@ -342,19 +342,19 @@ func TestEnforceTopicPermissions(t *testing.T) {
 		{
 			name:        "agent can send to bridge topic",
 			sender:      models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"},
-			targetTopic: "br::aether-msgbridge::default",
+			targetTopic: "br::example-bridge::default",
 			wantErr:     false,
 		},
 		{
 			name:        "user can send to bridge topic",
 			sender:      models.Identity{Type: models.PrincipalUser, Workspace: "ws1"},
-			targetTopic: "br::aether-msgbridge::default",
+			targetTopic: "br::example-bridge::default",
 			wantErr:     false,
 		},
 		{
 			name:        "orchestrator cannot send to bridge topic (not an agent/task topic)",
 			sender:      models.Identity{Type: models.PrincipalOrchestrator},
-			targetTopic: "br::aether-msgbridge::default",
+			targetTopic: "br::example-bridge::default",
 			wantErr:     true,
 			errContains: "agent/task",
 		},
@@ -490,7 +490,7 @@ func TestExtractWorkspaceFromTopic(t *testing.T) {
 		},
 		{
 			name:  "bridge topic returns empty (no workspace)",
-			topic: "br::msgbridge::default",
+			topic: "br::example-bridge::default",
 			want:  "",
 		},
 		{

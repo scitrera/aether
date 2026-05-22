@@ -38,6 +38,7 @@ var (
 type aetherliteProc struct {
 	cmd      *exec.Cmd
 	grpcAddr string // 127.0.0.1:<port>
+	opsAddr  string // 127.0.0.1:<port> for Prometheus /metrics
 	dataDir  string
 }
 
@@ -75,6 +76,10 @@ func startAetherlite() (*aetherliteProc, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pick admin port: %w", err)
 	}
+	opsPort, err := pickFreeTCPPort()
+	if err != nil {
+		return nil, fmt.Errorf("pick ops port: %w", err)
+	}
 	dataDir, err := os.MkdirTemp("", "aetherlite-e2e-")
 	if err != nil {
 		return nil, fmt.Errorf("mkdir data: %w", err)
@@ -82,10 +87,18 @@ func startAetherlite() (*aetherliteProc, error) {
 	cmd := exec.Command(binPath,
 		"-port", fmt.Sprintf("%d", grpcPort),
 		"-admin-port", fmt.Sprintf("%d", adminPort),
+		"-ops-port", fmt.Sprintf("%d", opsPort),
 		"-data-dir", dataDir,
 		"-dev",
 		"-insecure-admin",
 		"-workflow=false",
+	)
+	// Enable audit logging with tight flush settings so e2e tests can observe
+	// audit events without waiting the default 5-second flush period.
+	cmd.Env = append(os.Environ(),
+		"AETHER_AUDIT_ENABLED=true",
+		"AETHER_AUDIT_BATCH_SIZE=1",
+		"AETHER_AUDIT_FLUSH_PERIOD=200ms",
 	)
 	// Stream aetherlite output to stderr so failures surface in -v runs.
 	cmd.Stdout = os.Stderr
@@ -96,12 +109,13 @@ func startAetherlite() (*aetherliteProc, error) {
 		return nil, fmt.Errorf("start: %w", err)
 	}
 	grpcAddr := fmt.Sprintf("127.0.0.1:%d", grpcPort)
+	opsAddr := fmt.Sprintf("127.0.0.1:%d", opsPort)
 	if err := waitForTCP(grpcAddr, aetherliteStartTimeout); err != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		_ = os.RemoveAll(dataDir)
 		return nil, fmt.Errorf("wait ready %s: %w", grpcAddr, err)
 	}
-	return &aetherliteProc{cmd: cmd, grpcAddr: grpcAddr, dataDir: dataDir}, nil
+	return &aetherliteProc{cmd: cmd, grpcAddr: grpcAddr, opsAddr: opsAddr, dataDir: dataDir}, nil
 }
 
 func (a *aetherliteProc) stop() {

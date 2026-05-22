@@ -3997,7 +3997,7 @@ func (x *OrchestratorIdentity) GetSupportedProfiles() []string {
 
 type BridgeIdentity struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	Implementation string                 `protobuf:"bytes,1,opt,name=implementation,proto3" json:"implementation,omitempty"` // e.g., "aether-msgbridge", "webhook-bridge"
+	Implementation string                 `protobuf:"bytes,1,opt,name=implementation,proto3" json:"implementation,omitempty"` // e.g., "example-bridge", "webhook-bridge"
 	Specifier      string                 `protobuf:"bytes,2,opt,name=specifier,proto3" json:"specifier,omitempty"`           // Instance identifier for uniqueness (e.g., "default", "discord-1")
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
