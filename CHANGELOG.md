@@ -8,11 +8,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Aet
 
 ## [Unreleased]
 
+Internal builds carry a **v0.2.1** gateway/SDK version stamp; no v0.2.1 tag is published yet.
+
 ### Added
+
+- **[AG2] `scitrera-aether-ag2` adapter package.** Bridges AG2 / AutoGen agent runtimes to the Aether wire protocol with three layers: `AetherAgentHost` (server-side hosting of AG2 agents), `AetherRemoteAgent` (client-side stub that participates in AG2 group chats), and `AetherTransport` (typed wire transport). Ships a typed error hierarchy, example scripts for two-agent and group-chat scenarios, an `OPENAI_API_KEY`-driven `groupchat_with_remote_llm.py` example demonstrating `GroupChatManager` with LLM-based speaker selection, and e2e tests covering checkpoint persistence, streaming, and factory-based remote-agent setup.
+- **[AG2] `AetherAg2Orchestrator.shutdown()`** — idempotent teardown of tracked processes and client connections for the AG2 adapter. Tests cover process-termination resilience and client-closure robustness.
+- **[GO SDK / GATEWAY / PROXY SIDECAR] End-to-end CoDel-backed prioritization.** Priority-aware Controlled-Delay (CoDel) admission control now spans the send path (Go SDK), the delivery path (gateway per-client semaphore), and the sandbox relay path (proxy sidecar per-session queue). **Go SDK** — new `SendWithPriority` API classifies sends across five priority levels (control / chunked / best-effort tiers); `BackpressureError` surfaces sheds to callers; client config gains `BackpressureCapacity`, `BackpressureTarget`, and `BackpressureInterval` tuning knobs. **Gateway** — per-client `deliverySem` CoDel semaphore guards `Deliver*` callers; new `WithDeliveryBackpressure(capacity, target, interval)` server option (defaults: 16 / 50ms / 100ms); on shed or staging-buffer overflow the session emits a `BACKPRESSURE` `DownstreamMessage_Error` notice. **Proxy sidecar** — every send path (`runner.go`, `terminator.go`, `tunnel_transport.go`) routes through `SendWithPriority` so tunnel and proxy envelopes carry consistent priorities; per-session admission queue mirrors the SDK's; synthesized BACKPRESSURE notices on Acquire shed; terminator receive-loop throughput improved by offloading slow response paths and tunneling handshakes to bounded goroutines. Control envelopes are protected first under saturation across all three layers.
+- **[PROXY SIDECAR] `MaxSessions` config** to cap concurrent sandbox relay sessions (default `8`) for memory and table-tracking efficiency. Sessions over the cap surface as explicit rejections rather than slow-degrade. Loaded-config logging extended in both dev and prod paths for visibility.
+- **[AG2] `conversation_id` support across telemetry, proxy, and tool-loop layers.** Groups multiple `RequestEnvelope` correlation IDs into a single logical session. Telemetry hooks (`on_request_received`, `on_response_chunk`, `on_request_completed`, etc.) accept an optional `conversation_id`; propagation threads through the `proxy` and `tool_loop` modules. Backward-compatible — unit tests cover legacy payloads and schema migration scenarios.
+- **[PROXY SIDECAR] End-to-end sidecar integration test suite.** Covers streaming throughput/latency under fanout, chunked uploads under contention, mixed tunnel traffic, and CoDel priority-shedding behavior under real workloads. Adds structured SDK tests for failure and throughput scenarios.
+- **[TESTING] Shared aetherlite subprocess for e2e tests.** New `aetherlite_proc` package manages a single aetherlite gateway subprocess across the integration suite; harnesses attach sidecars with isolated per-test specs. Replaces the previous `fake-gateway` harness path for higher test fidelity. Lifecycle and startup-readiness checks run through `TestMain`.
+- **[GATEWAY] Clustering integration test for the chat-task workflow** (`TestClusterIntegration_ChatTaskWorkflow_EndToEnd`). Exercises the full production chat-task path on a single-node embedded NATS cluster: service-principal setup, agent orchestration, sandbox cache, agent-sandbox communication, cold-start replay, OBO grant propagation, task dispatching, and KV/cache interactions. Runs under `-short` without external dependencies.
+- **[PROXY SIDECAR] `HeaderMode` e2e coverage** expanded to query parsing plus `HEAD`, `PATCH`, and `OPTIONS` verbs.
+- **[AG2] Streaming buffer for empty final-message content** in `remote/proxy.py`. Continuation passes now reset cleanly; new unit tests cover buffer correctness and reset behavior.
+- **[AG2] Tool-loop error synthesis and lifecycle improvements.** Synthesizes errors for missing executors or raised exceptions. `_mirror_into_oai_messages` checkpoints agent conversation state. `RequestEnvelope.deadline_ms` is now enforced in `AetherAgentHost` with matching tests. `on_max_continuations` config handles proxy continuation limits gracefully. Telemetry counters track dropped events and metrics.
 
 ### Changed
 
+- **[GO SDK] Tunnel inflight registries scoped per `BaseClient`** instead of process-global, preventing key collisions when multiple clients share a process. `registerTunnelInflight` / `deleteTunnelInflight` now operate on the owning `BaseClient` instance. New `newTunnelState` constructs tunnel state testably without touching registries, improving test isolation across the tunnel unit-test suite.
+- **[PROXY SIDECAR] Concurrency and buffering refactor.** Replaced `aether.Async` in `OnProxyHttpRequest` and `OnTunnelOpen` with custom handlers that more tightly manage the receive-loop concurrency. New `pendingTunnel` buffer preserves frame order before tunnel registration, eliminating silent drops in registration-race scenarios. Logging and error handling extended for buffer-overflow and duplicate-tunnel-id paths. Affected e2e tests disable `t.Parallel()` to reduce contention and timeout risk under concurrent execution.
+- **[GATEWAY] Async-writer audit test replaced poll-based visibility check with deterministic drain via `Close()`.** Faster and stable on slow CI runners; aligns the test with the contract that events are queryable after drain.
+- **[VERSIONING] Internal version stamp bumped to v0.2.1** across the gateway and SDKs; log levels for target-clamp drops adjusted so routine backpressure no longer surfaces as warnings.
+- **[CI] GitHub Actions workflows:** `pull_request` triggers expanded; dev-image builds disable `latest` auto-injection (`flavor.latest=false`) so production and `dev-latest` tags stay distinct.
+
 ### Fixed
+
+- **[PROXY SIDECAR] Tunnel routing edge cases — peer misroutes and loops.** Tunnel pin lookups now enforce sender-peer integrity, with explicit checks for malformed or expired pins and disconnected peers. Unknown senders are silently dropped to avoid spurious reset cascades. Logging extended for routing edge cases to aid debugging.
+
+### Removed
+
+- Removed experimental msgbridge; a new replacement will be coming in a future release
 
 ### Security
 
@@ -20,7 +46,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Aet
 
 ## [0.2.0] - 2026-05-17
 
-This release lands the **Agentic-Fabric Protocol** (Phases 1–6) — a coherent expansion of the task lifecycle, authority model, and connection-time negotiation surface — alongside a cluster-mode NATS/JetStream substrate, full elimination of the `dbcompat` translation layer in favor of per-domain native SQLite stores, and a topic/address format breaking change. SDK versions are bumped to **0.2.0** across Go/Python/TypeScript.
+This release lands the **Agentic-Fabric Protocol Update** (Phases 1–6) — a coherent expansion of the task lifecycle, authority model, and connection-time negotiation surface — alongside a cluster-mode NATS/JetStream substrate, full elimination of the `dbcompat` translation layer in favor of per-domain native SQLite stores, and a topic/address format breaking change. SDK versions are bumped to **0.2.0** across Go/Python/TypeScript.
 
 ### Added
 
@@ -145,7 +171,6 @@ Initial public OSS release of the Aether gateway, SDKs (Go, Python, TypeScript),
 
 #### Standalone binaries
 - `aetherlite` (`cmd/aetherlite`): lightweight single-binary deployment target embedding SQLite + Badger; configurable via `AETHERLITE_*` environment variables or CLI flags.
-- `msgbridge` (`cmd/msgbridge`): messaging bridge server bridging Discord, Teams, and Email to Aether via the `Bridge` principal type.
 - `auth-proxy` (`cmd/auth-proxy`): authentication/authorization gateway for external services (e.g., MemoryLayer), backed by the same PostgreSQL schema as the gateway.
 
 #### Fan-in subscription architecture (Workflow Engine & Metrics Bridge)
@@ -161,7 +186,7 @@ Initial public OSS release of the Aether gateway, SDKs (Go, Python, TypeScript),
 - `EventTypeCustom` audit event category for application-defined events.
 
 #### Configuration
-- All aether-specific environment variables use a strict `AETHER_*` prefix (gateway runtime: `AETHER_GATEWAY_ID`, `AETHER_ADMIN_PORT`, `AETHER_ADMIN_ENABLED`, `AETHER_ADMIN_API_KEY`, `AETHER_ADMIN_TLS_CERT_FILE`, `AETHER_ADMIN_TLS_KEY_FILE`, `AETHER_ACL_REQUIRED`, `AETHER_AUTH_MODES`, `AETHER_LOG_LEVEL`, `AETHER_AUDIT_*`, etc.). Cloud-platform conventions (`PORT`, `POSTGRES_*`, `REDIS_*`, `STREAM_URL`, `AMQP_URL`, `DATABASE_URL`), `OTEL_*`, and service-scoped names (`MSGBRIDGE_*`, `WORKFLOW_*`, `AUTH_PROXY_*`, `PROXY_SIDECAR_*`, `TEAMS_*`, `DISCORD_*`, `SMTP_*`) are preserved for PaaS portability.
+- All aether-specific environment variables use a strict `AETHER_*` prefix (gateway runtime: `AETHER_GATEWAY_ID`, `AETHER_ADMIN_PORT`, `AETHER_ADMIN_ENABLED`, `AETHER_ADMIN_API_KEY`, `AETHER_ADMIN_TLS_CERT_FILE`, `AETHER_ADMIN_TLS_KEY_FILE`, `AETHER_ACL_REQUIRED`, `AETHER_AUTH_MODES`, `AETHER_LOG_LEVEL`, `AETHER_AUDIT_*`, etc.). Cloud-platform conventions (`PORT`, `POSTGRES_*`, `REDIS_*`, `STREAM_URL`, `AMQP_URL`, `DATABASE_URL`), `OTEL_*`, and service-scoped names (`WORKFLOW_*`, `AUTH_PROXY_*`, `PROXY_SIDECAR_*`) are preserved for PaaS portability.
 - AetherLite-specific overrides via `AETHERLITE_*` env vars (`AETHERLITE_PORT`, `AETHERLITE_ADMIN_PORT`, `AETHERLITE_DATA_DIR`, etc.) — each CLI flag has a matching env var; precedence is CLI flag > env > compiled-in default.
 - `docs/environment.md` — comprehensive reference covering all 87 environment variables across every binary.
 
