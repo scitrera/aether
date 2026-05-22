@@ -181,11 +181,10 @@ func (t *proxyInflightTracker) notifyPeersOfSessionEnd(ctx context.Context, depa
 		return
 	}
 	for _, entry := range entries {
-		peerTopic := entry.service
-		// requestID: what the SURVIVING peer's response handler is
-		// keyed on. Caller-side handler uses originalID; service-side
-		// handler uses the gateway-minted wireID.
-		var requestID string
+		// peerTopic / requestID: what the SURVIVING peer's response
+		// handler is keyed on. Caller-side handler uses originalID;
+		// service-side handler uses the gateway-minted wireID.
+		var peerTopic, requestID string
 		if departingTopic == entry.service {
 			// Service died; notify the caller.
 			peerTopic = entry.caller

@@ -248,32 +248,6 @@ func (m *tunnelManager) reserve(tunnelID string) *pendingTunnel {
 	return p
 }
 
-// activate replaces a pendingTunnel placeholder with the dialed real
-// tunnel and triggers the placeholder to flush buffered frames into it
-// in arrival order.
-//
-// Returns true on success. Returns false if no entry exists, the entry
-// is not a pendingTunnel (caller raced another activate), or the
-// placeholder was marked failed (caller cancelled via Close before
-// dial completed) — in any false case the caller is responsible for
-// stopping the dialed tunnel to release its goroutines.
-func (m *tunnelManager) activate(tunnelID string, real activeTunnel) bool {
-	m.mu.Lock()
-	entry, ok := m.tunnels[tunnelID]
-	if !ok {
-		m.mu.Unlock()
-		return false
-	}
-	pending, isPending := entry.(*pendingTunnel)
-	if !isPending {
-		m.mu.Unlock()
-		return false
-	}
-	m.tunnels[tunnelID] = real
-	m.mu.Unlock()
-	return pending.activate(real)
-}
-
 // unregister drops the entry without stopping the tunnel.
 func (m *tunnelManager) unregister(tunnelID string) {
 	m.mu.Lock()

@@ -71,9 +71,11 @@ func NewJetStreamRouter(js jetstream.JetStream, replicas int, log Logger) (*JetS
 		log = &zerologAdapter{}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
+	// Per-stream timeout rather than a shared budget. With Replicas>1 each
+	// CreateOrUpdateStream triggers a Raft leader election for that stream's
+	// own Raft group; on a freshly-formed cluster a slow early stream
+	// election can otherwise consume the whole shared budget and starve the
+	// remaining streams.
 	for prefix, info := range knownStreams {
 		cfg := jetstream.StreamConfig{
 			Name:      info.name,
@@ -83,7 +85,10 @@ func NewJetStreamRouter(js jetstream.JetStream, replicas int, log Logger) (*JetS
 			Storage:   jetstream.FileStorage,
 			Replicas:  replicas,
 		}
-		if _, err := js.CreateOrUpdateStream(ctx, cfg); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		_, err := js.CreateOrUpdateStream(ctx, cfg)
+		cancel()
+		if err != nil {
 			return nil, fmt.Errorf("jetstream_router: ensure stream %q (prefix %q): %w", info.name, prefix, err)
 		}
 	}

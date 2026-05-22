@@ -10,7 +10,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.18
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
-	github.com/bwmarrin/discordgo v0.29.0
 	github.com/casbin/casbin/v3 v3.10.0
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/dgraph-io/badger/v4 v4.9.1
@@ -33,7 +32,6 @@ require (
 	github.com/scitrera/aether/api v0.2.1
 	github.com/scitrera/aether/sdk/go v0.2.1
 	github.com/scitrera/go-backpressure v0.1.0
-	github.com/stretchr/testify v1.11.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0
 	go.opentelemetry.io/otel v1.43.0
@@ -56,8 +54,6 @@ require (
 replace github.com/scitrera/aether/api => ../api
 
 replace github.com/scitrera/aether/sdk/go => ../sdk/go
-
-replace github.com/scitrera/go-backpressure => /home/drew/oss/go-backpressure
 
 require (
 	github.com/MicahParks/jwkset v0.11.0 // indirect
@@ -82,7 +78,6 @@ require (
 	github.com/casbin/govaluate v1.3.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgraph-io/ristretto/v2 v2.2.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
@@ -104,7 +99,6 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

@@ -46,5 +46,3 @@ require (
 )
 
 replace github.com/scitrera/aether/api => ../../api
-
-replace github.com/scitrera/go-backpressure => /home/drew/oss/go-backpressure

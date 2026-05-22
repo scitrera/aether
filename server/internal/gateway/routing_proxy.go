@@ -507,24 +507,6 @@ func scopedPinID(scope, id string) string {
 	return scope + pinScopeSep + id
 }
 
-// encodeRequestPin returns the pin value used for SetRequestPin: caller and
-// service identities joined by requestPinSep.
-func encodeRequestPin(caller, service string) string {
-	if caller == "" {
-		return service
-	}
-	return caller + requestPinSep + service
-}
-
-// decodeRequestPin splits a pin value into caller and service. Legacy values
-// without a separator are treated as service-only.
-func decodeRequestPin(value string) (caller, service string) {
-	if idx := strings.Index(value, requestPinSep); idx >= 0 {
-		return value[:idx], value[idx+1:]
-	}
-	return "", value
-}
-
 // encodeRequestPin3 packs the three-tuple (originalID, caller, service) used
 // as the primary pin value when the gateway mints a unique wire id. The
 // originalID is the caller-supplied request_id (per-BaseClient, may collide
@@ -950,41 +932,6 @@ func tunnelPinTTL(idleMs int64) time.Duration {
 	return time.Duration(idleMs)*time.Millisecond + 30*time.Second
 }
 
-// followPin returns the concrete service identity bound to tunnelID,
-// emitting a PEER_RESET to the caller and clearing local bookkeeping when
-// the pin is missing or the pinned principal is no longer connected. Returns
-// "" when the caller MUST stop processing this frame.
-func (s *GatewayServer) followPin(ctx context.Context, client *ClientSession, tunnelID, workspace string) string {
-	pinValue, err := s.sessions.GetTunnelPin(ctx, tunnelID)
-	if err != nil {
-		logging.Logger.Warn().Err(err).Str("tunnel_id", tunnelID).Msg("tunnel pin lookup failed")
-		sendTunnelClose(client, tunnelID, pb.TunnelClose_PEER_RESET, "pin lookup failed")
-		return ""
-	}
-	if pinValue == "" {
-		sendTunnelClose(client, tunnelID, pb.TunnelClose_PEER_RESET, "tunnel pin expired or unknown")
-		s.tunnelCounterFor(workspace).n.Add(-1)
-		return ""
-	}
-	_, concrete := decodeTunnelPin(pinValue)
-	if concrete == "" {
-		sendTunnelClose(client, tunnelID, pb.TunnelClose_PEER_RESET, "tunnel pin malformed")
-		return ""
-	}
-	// Verify the pinned principal is still reachable. If neither local nor
-	// cluster-wide active, emit PEER_RESET and clear the pin.
-	if _, locallyConnected := s.identityIndex.Load(concrete); !locallyConnected {
-		active, _ := s.sessions.IsActive(ctx, concrete)
-		if !active {
-			_ = s.sessions.DeleteTunnelPin(ctx, tunnelID)
-			s.tunnelCounterFor(workspace).n.Add(-1)
-			sendTunnelClose(client, tunnelID, pb.TunnelClose_PEER_RESET, "pinned sidecar disconnected")
-			return ""
-		}
-	}
-	return concrete
-}
-
 func (s *GatewayServer) routeTunnelData(ctx context.Context, client *ClientSession, sender models.Identity, data *pb.TunnelData) {
 	tunnelID := data.GetTunnelId()
 	if tunnelID == "" {
@@ -1116,25 +1063,6 @@ func (s *GatewayServer) resolveTunnelPin(ctx context.Context, senderTopic, frame
 // value. The pin value is `caller_identity|service_identity`; legacy single-
 // value pins (no separator) are interpreted as service-only with no caller.
 const tunnelPinSep = "|"
-
-// encodeTunnelPin returns the pin value used for SetTunnelPin: caller and
-// service identities joined by tunnelPinSep. Empty caller produces a
-// service-only value, preserving legacy compatibility.
-func encodeTunnelPin(caller, service string) string {
-	if caller == "" {
-		return service
-	}
-	return caller + tunnelPinSep + service
-}
-
-// decodeTunnelPin splits a pin value into caller and service. Legacy values
-// without a separator are treated as service-only.
-func decodeTunnelPin(value string) (caller, service string) {
-	if idx := strings.Index(value, tunnelPinSep); idx >= 0 {
-		return value[:idx], value[idx+1:]
-	}
-	return "", value
-}
 
 // encodeTunnelPin3 packs the three-tuple (originalID, caller, service) used
 // as the primary tunnel-pin value when the gateway mints a unique wire id.

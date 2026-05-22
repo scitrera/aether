@@ -135,6 +135,25 @@ jobs:
         working-directory: server
         run: go test -race -count=1 -tags=integration ./...
 
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.10'
+          cache-dependency-path: server/go.sum
+
+      # The e2e suite spawns aetherlite as a subprocess and exercises the
+      # gateway / sidecar / SDK round-trip end to end. No external services
+      # are needed — aetherlite ships its own embedded SQLite + Badger.
+      - name: Run e2e tests
+        working-directory: server
+        env:
+          AETHER_ALLOW_DEV_MODE: "true"
+        run: go test -tags=e2e -count=1 -timeout 360s ./...
+
   security:
     runs-on: ubuntu-latest
     steps:
