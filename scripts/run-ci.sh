@@ -25,6 +25,9 @@
 #   KEEP_SERVICES   if set, don't tear down integration-test containers on exit
 #   SKIP_INSTALL    if set, fail if golangci-lint / govulncheck not already on PATH
 #                   (default behaviour is to `go install` them at the pinned version)
+#   LOG_DIR         override the per-job log directory (default: .run-ci-logs/<timestamp>)
+#   RUN_CI_VERBOSE  if set, mirror full subprocess output to stdout (default: only
+#                   forward test results, panics, linter findings, vuln headers)
 
 set -euo pipefail
 
@@ -96,14 +99,27 @@ fail() {
 }
 
 # run_logged JOB_NAME -- CMD... ARGS...
-# Runs CMD with stdout+stderr teed to LOG_DIR/<job>.log. Returns CMD's exit
-# code regardless of tee's exit. Caller is responsible for calling ok/fail.
+# Runs CMD with full stdout+stderr captured to LOG_DIR/<job>.log. To stdout,
+# only forwards the lines that matter — test results, package summaries,
+# panics, linter findings, govulncheck vuln headers, compile errors. The
+# rest (per-request structured logs from spawned subprocesses, go-test
+# "=== RUN" lines, framework chatter) goes only to the log. Set
+# RUN_CI_VERBOSE=1 to dump everything to stdout as well.
+# Returns CMD's exit code regardless of tee's exit. Caller calls ok/fail.
 run_logged() {
     local job="$1"; shift
     local log="$LOG_DIR/$job.log"
     echo "  log: $log"
     set +o pipefail
-    "$@" 2>&1 | tee "$log"
+    if [ -n "${RUN_CI_VERBOSE:-}" ]; then
+        "$@" 2>&1 | tee "$log"
+    else
+        "$@" 2>&1 \
+            | tee "$log" \
+            | grep --line-buffered -E \
+                '^--- (PASS|FAIL|SKIP):|^(ok|FAIL|PASS)([[:space:]]|$)|^panic:|^[[:space:]]*goroutine [0-9]+ \[|^[^[:space:]].+:[0-9]+:[0-9]+:[[:space:]]+(error|warning|fatal)|^Vulnerability #|^#[[:space:]]+[a-z]|\[build failed\]' \
+            || true
+    fi
     local rc=${PIPESTATUS[0]}
     set -o pipefail
     return "$rc"
