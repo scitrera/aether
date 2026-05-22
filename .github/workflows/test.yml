@@ -148,11 +148,14 @@ jobs:
       # The e2e suite spawns aetherlite as a subprocess and exercises the
       # gateway / sidecar / SDK round-trip end to end. No external services
       # are needed — aetherlite ships its own embedded SQLite + Badger.
+      # Scoped to the integration_e2e package; other dirs without build-tag
+      # gating (e.g. internal/cluster/integration) require NATS/JetStream
+      # and are covered by the integration-test job instead.
       - name: Run e2e tests
         working-directory: server
         env:
           AETHER_ALLOW_DEV_MODE: "true"
-        run: go test -tags=e2e -count=1 -timeout 360s ./...
+        run: go test -tags=e2e -count=1 -timeout 360s ./internal/proxysidecar/integration_e2e/...
 
   security:
     runs-on: ubuntu-latest

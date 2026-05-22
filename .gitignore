@@ -31,3 +31,4 @@ build/
 /server/.proxy_load_logs/
 /RELEASING.md
 /server/coverage.out
+/.run-ci-logs/

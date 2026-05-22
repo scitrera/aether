@@ -8,8 +8,10 @@
 #   lint          golangci-lint run --timeout=5m            (pinned to v2.11.4)
 #   integration   go test -race -count=1 -tags=integration ./...
 #                 with Redis (Valkey 8), RabbitMQ Streams, PostgreSQL services
-#   e2e           go test -tags=e2e -count=1 -timeout 360s ./...
+#   e2e           go test -tags=e2e -count=1 -timeout 360s ./internal/proxysidecar/integration_e2e/...
 #                 spawns aetherlite subprocess; no external services needed
+#                 (scoped to integration_e2e dir; other no-build-tag test
+#                 dirs that need NATS/JetStream are covered by integration)
 #   security      govulncheck ./...                          (pinned to v1.1.4)
 #
 # Usage:
@@ -50,6 +52,10 @@ SERVICE_CONTAINERS=(
     "${CONTAINER_PREFIX}-pg"
 )
 
+# Per-job logs. Set LOG_DIR=... to override; default is a fresh timestamped dir.
+LOG_DIR="${LOG_DIR:-${REPO_ROOT}/.run-ci-logs/$(date +%Y%m%d-%H%M%S)}"
+mkdir -p "$LOG_DIR"
+
 PASS=0
 FAIL=0
 FAILED_JOBS=()
@@ -64,10 +70,43 @@ ok() {
     PASS=$((PASS + 1))
 }
 
+# summarize_failure greps the per-job log for failure-context lines and prints
+# them so the user doesn't have to re-run with -v or page through scrollback.
+summarize_failure() {
+    local job="$1"
+    local log="$LOG_DIR/$job.log"
+    if [ ! -s "$log" ]; then
+        return 0
+    fi
+    echo ""
+    echo "  --- failure summary for $job ---"
+    # Patterns: go test individual failures, package-level fails, panics,
+    # linter findings (golangci-lint emits "path:line:col: severity: msg"),
+    # govulncheck vuln blocks. Cap at 50 lines so it stays scannable.
+    grep -nE '^--- FAIL:|^FAIL[[:space:]]+|^panic:|^[[:space:]]*goroutine [0-9]+ \[|^[^[:space:]].*:[0-9]+:[0-9]+:[[:space:]]+(error|warning|fatal)|^Vulnerability #' "$log" \
+        | head -50 || true
+    echo "  --- full log: $log ---"
+}
+
 fail() {
     echo "  FAILED"
     FAIL=$((FAIL + 1))
     FAILED_JOBS+=("$1")
+    summarize_failure "$1"
+}
+
+# run_logged JOB_NAME -- CMD... ARGS...
+# Runs CMD with stdout+stderr teed to LOG_DIR/<job>.log. Returns CMD's exit
+# code regardless of tee's exit. Caller is responsible for calling ok/fail.
+run_logged() {
+    local job="$1"; shift
+    local log="$LOG_DIR/$job.log"
+    echo "  log: $log"
+    set +o pipefail
+    "$@" 2>&1 | tee "$log"
+    local rc=${PIPESTATUS[0]}
+    set -o pipefail
+    return "$rc"
 }
 
 # --- Locate Go (mirrors scripts/build-all.sh) ---
@@ -111,11 +150,11 @@ export PATH
 
 job_test() {
     step "test (go vet + go test -short -race -coverprofile)"
-    (
-        cd "$REPO_ROOT/server"
-        "$GO" vet ./...
-        "$GO" test -short -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
-    ) && ok || { fail "test"; return 1; }
+    run_logged test bash -c "
+        cd '$REPO_ROOT/server' && \
+        '$GO' vet ./... && \
+        '$GO' test -short -race -count=1 -v -coverprofile=coverage.out -covermode=atomic ./...
+    " && ok || fail "test"
 }
 
 ensure_golangci_lint() {
@@ -147,10 +186,10 @@ job_lint() {
         fail "lint"
         return 1
     fi
-    (
-        cd "$REPO_ROOT/server"
+    run_logged lint bash -c "
+        cd '$REPO_ROOT/server' && \
         golangci-lint run --timeout=5m ./...
-    ) && ok || { fail "lint"; return 1; }
+    " && ok || fail "lint"
 }
 
 ensure_docker() {
@@ -233,25 +272,25 @@ job_integration() {
     fi
     start_services
     trap teardown_services EXIT
-    (
-        cd "$REPO_ROOT/server"
-        REDIS_ADDR="localhost:${REDIS_PORT}" \
-        RABBITMQ_STREAM_URL="rabbitmq-stream://guest:guest@localhost:${RMQ_STREAM_PORT}" \
-        RABBITMQ_AMQP_URL="amqp://guest:guest@localhost:${RMQ_AMQP_PORT}/" \
-        POSTGRES_DSN="postgres://aether:aether_test@localhost:${POSTGRES_PORT}/aether?sslmode=disable" \
-            "$GO" test -race -count=1 -tags=integration ./...
-    ) && ok || { fail "integration"; }
+    run_logged integration bash -c "
+        cd '$REPO_ROOT/server' && \
+        REDIS_ADDR='localhost:${REDIS_PORT}' \
+        RABBITMQ_STREAM_URL='rabbitmq-stream://guest:guest@localhost:${RMQ_STREAM_PORT}' \
+        RABBITMQ_AMQP_URL='amqp://guest:guest@localhost:${RMQ_AMQP_PORT}/' \
+        POSTGRES_DSN='postgres://aether:aether_test@localhost:${POSTGRES_PORT}/aether?sslmode=disable' \
+            '$GO' test -race -count=1 -v -tags=integration ./...
+    " && ok || fail "integration"
     teardown_services
     trap - EXIT
 }
 
 job_e2e() {
-    step "e2e (go test -tags=e2e ./...)"
-    (
-        cd "$REPO_ROOT/server"
+    step "e2e (go test -tags=e2e ./internal/proxysidecar/integration_e2e/...)"
+    run_logged e2e bash -c "
+        cd '$REPO_ROOT/server' && \
         AETHER_ALLOW_DEV_MODE=true \
-            "$GO" test -tags=e2e -count=1 -timeout 360s ./...
-    ) && ok || { fail "e2e"; return 1; }
+            '$GO' test -tags=e2e -count=1 -v -timeout 360s ./internal/proxysidecar/integration_e2e/...
+    " && ok || fail "e2e"
 }
 
 ensure_govulncheck() {
@@ -271,10 +310,10 @@ job_security() {
         fail "security"
         return 1
     fi
-    (
-        cd "$REPO_ROOT/server"
+    run_logged security bash -c "
+        cd '$REPO_ROOT/server' && \
         govulncheck ./...
-    ) && ok || { fail "security"; return 1; }
+    " && ok || fail "security"
 }
 
 # --- Driver ---
@@ -302,6 +341,7 @@ fi
 
 echo "running jobs: ${SELECTED_JOBS[*]}"
 echo "using GO=$GO ($("$GO" version | awk '{print $3}'))"
+echo "logs: $LOG_DIR"
 
 for job in "${SELECTED_JOBS[@]}"; do
     case "$job" in
