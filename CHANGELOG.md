@@ -18,6 +18,56 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Aet
 
 ---
 
+## [0.2.0] - 2026-05-17
+
+This release lands the **Agentic-Fabric Protocol** (Phases 1–6) — a coherent expansion of the task lifecycle, authority model, and connection-time negotiation surface — alongside a cluster-mode NATS/JetStream substrate, full elimination of the `dbcompat` translation layer in favor of per-domain native SQLite stores, and a topic/address format breaking change. SDK versions are bumped to **0.2.0** across Go/Python/TypeScript.
+
+### Added
+
+#### Agentic-Fabric Protocol (Phases 1–6)
+- **Phase 1 — Paused-state lifecycle and A2A-aligned `TaskStatus` states.** New `TaskStatus` values `WAITING_INPUT`, `HIBERNATED`, `REJECTED` aligned with A2A semantics. Task pause/resume APIs land in the gateway and SDKs; `WaitSpec` + `WaitReason` capture *why* a task is paused (dependency, input, schedule, hibernation). SQLite schema gains `wait_spec`, `paused_at`, `depends_on` columns (`migrations/sqlite_tasks/002_paused_states.sql`). TypeScript and Python SDKs gain protobuf-mirror types.
+- **Phase 2 — Authority-request lifecycle (sudo).** New `acl_authority_requests` table backs the request → approval → resolution flow with states `PENDING`, `APPROVED`, `DENIED`, `EXPIRED`, `CANCELED` and integrity constraints on resolution. Adds a request sweeper, approver-routing indices, and Go methods for `Create`, `Resolve`, `Expire`, `Cancel`. New protos: `AuthorityRequest`, `AuthorityRequestOperation`, `AuthorityRequestEvent`. Lifecycle actions are audit-logged.
+- **Phase 3 — Hibernation lifecycle.** Tasks can now suspend with `WaitSpec.HibernationDescriptor` (checkpoint keys, session IDs, escalation policy) and rehydrate via `TaskHibernated` handoff. Orchestrator gains `applyHibernationHandoffToAssignment`. DisconnectReaper guards against reaping hibernated tasks. Validations cover descriptor preconditions and JSON round-tripping.
+- **Phase 4 — Cursor pagination and descendant walks.** `ListTasksPage` returns cursor-encoded pages with recursive descendant traversal via SQLite CTEs. `TaskFilter` gains `CreatorActorID`, `StatusTimestampAfterUnixMs`, and related filters. New cursor encoding/decoding helpers in `server/pkg/tasks/cursor.go`. Comprehensive pagination conformance tests across postgres and SQLite backends.
+- **Phase 5 — Resource schema enforcement and audit attribution.** `AgentRegistration` carries a `resource_type_prefix` whose uniqueness is enforced across active registrations. Audit logs gain `owning_agent` and `owning_agent_prefix` metadata so downstream consumers can attribute writes back to the owning agent. ACL service, audit logger, and prefix-based routing all updated in lockstep.
+- **Phase 6 — Connection-time extension negotiation.** `InitConnection.extensions` lets clients declare extensions with required vs. optional semantics. The gateway negotiates and activates, returns `ConnectionAck.negotiated_extensions`, and rejects connections whose required extensions are unsupported. Negotiation activity is audit-logged.
+
+#### Cluster-mode NATS / JetStream substrate
+- **JetStream-based audit emitter** for cluster deployments. Audit events mirror into the JetStream `audit` stream; single-node deployments keep using the in-process SQLite audit store. Cluster startup gains guardrails for JetStream-based ACL rule propagation and task dispatching; integration tests cover KV propagation and fallback paths.
+- **Cross-gateway agent registry sync via NATS KV.** Best-effort KV propagation for `AgentRegistry.Register` and `Delete` keeps registries consistent across cluster members. New `KVSetter` interface; `AgentRegistry` and the SQLite registry store thread a KV bucket handle through. Backup logic now degrades gracefully when KV/stream domains are unprovisioned. Tests cover propagation, nil-KV no-ops, and cluster-mode registry wiring.
+- **NATS compatibility hardening.** Escaping logic for invalid NATS consumer/KV names (e.g., `:`, `@`) prevents subject-character errors. Regression tests cover JetStream durable consumers and KV round-trips with special characters. AWS SDK, NATS, and HashiCorp dependencies bumped.
+- **Multi-node cluster deployment manifests.** `cluster.yaml` and `cluster-ha.yaml` Docker Compose configs ship 2-node async and 3-node quorum topologies with JetStream, S3 backups, and optional load-balancer/debug profiles. Phase 4 integration tests exercise full cluster backup/restore cycles and HA deployments.
+
+#### Lifecycle and orchestration
+- **`TaskWaker`** periodically evaluates waiting tasks and triggers wake transitions on dependency completion, timeout-based failure, and scheduled wakes. Dependency-reconciliation logic moves into an event-driven state machine.
+- **Python SDK lifecycle helpers** — `pause_task`, `resume_task`, and matching pieces for the paused-state flow.
+- **`Agentic-Fabric Protocol Guide`** — long-form documentation covering Phases 1–6: state diagrams, code snippets, SDK usage, and migration guidance.
+
+#### Storage and migrations
+- **Native SQLite migration trees per domain** under `server/migrations/sqlite_{acl,audit_native,registry,tasks,tokens,workflow}/`. Each tree uses SQLite-native idioms (`AUTOINCREMENT`, `TEXT` timestamps, triggers, partial indices) and is embedded via a per-tree `embed.go`.
+
+### Changed
+
+- **Topic and address format standardized on `::` separator.** All task, agent, and progress topic/address strings now use `::` as the field separator across the protobuf models, server routing/validation, and the TypeScript, Python, and Go SDKs. **This is a wire-incompatible change with v0.1.x** — older clients cannot interoperate with v0.2.0 gateways, which is why SDKs are bumped to 0.2.0 in lockstep.
+- **Lite-mode services migrated to per-domain native SQLite stores.** ACL, tasks, registry, workflow, audit, and tokens each get their own SQLite database file (`acl.db`, `tasks.db`, `registry.db`, etc.) and dedicated handle, using the bare `modernc.org/sqlite` driver. Domain isolation simplifies lifecycle management and removes a class of cross-domain contention. Conformance tests run unchanged against the new backends.
+- **`WorkflowStore` interface in `internal/workflow`** decouples engine logic from `internal/storage/workflow.Store` to avoid an import cycle. Go's structural typing keeps the two interfaces interchangeable; compile-time assertions enforce method parity. Tests cover both the injected-store and legacy paths.
+- **`TaskAssignmentService` constructor cleanup.** Removed the unused `db` parameter from all initialization sites — the service has consumed its `taskStore` interface for some time and the raw `*sql.DB` was vestigial.
+- **gRPC HTTP/2 handshake timeout** added to the server configuration. Bounds shutdown latency and stabilizes CI by ensuring mid-handshake streams cannot stall server stop.
+- **Cert/key paths use a filesystem-safe `cnFilename`** helper to handle CNs containing characters disallowed in filenames (slashes, etc.) without manual sanitization at every call site.
+- **SDK version bumps to 0.2.0** — Go SDK, Python client (`scitrera_aether_client`), TypeScript SDK, and the gateway/aetherlite binaries. `versions.yaml` updated accordingly.
+
+### Removed
+
+- **`server/pkg/dbcompat/` removed in its entirety** — `dialect.go`, `driver.go`, `rewriter.go`, and their test files. The translation layer that previously rewrote PostgreSQL DDL/DML for SQLite is no longer in the source tree; each domain owns its native SQLite schema.
+- **Legacy lite-mode (`internal/aetherlite/lite.go`) and workflow SQLite migrations** under the old layout. Responsibilities consolidated into the per-domain native SQLite stores. Affected tests deleted or moved to the new layout.
+- **Unused helpers and dead code** pruned across packages: `collect`, `taskStatusToWaitReason`, `parseTimePtr`, and other identifiers with no remaining callers. Deferred `Stop` invocations replaced with error-checking closures (`defer func() { _ = watcher.Stop() }()`) for clearer resource management. `//nolint` markers added at the few deprecated-dependency call sites where migration is planned separately.
+
+### Fixed
+
+- **`proxysidecar/relay.go` indefinite-hang on shutdown.** `GracefulStop` is now bounded with a 3-second grace period; if the deadline passes (mid-handshake or stuck streams), the relay falls back to `Stop()` and logs a warning. Prior behavior could hang shutdown indefinitely under specific stream timing.
+
+---
+
 ## [0.1.60] - 2026-05-14
 
 ### Added
