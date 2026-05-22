@@ -9,7 +9,13 @@ Aether follows two naming conventions on purpose:
 - Aether-specific variables use an `AETHER_*` prefix (or service-scoped
   prefixes such as `AETHERLITE_*`, `WORKFLOW_*`, `AUTH_PROXY_*`,
   `PROXY_SIDECAR_*`). These are reserved by Aether and will not collide
-  with PaaS-injected variables.
+  with PaaS-injected variables. Settings shared between the full gateway
+  (`cmd/gateway`) and the single-binary build (`cmd/aetherlite`) — port,
+  admin port, ops port, dev/insecure-admin toggles, config / secrets file
+  paths — use a common `AETHER_*` name so the same env var works
+  unchanged across both binaries. The `AETHERLITE_*` prefix is reserved
+  for AetherLite-only knobs (embedded workflow server, embedded NATS
+  clustering, Badger data dir, S3 backup).
 - Backing-service and ecosystem variables use the conventional unprefixed
   names (`PORT`, `POSTGRES_*`, `REDIS_*`, `STREAM_URL`, `AMQP_URL`,
   `DATABASE_URL`, `OTEL_*`). These are kept unprefixed for portability
@@ -17,19 +23,23 @@ Aether follows two naming conventions on purpose:
   the standard semantics tooling already expects.
 
 Precedence (highest first) for every binary is: explicit CLI flag >
-environment variable > YAML config file > compiled-in default. AetherLite
-adds one more layer (CLI flag > `AETHERLITE_*` env > compiled-in default
-for the flag value), as documented in that section.
+environment variable > YAML config file > compiled-in default.
 
 For setup walkthroughs, see `docs/quickstart.md`,
 `docs/aetherlite.md`, and the per-binary guides under `server/docs/`.
 
 ## Naming Conventions
 
-- `AETHER_*` — variables read by the gateway / shared aether server
-  packages (auth, ACL, TLS, config validation, tracing knobs).
-- `AETHERLITE_*` — flag defaults for the AetherLite single-binary mode.
-  Every CLI flag has a matching `AETHERLITE_*` env var.
+- `AETHER_*` — variables read by both `cmd/gateway` and `cmd/aetherlite`.
+  Covers shared server packages (auth, ACL, TLS, config validation,
+  tracing knobs) AND the overlapping CLI-flag defaults (port, admin port,
+  ops port, dev mode, insecure-admin, config / secrets file). Set
+  `AETHER_PORT=50051` and the same value applies whether you launch the
+  full gateway or the single-binary build.
+- `AETHERLITE_*` — flag defaults for AetherLite-only features (embedded
+  workflow server, embedded NATS clustering, Badger data dir, S3 backup
+  for JetStream restore). These do not apply to the full gateway because
+  it doesn't ship those features.
 - `WORKFLOW_*`, `AUTH_PROXY_*`, `PROXY_SIDECAR_*` — service-scoped
   overrides for the corresponding `cmd/*` binary.
 - `PORT`, `POSTGRES_*`, `REDIS_*`, `STREAM_URL`, `AMQP_URL`,
@@ -158,28 +168,27 @@ gateway image can drop straight into PaaS targets that inject
 ## AetherLite (`cmd/aetherlite`)
 
 AetherLite is the single-binary mode (gateway + workflow in one process
-with embedded SQLite + Badger). It honours every gateway
-variable above (it embeds the same config object) and adds a parallel
-set of `AETHERLITE_*` variables that set the **default value of the
-matching CLI flag**. Precedence at the call site is therefore:
+with embedded SQLite + Badger). It honours every gateway variable above
+(it embeds the same config object). For CLI-flag defaults, settings
+shared with the full gateway use `AETHER_*` (so the same env var works
+for both binaries) and AetherLite-only features use `AETHERLITE_*`.
+Precedence at the call site is:
 
-> explicit CLI flag > `AETHERLITE_*` env var > compiled-in default
+> explicit CLI flag > env var > compiled-in default
 
-If you want to override a setting that the gateway already exposes via
-`AETHER_*` / `POSTGRES_*` / etc., set that variable directly — those win
-during `ApplyEnvOverrides()`.
-
-| Variable | Type | Default | Maps to flag |
-|---|---|---|---|
-| `AETHERLITE_CONFIG` | path | (empty) | `--config` |
-| `AETHERLITE_DATA_DIR` | path | `./aether-lite-data` | `--data-dir` |
-| `AETHERLITE_PORT` | int | `50051` | `--port` |
-| `AETHERLITE_ADMIN_PORT` | int | `31880` | `--admin-port` |
-| `AETHERLITE_DEV` | bool | `false` | `--dev` |
-| `AETHERLITE_INSECURE_ADMIN` | bool | `false` | `--insecure-admin` (requires `AETHER_ALLOW_DEV_MODE=true`). **NOT FOR PRODUCTION.** |
-| `AETHERLITE_WORKFLOW` | bool | `true` | `--workflow` (toggles embedded workflow server) |
-| `AETHERLITE_WORKFLOW_CONFIG` | path | (empty) | `--workflow-config` |
-| `AETHERLITE_WORKFLOW_ADMIN_PORT` | int | `31881` | `--workflow-admin-port` |
+| Variable | Type | Default | Maps to flag | Also recognised by `cmd/gateway` |
+|---|---|---|---|---|
+| `AETHER_CONFIG` | path | (empty) | `--config` | ✅ |
+| `AETHER_SECRETS_FILE` | path | (empty in lite; `/etc/aether/generated-secrets.yaml` in full) | `--secrets-file` | ✅ |
+| `AETHER_PORT` | int | `50051` (lite) / `0`-use-config (full) | `--port` | ✅ |
+| `AETHER_ADMIN_PORT` | int | `31880` (lite) / `0`-use-config (full) | `--admin-port` | ✅ |
+| `AETHER_OPS_PORT` | int | `0` (use config default `9090`) | `--ops-port` | ✅ |
+| `AETHER_DEV` | bool | `false` | `--dev` | ✅ |
+| `AETHER_INSECURE_ADMIN` | bool | `false` | `--insecure-admin` (requires `AETHER_ALLOW_DEV_MODE=true` in lite). **NOT FOR PRODUCTION.** | ✅ |
+| `AETHERLITE_DATA_DIR` | path | `./aether-lite-data` | `--data-dir` | lite-only (Badger storage) |
+| `AETHERLITE_WORKFLOW` | bool | `true` | `--workflow` (toggles embedded workflow server) | lite-only |
+| `AETHERLITE_WORKFLOW_CONFIG` | path | (empty) | `--workflow-config` | lite-only |
+| `AETHERLITE_WORKFLOW_ADMIN_PORT` | int | `31881` | `--workflow-admin-port` | lite-only |
 
 ## Migrate (`cmd/migrate`)
 

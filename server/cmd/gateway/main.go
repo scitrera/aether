@@ -62,12 +62,17 @@ Aether Gateway v%s
 `
 )
 
+// Settings that overlap with the AetherLite single-binary use the AETHER_*
+// env-var prefix so the same env var works for both binaries. Aether-specific
+// configuration (PostgreSQL, Redis, RabbitMQ) keeps its own naming because
+// aetherlite doesn't share those.
+// Precedence: explicit CLI flag > env var > compiled-in default.
 var (
 	// Config file
-	configFile = flag.String("config", "", "Path to configuration file (required unless --dev is set)")
+	configFile = flag.String("config", config.EnvStr("AETHER_CONFIG", ""), "Path to configuration file (required unless --dev is set) (env: AETHER_CONFIG)")
 
 	// Server options
-	port = flag.Int("port", 0, "gRPC server port (overrides config)")
+	port = flag.Int("port", config.EnvInt("AETHER_PORT", 0), "gRPC server port (overrides config) (env: AETHER_PORT)")
 
 	// mTLS options
 	enableTLS = flag.Bool("tls", false, "Enable mTLS (requires cert-file, key-file, ca-file)")
@@ -89,20 +94,20 @@ var (
 	amqpURL   = flag.String("amqp-url", "", "RabbitMQ AMQP URL (overrides config)")
 
 	// Admin UI options (override config)
-	adminPort     = flag.Int("admin-port", 0, "Admin UI port (overrides config)")
+	adminPort     = flag.Int("admin-port", config.EnvInt("AETHER_ADMIN_PORT", 0), "Admin UI port (overrides config) (env: AETHER_ADMIN_PORT)")
 	adminDevPath  = flag.String("admin-dev-path", "", "Path to admin static files in dev mode")
-	insecureAdmin = flag.Bool("insecure-admin", false, "Allow admin API to run without authentication when no AETHER_ADMIN_API_KEY is set (NOT FOR PRODUCTION)")
+	insecureAdmin = flag.Bool("insecure-admin", config.EnvBool("AETHER_INSECURE_ADMIN", false), "Allow admin API to run without authentication when no AETHER_ADMIN_API_KEY is set (NOT FOR PRODUCTION) (env: AETHER_INSECURE_ADMIN)")
 
 	// Ops/metrics server options (override config)
 	opsPort = flag.Int("ops-port", config.EnvInt("AETHER_OPS_PORT", 0), "Override the ops/metrics server port (0 = use config default 9090) (env: AETHER_OPS_PORT)")
 
 	// Secrets options
-	secretsFile = flag.String("secrets-file", "/etc/aether/generated-secrets.yaml", "Path to generated secrets file")
+	secretsFile = flag.String("secrets-file", config.EnvStr("AETHER_SECRETS_FILE", "/etc/aether/generated-secrets.yaml"), "Path to generated secrets file (env: AETHER_SECRETS_FILE)")
 
 	// Other options
 	showVersion = flag.Bool("version", false, "Show version and exit")
 	showHelp    = flag.Bool("help", false, "Show this help message")
-	devMode     = flag.Bool("dev", false, "Allow startup with hardcoded development defaults when config file is missing (NOT FOR PRODUCTION)")
+	devMode     = flag.Bool("dev", config.EnvBool("AETHER_DEV", false), "Allow startup with hardcoded development defaults when config file is missing (NOT FOR PRODUCTION) (env: AETHER_DEV)")
 	liteMode    = flag.Bool("lite", false, "Run in lite mode with embedded backends (SQLite + Badger, no external Redis/RabbitMQ/PostgreSQL required)")
 )
 

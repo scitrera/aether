@@ -75,25 +75,29 @@ AetherLite v%s — embedded single-binary server
 `
 )
 
-// Every CLI flag has a matching AETHERLITE_* environment variable.
+// Every CLI flag has a matching env var. Settings that overlap with the
+// full aether gateway use the AETHER_* prefix so the same env var works
+// for both binaries with no change. AetherLite-specific configuration
+// (embedded workflow, embedded NATS clustering, Badger storage, S3 backup)
+// keeps the AETHERLITE_* prefix because aether full doesn't share those.
 // Precedence: explicit CLI flag > environment variable > compiled-in default.
 // config.EnvStr/EnvInt/EnvBool set the flag's default at init time, so the
 // user can still override on the command line.
 var (
-	configFile    = flag.String("config", config.EnvStr("AETHERLITE_CONFIG", ""), "Optional path to a gateway config file (env: AETHERLITE_CONFIG)")
-	secretsFile   = flag.String("secrets-file", config.EnvStr("AETHERLITE_SECRETS_FILE", ""), "Optional generated-secrets.yaml; merged into config (HMAC, admin key, TLS paths) (env: AETHERLITE_SECRETS_FILE)")
+	configFile    = flag.String("config", config.EnvStr("AETHER_CONFIG", ""), "Optional path to a gateway config file (env: AETHER_CONFIG)")
+	secretsFile   = flag.String("secrets-file", config.EnvStr("AETHER_SECRETS_FILE", ""), "Optional generated-secrets.yaml; merged into config (HMAC, admin key, TLS paths) (env: AETHER_SECRETS_FILE)")
 	dataDir       = flag.String("data-dir", config.EnvStr("AETHERLITE_DATA_DIR", "./aether-lite-data"), "Data directory for SQLite and Badger storage (env: AETHERLITE_DATA_DIR)")
-	port          = flag.Int("port", config.EnvInt("AETHERLITE_PORT", 50051), "gRPC server port (env: AETHERLITE_PORT)")
-	adminPort     = flag.Int("admin-port", config.EnvInt("AETHERLITE_ADMIN_PORT", 31880), "Admin UI port (env: AETHERLITE_ADMIN_PORT)")
-	devMode       = flag.Bool("dev", config.EnvBool("AETHERLITE_DEV", false), "Development mode (relaxed security, CORS wildcard) (env: AETHERLITE_DEV)")
-	insecureAdmin = flag.Bool("insecure-admin", config.EnvBool("AETHERLITE_INSECURE_ADMIN", false), "Allow admin API without authentication (NOT FOR PRODUCTION) (env: AETHERLITE_INSECURE_ADMIN)")
+	port          = flag.Int("port", config.EnvInt("AETHER_PORT", 50051), "gRPC server port (env: AETHER_PORT)")
+	adminPort     = flag.Int("admin-port", config.EnvInt("AETHER_ADMIN_PORT", 31880), "Admin UI port (env: AETHER_ADMIN_PORT)")
+	devMode       = flag.Bool("dev", config.EnvBool("AETHER_DEV", false), "Development mode (relaxed security, CORS wildcard) (env: AETHER_DEV)")
+	insecureAdmin = flag.Bool("insecure-admin", config.EnvBool("AETHER_INSECURE_ADMIN", false), "Allow admin API without authentication (NOT FOR PRODUCTION) (env: AETHER_INSECURE_ADMIN)")
 	showVersion   = flag.Bool("version", false, "Show version and exit")
 	showHelp      = flag.Bool("help", false, "Show this help message")
-	// Workflow options
+	// Workflow options (AetherLite-specific — aether full has separate workflow service)
 	enableWorkflow     = flag.Bool("workflow", config.EnvBool("AETHERLITE_WORKFLOW", true), "Enable embedded workflow server (env: AETHERLITE_WORKFLOW)")
 	workflowConfigFile = flag.String("workflow-config", config.EnvStr("AETHERLITE_WORKFLOW_CONFIG", ""), "Optional workflow config file (overrides auto-config) (env: AETHERLITE_WORKFLOW_CONFIG)")
 	workflowAdminPort  = flag.Int("workflow-admin-port", config.EnvInt("AETHERLITE_WORKFLOW_ADMIN_PORT", 31881), "Workflow admin API port (env: AETHERLITE_WORKFLOW_ADMIN_PORT)")
-	opsPort            = flag.Int("ops-port", config.EnvInt("AETHERLITE_OPS_PORT", 0), "Override the ops/metrics server port (0 = use config default 9090) (env: AETHERLITE_OPS_PORT)")
+	opsPort            = flag.Int("ops-port", config.EnvInt("AETHER_OPS_PORT", 0), "Override the ops/metrics server port (0 = use config default 9090) (env: AETHER_OPS_PORT)")
 )
 
 func main() {

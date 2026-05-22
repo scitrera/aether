@@ -82,10 +82,10 @@ services:
     environment:
       # Core
       AETHERLITE_DATA_DIR: /data/aetherlite
-      AETHERLITE_PORT: "50051"
-      AETHERLITE_ADMIN_PORT: "31880"
-      AETHERLITE_DEV: "true"
-      AETHERLITE_INSECURE_ADMIN: "true"
+      AETHER_PORT: "50051"
+      AETHER_ADMIN_PORT: "31880"
+      AETHER_DEV: "true"
+      AETHER_INSECURE_ADMIN: "true"
       AETHER_ALLOW_DEV_MODE: "true"
 
       # Cluster mode — peers are nodes 2 and 3
@@ -138,10 +138,10 @@ services:
     environment:
       # Core
       AETHERLITE_DATA_DIR: /data/aetherlite
-      AETHERLITE_PORT: "50051"
-      AETHERLITE_ADMIN_PORT: "31880"
-      AETHERLITE_DEV: "true"
-      AETHERLITE_INSECURE_ADMIN: "true"
+      AETHER_PORT: "50051"
+      AETHER_ADMIN_PORT: "31880"
+      AETHER_DEV: "true"
+      AETHER_INSECURE_ADMIN: "true"
       AETHER_ALLOW_DEV_MODE: "true"
 
       # Cluster mode — peers are nodes 1 and 3
@@ -194,10 +194,10 @@ services:
     environment:
       # Core
       AETHERLITE_DATA_DIR: /data/aetherlite
-      AETHERLITE_PORT: "50051"
-      AETHERLITE_ADMIN_PORT: "31880"
-      AETHERLITE_DEV: "true"
-      AETHERLITE_INSECURE_ADMIN: "true"
+      AETHER_PORT: "50051"
+      AETHER_ADMIN_PORT: "31880"
+      AETHER_DEV: "true"
+      AETHER_INSECURE_ADMIN: "true"
       AETHER_ALLOW_DEV_MODE: "true"
 
       # Cluster mode — peers are nodes 1 and 2

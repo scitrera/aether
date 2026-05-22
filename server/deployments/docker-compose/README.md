@@ -148,7 +148,7 @@ After startup, the Admin UI is available at:
 - Topology B node 1: http://localhost:31880 / node 2: http://localhost:31881
 - Topology C node 1: http://localhost:31880 / node 2: http://localhost:31881 / node 3: http://localhost:31882
 
-The Admin UI is opened with `AETHERLITE_INSECURE_ADMIN=true` + `AETHER_ALLOW_DEV_MODE=true`
+The Admin UI is opened with `AETHER_INSECURE_ADMIN=true` + `AETHER_ALLOW_DEV_MODE=true`
 so no authentication is required in these dev configurations.
 
 ### MinIO console

@@ -385,7 +385,7 @@ nats consumer ls msg    # View stream consumer groups
 
 ```bash
 export AETHERLITE_DATA_DIR=./aether-lite-data
-export AETHERLITE_DEV=true
+export AETHER_DEV=true
 export AETHER_ALLOW_DEV_MODE=true
 
 ./aetherlite \
@@ -696,7 +696,7 @@ NATS subject:    ag.acme.com_2Eexample_2Echat-agent.v1
 | `AETHER_DISPATCHER` | string | auto | A2/B/C | Task dispatcher (polling/jetstream) |
 | `AETHER_STRICT_IDENTIFIER_CHARSET` | bool | true | all | Validate identifiers (reject reserved chars) |
 | `AETHERLITE_DATA_DIR` | string | ./aether-lite-data | all | Data directory (SQLite, Badger, NATS files) |
-| `AETHERLITE_PORT` | int | 50051 | all | gRPC server port |
-| `AETHERLITE_ADMIN_PORT` | int | 31880 | all | Admin UI port |
-| `AETHERLITE_DEV` | bool | false | all | Development mode (relaxed security) |
+| `AETHER_PORT` | int | 50051 | all | gRPC server port |
+| `AETHER_ADMIN_PORT` | int | 31880 | all | Admin UI port |
+| `AETHER_DEV` | bool | false | all | Development mode (relaxed security) |
 | `AETHER_ALLOW_DEV_MODE` | bool | false | all | Opt-in for relaxed security features |
