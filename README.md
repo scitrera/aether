@@ -39,8 +39,16 @@ Built by [scitrera.ai](https://scitrera.ai).
   ensure only one connection per identity at any time.
 - **Hierarchical KV Store** — Namespace-scoped configuration with global, workspace, user, and user-workspace scopes.
   Config is pushed to connecting clients as a baseline snapshot.
-- **Topic-Based Message Routing** — Prefix-driven routing with per-principal permission enforcement, served by the
-  active messaging backbone.
+- **First Class Access Control** — Access control is fundamentally baked into every layer which (1) enforces security
+    even preventing message sending/routing/receipt based on ACL rules as well as throughout KV, orchestration, etc and
+    (2) benefits applications and agent design by handling one of the more critical and error-prone parts of enterprise
+    development for you.
+- **Workspaces** — Built-in support for "workspaces" which are logical namespaces for agent identities, messages, and KV. 
+  By default, workspaces are isolated but ACL rules allow cross-workspace messaging and KV if configured. 
+  Applications can use workspaces to organize data and enforce access control.
+- **Intent-Based Message Routing** — SDKs provide helpers for topics to enable developers to focus on intent (e.g. send 
+  message to some other agent, etc.) rather than the mechanics of topics and fan-in/out targeting. The SDKs and gateway 
+  handle logistics for prefix-driven routing with per-principal permission enforcement.
 - **Orchestration / Lazy Loading** — When a message targets an offline agent or task, the gateway enqueues the message
   and signals the responsible orchestrator to spin up compute.
 - **Built-in Workflow Engine** — Both **DAG-based** workflows (declarative graphs with typed inputs/outputs,
@@ -50,10 +58,7 @@ Built by [scitrera.ai](https://scitrera.ai).
 - **Horizontal Scaling** — Stateless gateway instances share state through the configured state and messaging
   backends, enabling multi-node deployments either on the JetStream-clustered AetherLite path or on the full
   Redis + RabbitMQ + PostgreSQL stack.
-- **First Class Access Control** — Access control is fundamentally baked into every layer which (1) enforces security
-  even preventing message sending/routing/receipt based on ACL rules as well as throughout KV, orchestration, etc and 
-  (2) benefits applications and agent design by handling one of the more critical and error-prone parts of enterprise
-  development for you.
+- **Progress Updates** — A built-in topic schema and message type for handling progress updates on tasks.
 - **Audit Logging** — Configurable event capture (connection, auth, message, KV, admin, ACL) with batched writes and
   retention policies. By default, everything is captured in audit logs, but you control it.
 
