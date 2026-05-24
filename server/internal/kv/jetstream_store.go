@@ -122,29 +122,67 @@ func scopeTag(scope KVScope) string {
 	}
 }
 
-// buildKey constructs the full NATS KV key for an entry.
-// Format: {scopeTag}/{impl}/{spec}/{userID}/{workspace}/{userKey}
+// buildJSKey constructs the full NATS KV key for an entry.
+//
+// Layout mirrors BuildNamespace semantics (see namespace.go): the agent
+// identity segments (impl, spec) are ONLY embedded for SharingExclusive
+// scopes. For SharingShared scopes (global, workspace, user-shared,
+// user-workspace-shared) the agent identity is omitted so that all agents
+// in the tenant rendezvous on the same storage key. The identity
+// (user/workspace) segments included depend on spec.Identity.
 func buildJSKey(agent models.Identity, scope KVScope, userID, workspace, key string) string {
-	return strings.Join([]string{
-		scopeTag(scope),
-		encodeKVSegment(agent.Implementation),
-		encodeKVSegment(agent.Specifier),
-		encodeKVSegment(userID),
-		encodeKVSegment(workspace),
-		encodeKVSegment(key),
-	}, jsSeparator)
+	spec, ok := ScopeSpecFromKVScope(scope)
+	if !ok {
+		// Unknown scope — fall back to the most restrictive (per-agent
+		// per-user-per-workspace) layout to preserve isolation rather than
+		// accidentally leak across agents. Callers should always use a
+		// canonical KVScope value.
+		spec = SpecUserWorkspace
+	}
+	segments := []string{scopeTag(scope)}
+	if spec.Sharing == SharingExclusive {
+		segments = append(segments,
+			encodeKVSegment(agent.Implementation),
+			encodeKVSegment(agent.Specifier),
+		)
+	}
+	switch spec.Identity {
+	case IdentityScopeWorkspace:
+		segments = append(segments, encodeKVSegment(workspace))
+	case IdentityScopeUser:
+		segments = append(segments, encodeKVSegment(userID))
+	case IdentityScopeUserWorkspace:
+		segments = append(segments, encodeKVSegment(userID), encodeKVSegment(workspace))
+	}
+	segments = append(segments, encodeKVSegment(key))
+	return strings.Join(segments, jsSeparator)
 }
 
 // buildJSPrefix constructs the namespace prefix for list/filter operations.
-// The prefix ends with "/" so NATS keys() matching works by prefix.
+// The prefix ends with jsSeparator so NATS keys() matching works by prefix.
+// Mirrors buildJSKey's conditional inclusion of agent-identity segments based
+// on spec.Sharing.
 func buildJSPrefix(agent models.Identity, scope KVScope, userID, workspace string) string {
-	return strings.Join([]string{
-		scopeTag(scope),
-		encodeKVSegment(agent.Implementation),
-		encodeKVSegment(agent.Specifier),
-		encodeKVSegment(userID),
-		encodeKVSegment(workspace),
-	}, jsSeparator) + jsSeparator
+	spec, ok := ScopeSpecFromKVScope(scope)
+	if !ok {
+		spec = SpecUserWorkspace
+	}
+	segments := []string{scopeTag(scope)}
+	if spec.Sharing == SharingExclusive {
+		segments = append(segments,
+			encodeKVSegment(agent.Implementation),
+			encodeKVSegment(agent.Specifier),
+		)
+	}
+	switch spec.Identity {
+	case IdentityScopeWorkspace:
+		segments = append(segments, encodeKVSegment(workspace))
+	case IdentityScopeUser:
+		segments = append(segments, encodeKVSegment(userID))
+	case IdentityScopeUserWorkspace:
+		segments = append(segments, encodeKVSegment(userID), encodeKVSegment(workspace))
+	}
+	return strings.Join(segments, jsSeparator) + jsSeparator
 }
 
 // extractUserKey strips the namespace prefix from a full NATS KV key and
