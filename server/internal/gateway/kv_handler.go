@@ -218,6 +218,23 @@ func (h *KVHandler) HandleKVOperation(
 	default:
 		opErr = status.Error(codes.InvalidArgument, "unknown KV operation")
 	}
+
+	// Every KV op's wire contract is "echo the request_id on a KVResponse
+	// (Success=true or false)". Sub-handlers always send a KVResponse on
+	// success but bail out on error without one — that asymmetry strands
+	// the SDK's KVGetSync / KVPutSync waiters on a pending request that
+	// the gateway has decided to reject. Emit a typed failure response
+	// here so the typed pending-request channel resolves. The caller
+	// continues to receive opErr and can layer its own ErrorResponse on
+	// top for OnError consumers.
+	if opErr != nil && requestID != "" {
+		sendResponse(&pb.DownstreamMessage{
+			Payload: &pb.DownstreamMessage_Kv{
+				Kv: &pb.KVResponse{Success: false, RequestId: requestID},
+			},
+		})
+	}
+
 	return opErr
 }
 

@@ -1070,3 +1070,109 @@ func TestKVHandler_DecrementIf_GatewayHandler_ConcurrentOps(t *testing.T) {
 		t.Errorf("final balance = %q, want \"0\"", finalVal)
 	}
 }
+
+// TestKVHandler_ErrorStillEmitsTypedFailureResponse verifies the gateway
+// emits a `KVResponse{Success=false, RequestId=…}` even when the sub-handler
+// errors before its own success path could send one. This is the wire
+// contract the SDK's typed pending-request map depends on: KVGetSync /
+// KVPutSync registers a chan keyed by request_id and waits for a
+// KVResponse with that id. Without this emission, ACL or store errors
+// would strand the waiter on its per-op timeout (5–30s) even though the
+// gateway responded instantly with an ErrorResponse — that surfaces as
+// a deadline-exceeded error that hides the real cause.
+//
+// Regression test for the deadlock we hit during the webhookservice E2E:
+// pool-worker dispatch did endpoints.Get → KVGetSync; the worker lacked
+// the workspace KV ACL grant, gateway emitted only ErrorResponse, and
+// the worker hung 5s waiting for a KVResponse that never came.
+func TestKVHandler_ErrorStillEmitsTypedFailureResponse(t *testing.T) {
+	t.Run("ACL deny on GET", func(t *testing.T) {
+		aclMock := newMockACLChecker()
+		// Key-level fallback, scope-level deny.
+		aclMock.setScopeRule("workspace", false, acl.AccessNone)
+
+		h := newTestKVHandlerWithACL(newMockKVReadWriter(), aclMock)
+		cb, msgs := captureResponses()
+
+		op := &pb.KVOperation{
+			Op:        pb.KVOperation_GET,
+			Scope:     pb.KVOperation_WORKSPACE,
+			Key:       "denied-key",
+			Workspace: "ws1",
+			RequestId: "req-deny-1",
+		}
+
+		err := h.HandleKVOperation(context.Background(), agentIdentity, uuid.New(), nil, op, cb)
+		if err == nil {
+			t.Fatal("expected error for ACL deny, got nil")
+		}
+		if len(*msgs) != 1 {
+			t.Fatalf("expected 1 typed response (Success=false), got %d", len(*msgs))
+		}
+		kv := (*msgs)[0].GetKv()
+		if kv == nil {
+			t.Fatal("response was not a KVResponse")
+		}
+		if kv.Success {
+			t.Error("expected Success=false on ACL deny")
+		}
+		if kv.RequestId != "req-deny-1" {
+			t.Errorf("RequestId = %q, want req-deny-1", kv.RequestId)
+		}
+	})
+
+	t.Run("ACL deny on PUT", func(t *testing.T) {
+		aclMock := newMockACLChecker()
+		aclMock.setKeyRule("denied-write-key", false, acl.AccessNone)
+
+		h := newTestKVHandlerWithACL(newMockKVReadWriter(), aclMock)
+		cb, msgs := captureResponses()
+
+		op := &pb.KVOperation{
+			Op:        pb.KVOperation_PUT,
+			Scope:     pb.KVOperation_GLOBAL,
+			Key:       "denied-write-key",
+			Value:     []byte("v"),
+			RequestId: "req-deny-put",
+		}
+
+		err := h.HandleKVOperation(context.Background(), agentIdentity, uuid.New(), nil, op, cb)
+		if err == nil {
+			t.Fatal("expected error for ACL deny, got nil")
+		}
+		if len(*msgs) != 1 {
+			t.Fatalf("expected 1 typed response (Success=false), got %d", len(*msgs))
+		}
+		kv := (*msgs)[0].GetKv()
+		if kv == nil || kv.Success || kv.RequestId != "req-deny-put" {
+			t.Errorf("expected KVResponse{Success=false, RequestId=req-deny-put}, got %+v", kv)
+		}
+	})
+
+	t.Run("empty RequestId omits typed failure", func(t *testing.T) {
+		// Sanity: fire-and-forget callers (no request_id) shouldn't get
+		// a stray empty-id KVResponse — there's no pending waiter and
+		// the extra frame would just be noise.
+		aclMock := newMockACLChecker()
+		aclMock.setScopeRule("global", false, acl.AccessNone)
+
+		h := newTestKVHandlerWithACL(newMockKVReadWriter(), aclMock)
+		cb, msgs := captureResponses()
+
+		op := &pb.KVOperation{
+			Op:    pb.KVOperation_PUT,
+			Scope: pb.KVOperation_GLOBAL,
+			Key:   "k",
+			Value: []byte("v"),
+			// no RequestId set
+		}
+
+		err := h.HandleKVOperation(context.Background(), agentIdentity, uuid.New(), nil, op, cb)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if len(*msgs) != 0 {
+			t.Errorf("expected no extra response when RequestId is empty, got %d", len(*msgs))
+		}
+	})
+}
