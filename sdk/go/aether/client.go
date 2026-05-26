@@ -2088,6 +2088,18 @@ func (c *BaseClient) handleKVResponse(ctx context.Context, kv *pb.KVResponse) er
 }
 
 // handleTaskAssignment processes a task assignment from the server.
+//
+// The user-registered OnTaskAssignment handler is invoked in its own
+// goroutine rather than synchronously on the receive loop. Task workers
+// almost always need to make gateway round-trips during delivery
+// (CompleteTask/FailTask at a minimum, and frequently KVGetSync to
+// resolve resources); the response to those round-trips can ONLY arrive
+// via this same receive loop, so a synchronous dispatch would deadlock
+// the worker on its own KVResponse until the per-op timeout fires.
+//
+// Errors from the handler are logged via OnError if registered; panics
+// are recovered and logged. This call returns nil immediately so the
+// receive loop can continue processing inbound frames.
 func (c *BaseClient) handleTaskAssignment(ctx context.Context, ta *pb.TaskAssignment) error {
 	if c.handlers.OnTaskAssignment == nil {
 		return nil
@@ -2114,7 +2126,25 @@ func (c *BaseClient) handleTaskAssignment(ctx context.Context, ta *pb.TaskAssign
 		assignment.AssignedAt = time.Now()
 	}
 
-	return c.handlers.OnTaskAssignment(ctx, assignment)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if c.handlers.OnError != nil {
+					_ = c.handlers.OnError(ctx, &ErrorInfo{
+						Code:    "TASK_ASSIGNMENT_HANDLER_PANIC",
+						Message: fmt.Sprintf("OnTaskAssignment handler panic: %v", r),
+					})
+				}
+			}
+		}()
+		if err := c.handlers.OnTaskAssignment(ctx, assignment); err != nil && c.handlers.OnError != nil {
+			_ = c.handlers.OnError(ctx, &ErrorInfo{
+				Code:    "TASK_ASSIGNMENT_HANDLER_ERROR",
+				Message: err.Error(),
+			})
+		}
+	}()
+	return nil
 }
 
 // handleConnectionAck processes the connection acknowledgment from the server.

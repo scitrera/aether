@@ -698,14 +698,33 @@ type ProgressHandler func(ctx context.Context, update *ProgressUpdate) error
 
 // TaskAssignmentHandler is called when a task assignment is received.
 //
-// This is used by Orchestrators to receive task assignments that require
-// starting new agent or task instances.
+// Orchestrators use this to receive assignments that require starting
+// new agent/task instances; service workers (e.g. webhookservice) use
+// it to receive pool-dispatched work items and report the outcome via
+// CompleteTask / FailTask.
+//
+// Dispatch model: the SDK invokes this handler on a dedicated goroutine
+// rather than synchronously on the receive loop. That matters because
+// worker handlers almost always need to round-trip the gateway during
+// delivery — at minimum CompleteTask / FailTask, frequently KVGetSync
+// to resolve state — and the responses can only arrive via the same
+// receive loop. A synchronous handler that performed those round-trips
+// would deadlock on its own response until the per-op timeout fires.
+//
+// Implications:
+//   - Handler return values are not awaited by the receive loop; a
+//     non-nil error is delivered to OnError (if registered) and
+//     otherwise dropped.
+//   - Panics inside the handler are recovered; OnError sees a synthetic
+//     ErrorInfo with code "TASK_ASSIGNMENT_HANDLER_PANIC".
+//   - Multiple assignments may be in-flight concurrently. Handlers must
+//     be safe to invoke from multiple goroutines.
 //
 // Example:
 //
 //	orchestrator.OnTaskAssignment(func(ctx context.Context, task *aether.TaskAssignment) error {
 //	    log.Printf("Starting %s for task %s", task.TargetImplementation, task.TaskID)
-//	    // Launch container/process based on task.LaunchParams
+//	    // Launch container/process; safe to call CompleteTask / KVGetSync here.
 //	    return nil
 //	})
 type TaskAssignmentHandler func(ctx context.Context, task *TaskAssignment) error

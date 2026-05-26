@@ -937,8 +937,26 @@ func TestBaseClient_DispatchResponse_TaskAssignment(t *testing.T) {
 		t.Errorf("dispatchResponse() error = %v", err)
 	}
 
-	if len(tracker.tasks) != 1 {
-		t.Errorf("Task assignment handler called %d times, want 1", len(tracker.tasks))
+	// OnTaskAssignment is dispatched on its own goroutine — workers
+	// typically need to round-trip the gateway (CompleteTask, KVGetSync)
+	// during delivery and would deadlock the receive loop if invoked
+	// synchronously. Poll for handler completion under the tracker's
+	// mutex.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		tracker.mu.Lock()
+		n := len(tracker.tasks)
+		tracker.mu.Unlock()
+		if n >= 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	tracker.mu.Lock()
+	got := len(tracker.tasks)
+	tracker.mu.Unlock()
+	if got != 1 {
+		t.Errorf("Task assignment handler called %d times, want 1", got)
 	}
 }
 
