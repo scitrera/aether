@@ -601,6 +601,44 @@ enum TaskClass {
                                //   terminal state (completed / failed).
 }
 
+// BackoffStrategy describes how the task store scales delays across retry
+// attempts when a RetryPolicy is attached to a task. Defaults to
+// EXPONENTIAL when unspecified (preserves current behavior).
+enum BackoffStrategy {
+  BACKOFF_STRATEGY_UNSPECIFIED = 0;
+  BACKOFF_STRATEGY_FIXED = 1;             // Same delay every attempt.
+  BACKOFF_STRATEGY_EXPONENTIAL = 2;       // delay = initial * 2^(n-1), capped at max_delay_ms.
+  BACKOFF_STRATEGY_EXPLICIT_SCHEDULE = 3; // Use schedule_ms[attempt-1]; clamp the last entry.
+}
+
+// RetryPolicy lifts retry scheduling out of individual workers and into the
+// task store. When a task carries a RetryPolicy and a worker calls FailTask
+// without an explicit reschedule, the store computes next_retry_at from
+// this policy and re-pends the task. The waker then picks it up at the
+// scheduled time. Workers can still call RescheduleTaskAt to override
+// (e.g., to honor a Retry-After header).
+message RetryPolicy {
+  // Total attempts allowed (1 = no retries). 0 means use server default (3).
+  int32 max_attempts = 1;
+  BackoffStrategy backoff = 2;
+  int64 initial_delay_ms = 3;
+  int64 max_delay_ms = 4;
+  // Multiplicative random jitter in [0,1]. Final delay = computed *
+  // (1 + uniform(-jitter, +jitter)).
+  double jitter_factor = 5;
+  // For BACKOFF_STRATEGY_EXPLICIT_SCHEDULE. Indexed by 0-based attempt
+  // number; the final entry is used for any subsequent attempt.
+  repeated int64 schedule_ms = 6;
+  // Optional worker convention: HTTP-style status codes that should
+  // trigger a retry. The task store does not inspect failure context;
+  // workers use this to decide whether to FailTask or CompleteTask with
+  // permanent-failure semantics.
+  repeated int32 retryable_status_codes = 7;
+  // Worker hint: prefer Retry-After (or analogous) over computed delay
+  // when set on the failure response.
+  bool honor_retry_after = 8;
+}
+
 message CreateTaskRequest {
   string task_type = 1;
   string workspace = 2;
@@ -647,6 +685,12 @@ message CreateTaskRequest {
   // Persisted on Task.context_id and queryable via TaskFilter.context_id.
   // Empty = no session grouping.
   string context_id = 13;
+
+  // Optional. When set, the task store computes next_retry_at on FailTask
+  // according to this policy and re-pends the task automatically (up to
+  // max_attempts). Absent = legacy behavior (immediate re-pend, hardcoded
+  // max_retries=3).
+  RetryPolicy retry_policy = 14;
 }
 
 // CreateTaskResponse is sent in response to CreateTaskRequest when the

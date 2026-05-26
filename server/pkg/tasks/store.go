@@ -40,7 +40,8 @@ const taskSelectColumns = `
 	authority_audience_type, authority_audience_id, authority_delegate_type, authority_delegate_id,
 	task_class,
 	disconnected_at, grace_window_ms,
-	wait_spec, depends_on, context_id, paused_at
+	wait_spec, depends_on, context_id, paused_at,
+	retry_policy_json
 `
 
 // =============================================================================
@@ -97,6 +98,13 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 			return fmt.Errorf("failed to marshal depends_on: %w", err)
 		}
 	}
+	var retryPolicyJSON []byte
+	if task.RetryPolicy != nil {
+		retryPolicyJSON, err = json.Marshal(task.RetryPolicy)
+		if err != nil {
+			return fmt.Errorf("failed to marshal retry_policy: %w", err)
+		}
+	}
 
 	query := `
 		INSERT INTO tasks (
@@ -111,13 +119,15 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 			authority_grant_id, root_authority_grant_id, parent_authority_grant_id,
 			authority_audience_type, authority_audience_id, authority_delegate_type, authority_delegate_id,
 			task_class, grace_window_ms,
-			wait_spec, depends_on, context_id, paused_at
+			wait_spec, depends_on, context_id, paused_at,
+			retry_policy_json
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
 			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28,
 			$29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41,
 			$42, $43,
-			$44, $45, $46, $47
+			$44, $45, $46, $47,
+			$48
 		)
 	`
 
@@ -169,6 +179,7 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 		dependsOnJSON,
 		nullString(task.ContextID),
 		nullTime(task.PausedAt),
+		retryPolicyJSON,
 	)
 
 	return err
@@ -397,9 +408,53 @@ func (s *TaskStore) CompleteTask(ctx context.Context, taskID string) error {
 	return nil
 }
 
-// FailTask marks a task as failed
+// FailTask marks a task as failed and increments retry_count. When the task
+// carries a RetryPolicy AND the post-increment retry_count is still below
+// the policy's effective max attempts, FailTask also stamps next_retry_at
+// from ComputeNextRetryAt — the task waker will then re-pend the row at
+// that time. Tasks without a policy keep legacy behavior (no next_retry_at;
+// the existing gateway retry sweeper handles backoff separately).
 func (s *TaskStore) FailTask(ctx context.Context, taskID, errorMsg string) error {
 	now := time.Now()
+
+	// Best-effort lookup of an attached RetryPolicy. If GetTask fails, fall
+	// back to the legacy update — losing the policy-driven reschedule is
+	// preferable to losing the FailTask transition itself.
+	var nextRetryAt *time.Time
+	if task, getErr := s.GetTask(ctx, taskID); getErr == nil && task != nil && task.RetryPolicy != nil {
+		// task.RetryCount is the count BEFORE this failure. The new count
+		// after this update is RetryCount + 1.
+		newCount := int32(task.RetryCount + 1)
+		if newCount < task.RetryPolicy.EffectiveMaxAttempts() {
+			t := ComputeNextRetryAt(task.RetryPolicy, int(newCount), nil)
+			nextRetryAt = &t
+		}
+	}
+
+	if nextRetryAt != nil {
+		query := `
+			UPDATE tasks
+			SET status = 'failed',
+			    failed_at = $1,
+			    error_message = $2,
+			    next_retry_at = $3,
+			    retry_count = retry_count + 1
+			WHERE task_id = $4
+		`
+		result, err := s.db.ExecContext(ctx, query, now, errorMsg, nullTime(nextRetryAt), taskID)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return fmt.Errorf("task %s not found or not in a failable state", taskID)
+		}
+		return nil
+	}
+
 	query := `
 		UPDATE tasks
 		SET status = 'failed', failed_at = $1, error_message = $2, retry_count = retry_count + 1
@@ -1600,7 +1655,7 @@ func scanTaskInto(s taskScanner) (*Task, error) {
 	var contextID sql.NullString
 	var scheduledFor, startedAt, completedAt, failedAt, assignedAt, nextRetryAt, lastHeartbeat, disconnectedAt, pausedAt sql.NullTime
 	var scheduleToStart, startToClose, heartbeatTimeout, scheduleToClose sql.NullInt64
-	var launchParamsJSON, metadataJSON, checkpointJSON, heartbeatJSON, waitSpecJSON, dependsOnJSON []byte
+	var launchParamsJSON, metadataJSON, checkpointJSON, heartbeatJSON, waitSpecJSON, dependsOnJSON, retryPolicyJSON []byte
 
 	err := s.Scan(
 		&task.TaskID, &task.TaskType, &task.Workspace, &implementation, &specifier,
@@ -1621,6 +1676,7 @@ func scanTaskInto(s taskScanner) (*Task, error) {
 		&task.TaskClass,
 		&disconnectedAt, &task.GraceWindowMs,
 		&waitSpecJSON, &dependsOnJSON, &contextID, &pausedAt,
+		&retryPolicyJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -1775,6 +1831,13 @@ func scanTaskInto(s taskScanner) (*Task, error) {
 		if err := json.Unmarshal(dependsOnJSON, &task.DependsOn); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal depends_on: %w", err)
 		}
+	}
+	if len(retryPolicyJSON) > 0 {
+		var rp RetryPolicy
+		if err := json.Unmarshal(retryPolicyJSON, &rp); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal retry_policy: %w", err)
+		}
+		task.RetryPolicy = &rp
 	}
 	if contextID.Valid {
 		task.ContextID = contextID.String

@@ -170,32 +170,22 @@ func (d *DAGEngine) ProcessStepCompletion(ctx context.Context, executionID, step
 		return fmt.Errorf("parse DAG definition: %w", err)
 	}
 
-	// Handle failure with retry
+	// Handle failure. Phase 2: retry scheduling is delegated to the task
+	// store via the per-task RetryPolicy attached at CreateTask time.
+	// The WE no longer re-dispatches steps directly — by the time we see
+	// ProcessStepCompletion(success=false) the underlying task has
+	// already exhausted its policy (or the worker called Complete with
+	// permanent-failure semantics). We honor the optional on_failure
+	// handler hop and otherwise fail the execution.
 	if !success {
 		step := d.findStep(&dagDef, stepID)
-		if step != nil && step.Retry.MaxAttempts > 0 {
-			stepStates, _ := d.store.GetStepStates(ctx, executionID)
-			for _, ss := range stepStates {
-				if ss.StepID == stepID && ss.Attempt < step.Retry.MaxAttempts {
-					log.Info().
-						Str("execution_id", executionID).
-						Str("step_id", stepID).
-						Int("attempt", ss.Attempt+1).
-						Msg("retrying step")
-					if err := d.store.IncrementStepAttempt(ctx, executionID, stepID); err != nil {
-						log.Warn().Err(err).Str("execution_id", executionID).Str("step_id", stepID).Msg("failed to increment step attempt; retry counter may drift")
-					}
-					return d.advanceExecution(ctx, executionID, &dagDef, exec.TriggerData)
-				}
-			}
-		}
 
 		// Check for on_failure handler
 		if step != nil && step.OnFailure != "" {
 			return d.advanceExecution(ctx, executionID, &dagDef, exec.TriggerData)
 		}
 
-		// No retry, no handler: fail the execution
+		// No handler: fail the execution.
 		log.Warn().
 			Str("execution_id", executionID).
 			Str("step_id", stepID).
@@ -330,7 +320,14 @@ func (d *DAGEngine) advanceExecution(ctx context.Context, executionID string, da
 		}
 		payload, _ := json.Marshal(action)
 
-		if err := d.executor.CreateTask(action.Workspace, action.Agent, metadata, payload); err != nil {
+		// Pass the step's retry config so the task store handles backoff
+		// scheduling on FailTask. Nil = legacy default behavior.
+		var retry *RetryConfig
+		if dagStep.Retry.MaxAttempts > 0 {
+			r := dagStep.Retry
+			retry = &r
+		}
+		if err := d.executor.CreateTask(action.Workspace, action.Agent, metadata, payload, retry); err != nil {
 			log.Error().Err(err).
 				Str("execution_id", executionID).
 				Str("step_id", dagStep.ID).

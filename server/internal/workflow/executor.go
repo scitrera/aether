@@ -23,6 +23,10 @@ type ActionDef struct {
 	TaskType             string `json:"task_type,omitempty" yaml:"task_type,omitempty"`
 	TargetImplementation string `json:"target_implementation,omitempty" yaml:"target_implementation,omitempty"`
 	Payload              any    `json:"payload,omitempty" yaml:"payload,omitempty"`
+	// Optional retry policy for create_task actions. When set, the task
+	// store re-pends the task with a policy-driven next_retry_at on
+	// FailTask. Omitted = legacy hard-coded max_retries=3 behavior.
+	Retry *RetryConfig `json:"retry,omitempty" yaml:"retry,omitempty"`
 }
 
 // ToolCallPayload is the JSON structure sent as the message payload
@@ -124,11 +128,14 @@ func (e *Executor) dispatchCreateTask(action *ActionDef) error {
 		Str("target_impl", targetImpl).
 		Msg("dispatching create_task action")
 
-	return e.CreateTaskWithType(workspace, action.TaskType, targetImpl, metadata, payload)
+	return e.CreateTaskWithType(workspace, action.TaskType, targetImpl, metadata, payload, action.Retry)
 }
 
-// CreateTaskWithType creates an Aether task with the given task type.
-func (e *Executor) CreateTaskWithType(workspace, taskType, targetImpl string, metadata map[string]string, payload []byte) error {
+// CreateTaskWithType creates an Aether task with the given task type. When
+// retry is non-nil, it is translated to a proto RetryPolicy and attached to
+// the request so the task store handles backoff scheduling on FailTask.
+// Pass nil to keep the legacy hard-coded max_retries=3 behavior.
+func (e *Executor) CreateTaskWithType(workspace, taskType, targetImpl string, metadata map[string]string, payload []byte, retry *RetryConfig) error {
 	log.Debug().
 		Str("workspace", workspace).
 		Str("task_type", taskType).
@@ -144,6 +151,7 @@ func (e *Executor) CreateTaskWithType(workspace, taskType, targetImpl string, me
 				TargetImplementation: targetImpl,
 				Metadata:             metadata,
 				Payload:              payload,
+				RetryPolicy:          retryConfigToProto(retry),
 			},
 		},
 	}
@@ -185,7 +193,11 @@ func (e *Executor) DispatchTransformResult(result *TransformResult) error {
 
 // CreateTask creates an Aether task targeting an agent for DAG step execution.
 // Uses raw Send() since WorkflowEngineClient doesn't expose CreateTask directly.
-func (e *Executor) CreateTask(workspace, agentImpl string, metadata map[string]string, payload []byte) error {
+//
+// When retry is non-nil, it is translated to a proto RetryPolicy and
+// attached to the request so the task store handles backoff scheduling
+// on FailTask. The WE no longer drives backoff itself.
+func (e *Executor) CreateTask(workspace, agentImpl string, metadata map[string]string, payload []byte, retry *RetryConfig) error {
 	log.Debug().
 		Str("workspace", workspace).
 		Str("agent_impl", agentImpl).
@@ -200,9 +212,36 @@ func (e *Executor) CreateTask(workspace, agentImpl string, metadata map[string]s
 				TargetImplementation: agentImpl,
 				Metadata:             metadata,
 				Payload:              payload,
+				RetryPolicy:          retryConfigToProto(retry),
 			},
 		},
 	}
 
 	return e.client.Send(msg)
+}
+
+// retryConfigToProto translates a DAG-step RetryConfig into the proto
+// RetryPolicy understood by the task store. Returns nil when the step did
+// not declare retries (preserving legacy default-attempts behavior).
+func retryConfigToProto(cfg *RetryConfig) *pb.RetryPolicy {
+	if cfg == nil || cfg.MaxAttempts <= 0 {
+		return nil
+	}
+	backoff := pb.BackoffStrategy_BACKOFF_STRATEGY_EXPONENTIAL
+	switch cfg.Backoff {
+	case "constant", "fixed":
+		backoff = pb.BackoffStrategy_BACKOFF_STRATEGY_FIXED
+	case "exponential", "":
+		backoff = pb.BackoffStrategy_BACKOFF_STRATEGY_EXPONENTIAL
+	case "linear":
+		// Linear isn't a first-class strategy in the store; map to
+		// EXPONENTIAL with no max cap so attempts scale up similarly.
+		backoff = pb.BackoffStrategy_BACKOFF_STRATEGY_EXPONENTIAL
+	}
+	return &pb.RetryPolicy{
+		MaxAttempts:    int32(cfg.MaxAttempts),
+		Backoff:        backoff,
+		InitialDelayMs: 1000, // 1s base; DAG step authors can refine when the schema grows.
+		JitterFactor:   0.1,
+	}
 }

@@ -484,6 +484,7 @@ func (s *GatewayServer) handleCreateTask(
 		Payload:              req.Payload,
 		CreatorIdentity:      identity,
 		ParentTaskID:         client.AssociatedTaskID,
+		RetryPolicy:          retryPolicyFromProto(req.GetRetryPolicy()),
 	}
 	// Fix AA: seed the task's Authority.SubjectType/SubjectID from the resolved
 	// OBO subject so downstream consumers (buildTaskContext →
@@ -1184,13 +1185,20 @@ func (s *GatewayServer) removeFromImplIndex(identity models.Identity, client *Cl
 	s.implIndexMu.Unlock()
 }
 
-// findWorkerByImplementation finds an online agent matching the given implementation
-// in the specified workspace. Uses power-of-two-choices load balancing: picks 2 random
-// candidates and selects the one with fewer active pool tasks.
+// findWorkerByImplementation finds an online worker (agent OR service)
+// matching the given implementation. Workspace-scoped principals (agents)
+// register under "workspace:impl"; cross-workspace services register under
+// ":impl". The lookup first tries the workspace-specific key, then falls
+// back to the workspace-less key so services like sv::webhook can pick up
+// pool tasks created in any workspace. Uses power-of-two-choices load
+// balancing within the chosen bucket.
 func (s *GatewayServer) findWorkerByImplementation(implementation, workspace string) *ClientSession {
-	key := workspace + ":" + implementation
 	s.implIndexMu.RLock()
-	clients := s.implementationIndex[key]
+	clients := s.implementationIndex[workspace+":"+implementation]
+	if len(clients) == 0 && workspace != "" {
+		// Cross-workspace fallback: services register under empty workspace.
+		clients = s.implementationIndex[":"+implementation]
+	}
 	n := len(clients)
 	if n == 0 {
 		s.implIndexMu.RUnlock()

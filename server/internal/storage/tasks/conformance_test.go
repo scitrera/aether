@@ -66,6 +66,11 @@ func TestStoreConformance(t *testing.T) {
 				defer cleanup()
 				runPoolClaim(t, store)
 			})
+			t.Run("PoolCrossWorkspace", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runPoolCrossWorkspace(t, store)
+			})
 			t.Run("AuditEvents", func(t *testing.T) {
 				store, _, cleanup := b.factory(t)
 				defer cleanup()
@@ -275,6 +280,82 @@ func runPoolClaim(t *testing.T, store tasks.Store) {
 	if claimedAgain {
 		t.Fatalf("ClaimPoolTask second call: expected claimed=false (already claimed)")
 	}
+}
+
+// runPoolCrossWorkspace verifies the workspace="" path of GetPendingPoolTasks
+// returns rows from every workspace for the given implementation. This is the
+// service-principal lookup mode: cross-workspace services (webhookservice,
+// proxy-sidecar) register with an empty workspace, and DeliverPoolTasks
+// passes that empty workspace through so the service sees every pending pool
+// task targeting its implementation. A concrete-workspace lookup still
+// returns only that workspace's rows.
+func runPoolCrossWorkspace(t *testing.T, store tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	impl := "conf-cross-ws-impl"
+
+	taskA := newTestTask(t, "cross-ws-A")
+	taskA.AssignmentMode = tasks.AssignmentModePool
+	taskA.TargetImplementation = impl
+	taskA.QueuedForStartup = true
+	taskA.Workspace = "ws-alpha"
+	if err := store.CreateTask(ctx, taskA); err != nil {
+		t.Fatalf("CreateTask(ws-alpha): %v", err)
+	}
+
+	taskB := newTestTask(t, "cross-ws-B")
+	taskB.AssignmentMode = tasks.AssignmentModePool
+	taskB.TargetImplementation = impl
+	taskB.QueuedForStartup = true
+	taskB.Workspace = "ws-beta"
+	if err := store.CreateTask(ctx, taskB); err != nil {
+		t.Fatalf("CreateTask(ws-beta): %v", err)
+	}
+
+	// Concrete-workspace lookup returns only the matching task.
+	gotAlpha, err := store.GetPendingPoolTasks(ctx, impl, "ws-alpha")
+	if err != nil {
+		t.Fatalf("GetPendingPoolTasks(ws-alpha): %v", err)
+	}
+	if !containsTaskID(gotAlpha, taskA.TaskID) {
+		t.Fatalf("ws-alpha lookup: expected to contain %s, got %v", taskA.TaskID, taskIDs(gotAlpha))
+	}
+	if containsTaskID(gotAlpha, taskB.TaskID) {
+		t.Fatalf("ws-alpha lookup: must NOT include ws-beta task %s", taskB.TaskID)
+	}
+
+	// Service lookup (workspace="") returns every workspace's pending pool
+	// task for the implementation.
+	gotAll, err := store.GetPendingPoolTasks(ctx, impl, "")
+	if err != nil {
+		t.Fatalf("GetPendingPoolTasks(workspace=\"\"): %v", err)
+	}
+	if !containsTaskID(gotAll, taskA.TaskID) {
+		t.Fatalf("cross-workspace lookup: missing ws-alpha task %s, got %v", taskA.TaskID, taskIDs(gotAll))
+	}
+	if !containsTaskID(gotAll, taskB.TaskID) {
+		t.Fatalf("cross-workspace lookup: missing ws-beta task %s, got %v", taskB.TaskID, taskIDs(gotAll))
+	}
+}
+
+func containsTaskID(list []*tasks.Task, id string) bool {
+	for _, t := range list {
+		if t != nil && t.TaskID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func taskIDs(list []*tasks.Task) []string {
+	out := make([]string, 0, len(list))
+	for _, t := range list {
+		if t != nil {
+			out = append(out, t.TaskID)
+		}
+	}
+	return out
 }
 
 // runAuditEvents: RecordAuditEvent then GetTaskAuditEvents returns it.

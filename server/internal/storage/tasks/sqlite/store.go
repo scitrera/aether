@@ -128,6 +128,14 @@ func (s *Store) CreateTask(ctx context.Context, task *tasks.Task) error {
 	if task.PausedAt != nil {
 		pausedAtMs = sql.NullInt64{Int64: task.PausedAt.UnixMilli(), Valid: true}
 	}
+	var retryPolicyStr sql.NullString
+	if task.RetryPolicy != nil {
+		b, merr := json.Marshal(task.RetryPolicy)
+		if merr != nil {
+			return fmt.Errorf("failed to marshal retry_policy: %w", merr)
+		}
+		retryPolicyStr = sql.NullString{String: string(b), Valid: true}
+	}
 
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO tasks (
@@ -142,13 +150,15 @@ func (s *Store) CreateTask(ctx context.Context, task *tasks.Task) error {
 			authority_grant_id, root_authority_grant_id, parent_authority_grant_id,
 			authority_audience_type, authority_audience_id, authority_delegate_type, authority_delegate_id,
 			task_class, grace_window_ms,
-			wait_spec, depends_on, context_id, paused_at
+			wait_spec, depends_on, context_id, paused_at,
+			retry_policy_json
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?,
-			?, ?, ?, ?
+			?, ?, ?, ?,
+			?
 		)
 	`,
 		task.TaskID,
@@ -198,6 +208,7 @@ func (s *Store) CreateTask(ctx context.Context, task *tasks.Task) error {
 		dependsOnStr,
 		nullStr(task.ContextID),
 		pausedAtMs,
+		retryPolicyStr,
 	)
 	return err
 }
@@ -384,6 +395,39 @@ func (s *Store) CompleteTask(ctx context.Context, taskID string) error {
 
 func (s *Store) FailTask(ctx context.Context, taskID, errorMsg string) error {
 	nowStr := now()
+
+	// Best-effort lookup of an attached RetryPolicy. If GetTask fails, fall
+	// back to the legacy update — losing the policy-driven reschedule is
+	// preferable to losing the FailTask transition itself.
+	var nextRetryAt *time.Time
+	if task, getErr := s.GetTask(ctx, taskID); getErr == nil && task != nil && task.RetryPolicy != nil {
+		newCount := int32(task.RetryCount + 1)
+		if newCount < task.RetryPolicy.EffectiveMaxAttempts() {
+			t := tasks.ComputeNextRetryAt(task.RetryPolicy, int(newCount), nil)
+			nextRetryAt = &t
+		}
+	}
+
+	if nextRetryAt != nil {
+		result, err := s.db.ExecContext(ctx, `
+			UPDATE tasks
+			SET status = 'failed', failed_at = ?, error_message = ?,
+			    next_retry_at = ?, retry_count = retry_count + 1
+			WHERE task_id = ?
+		`, nowStr, errorMsg, nullTimeStr(nextRetryAt), taskID)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return fmt.Errorf("task %s not found or not in a failable state", taskID)
+		}
+		return nil
+	}
+
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = 'failed', failed_at = ?, error_message = ?, retry_count = retry_count + 1
@@ -1505,7 +1549,8 @@ const taskSelectColumns = `
 	authority_audience_type, authority_audience_id, authority_delegate_type, authority_delegate_id,
 	task_class,
 	disconnected_at, grace_window_ms,
-	wait_spec, depends_on, context_id, paused_at
+	wait_spec, depends_on, context_id, paused_at,
+	retry_policy_json
 `
 
 // taskScanner is satisfied by both *sql.Row and *sql.Rows.
@@ -1526,7 +1571,7 @@ func scanTaskInto(s taskScanner) (*tasks.Task, error) {
 	var pausedAtMs sql.NullInt64
 	var scheduleToStart, startToClose, heartbeatTimeout, scheduleToClose sql.NullInt64
 	var launchParamsJSON, metadataJSON, checkpointJSON, heartbeatJSON []byte
-	var waitSpecJSON, dependsOnJSON sql.NullString
+	var waitSpecJSON, dependsOnJSON, retryPolicyJSON sql.NullString
 	var queuedForStartup int
 
 	err := s.Scan(
@@ -1548,6 +1593,7 @@ func scanTaskInto(s taskScanner) (*tasks.Task, error) {
 		&task.TaskClass,
 		&disconnectedAtStr, &task.GraceWindowMs,
 		&waitSpecJSON, &dependsOnJSON, &contextID, &pausedAtMs,
+		&retryPolicyJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -1748,6 +1794,13 @@ func scanTaskInto(s taskScanner) (*tasks.Task, error) {
 		if err := json.Unmarshal([]byte(dependsOnJSON.String), &task.DependsOn); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal depends_on: %w", err)
 		}
+	}
+	if retryPolicyJSON.Valid && len(retryPolicyJSON.String) > 0 {
+		var rp tasks.RetryPolicy
+		if err := json.Unmarshal([]byte(retryPolicyJSON.String), &rp); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal retry_policy: %w", err)
+		}
+		task.RetryPolicy = &rp
 	}
 	if contextID.Valid {
 		task.ContextID = contextID.String

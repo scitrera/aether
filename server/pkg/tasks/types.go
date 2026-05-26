@@ -173,6 +173,12 @@ type Task struct {
 	MaxRetries  int        `json:"max_retries"`
 	NextRetryAt *time.Time `json:"next_retry_at,omitempty"`
 
+	// RetryPolicy, when non-nil, is honored by FailTask: the store computes
+	// next_retry_at from the policy and re-pends the task (up to
+	// MaxAttempts). Persisted as JSON in retry_policy_json. Workers that
+	// need different semantics call RescheduleTaskAt explicitly.
+	RetryPolicy *RetryPolicy `json:"retry_policy,omitempty"`
+
 	// Error tracking
 	ErrorMessage string `json:"error_message,omitempty"`
 	ErrorType    string `json:"error_type,omitempty"`

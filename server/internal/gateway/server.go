@@ -46,8 +46,12 @@ type GatewayServer struct {
 	activeStreams sync.Map
 	// Secondary index: identity string -> sessionID for O(1) lookup
 	identityIndex sync.Map
-	// implementationIndex maps "workspace:implementation" -> []*ClientSession (agents only).
-	// Used for O(1) pool task worker lookup with power-of-two-choices load balancing.
+	// implementationIndex maps "workspace:implementation" -> []*ClientSession.
+	// Indexed clients include connected agents AND connected services. Used for
+	// O(1) pool task worker lookup with power-of-two-choices load balancing.
+	// Services have no workspace component, so they are registered under the
+	// empty workspace key (e.g. ":webhook"); findWorkerByImplementation falls
+	// back to the empty workspace if no workspace-scoped match exists.
 	implIndexMu         sync.RWMutex
 	implementationIndex map[string][]*ClientSession
 	// orchestratorIndex maps "workspace:profile" -> []*ClientSession (orchestrators only).
@@ -341,7 +345,11 @@ func WithACLService(svc aclstore.Store) GatewayOption {
 func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVReadWriter, checkpointStore CheckpointManager, taskStore taskstore.Store, gatewayID string, auditLogger auditstore.Store, mtlsConfig MTLSConfig, opts ...GatewayOption) *GatewayServer {
 	ts := timer.NewTimerSequence()
 
-	// Implement actual reschedule function that persists retry timing
+	// Implement actual reschedule function that persists retry timing.
+	// When the task carries a RetryPolicy, prefer the policy-computed delay
+	// over the caller-supplied one — the caller's value becomes the
+	// fallback for tasks without a policy. This delegates retry scheduling
+	// to the policy primitive without changing the timer's outer cadence.
 	rescheduleFn := func(taskID string, delay time.Duration) {
 		if taskStore == nil {
 			logging.Logger.Warn().Str("task_id", taskID).Msg("cannot reschedule task, no taskStore")
@@ -350,6 +358,12 @@ func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVR
 
 		ctx := context.Background()
 		retryAt := time.Now().Add(delay)
+		if task, err := taskStore.GetTask(ctx, taskID); err == nil && task != nil && task.RetryPolicy != nil {
+			// task.RetryCount is the post-failure count (FailTask already
+			// incremented). The next attempt index passed to
+			// ComputeNextRetryAt is therefore RetryCount.
+			retryAt = taskstore.ComputeNextRetryAt(task.RetryPolicy, task.RetryCount, nil)
+		}
 		err := taskStore.RescheduleTaskAt(ctx, taskID, retryAt)
 		if err != nil {
 			logging.Logger.Error().Err(err).Str("task_id", taskID).Msg("failed to reschedule task")

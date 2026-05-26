@@ -8,6 +8,8 @@ package aether
 import (
 	"crypto/tls"
 	"time"
+
+	pb "github.com/scitrera/aether/api/proto"
 )
 
 // =============================================================================
@@ -672,6 +674,14 @@ type CreateTaskOptions struct {
 	// flows (sandbox lease, etc.). Use TargetAgentID for the Agent-typed
 	// equivalent; the two are mutually exclusive.
 	TargetIdentity string
+
+	// RetryPolicy, when non-nil, is persisted on the created task. The
+	// task store consults it on FailTask to compute next_retry_at,
+	// re-pending the task up to the policy's max_attempts. Use this to
+	// lift retry scheduling out of the worker (e.g., svix-style schedules
+	// for webhook delivery). Absent = the server's legacy default
+	// (immediate re-pend, max_retries=3).
+	RetryPolicy *pb.RetryPolicy
 }
 
 // =============================================================================

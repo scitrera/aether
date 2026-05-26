@@ -170,6 +170,13 @@ type CreateTaskRequest struct {
 	// route responses back to the originating user. Leave zero-value for internal/
 	// service-initiated tasks that have no OBO subject.
 	SubjectIdentity models.Identity
+
+	// RetryPolicy, when non-nil, is persisted on the created task and
+	// honored by the store's FailTask: the store computes next_retry_at
+	// from this policy and re-pends the task automatically (up to
+	// MaxAttempts). Absent = legacy behavior (immediate re-pend,
+	// hardcoded max_retries=3).
+	RetryPolicy *tasks.RetryPolicy
 }
 
 // principalTypeStringForTask maps a models.PrincipalType to the lowercase
@@ -225,6 +232,18 @@ func applySubjectIdentityToAuthority(task *tasks.ExtendedTask, subject models.Id
 	}
 }
 
+// applyRetryPolicyToTask reconciles task.MaxRetries with the attached
+// RetryPolicy. When a policy is present we prefer its MaxAttempts so the
+// store's legacy "retry_count < max_retries" guards stay consistent with
+// the policy-driven scheduling. EffectiveMaxAttempts handles the
+// "0 = server default" rule.
+func applyRetryPolicyToTask(task *tasks.ExtendedTask) {
+	if task == nil || task.RetryPolicy == nil {
+		return
+	}
+	task.MaxRetries = int(task.RetryPolicy.EffectiveMaxAttempts())
+}
+
 // CreateTaskResponse represents the result of task creation
 type CreateTaskResponse struct {
 	TaskID     string
@@ -273,8 +292,10 @@ func (tas *TaskAssignmentService) handleSelfAssign(ctx context.Context, req *Cre
 		Metadata:       req.Metadata,
 		Payload:        req.Payload,
 		MaxRetries:     3,
+		RetryPolicy:    req.RetryPolicy,
 	}
 	applySubjectIdentityToAuthority(task, req.SubjectIdentity)
+	applyRetryPolicyToTask(task)
 
 	// Create task in database as pending
 	if err := tas.taskStore.CreateTask(ctx, task); err != nil {
@@ -336,8 +357,10 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 		Metadata:       req.Metadata,
 		Payload:        req.Payload,
 		MaxRetries:     3,
+		RetryPolicy:    req.RetryPolicy,
 	}
 	applySubjectIdentityToAuthority(task, req.SubjectIdentity)
+	applyRetryPolicyToTask(task)
 
 	// Special case: if this IS a startup task (e.g., from admin API), go directly to
 	// createOrchestratedStartupTask which handles all duplicate prevention:
@@ -638,8 +661,10 @@ func (tas *TaskAssignmentService) handlePool(ctx context.Context, req *CreateTas
 		Metadata:             req.Metadata,
 		Payload:              req.Payload,
 		MaxRetries:           3,
+		RetryPolicy:          req.RetryPolicy,
 	}
 	applySubjectIdentityToAuthority(task, req.SubjectIdentity)
+	applyRetryPolicyToTask(task)
 
 	if err := tas.taskStore.CreateTask(ctx, task); err != nil {
 		return nil, fmt.Errorf("failed to create pool task: %w", err)
@@ -654,7 +679,18 @@ func (tas *TaskAssignmentService) handlePool(ctx context.Context, req *CreateTas
 	}, nil
 }
 
-// DeliverPoolTasks claims and returns pending pool tasks for a connecting agent.
+// DeliverPoolTasks claims and returns pending pool tasks for a connecting
+// worker (agent or service).
+//
+// Workspace handling: agents register with a concrete workspace and only
+// see their own. Services have an empty workspace (system principals) and
+// intentionally see pool tasks across all workspaces for their
+// implementation — `GetPendingPoolTasks` treats an empty workspace as
+// "no workspace filter" via `ListTasks`. This matches the cross-workspace
+// design of `PrincipalService` (proxy-sidecar, webhookservice, etc.):
+// services connect once and serve every workspace in the deployment. The
+// per-workspace creator already passed CreateTask ACL on each pending row,
+// so no further ACL check is layered here.
 func (tas *TaskAssignmentService) DeliverPoolTasks(ctx context.Context, agentIdentity models.Identity) ([]*tasks.ExtendedTask, error) {
 	pendingTasks, err := tas.taskStore.GetPendingPoolTasks(ctx, agentIdentity.Implementation, agentIdentity.Workspace)
 	if err != nil {

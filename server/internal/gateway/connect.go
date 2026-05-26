@@ -205,8 +205,11 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 	s.activeStreams.Store(sessionID, client)
 	s.identityIndex.Store(identity.String(), sessionID)
 
-	// Add agent to implementation index for pool task routing
-	if identity.Type == models.PrincipalAgent {
+	// Add agent or service to implementation index for pool task routing.
+	// Services participate via the workspace-less key (":impl"), enabling
+	// pool tasks targeted at services (e.g. webhook delivery) to find a
+	// healthy instance without per-workspace registration.
+	if identity.Type == models.PrincipalAgent || identity.Type == models.PrincipalService {
 		s.addToImplIndex(identity, client)
 	}
 
@@ -916,8 +919,8 @@ func (s *GatewayServer) rollbackSession(cs *connectionState) {
 	s.activeStreams.Delete(cs.sessionID)
 	s.identityIndex.Delete(cs.identity.String())
 
-	// Remove agent from implementation index
-	if cs.identity.Type == models.PrincipalAgent && cs.client != nil {
+	// Remove agent or service from implementation index
+	if (cs.identity.Type == models.PrincipalAgent || cs.identity.Type == models.PrincipalService) && cs.client != nil {
 		s.removeFromImplIndex(cs.identity, cs.client)
 	}
 
@@ -991,8 +994,8 @@ func (s *GatewayServer) cleanupSession(cs *connectionState, gracefulExit bool) {
 	s.activeStreams.Delete(cs.sessionID)
 	s.identityIndex.Delete(cs.identity.String())
 
-	// Remove agent from implementation index
-	if cs.identity.Type == models.PrincipalAgent {
+	// Remove agent or service from implementation index
+	if cs.identity.Type == models.PrincipalAgent || cs.identity.Type == models.PrincipalService {
 		s.removeFromImplIndex(cs.identity, cs.client)
 	}
 

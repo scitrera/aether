@@ -2298,6 +2298,7 @@ func (c *BaseClient) CreateTask(taskType, workspace string, opts CreateTaskOptio
 		LaunchParamOverrides: opts.LaunchParamOverrides,
 		Metadata:             opts.Metadata,
 		Payload:              opts.Payload,
+		RetryPolicy:          opts.RetryPolicy,
 	}
 	return c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_CreateTask{CreateTask: req},
@@ -2327,6 +2328,7 @@ func (c *BaseClient) CreateTaskSync(ctx context.Context, taskType, workspace str
 		LaunchParamOverrides: opts.LaunchParamOverrides,
 		Metadata:             opts.Metadata,
 		Payload:              opts.Payload,
+		RetryPolicy:          opts.RetryPolicy,
 		RequestId:            requestID,
 	}
 	if err := c.Send(&pb.UpstreamMessage{

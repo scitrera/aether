@@ -97,7 +97,31 @@ type (
 
 	// WaitSpec describes why a task was paused and what conditions will wake it.
 	WaitSpec = legacy.WaitSpec
+
+	// RetryPolicy mirrors the proto pb.RetryPolicy message, persisted on
+	// the task row via retry_policy_json and consumed by FailTask to
+	// compute next_retry_at when set.
+	RetryPolicy = legacy.RetryPolicy
+
+	// BackoffStrategy enumerates the retry-delay shapes consumed by
+	// ComputeNextRetryAt.
+	BackoffStrategy = legacy.BackoffStrategy
 )
+
+// BackoffStrategy enum values — re-exported so callers depending only on
+// the storage/tasks package can construct a RetryPolicy without taking a
+// second import on pkg/tasks.
+const (
+	BackoffStrategyUnspecified      = legacy.BackoffStrategyUnspecified
+	BackoffStrategyFixed            = legacy.BackoffStrategyFixed
+	BackoffStrategyExponential      = legacy.BackoffStrategyExponential
+	BackoffStrategyExplicitSchedule = legacy.BackoffStrategyExplicitSchedule
+)
+
+// ComputeNextRetryAt is re-exported so the native sqlite store and other
+// in-tree consumers of the tasks package can compute the policy-driven
+// next_retry_at without a second import.
+var ComputeNextRetryAt = legacy.ComputeNextRetryAt
 
 // Task lifecycle statuses — values stored in tasks.status.
 const (
