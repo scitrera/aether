@@ -956,6 +956,15 @@ func (s *GatewayServer) handleKVOp(ctx context.Context, client *ClientSession, o
 	resolvedAuthority, err := s.resolveAuthorizationContext(ctx, client, ident, op.GetAuthorization())
 	if err != nil {
 		sendClientError(client, "ERR_PERMISSION_DENIED", "invalid authorization context", withRequestID(op.GetRequestId()))
+		// Resolve the matching pending sync KV request so the client doesn't
+		// time out waiting for a KVResponse alongside this ErrorResponse.
+		if reqID := op.GetRequestId(); reqID != "" {
+			sendResponse(&pb.DownstreamMessage{
+				Payload: &pb.DownstreamMessage_Kv{
+					Kv: &pb.KVResponse{Success: false, RequestId: reqID},
+				},
+			})
+		}
 		return
 	}
 
@@ -1002,6 +1011,20 @@ func (s *GatewayServer) handleKVOp(ctx context.Context, client *ClientSession, o
 		logging.Logger.Error().Err(err).Msg("KV operation failed")
 		// Send generic error to avoid leaking internal details (e.g. Redis internals) to clients.
 		sendClientError(client, "KV_ERROR", "internal error processing KV operation", withRequestID(op.GetRequestId()))
+		// Also resolve any pending sync KV request with Success=false so the
+		// client's KVGetSync/KVPutSync wait returns immediately instead of
+		// timing out. Without this the ErrorResponse satisfies OnError but
+		// leaves the typed pending-request map waiting on its request_id.
+		if reqID := op.GetRequestId(); reqID != "" {
+			sendResponse(&pb.DownstreamMessage{
+				Payload: &pb.DownstreamMessage_Kv{
+					Kv: &pb.KVResponse{
+						Success:   false,
+						RequestId: reqID,
+					},
+				},
+			})
+		}
 	} else {
 		workspace := op.Workspace
 		if workspace == "" {
