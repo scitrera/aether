@@ -435,6 +435,52 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 		// Standalone: HandleTunnelClose silently no-ops on unknown tunnels.
 		return nil
 	})
+
+	// Raw downstream tap: route correlated responses for relay-issued KV /
+	// task / workspace / checkpoint ops back to the originating session. The
+	// shared runtime forwards these upstream verbatim (sharedRuntimeSession.
+	// Send), so the gateway's response lands here with no pending correlation
+	// in this Go client — without the tap it would be dropped and the
+	// in-sandbox caller would stall until its client-side timeout (the 5s
+	// per-turn lag the workclaw bridge saw on kv_put). Errors that correlate
+	// to a relay request (DownstreamMessage_Error with a request_id) route
+	// the same way so a failed op surfaces promptly instead of timing out.
+	if r.relay != nil {
+		relay := r.relay
+		client.SetRawDownstreamTap(func(msg *pb.DownstreamMessage) bool {
+			rid := downstreamResponseRequestID(msg)
+			if rid == "" {
+				return false
+			}
+			return relay.routeResponseToOwner(rid, msg)
+		})
+	}
+}
+
+// downstreamResponseRequestID returns the correlation request_id carried by a
+// response-class downstream message, or "" for message types that are not
+// correlated responses (or carry no request_id). Used by the rawDownstreamTap
+// to decide whether a message might belong to a relay session. The set mirrors
+// the request-class ops registered in sharedRuntimeSession.Send plus the
+// generic Error envelope, which the gateway stamps with the originating
+// request_id when an op fails.
+func downstreamResponseRequestID(msg *pb.DownstreamMessage) string {
+	switch p := msg.GetPayload().(type) {
+	case *pb.DownstreamMessage_Kv:
+		return p.Kv.GetRequestId()
+	case *pb.DownstreamMessage_TaskOp:
+		return p.TaskOp.GetRequestId()
+	case *pb.DownstreamMessage_TaskQuery:
+		return p.TaskQuery.GetRequestId()
+	case *pb.DownstreamMessage_Checkpoint:
+		return p.Checkpoint.GetRequestId()
+	case *pb.DownstreamMessage_Workspace:
+		return p.Workspace.GetRequestId()
+	case *pb.DownstreamMessage_Error:
+		return p.Error.GetRequestId()
+	default:
+		return ""
+	}
 }
 
 // =============================================================================
@@ -620,6 +666,29 @@ func (s *sharedRelaySink) registerTunnel(sess *sharedRuntimeSession, tunnelID st
 	s.mu.Unlock()
 }
 
+// routeResponseToOwner delivers a correlated response-class downstream
+// message to the relay session that issued the matching request, keyed by
+// request_id. Returns true when a session owned the id (message delivered,
+// route released so the table stays bounded); false when no relay session
+// owns it — in which case the caller must let the SDK handle the message
+// normally (e.g. a response to an op the terminator surface issued itself).
+func (s *sharedRelaySink) routeResponseToOwner(requestID string, msg *pb.DownstreamMessage) bool {
+	if requestID == "" {
+		return false
+	}
+	s.mu.Lock()
+	sess := s.requestRoutes[requestID]
+	if sess != nil {
+		delete(s.requestRoutes, requestID)
+	}
+	s.mu.Unlock()
+	if sess == nil {
+		return false
+	}
+	sess.deliver(msg)
+	return true
+}
+
 // =============================================================================
 // Fake AetherGatewayClient that the relay sees via the shared sink.
 // =============================================================================
@@ -716,6 +785,22 @@ func (s *sharedRuntimeSession) Send(msg *pb.UpstreamMessage) error {
 		s.owner.registerRequest(s, p.ProxyHttpRequest.GetRequestId())
 	case *pb.UpstreamMessage_TunnelOpen:
 		s.owner.registerTunnel(s, p.TunnelOpen.GetTunnelId())
+	// Correlated request/response ops the in-sandbox SDK awaits. The shared
+	// runtime forwards these upstream verbatim, so the gateway's response
+	// arrives on the runtime connection with no pending correlation here —
+	// register the request_id so the rawDownstreamTap can route the matching
+	// response back to THIS session instead of letting it get dropped (which
+	// stalls the in-sandbox caller until its client-side timeout).
+	case *pb.UpstreamMessage_KvOp:
+		s.owner.registerRequest(s, p.KvOp.GetRequestId())
+	case *pb.UpstreamMessage_TaskOp:
+		s.owner.registerRequest(s, p.TaskOp.GetRequestId())
+	case *pb.UpstreamMessage_TaskQuery:
+		s.owner.registerRequest(s, p.TaskQuery.GetRequestId())
+	case *pb.UpstreamMessage_CheckpointOp:
+		s.owner.registerRequest(s, p.CheckpointOp.GetRequestId())
+	case *pb.UpstreamMessage_WorkspaceOp:
+		s.owner.registerRequest(s, p.WorkspaceOp.GetRequestId())
 	}
 	prio := priorityForSharedRelayUpstream(msg)
 	// SendWithPriority feeds the SDK's CoDel-managed admission queue.

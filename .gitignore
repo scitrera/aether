@@ -32,3 +32,4 @@ build/
 /RELEASING.md
 /server/coverage.out
 /.run-ci-logs/
+/bin/

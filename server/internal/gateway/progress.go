@@ -75,13 +75,19 @@ func (s *GatewayServer) handleProgressReport(ctx context.Context, client *Client
 		attribute.String("task_id", report.TaskId),
 	)
 
-	// Only agents and tasks can report progress
-	if sender.Type != models.PrincipalAgent && sender.Type != models.PrincipalTask {
+	// Only agents, tasks, and services can report progress. Services are
+	// permitted because sidecar bridges (identity sv::sandbox-sidecar::<id>)
+	// relay chat-lifecycle progress on behalf of the agent harness running
+	// inside the sandbox — they target a user recipient (us::{user}) just
+	// like an agent would, and recipient filtering still applies downstream.
+	if sender.Type != models.PrincipalAgent &&
+		sender.Type != models.PrincipalTask &&
+		sender.Type != models.PrincipalService {
 		if sendErr := client.SafeSend(&pb.DownstreamMessage{
 			Payload: &pb.DownstreamMessage_Error{
 				Error: &pb.ErrorResponse{
 					Code:    "ERR_INVALID_PRINCIPAL",
-					Message: "only agents and tasks can report progress",
+					Message: "only agents, tasks, and services can report progress",
 				},
 			},
 		}); sendErr != nil {

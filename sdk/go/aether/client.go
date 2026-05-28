@@ -115,6 +115,18 @@ type BaseClient struct {
 	pendingAuditQueryRequests     pendingRequests[*pb.AuditQueryResponse]
 	requestIDCounter              atomic.Uint64
 
+	// rawDownstreamTap, when non-nil, is invoked for every downstream
+	// message before typed dispatch. Returning true means the tap claimed
+	// the message and the SDK skips its own typed handling. This exists for
+	// the proxy-sidecar shared-runtime relay: a sandbox session's KV / task /
+	// workspace ops are relayed upstream as raw envelopes through this
+	// client, so the gateway's correlated responses arrive here with no
+	// pending request to resolve (the in-sandbox SDK owns the correlation).
+	// The tap lets the relay route those responses back to the originating
+	// session by request_id. Set once before the connection loop starts; not
+	// mutated concurrently.
+	rawDownstreamTap func(*pb.DownstreamMessage) bool
+
 	// Per-client inflight registries for proxy requests and tunnels. These
 	// must be per-BaseClient (not package-globals) because each BaseClient's
 	// NextRequestID() counter restarts at "req-1", so two clients in the same
@@ -614,6 +626,18 @@ func (c *BaseClient) setSessionID(id string) {
 // wrap it with aether.AsyncMessageHandler.
 func (c *BaseClient) OnMessage(handler MessageHandler) {
 	c.handlers.OnMessage = handler
+}
+
+// SetRawDownstreamTap installs a tap invoked for every downstream message
+// before typed dispatch. Returning true claims the message — the SDK then
+// skips its own typed handling for it. Passing nil clears the tap.
+//
+// Used by the proxy-sidecar shared-runtime relay to route responses for ops
+// a sandbox session issued (which this client has no pending correlation
+// state for) back to that session. Must be set before the connection loop
+// starts; it is read on the receive loop without locking.
+func (c *BaseClient) SetRawDownstreamTap(tap func(*pb.DownstreamMessage) bool) {
+	c.rawDownstreamTap = tap
 }
 
 // OnConfig registers a handler for configuration snapshots.
@@ -1763,6 +1787,13 @@ func (c *BaseClient) dispatchResponse(ctx context.Context, response *pb.Downstre
 	// Connection confirmed when we receive first response from server
 	if !c.connectionConfirmed.Load() {
 		c.ConfirmConnection()
+	}
+
+	// Raw downstream tap: lets a relay claim responses for ops it forwarded
+	// on behalf of a sandbox session. When the tap claims the message we skip
+	// typed dispatch — this client has no pending correlation state for it.
+	if tap := c.rawDownstreamTap; tap != nil && tap(response) {
+		return nil
 	}
 
 	// Dispatch based on payload type

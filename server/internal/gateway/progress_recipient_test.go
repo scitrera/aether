@@ -92,6 +92,56 @@ func TestHandleProgressReport_RoutesToUserProgressTopic(t *testing.T) {
 	}
 }
 
+// TestHandleProgressReport_ServiceSenderAccepted verifies that a service
+// principal (e.g. a sandbox sidecar bridge, identity sv::sandbox-sidecar::<id>)
+// is permitted to report progress. The bridge relays chat-lifecycle progress
+// (task_done) on behalf of the agent harness running inside the sandbox,
+// targeting a bare user recipient just like an agent would. Before this was
+// allowed the report was dropped with ERR_INVALID_PRINCIPAL and the frontend
+// never cleared its in-flight indicator.
+func TestHandleProgressReport_ServiceSenderAccepted(t *testing.T) {
+	router := newMockMessageRouter()
+	s := newProgressTestServer(router)
+
+	sender := models.Identity{
+		Type:           models.PrincipalService,
+		Implementation: "sandbox-sidecar",
+		Specifier:      "sandbox-abc",
+	}
+	client := newProgressTestClient(sender)
+
+	report := &pb.ProgressReport{
+		TaskId:    "task-svc-1",
+		State:     "running",
+		Recipient: "us::dev@example.com", // bare user, multi-tab broadcast
+		Kind:      pb.ProgressKind_PROGRESS_KIND_CHAT,
+		Step:      &pb.ProgressStep{Name: "task_done"},
+		Metadata:  map[string]string{"thread_id": "chat-t1", "status": "completed"},
+	}
+
+	s.handleProgressReport(context.Background(), client, report)
+
+	router.mu.Lock()
+	published := append([]publishedMsg(nil), router.publishedMessages...)
+	router.mu.Unlock()
+
+	if len(published) != 1 {
+		t.Fatalf("expected 1 published message from service sender, got %d", len(published))
+	}
+	wantTopic := "pg::us::dev@example.com"
+	if published[0].topic != wantTopic {
+		t.Errorf("publish topic = %q, want %q", published[0].topic, wantTopic)
+	}
+
+	var update pb.ProgressUpdate
+	if err := proto.Unmarshal(published[0].payload, &update); err != nil {
+		t.Fatalf("unmarshal ProgressUpdate: %v", err)
+	}
+	if update.Step == nil || update.Step.Name != "task_done" {
+		t.Errorf("update.Step.Name = %v, want task_done", update.Step)
+	}
+}
+
 // TestHandleProgressReport_BareUserRecipientPublishesToUserTopic verifies that
 // a bare user-level recipient (us::{user}, no window specifier) routes to the
 // same pg::us::{user} topic as the window-specific form. The filter at delivery
