@@ -233,13 +233,33 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 		return
 	}
 
-	// Plain peer messages: log only — the sidecar has no message-relay
-	// surface, terminators don't expect peer-to-peer messages.
+	// Plain peer messages: forward to attached relay sessions so Python
+	// AsyncServiceClient instances connected via the local relay socket
+	// receive peer messages addressed to this implementation. Pre-relay,
+	// the proxy-sidecar runner was a pure HTTP-RPC terminator and the
+	// OnMessage path was a no-op; the workclaw chat envelope flow
+	// (gateway → sv::sandbox-sidecar::<id> → Python bridge OnMessage)
+	// requires this relay path. Wraps the SDK-level Message into the
+	// same DownstreamMessage_Msg envelope the gateway uses for normal
+	// subscription delivery (gateway/subscription.go:228) so the relay
+	// session's downstream stream is wire-compatible.
 	client.OnMessage(func(_ context.Context, msg *aether.Message) error {
 		log.Debug().
 			Str("source", msg.SourceTopic).
 			Int("payload_bytes", len(msg.Payload)).
 			Msg("runner: received message via OnMessage path")
+		if r.relay == nil {
+			return nil
+		}
+		r.relay.routeMessage(&pb.DownstreamMessage{
+			Payload: &pb.DownstreamMessage_Msg{
+				Msg: &pb.IncomingMessage{
+					SourceTopic: msg.SourceTopic,
+					Payload:     msg.Payload,
+					MessageType: msg.MessageType,
+				},
+			},
+		})
 		return nil
 	})
 

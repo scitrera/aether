@@ -65,6 +65,14 @@ const (
 	// mitmproxy + initiator path instead.
 	AllowedOpsProfileSandboxTunnels = "sandbox-tunnels"
 
+	// AllowedOpsProfileSidecarOwn is the superset of sandbox-tunnels that
+	// also exposes TaskQuery + TaskOp for the sidecar's in-process
+	// openclaw bridge (chat_message task lifecycle: orphan scan,
+	// complete, fail). Use when the sidecar container hosts both the
+	// in-sandbox SDK (proxy/tunnel consumer) AND the bridge (task ops
+	// consumer); both share the relay listener.
+	AllowedOpsProfileSidecarOwn = "sidecar-own"
+
 	// AllowedOpsProfileToolStubOnly forbids every upstream op except the
 	// init handshake. Useful for sandboxes that act purely as inbound
 	// responders (tool stubs that only receive ProxyHttpRequest).
@@ -442,12 +450,14 @@ func (c *Config) validateRelay() []string {
 		switch c.Relay.AllowedOps.Profile {
 		case AllowedOpsProfileSandboxDefault,
 			AllowedOpsProfileSandboxTunnels,
+			AllowedOpsProfileSidecarOwn,
 			AllowedOpsProfileToolStubOnly:
 		default:
-			errs = append(errs, fmt.Sprintf("relay.allowed_ops.profile=%q: must be one of %q, %q, %q (or pass a literal list)",
+			errs = append(errs, fmt.Sprintf("relay.allowed_ops.profile=%q: must be one of %q, %q, %q, %q (or pass a literal list)",
 				c.Relay.AllowedOps.Profile,
 				AllowedOpsProfileSandboxDefault,
 				AllowedOpsProfileSandboxTunnels,
+				AllowedOpsProfileSidecarOwn,
 				AllowedOpsProfileToolStubOnly))
 		}
 	}

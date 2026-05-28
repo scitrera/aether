@@ -619,6 +619,11 @@ def proxy_http(
     """
     _ensure_hooks_installed()
 
+    # Defensive: callers may pass body=None explicitly even though the default
+    # is b"".  Normalise here so len(body) never raises TypeError.
+    if body is None:
+        body = b""
+
     if request_id is None:
         request_id = str(uuid.uuid4())
 
@@ -737,6 +742,11 @@ async def proxy_http_async(
     max_response_body_bytes: int = 0,
 ) -> Any:
     _ensure_hooks_installed()
+
+    # Defensive: callers may pass body=None explicitly even though the default
+    # is b"".  Normalise here so len(body) never raises TypeError.
+    if body is None:
+        body = b""
 
     if request_id is None:
         request_id = str(uuid.uuid4())

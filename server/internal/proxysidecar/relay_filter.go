@@ -26,6 +26,13 @@ const (
 	OpTunnelClose         = "TunnelClose"
 	OpTunnelAck           = "TunnelAck"
 	OpSwitchWorkspace     = "SwitchWorkspace"
+	// OpTaskQuery covers TaskQuery (list/filter tasks). The sidecar's
+	// bridge uses this on startup to scan for orphaned chat_message tasks
+	// it owned in a prior incarnation and fail them.
+	OpTaskQuery = "TaskQuery"
+	// OpTaskOp covers TaskOperation (complete / fail / pause / etc.). The
+	// bridge uses this to drive the chat_message task lifecycle.
+	OpTaskOp = "TaskOp"
 )
 
 // allowedOpsSet is an O(1)-membership view of the relay's permitted upstream
@@ -89,6 +96,33 @@ func profileOps(profile string) ([]string, error) {
 			OpTunnelClose,
 			OpTunnelAck,
 		}, nil
+	case AllowedOpsProfileSidecarOwn:
+		// Superset of sandbox-tunnels that also exposes the task-lifecycle
+		// ops (TaskQuery + TaskOp) the sidecar's in-process openclaw
+		// bridge needs to manage chat_message tasks (orphan scan at
+		// startup, complete/fail per-turn). Use this profile when the
+		// sidecar container hosts BOTH:
+		//   - the in-sandbox SDK that talks data-connectors / memorylayer
+		//     via ProxyHttp (the sandbox-tunnels piece), AND
+		//   - the in-sidecar openclaw bridge that drives chat_message
+		//     task lifecycle via TaskQuery + TaskOp.
+		// The relay listener is shared between both consumers (one
+		// listener per sidecar container), so the profile must cover
+		// the union of their needs.
+		return []string{
+			OpSendMessage,
+			OpProgressReport,
+			OpKVOperation,
+			OpProxyHttpRequest,
+			OpProxyHttpBodyChunk,
+			OpProxyHttpResponse,
+			OpTunnelOpen,
+			OpTunnelData,
+			OpTunnelClose,
+			OpTunnelAck,
+			OpTaskQuery,
+			OpTaskOp,
+		}, nil
 	case AllowedOpsProfileToolStubOnly:
 		// Only the InitConnection handshake; any other op is denied. The
 		// sandbox is expected to *receive* envelopes (e.g. ProxyHttpRequest)
@@ -113,7 +147,9 @@ func knownRelayOp(name string) bool {
 		OpTunnelData,
 		OpTunnelClose,
 		OpTunnelAck,
-		OpSwitchWorkspace:
+		OpSwitchWorkspace,
+		OpTaskQuery,
+		OpTaskOp:
 		return true
 	}
 	return false
@@ -216,6 +252,10 @@ func upstreamOpName(msg *pb.UpstreamMessage) string {
 		return OpTunnelAck
 	case *pb.UpstreamMessage_SwitchWorkspace:
 		return OpSwitchWorkspace
+	case *pb.UpstreamMessage_TaskQuery:
+		return OpTaskQuery
+	case *pb.UpstreamMessage_TaskOp:
+		return OpTaskOp
 	}
 	return ""
 }
