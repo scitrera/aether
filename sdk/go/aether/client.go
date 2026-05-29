@@ -98,22 +98,23 @@ type BaseClient struct {
 	checkpointResponseQueue chan *CheckpointResponse
 
 	// Pending request maps for request_id-based correlation
-	pendingKVRequests             pendingRequests[*KVResponse]
-	pendingCheckpointRequests     pendingRequests[*CheckpointResponse]
-	pendingCreateTaskRequests     pendingRequests[*CreateTaskResponse]
-	pendingTaskQueryRequests      pendingRequests[*TaskQueryResponse]
-	pendingTaskOpRequests         pendingRequests[*TaskOperationResponse]
-	pendingWorkflowRequests       pendingRequests[*WorkflowResponse]
-	pendingWorkspaceRequests      pendingRequests[*WorkspaceResponse]
-	pendingAgentRequests          pendingRequests[*AgentResponse]
-	pendingACLRequests            pendingRequests[*ACLResponse]
-	pendingTokenRequests          pendingRequests[*TokenResponse]
-	pendingAuthorityGrantRequests pendingRequests[*pb.AuthorityGrantResponse]
-	pendingAdminRequests          pendingRequests[*AdminResponse]
-	pendingSessionRequests        pendingRequests[*SessionOperationResponse]
-	pendingAuditSubmitRequests    pendingRequests[*pb.SubmitAuditEventResponse]
-	pendingAuditQueryRequests     pendingRequests[*pb.AuditQueryResponse]
-	requestIDCounter              atomic.Uint64
+	pendingKVRequests               pendingRequests[*KVResponse]
+	pendingCheckpointRequests       pendingRequests[*CheckpointResponse]
+	pendingCreateTaskRequests       pendingRequests[*CreateTaskResponse]
+	pendingTaskQueryRequests        pendingRequests[*TaskQueryResponse]
+	pendingTaskOpRequests           pendingRequests[*TaskOperationResponse]
+	pendingWorkflowRequests         pendingRequests[*WorkflowResponse]
+	pendingWorkspaceRequests        pendingRequests[*WorkspaceResponse]
+	pendingAgentRequests            pendingRequests[*AgentResponse]
+	pendingACLRequests              pendingRequests[*ACLResponse]
+	pendingTokenRequests            pendingRequests[*TokenResponse]
+	pendingAuthorityGrantRequests   pendingRequests[*pb.AuthorityGrantResponse]
+	pendingConnectionStatusRequests pendingRequests[*pb.ConnectionStatusResponse]
+	pendingAdminRequests            pendingRequests[*AdminResponse]
+	pendingSessionRequests          pendingRequests[*SessionOperationResponse]
+	pendingAuditSubmitRequests      pendingRequests[*pb.SubmitAuditEventResponse]
+	pendingAuditQueryRequests       pendingRequests[*pb.AuditQueryResponse]
+	requestIDCounter                atomic.Uint64
 
 	// rawDownstreamTap, when non-nil, is invoked for every downstream
 	// message before typed dispatch. Returning true means the tap claimed
@@ -142,26 +143,28 @@ type BaseClient struct {
 	authorityCaches  []*AuthorityGrantCache
 
 	// Cached KV, Checkpoint, and Workflow helpers (for sync mutex to work across calls)
-	kvOnce            sync.Once
-	kvInstance        *KV
-	cpOnce            sync.Once
-	cpInstance        *Checkpoint
-	workflowOnce      sync.Once
-	workflowInstance  *WorkflowOps
-	workspaceOnce     sync.Once
-	workspaceInstance *WorkspaceOps
-	agentOnce         sync.Once
-	agentInstance     *AgentOps
-	aclOnce           sync.Once
-	aclInstance       *ACLOps
-	tokenOnce         sync.Once
-	tokenInstance     *TokenOps
-	authorityOnce     sync.Once
-	authorityInstance *AuthorityGrantOps
-	adminOnce         sync.Once
-	adminInstance     *AdminOps
-	sessionOnce       sync.Once
-	sessionInstance   *SessionOps
+	kvOnce             sync.Once
+	kvInstance         *KV
+	cpOnce             sync.Once
+	cpInstance         *Checkpoint
+	workflowOnce       sync.Once
+	workflowInstance   *WorkflowOps
+	workspaceOnce      sync.Once
+	workspaceInstance  *WorkspaceOps
+	agentOnce          sync.Once
+	agentInstance      *AgentOps
+	aclOnce            sync.Once
+	aclInstance        *ACLOps
+	tokenOnce          sync.Once
+	tokenInstance      *TokenOps
+	authorityOnce      sync.Once
+	authorityInstance  *AuthorityGrantOps
+	adminOnce          sync.Once
+	adminInstance      *AdminOps
+	sessionOnce        sync.Once
+	sessionInstance    *SessionOps
+	connectionOnce     sync.Once
+	connectionInstance *ConnectionOps
 
 	// InitConnection message builder (set by specific client types)
 	initMsgBuilder func() *pb.InitConnection
@@ -1854,6 +1857,9 @@ func (c *BaseClient) dispatchResponse(ctx context.Context, response *pb.Downstre
 
 	case *pb.DownstreamMessage_SessionResponse:
 		return c.handleSessionResponse(ctx, payload.SessionResponse)
+
+	case *pb.DownstreamMessage_ConnectionStatusResponse:
+		return c.handleConnectionStatusResponse(ctx, payload.ConnectionStatusResponse)
 
 	case *pb.DownstreamMessage_AuthorityGrant:
 		return c.handleAuthorityGrantResponse(ctx, payload.AuthorityGrant)
