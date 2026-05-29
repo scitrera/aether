@@ -79,6 +79,13 @@ class TaskClass(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     TASK_CLASS_BACKGROUND: _ClassVar[TaskClass]
     TASK_CLASS_BATCH: _ClassVar[TaskClass]
 
+class BackoffStrategy(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    BACKOFF_STRATEGY_UNSPECIFIED: _ClassVar[BackoffStrategy]
+    BACKOFF_STRATEGY_FIXED: _ClassVar[BackoffStrategy]
+    BACKOFF_STRATEGY_EXPONENTIAL: _ClassVar[BackoffStrategy]
+    BACKOFF_STRATEGY_EXPLICIT_SCHEDULE: _ClassVar[BackoffStrategy]
+
 class WaitReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     WAIT_REASON_UNSPECIFIED: _ClassVar[WaitReason]
@@ -150,6 +157,10 @@ TASK_CLASS_UNSPECIFIED: TaskClass
 TASK_CLASS_INTERACTIVE: TaskClass
 TASK_CLASS_BACKGROUND: TaskClass
 TASK_CLASS_BATCH: TaskClass
+BACKOFF_STRATEGY_UNSPECIFIED: BackoffStrategy
+BACKOFF_STRATEGY_FIXED: BackoffStrategy
+BACKOFF_STRATEGY_EXPONENTIAL: BackoffStrategy
+BACKOFF_STRATEGY_EXPLICIT_SCHEDULE: BackoffStrategy
 WAIT_REASON_UNSPECIFIED: WaitReason
 WAIT_REASON_INPUT: WaitReason
 WAIT_REASON_AUTHORITY: WaitReason
@@ -748,8 +759,28 @@ class ErrorResponse(_message.Message):
     request_id: str
     def __init__(self, code: _Optional[str] = ..., message: _Optional[str] = ..., retryable: bool = ..., retry_after_ms: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
 
+class RetryPolicy(_message.Message):
+    __slots__ = ("max_attempts", "backoff", "initial_delay_ms", "max_delay_ms", "jitter_factor", "schedule_ms", "retryable_status_codes", "honor_retry_after")
+    MAX_ATTEMPTS_FIELD_NUMBER: _ClassVar[int]
+    BACKOFF_FIELD_NUMBER: _ClassVar[int]
+    INITIAL_DELAY_MS_FIELD_NUMBER: _ClassVar[int]
+    MAX_DELAY_MS_FIELD_NUMBER: _ClassVar[int]
+    JITTER_FACTOR_FIELD_NUMBER: _ClassVar[int]
+    SCHEDULE_MS_FIELD_NUMBER: _ClassVar[int]
+    RETRYABLE_STATUS_CODES_FIELD_NUMBER: _ClassVar[int]
+    HONOR_RETRY_AFTER_FIELD_NUMBER: _ClassVar[int]
+    max_attempts: int
+    backoff: BackoffStrategy
+    initial_delay_ms: int
+    max_delay_ms: int
+    jitter_factor: float
+    schedule_ms: _containers.RepeatedScalarFieldContainer[int]
+    retryable_status_codes: _containers.RepeatedScalarFieldContainer[int]
+    honor_retry_after: bool
+    def __init__(self, max_attempts: _Optional[int] = ..., backoff: _Optional[_Union[BackoffStrategy, str]] = ..., initial_delay_ms: _Optional[int] = ..., max_delay_ms: _Optional[int] = ..., jitter_factor: _Optional[float] = ..., schedule_ms: _Optional[_Iterable[int]] = ..., retryable_status_codes: _Optional[_Iterable[int]] = ..., honor_retry_after: bool = ...) -> None: ...
+
 class CreateTaskRequest(_message.Message):
-    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id")
+    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id", "retry_policy")
     class LaunchParamOverridesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -777,6 +808,7 @@ class CreateTaskRequest(_message.Message):
     TARGET_IDENTITY_FIELD_NUMBER: _ClassVar[int]
     TASK_CLASS_FIELD_NUMBER: _ClassVar[int]
     CONTEXT_ID_FIELD_NUMBER: _ClassVar[int]
+    RETRY_POLICY_FIELD_NUMBER: _ClassVar[int]
     task_type: str
     workspace: str
     assignment_mode: TaskAssignmentMode
@@ -790,7 +822,8 @@ class CreateTaskRequest(_message.Message):
     target_identity: str
     task_class: TaskClass
     context_id: str
-    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ...) -> None: ...
+    retry_policy: RetryPolicy
+    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]] = ...) -> None: ...
 
 class CreateTaskResponse(_message.Message):
     __slots__ = ("success", "task_id", "status", "error_code", "error_message", "request_id", "assigned_to", "task_token", "authority_grant_id")
@@ -1270,6 +1303,7 @@ class TaskOperation(_message.Message):
         WAIT_FOR: _ClassVar[TaskOperation.OpType]
         RESUME: _ClassVar[TaskOperation.OpType]
         REJECT: _ClassVar[TaskOperation.OpType]
+        CLAIM: _ClassVar[TaskOperation.OpType]
     RETRY: TaskOperation.OpType
     CANCEL: TaskOperation.OpType
     COMPLETE: TaskOperation.OpType
@@ -1278,6 +1312,7 @@ class TaskOperation(_message.Message):
     WAIT_FOR: TaskOperation.OpType
     RESUME: TaskOperation.OpType
     REJECT: TaskOperation.OpType
+    CLAIM: TaskOperation.OpType
     OP_FIELD_NUMBER: _ClassVar[int]
     TASK_ID_FIELD_NUMBER: _ClassVar[int]
     REASON_FIELD_NUMBER: _ClassVar[int]

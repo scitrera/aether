@@ -113,6 +113,13 @@ type Store interface {
 	// task can be reconciled if the orchestrated agent disconnects later.
 	StartTaskWithAgent(ctx context.Context, taskID, agentIdentity string) error
 
+	// ClaimTask transitions a task into running when claimed by its assignee.
+	// Unlike StartTask, it additionally accepts a pending source state so a
+	// per-turn task can be claimed straight out of the queue. Only stamps
+	// started_at on the first transition; running → running is a no-op for
+	// that timestamp (idempotent for re-claim / multi-tab scenarios).
+	ClaimTask(ctx context.Context, taskID string) error
+
 	// CompleteTask marks a task as completed and stamps completed_at.
 	CompleteTask(ctx context.Context, taskID string) error
 

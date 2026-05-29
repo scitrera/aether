@@ -11,6 +11,7 @@ import (
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/internal/tracing"
 	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/pkg/tasks"
 	"github.com/scitrera/aether/sdk/go/aether"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/protobuf/proto"
@@ -297,7 +298,18 @@ func (s *GatewayServer) createProgressFilterHandler(client *ClientSession) func(
 // spawning agent receives the notification via server-side filtering.
 //
 // This method is best-effort: failures are logged but do not block the caller.
-func (s *GatewayServer) notifyTaskStatusChange(ctx context.Context, taskID, newStatus, workspace, parentAgentID, errorMsg string) {
+//
+// When task is non-nil and carries an OBO subject (subject_participant marked,
+// Authority.SubjectType == "User", Authority.SubjectID set), an ADDITIONAL
+// notice is emitted to the subject's per-user progress topic so the end user's
+// browser tabs can be driven by task lifecycle state. The subject emit routes
+// like handleProgressReport's us::<user> path (pg::us::<user>) rather than the
+// workspace-broadcast pg::<workspace> topic.
+func (s *GatewayServer) notifyTaskStatusChange(ctx context.Context, taskID, newStatus, workspace, parentAgentID, errorMsg string, task *tasks.Task) {
+	// Subject notify is independent of the parent notify: a per-turn chat task
+	// may have no parent agent but still needs to drive the user's tabs.
+	defer s.maybeNotifyTaskSubject(ctx, taskID, newStatus, task)
+
 	if parentAgentID == "" || workspace == "" {
 		return // No parent to notify or no workspace for the progress topic
 	}
@@ -341,6 +353,91 @@ func (s *GatewayServer) notifyTaskStatusChange(ctx context.Context, taskID, newS
 	}
 }
 
+// taskMetadataTruthy reports whether a task metadata value represents a truthy
+// flag. Accepts bool true or the strings "1"/"true" (case-insensitive).
+func taskMetadataTruthy(v interface{}) bool {
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "1", "true":
+			return true
+		}
+	}
+	return false
+}
+
+// maybeNotifyTaskSubject emits an additional ProgressUpdate to the task's OBO
+// subject (the end user) when the task opted into subject participation. Routed
+// to the per-user progress topic pg::us::<subject> with a bare us::<subject>
+// recipient so EVERY one of the user's windows receives it. Best-effort: any
+// failure is logged and ignored; never blocks the caller.
+func (s *GatewayServer) maybeNotifyTaskSubject(ctx context.Context, taskID, newStatus string, task *tasks.Task) {
+	if task == nil {
+		return
+	}
+	if !taskMetadataTruthy(task.Metadata["subject_participant"]) {
+		return
+	}
+	if task.Authority.SubjectType != string(models.PrincipalUser) || task.Authority.SubjectID == "" {
+		return
+	}
+
+	subjectID := task.Authority.SubjectID
+	subjectTopic, err := models.UserProgressTopic(subjectID)
+	if err != nil {
+		logging.Logger.Warn().Err(err).Str("task_id", taskID).Str("subject_id", subjectID).Msg("invalid subject id for task subject notification; skipping")
+		return
+	}
+
+	meta := map[string]string{
+		"status": newStatus,
+	}
+	if v := metadataString(task.Metadata, "thread_id"); v != "" {
+		meta["thread_id"] = v
+	}
+	if v := metadataString(task.Metadata, "message_id"); v != "" {
+		meta["message_id"] = v
+	}
+	if v := metadataString(task.Metadata, "started_at_ms"); v != "" {
+		meta["started_at_ms"] = v
+	}
+	if v := metadataString(task.Metadata, "task_type"); v != "" {
+		meta["task_type"] = v
+	} else if task.TaskType != "" {
+		meta["task_type"] = task.TaskType
+	}
+
+	update := &pb.ProgressUpdate{
+		Source:      s.gatewayID,
+		TaskId:      taskID,
+		State:       newStatus,
+		TimestampMs: time.Now().UnixMilli(),
+		Workspace:   task.Workspace,
+		// Bare user recipient → delivered to all of the user's windows via the
+		// gateway-side prefix-match filter (isBareUserRecipientMatch).
+		Recipient: "us" + models.IdentitySep + subjectID,
+		Kind:      pb.ProgressKind_PROGRESS_KIND_TASK,
+		Metadata:  meta,
+	}
+
+	updateBytes, err := proto.Marshal(update)
+	if err != nil {
+		logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to marshal task subject notification")
+		return
+	}
+
+	publishErr := s.publishBreaker.Execute(func() error {
+		return s.router.Publish(ctx, subjectTopic, updateBytes)
+	})
+	if publishErr != nil {
+		logging.Logger.Warn().Err(publishErr).Str("task_id", taskID).Str("status", newStatus).Str("subject_id", subjectID).Msg("failed to publish task subject notification")
+	} else {
+		logging.Logger.Debug().Str("task_id", taskID).Str("status", newStatus).Str("subject_id", subjectID).Msg("task subject notification sent")
+	}
+}
+
 // notifyTaskStatusChangeFromTaskID looks up a task by ID, extracts the parent
 // agent and workspace, and publishes a status notification. Best-effort.
 func (s *GatewayServer) notifyTaskStatusChangeFromTaskID(ctx context.Context, taskID, newStatus, errorMsg string) {
@@ -351,7 +448,7 @@ func (s *GatewayServer) notifyTaskStatusChangeFromTaskID(ctx context.Context, ta
 	if err != nil || task == nil {
 		return
 	}
-	s.notifyTaskStatusChange(ctx, taskID, newStatus, task.Workspace, task.ParentAgentID, errorMsg)
+	s.notifyTaskStatusChange(ctx, taskID, newStatus, task.Workspace, task.ParentAgentID, errorMsg, task)
 }
 
 // subscribeClientToProgress subscribes a client to the pg::{workspace} progress

@@ -216,6 +216,7 @@ func (f *fakeTaskStore) StartTask(_ context.Context, _ string) error     { panic
 func (f *fakeTaskStore) StartTaskWithAgent(_ context.Context, _, _ string) error {
 	panic("unexpected")
 }
+func (f *fakeTaskStore) ClaimTask(_ context.Context, _ string) error    { panic("unexpected") }
 func (f *fakeTaskStore) CompleteTask(_ context.Context, _ string) error { panic("unexpected") }
 func (f *fakeTaskStore) FailTask(_ context.Context, _, _ string) error  { panic("unexpected") }
 func (f *fakeTaskStore) FailTaskWithRetry(_ context.Context, _, _, _ string, _ *time.Time) error {

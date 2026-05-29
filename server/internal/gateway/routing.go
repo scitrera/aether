@@ -1504,6 +1504,18 @@ func (s *GatewayServer) authorizeTaskOp(ctx context.Context, client *ClientSessi
 		return true
 	}
 
+	// OBO subject-match: the end user the task acts on behalf of may operate
+	// on its own task (e.g. CLAIM a per-turn chat_message task from any of
+	// their browser tabs). Match by identity ID+type rather than topic string,
+	// since a connected user topic carries a window specifier the stored
+	// subject id does not.
+	if callerIdentity.Type == models.PrincipalUser &&
+		task.Authority.SubjectType == string(models.PrincipalUser) &&
+		callerIdentity.ID != "" &&
+		callerIdentity.ID == task.Authority.SubjectID {
+		return true
+	}
+
 	// Workspace-admin: requires the ACL store. If no ACL is configured,
 	// fail open on workspace match (the current Phase 1-3 behavior).
 	if s.acl == nil {
@@ -2094,6 +2106,46 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 				response.Task = taskToProto(updated)
 			}
 			s.notifyTaskStatusChangeFromTaskID(ctx, op.TaskId, string(tasks.TaskStatusRejected), reason)
+		}
+
+	case pb.TaskOperation_CLAIM:
+		// CLAIM: the assignee (or OBO subject) transitions a pending/assigned
+		// task to RUNNING. Mirrors CANCEL structurally: GetTask (info-hiding on
+		// miss) → authorize → claim store fn → notify on success.
+		claimTask, err := s.taskStore.GetTask(ctx, op.TaskId)
+		if err != nil || claimTask == nil {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   ErrTaskNotFoundOrUnauthorized,
+			}
+			break
+		}
+		if !s.authorizeTaskOp(ctx, client, claimTask) {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   ErrTaskNotFoundOrUnauthorized,
+			}
+			break
+		}
+		claimFn := s.taskStore.ClaimTask
+		if s.orchestration != nil && s.orchestration.TaskService != nil {
+			claimFn = s.orchestration.TaskService.ClaimTask
+		}
+		if err := claimFn(ctx, op.TaskId); err != nil {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   err.Error(),
+			}
+		} else {
+			updated, _ := s.taskStore.GetTask(ctx, op.TaskId)
+			response = &pb.TaskOperationResponse{
+				Success: true,
+				Message: "task claimed",
+			}
+			if updated != nil {
+				response.Task = taskToProto(updated)
+			}
+			s.notifyTaskStatusChangeFromTaskID(ctx, op.TaskId, "running", "")
 		}
 
 	default:

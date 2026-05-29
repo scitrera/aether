@@ -1150,6 +1150,7 @@ const (
 	TaskOperation_WAIT_FOR TaskOperation_OpType = 5 // Transition running -> WAITING_DEPENDENCY on specific task ids. Requires wait_spec.
 	TaskOperation_RESUME   TaskOperation_OpType = 6 // Force-resume a paused task (admin/manual; normally task_waker fires).
 	TaskOperation_REJECT   TaskOperation_OpType = 7 // Agent declines before processing -> REJECTED terminal state.
+	TaskOperation_CLAIM    TaskOperation_OpType = 8 // Assignee transitions an assigned/pending task to RUNNING.
 )
 
 // Enum value maps for TaskOperation_OpType.
@@ -1163,6 +1164,7 @@ var (
 		5: "WAIT_FOR",
 		6: "RESUME",
 		7: "REJECT",
+		8: "CLAIM",
 	}
 	TaskOperation_OpType_value = map[string]int32{
 		"RETRY":    0,
@@ -1173,6 +1175,7 @@ var (
 		"WAIT_FOR": 5,
 		"RESUME":   6,
 		"REJECT":   7,
+		"CLAIM":    8,
 	}
 )
 
@@ -17387,14 +17390,14 @@ const file_aether_proto_rawDesc = "" +
 	"totalCount\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x06 \x01(\tR\trequestId\x12&\n" +
-	"\x0fnext_page_token\x18\a \x01(\tR\rnextPageToken\"\xac\x02\n" +
+	"\x0fnext_page_token\x18\a \x01(\tR\rnextPageToken\"\xb7\x02\n" +
 	"\rTaskOperation\x12/\n" +
 	"\x02op\x18\x01 \x01(\x0e2\x1f.aether.v1.TaskOperation.OpTypeR\x02op\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x04 \x01(\tR\trequestId\x120\n" +
-	"\twait_spec\x18\x05 \x01(\v2\x13.aether.v1.WaitSpecR\bwaitSpec\"h\n" +
+	"\twait_spec\x18\x05 \x01(\v2\x13.aether.v1.WaitSpecR\bwaitSpec\"s\n" +
 	"\x06OpType\x12\t\n" +
 	"\x05RETRY\x10\x00\x12\n" +
 	"\n" +
@@ -17406,7 +17409,8 @@ const file_aether_proto_rawDesc = "" +
 	"\n" +
 	"\x06RESUME\x10\x06\x12\n" +
 	"\n" +
-	"\x06REJECT\x10\a\"\xf6\x03\n" +
+	"\x06REJECT\x10\a\x12\t\n" +
+	"\x05CLAIM\x10\b\"\xf6\x03\n" +
 	"\bWaitSpec\x12-\n" +
 	"\x06reason\x18\x01 \x01(\x0e2\x15.aether.v1.WaitReasonR\x06reason\x12-\n" +
 	"\x12expected_principal\x18\x02 \x01(\tR\x11expectedPrincipal\x12D\n" +

@@ -910,6 +910,23 @@ func (tas *TaskAssignmentService) ResumeTask(ctx context.Context, taskID string,
 	return nil
 }
 
+// ClaimTask transitions a task into running when claimed by its assignee
+// (e.g. a per-turn chat_message task claimed straight out of the queue).
+// Side effects: log only — tokens and grants are retained for the run.
+// Idempotent: re-claiming a running task is a no-op on started_at.
+func (tas *TaskAssignmentService) ClaimTask(ctx context.Context, taskID string) error {
+	pre := tas.loadTransitionMetadata(ctx, taskID)
+	if err := tas.taskStore.ClaimTask(ctx, taskID); err != nil {
+		return err
+	}
+	logging.Logger.Info().
+		Str("task_id", taskID).
+		Str("to_status", string(tasks.TaskStatusRunning)).
+		Msg("task claimed")
+	tas.emitTransitionEvent(ctx, pre, taskID, tasks.TaskStatusRunning, "")
+	return nil
+}
+
 // WakeHibernatedTask transitions a HIBERNATED task back to pending and
 // reinserts it into the orchestrated_task_queue so the orchestrator can spawn
 // a fresh worker for it. Before clearing the WaitSpec, the task's

@@ -375,6 +375,28 @@ func (s *Store) StartTaskWithAgent(ctx context.Context, taskID, agentIdentity st
 	return nil
 }
 
+// ClaimTask transitions a task into running when claimed by its assignee.
+// Unlike StartTask it also accepts a pending source state so a per-turn task
+// can be claimed straight out of the queue. Only stamps started_at on the
+// first transition; running -> running is a no-op for that timestamp
+// (idempotent for re-claim / multi-tab scenarios).
+func (s *Store) ClaimTask(ctx context.Context, taskID string) error {
+	nowStr := now()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'running', started_at = COALESCE(started_at, ?)
+		WHERE task_id = ? AND status IN ('pending', 'assigned', 'starting', 'running')
+	`, nowStr, taskID)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("task %s not in a claimable state (pending, assigned, starting, or running)", taskID)
+	}
+	return nil
+}
+
 func (s *Store) CompleteTask(ctx context.Context, taskID string) error {
 	nowStr := now()
 	result, err := s.db.ExecContext(ctx, `

@@ -3,7 +3,7 @@
 
 export interface BridgeIdentity {
   /**
-   * e.g., "aether-msgbridge", "webhook-bridge"
+   * e.g., "example-bridge", "webhook-bridge"
    */
   'implementation'?: (string);
   /**
@@ -14,7 +14,7 @@ export interface BridgeIdentity {
 
 export interface BridgeIdentity__Output {
   /**
-   * e.g., "aether-msgbridge", "webhook-bridge"
+   * e.g., "example-bridge", "webhook-bridge"
    */
   'implementation': (string);
   /**

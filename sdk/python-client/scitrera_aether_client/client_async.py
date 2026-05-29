@@ -2003,6 +2003,33 @@ class BaseAsyncAetherClient:
             request_id, timeout,
         )
 
+    async def claim_task(self, task_id: str, *,
+                         timeout: float = 5.0) -> Optional[aether_pb2.TaskOperationResponse]:
+        """
+        Claim a pending/assigned task, transitioning it to RUNNING.
+
+        Used by the assignee (or the task's on-behalf-of subject) to start a
+        task — e.g. a per-turn chat_message task claimed straight out of the
+        queue. Idempotent: re-claiming a running task succeeds without error.
+
+        Args:
+            task_id: The task ID to claim
+            timeout: Timeout in seconds
+
+        Returns:
+            TaskOperationResponse or None if timeout
+        """
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.TaskOperation(
+            op=aether_pb2.TaskOperation.CLAIM,
+            task_id=task_id,
+            request_id=request_id,
+        )
+        return await self._send_sync_op(
+            aether_pb2.UpstreamMessage(task_op=op),
+            request_id, timeout,
+        )
+
     async def retry_task(self, task_id: str,
                          timeout: float = 10.0) -> Optional[aether_pb2.TaskOperationResponse]:
         """

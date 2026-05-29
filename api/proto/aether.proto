@@ -1192,6 +1192,7 @@ message TaskOperation {
     WAIT_FOR = 5;   // Transition running -> WAITING_DEPENDENCY on specific task ids. Requires wait_spec.
     RESUME = 6;     // Force-resume a paused task (admin/manual; normally task_waker fires).
     REJECT = 7;     // Agent declines before processing -> REJECTED terminal state.
+    CLAIM = 8;      // Assignee transitions an assigned/pending task to RUNNING.
   }
   OpType op = 1;
 

@@ -60,6 +60,7 @@ export interface ProtoGrpcType {
       AuthorityRequestStatus: EnumTypeDefinition
       AuthoritySpan: MessageTypeDefinition
       AuthorizationContext: MessageTypeDefinition
+      BackoffStrategy: EnumTypeDefinition
       BridgeIdentity: MessageTypeDefinition
       BuildInfo: MessageTypeDefinition
       CheckpointOperation: MessageTypeDefinition
@@ -113,6 +114,7 @@ export interface ProtoGrpcType {
       ResolveAuthorityResponse: MessageTypeDefinition
       ResolvedAuthority: MessageTypeDefinition
       ResolvedAuthorityInfo: MessageTypeDefinition
+      RetryPolicy: MessageTypeDefinition
       SendMessage: MessageTypeDefinition
       ServiceIdentity: MessageTypeDefinition
       SessionOperation: MessageTypeDefinition

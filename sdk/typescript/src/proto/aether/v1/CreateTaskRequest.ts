@@ -3,6 +3,7 @@
 import type { TaskAssignmentMode as _aether_v1_TaskAssignmentMode, TaskAssignmentMode__Output as _aether_v1_TaskAssignmentMode__Output } from '../../aether/v1/TaskAssignmentMode';
 import type { AuthorizationContext as _aether_v1_AuthorizationContext, AuthorizationContext__Output as _aether_v1_AuthorizationContext__Output } from '../../aether/v1/AuthorizationContext';
 import type { TaskClass as _aether_v1_TaskClass, TaskClass__Output as _aether_v1_TaskClass__Output } from '../../aether/v1/TaskClass';
+import type { RetryPolicy as _aether_v1_RetryPolicy, RetryPolicy__Output as _aether_v1_RetryPolicy__Output } from '../../aether/v1/RetryPolicy';
 
 export interface CreateTaskRequest {
   'taskType'?: (string);
@@ -55,6 +56,13 @@ export interface CreateTaskRequest {
    * Empty = no session grouping.
    */
   'contextId'?: (string);
+  /**
+   * Optional. When set, the task store computes next_retry_at on FailTask
+   * according to this policy and re-pends the task automatically (up to
+   * max_attempts). Absent = legacy behavior (immediate re-pend, hardcoded
+   * max_retries=3).
+   */
+  'retryPolicy'?: (_aether_v1_RetryPolicy | null);
 }
 
 export interface CreateTaskRequest__Output {
@@ -108,4 +116,11 @@ export interface CreateTaskRequest__Output {
    * Empty = no session grouping.
    */
   'contextId': (string);
+  /**
+   * Optional. When set, the task store computes next_retry_at on FailTask
+   * according to this policy and re-pends the task automatically (up to
+   * max_attempts). Absent = legacy behavior (immediate re-pend, hardcoded
+   * max_retries=3).
+   */
+  'retryPolicy': (_aether_v1_RetryPolicy__Output | null);
 }
