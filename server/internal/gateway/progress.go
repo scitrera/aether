@@ -281,6 +281,22 @@ func (s *GatewayServer) createProgressFilterHandler(client *ClientSession) func(
 			}
 		}
 
+		// Phase 2 "Design M": drive the per-task chat message lane off task
+		// lifecycle. The notice already targets this session's subject (the
+		// recipient filter above passed), so the session principal IS the
+		// task's subject — auto-attach / detach the tk::{ws}::{task}::msg lane
+		// without any additional authz. Subscribe on running, unsubscribe on a
+		// terminal status. Live (non-replay) subscribe: the running notice
+		// marks "from here forward".
+		if update.Kind == pb.ProgressKind_PROGRESS_KIND_TASK && update.TaskId != "" {
+			switch update.Metadata["status"] {
+			case "running":
+				s.subscribeClientToTaskMessages(client, update.Workspace, update.TaskId)
+			case "completed", "failed", "cancelled":
+				s.unsubscribeClientFromTaskMessages(client, update.TaskId)
+			}
+		}
+
 		// Progress updates ride at PriorityBestEffort — they are the first
 		// to be shed when the per-session delivery Semaphore is saturated
 		// by request / response chunk traffic.

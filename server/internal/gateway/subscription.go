@@ -354,6 +354,14 @@ func (s *GatewayServer) setupClientSubscriptions(client *ClientSession) error {
 				logging.Logger.Warn().Err(err).Str("topic", upgTopic).Msg("failed to subscribe to user-progress topic")
 			}
 		}
+		// Phase 2 "Design M": re-attach this session to the per-task chat
+		// message lanes of any tasks that are already RUNNING with this user
+		// as the participating OBO subject. The live subscribe path
+		// (createProgressFilterHandler) only fires on the running notice, which
+		// has already passed for in-flight tasks — backfill catches them.
+		if s.taskStore != nil {
+			s.backfillRunningSubjectTaskMessages(context.Background(), client)
+		}
 		// Subscribe to workspace-scoped topics if workspace is set (shared, no offset tracking)
 		// This includes gu::{workspace}, uw::{user}::{workspace}, and pg::{workspace}
 		if identity.Workspace != "" {

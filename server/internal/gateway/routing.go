@@ -34,7 +34,7 @@ const offlineCacheTTL = 5 * time.Second
 var validTopicPrefixSet = map[string]bool{
 	"ag": true, "tu": true, "ta": true, "tb": true,
 	"us": true, "uw": true, "ga": true, "gu": true,
-	"pg": true, "event": true, "metric": true, "br": true, "sv": true,
+	"pg": true, "tk": true, "event": true, "metric": true, "br": true, "sv": true,
 }
 
 func validateTopicFormat(topic string) error {
@@ -74,8 +74,9 @@ func workspaceFromTopic(topic string) string {
 			return ""
 		}
 		return parts[1]
-	case "ag", "tu", "ta", "tb", "ga", "gu", "pg":
+	case "ag", "tu", "ta", "tb", "ga", "gu", "pg", "tk":
 		// workspace is the next component: prefix::{workspace}[::rest]
+		// tk::{workspace}::{task_id}::{events,msg} → parts[1] = workspace.
 		return parts[1]
 	case "uw":
 		// uw::{user_id}::{workspace} — workspace is the third component

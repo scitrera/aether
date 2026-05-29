@@ -145,6 +145,32 @@ func MustTaskEventsTopic(workspace, taskID string) string {
 	return t
 }
 
+// TaskMessageTopic returns the topic used for a task's per-task chat message
+// stream. Format: tk::{workspace}::{task_id}::msg
+//
+// This topic carries ordinary MessageEnvelope protos (chat tokens / appended
+// messages) addressed to a single task_id rather than to a specific user
+// window. The gateway auto-subscribes a task's SUBJECT sessions to this topic
+// for the task's lifetime (subscribe on the running notice, unsubscribe on the
+// terminal notice) so chat streaming follows the task instead of being pinned
+// to the window that started it.
+func TaskMessageTopic(workspace, taskID string) (string, error) {
+	if err := validateSegments("workspace", workspace, "task_id", taskID); err != nil {
+		return "", err
+	}
+	return "tk" + IdentitySep + workspace + IdentitySep + taskID + IdentitySep + "msg", nil
+}
+
+// MustTaskMessageTopic builds a task-message topic and panics on invalid input.
+// Use only for trusted segments.
+func MustTaskMessageTopic(workspace, taskID string) string {
+	t, err := TaskMessageTopic(workspace, taskID)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
 // UserProgressTopic returns a per-user progress stream topic used for
 // targeted progress delivery across all of a user's open windows. Agents
 // that send chat-kind progress set ProgressReport.recipient to the user's

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
@@ -21,6 +23,32 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// Per-identity auth-failure throttle tunables. These gate repeated credential
+// validation for a single identity to relieve log/audit spam and validation
+// load when a stale/zombie client reconnects in a tight loop with a token the
+// gateway no longer recognizes. They do not alter the actual token-validation
+// or identity-match security logic.
+const (
+	// authFailThreshold is the number of failures within authFailWindow that
+	// engages the cooldown.
+	authFailThreshold = 5
+	// authFailWindow is the sliding window over which failures are counted.
+	authFailWindow = 30 * time.Second
+	// authFailCooldown is how long an identity is throttled (fast-rejected
+	// without re-validation) once the threshold is reached.
+	authFailCooldown = 30 * time.Second
+	// authFailMapMaxEntries caps the throttle map size to bound memory across
+	// many transient identities; on overflow, stale records are swept.
+	authFailMapMaxEntries = 1024
+)
+
+// authFailRecord tracks recent auth failures for a single identity.
+type authFailRecord struct {
+	failures      int
+	windowStart   time.Time
+	cooldownUntil time.Time
+}
+
 // AuthHandler encapsulates authentication and identity resolution concerns for the gateway.
 // It holds the mTLS configuration, ACL service, composite authenticator, and audit logger
 // needed to authenticate connections and validate credentials.
@@ -35,16 +63,94 @@ type AuthHandler struct {
 	// tokenStore is used to validate orchestration task tokens for agents.
 	// It is set when orchestration is configured and may be nil.
 	tokenStore state.TokenStore
+
+	// authFailMu guards authFailRecords. The gateway may authenticate
+	// concurrent connects, so the per-identity throttle state must be locked.
+	authFailMu sync.Mutex
+	// authFailRecords holds per-identity (keyed by identity.String()) failure
+	// bookkeeping for the auth-failure throttle.
+	authFailRecords map[string]*authFailRecord
 }
 
 // newAuthHandler creates an AuthHandler from gateway server configuration.
 func newAuthHandler(authenticator *auth.CompositeAuthenticator, mtlsRequired bool, mtlsMode MTLSMode, aclService aclstore.Store, auditLogger auditstore.Store) *AuthHandler {
 	return &AuthHandler{
-		authenticator: authenticator,
-		mtlsRequired:  mtlsRequired,
-		mtlsMode:      mtlsMode,
-		acl:           aclService,
-		auditLogger:   auditLogger,
+		authenticator:   authenticator,
+		mtlsRequired:    mtlsRequired,
+		mtlsMode:        mtlsMode,
+		acl:             aclService,
+		auditLogger:     auditLogger,
+		authFailRecords: make(map[string]*authFailRecord),
+	}
+}
+
+// throttled reports whether the given identity is currently within its
+// auth-failure cooldown. When true, callers should fast-reject without
+// re-validating credentials and without emitting per-attempt WARNING/audit.
+func (h *AuthHandler) throttled(identityKey string, now time.Time) bool {
+	h.authFailMu.Lock()
+	defer h.authFailMu.Unlock()
+	rec, ok := h.authFailRecords[identityKey]
+	if !ok {
+		return false
+	}
+	return now.Before(rec.cooldownUntil)
+}
+
+// recordAuthFailure records a credential-validation failure for the identity
+// and returns true if this failure engaged (newly crossed) the cooldown
+// threshold. The window is sliding: failures older than authFailWindow reset
+// the count. The caller logs the single throttle-engaged WARNING/audit when
+// this returns true.
+func (h *AuthHandler) recordAuthFailure(identityKey string, now time.Time) (engaged bool) {
+	h.authFailMu.Lock()
+	defer h.authFailMu.Unlock()
+
+	h.evictStaleLocked(now)
+
+	rec, ok := h.authFailRecords[identityKey]
+	if !ok {
+		rec = &authFailRecord{}
+		h.authFailRecords[identityKey] = rec
+	}
+
+	if rec.windowStart.IsZero() || now.Sub(rec.windowStart) > authFailWindow {
+		rec.failures = 1
+		rec.windowStart = now
+	} else {
+		rec.failures++
+	}
+
+	if rec.failures >= authFailThreshold && now.After(rec.cooldownUntil) {
+		rec.cooldownUntil = now.Add(authFailCooldown)
+		return true
+	}
+	return false
+}
+
+// clearAuthFailure removes any throttle bookkeeping for the identity so a
+// recovered client is not penalized after a successful authentication.
+func (h *AuthHandler) clearAuthFailure(identityKey string) {
+	h.authFailMu.Lock()
+	defer h.authFailMu.Unlock()
+	delete(h.authFailRecords, identityKey)
+}
+
+// evictStaleLocked opportunistically removes records whose window and cooldown
+// are both well in the past, bounding memory across many transient identities.
+// Callers must hold authFailMu. The sweep only runs when the map exceeds the
+// size cap, so the common case adds no work.
+func (h *AuthHandler) evictStaleLocked(now time.Time) {
+	if len(h.authFailRecords) < authFailMapMaxEntries {
+		return
+	}
+	// A record is stale once it is no longer in cooldown and its window has
+	// fully elapsed; such records carry no live throttle state.
+	staleBefore := now.Add(-authFailWindow)
+	for k, rec := range h.authFailRecords {
+		if now.After(rec.cooldownUntil) && rec.windowStart.Before(staleBefore) {
+			delete(h.authFailRecords, k)
+		}
 	}
 }
 
@@ -348,12 +454,34 @@ func (h *AuthHandler) authenticateCredentials(ctx context.Context, init *pb.Init
 	if init != nil {
 		if token, ok := init.Credentials["token"]; ok && token != "" {
 			if h.tokenStore != nil {
+				identityKey := identity.String()
+
+				// Defense-in-depth throttle: if this identity has recently
+				// failed token validation repeatedly, fast-reject without
+				// re-validating and without per-attempt WARNING/audit spam.
+				// This relieves load from stale/zombie clients reconnecting in
+				// a tight loop with a token the gateway no longer knows.
+				if h.throttled(identityKey, time.Now()) {
+					logging.Logger.Debug().Str("identity", identityKey).Msg("auth throttled: skipping token validation during cooldown")
+					return "", identity, status.Errorf(codes.Unauthenticated, "auth temporarily throttled after repeated failures")
+				}
+
 				taskToken, err := h.tokenStore.ValidateToken(ctx, token)
 				if err != nil {
-					logging.Logger.Warn().Err(err).Str("identity", identity.String()).Msg("token validation failed")
-					h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identity.String(), audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), false, err.Error(), map[string]interface{}{
-						"reason": "token_validation_failed",
-					}))
+					engaged := h.recordAuthFailure(identityKey, time.Now())
+					if engaged {
+						logging.Logger.Warn().Err(err).Str("identity", identityKey).Int("failures", authFailThreshold).Dur("cooldown", authFailCooldown).Msg("auth throttled for identity after repeated failures, cooling down")
+						h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identityKey, audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), false, err.Error(), map[string]interface{}{
+							"reason":        "auth_throttle_engaged",
+							"failures":      authFailThreshold,
+							"cooldown_secs": int(authFailCooldown.Seconds()),
+						}))
+					} else {
+						logging.Logger.Warn().Err(err).Str("identity", identityKey).Msg("token validation failed")
+						h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identityKey, audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), false, err.Error(), map[string]interface{}{
+							"reason": "token_validation_failed",
+						}))
+					}
 					return "", identity, status.Errorf(codes.Unauthenticated, "invalid or revoked token: %v", err)
 				}
 
@@ -371,6 +499,10 @@ func (h *AuthHandler) authenticateCredentials(ctx context.Context, init *pb.Init
 						taskToken.TargetIdentity,
 						identity.String())
 				}
+
+				// Token validated OK: a recovered client must not stay
+				// penalized — clear any throttle bookkeeping for this identity.
+				h.clearAuthFailure(identityKey)
 
 				logging.Logger.Info().Str("identity", identity.String()).Str("task_id", taskToken.TaskID).Str("principal_type", string(identity.Type)).Msg("task token validated")
 				h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identity.String(), audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), true, "", map[string]interface{}{
