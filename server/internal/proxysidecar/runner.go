@@ -149,7 +149,6 @@ func (r *Runner) Run(ctx context.Context) error {
 			return fmt.Errorf("runner: build client: %w", err)
 		}
 		r.router.installOn(r.runtime.Client(), r.runtime.Transport())
-		go r.runtime.runConnectionLoop(ctx)
 	}
 
 	log.Info().
@@ -159,6 +158,17 @@ func (r *Runner) Run(ctx context.Context) error {
 		Msg("proxy sidecar runner starting")
 
 	g, gctx := errgroup.WithContext(ctx)
+
+	// The shared gateway connection runs as a surface in the errgroup: a fatal
+	// give-up (too many consecutive terminal auth failures) cancels gctx,
+	// drains the other surfaces, and propagates out of Run so the process
+	// exits non-zero / signals its wrapped child — making an orphaned sandbox
+	// reapable instead of a zombie spamming the gateway.
+	if r.runtime != nil {
+		g.Go(func() error {
+			return r.runtime.runConnectionLoop(gctx)
+		})
+	}
 
 	if r.term != nil {
 		g.Go(func() error {
