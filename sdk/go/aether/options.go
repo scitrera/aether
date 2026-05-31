@@ -682,6 +682,12 @@ type CreateTaskOptions struct {
 	// for webhook delivery). Absent = the server's legacy default
 	// (immediate re-pend, max_retries=3).
 	RetryPolicy *pb.RetryPolicy
+
+	// Priority is the optional dispatch priority for the task. Higher
+	// priority pending tasks are delivered before lower ones (ties break
+	// FIFO). Defaults to UNSPECIFIED, which the server normalizes to NORMAL.
+	// Use the pb.TaskPriority_TASK_PRIORITY_* constants.
+	Priority pb.TaskPriority
 }
 
 // =============================================================================

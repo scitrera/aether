@@ -4,6 +4,7 @@ import type { TaskAssignmentMode as _aether_v1_TaskAssignmentMode, TaskAssignmen
 import type { AuthorizationContext as _aether_v1_AuthorizationContext, AuthorizationContext__Output as _aether_v1_AuthorizationContext__Output } from '../../aether/v1/AuthorizationContext';
 import type { TaskClass as _aether_v1_TaskClass, TaskClass__Output as _aether_v1_TaskClass__Output } from '../../aether/v1/TaskClass';
 import type { RetryPolicy as _aether_v1_RetryPolicy, RetryPolicy__Output as _aether_v1_RetryPolicy__Output } from '../../aether/v1/RetryPolicy';
+import type { TaskPriority as _aether_v1_TaskPriority, TaskPriority__Output as _aether_v1_TaskPriority__Output } from '../../aether/v1/TaskPriority';
 
 export interface CreateTaskRequest {
   'taskType'?: (string);
@@ -63,6 +64,11 @@ export interface CreateTaskRequest {
    * max_retries=3).
    */
   'retryPolicy'?: (_aether_v1_RetryPolicy | null);
+  /**
+   * Optional dispatch priority. Defaults to UNSPECIFIED ⇒ NORMAL. Higher
+   * priority pending tasks are delivered before lower ones (ties break FIFO).
+   */
+  'priority'?: (_aether_v1_TaskPriority);
 }
 
 export interface CreateTaskRequest__Output {
@@ -123,4 +129,9 @@ export interface CreateTaskRequest__Output {
    * max_retries=3).
    */
   'retryPolicy': (_aether_v1_RetryPolicy__Output | null);
+  /**
+   * Optional dispatch priority. Defaults to UNSPECIFIED ⇒ NORMAL. Higher
+   * priority pending tasks are delivered before lower ones (ties break FIFO).
+   */
+  'priority': (_aether_v1_TaskPriority__Output);
 }

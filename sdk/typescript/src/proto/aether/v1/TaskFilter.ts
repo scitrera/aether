@@ -3,6 +3,7 @@
 import type { TaskStatus as _aether_v1_TaskStatus, TaskStatus__Output as _aether_v1_TaskStatus__Output } from '../../aether/v1/TaskStatus';
 import type { TaskClass as _aether_v1_TaskClass, TaskClass__Output as _aether_v1_TaskClass__Output } from '../../aether/v1/TaskClass';
 import type { PrincipalRef as _aether_v1_PrincipalRef, PrincipalRef__Output as _aether_v1_PrincipalRef__Output } from '../../aether/v1/PrincipalRef';
+import type { TaskPriority as _aether_v1_TaskPriority, TaskPriority__Output as _aether_v1_TaskPriority__Output } from '../../aether/v1/TaskPriority';
 import type { Long } from '@grpc/proto-loader';
 
 /**
@@ -109,6 +110,17 @@ export interface TaskFilter {
    * the existing parent_task_id behavior.
    */
   'includeDescendants'?: (boolean);
+  /**
+   * Exact dispatch-priority filter. UNSPECIFIED (0) = no filter; otherwise
+   * returns only tasks whose stored priority equals this level.
+   */
+  'priority'?: (_aether_v1_TaskPriority);
+  /**
+   * Minimum dispatch-priority threshold. UNSPECIFIED (0) = no filter;
+   * otherwise returns tasks whose priority is >= this level (e.g. pass HIGH
+   * to get everything HIGH and PREEMPT). Combinable with other filters.
+   */
+  'minPriority'?: (_aether_v1_TaskPriority);
 }
 
 /**
@@ -215,4 +227,15 @@ export interface TaskFilter__Output {
    * the existing parent_task_id behavior.
    */
   'includeDescendants': (boolean);
+  /**
+   * Exact dispatch-priority filter. UNSPECIFIED (0) = no filter; otherwise
+   * returns only tasks whose stored priority equals this level.
+   */
+  'priority': (_aether_v1_TaskPriority__Output);
+  /**
+   * Minimum dispatch-priority threshold. UNSPECIFIED (0) = no filter;
+   * otherwise returns tasks whose priority is >= this level (e.g. pass HIGH
+   * to get everything HIGH and PREEMPT). Combinable with other filters.
+   */
+  'minPriority': (_aether_v1_TaskPriority__Output);
 }

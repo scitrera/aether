@@ -66,6 +66,11 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 	if task.MaxRetries == 0 {
 		task.MaxRetries = 3
 	}
+	// Normalize unspecified priority to NORMAL so the stored weight is always
+	// a concrete dispatch level and ORDER BY priority needs no COALESCE.
+	if task.Priority == 0 {
+		task.Priority = int(PriorityNormal)
+	}
 
 	// Marshal JSONB fields
 	launchParamsJSON, err := json.Marshal(task.LaunchParams)
@@ -930,6 +935,16 @@ func buildTaskFilterClauses(filter *TaskFilter, argNum int, args []interface{}, 
 		args = append(args, filter.StatusTimestampAfterUnixMs)
 		argNum++
 	}
+	if filter.Priority != 0 {
+		query += fmt.Sprintf(" AND priority = $%d", argNum)
+		args = append(args, filter.Priority)
+		argNum++
+	}
+	if filter.MinPriority != 0 {
+		query += fmt.Sprintf(" AND priority >= $%d", argNum)
+		args = append(args, filter.MinPriority)
+		argNum++
+	}
 	return query, argNum, args
 }
 
@@ -954,7 +969,12 @@ func (s *TaskStore) ListTasks(ctx context.Context, filter *TaskFilter) ([]*Task,
 	clauses, argNum, args := buildTaskFilterClauses(filter, argNum, args, false)
 	query += clauses
 
-	query += " ORDER BY created_at DESC"
+	if filter.OrderByPriority {
+		// Dispatch-selection order: highest priority first, FIFO within a level.
+		query += " ORDER BY priority DESC, created_at ASC"
+	} else {
+		query += " ORDER BY created_at DESC"
+	}
 	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argNum, argNum+1)
 	args = append(args, filter.Limit, filter.Offset)
 
@@ -1183,6 +1203,7 @@ func (s *TaskStore) GetPendingPoolTasks(ctx context.Context, implementation, wor
 		TargetImplementation: implementation,
 		Workspace:            workspace,
 		QueuedForStartup:     &queuedTrue,
+		OrderByPriority:      true, // highest-priority pending task first
 		Limit:                100,
 	})
 }

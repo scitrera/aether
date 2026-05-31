@@ -154,21 +154,65 @@ func ParseAccessLevel(name string) (int, error) {
 	}
 }
 
-// CreateInitialToken creates an admin bootstrap API token in the database and
-// seeds an ACL rule granting the token's principal the specified access level
-// on all workspaces.
+// ACLGrantFunc seeds an ACL rule. It mirrors the GrantAccess method shared by
+// the Postgres acl.Service and the native-sqlite ACL store, but returns only an
+// error so a single helper can drive either backend (their methods return
+// different rule types). The caller is responsible for adapting the concrete
+// store's GrantAccess into this signature.
+type ACLGrantFunc func(ctx context.Context, principalType, principalID, resourceType, resourceID string, accessLevel int, grantedBy, reason string, expiresAt *time.Time) error
+
+// CreateInitialToken creates an admin bootstrap API token in the PostgreSQL
+// database and seeds an ACL rule granting the token's principal the specified
+// access level on all workspaces.
+//
 // principalType should be a valid models.PrincipalType (e.g., models.PrincipalUser).
+//
+// This is the PostgreSQL convenience wrapper; it builds the Postgres-backed
+// token store and ACL service from db and delegates to
+// CreateInitialTokenWithStore. For backend-agnostic callers (e.g. aetherlite's
+// SQLite stores), use CreateInitialTokenWithStore directly.
 func CreateInitialToken(ctx context.Context, db *sql.DB, cfg *config.Config, tokenName string, principalType models.PrincipalType, accessLevel int) (string, error) {
 	if db == nil {
 		return "", fmt.Errorf("database connection required to create initial token")
 	}
 
+	store := auth.NewAPITokenStore(db)
+
+	// Seed an ACL rule granting the _system principal the requested access level
+	// on all workspaces. The token inherits permissions from its creator (_system),
+	// so this rule enables the token holder to perform admin operations.
+	aclService := acl.NewService(db, acl.SystemPrincipal)
+	defer aclService.Close()
+
+	grant := func(ctx context.Context, principalType, principalID, resourceType, resourceID string, accessLevel int, grantedBy, reason string, expiresAt *time.Time) error {
+		_, err := aclService.GrantAccess(ctx, principalType, principalID, resourceType, resourceID, accessLevel, grantedBy, reason, expiresAt)
+		return err
+	}
+
+	return CreateInitialTokenWithStore(ctx, store, grant, cfg, tokenName, principalType, accessLevel)
+}
+
+// CreateInitialTokenWithStore creates an admin bootstrap API token using the
+// provided APITokenStore and (optionally) seeds an ACL rule via grant.
+//
+// This is the backend-agnostic core used by init-secrets so the same logic
+// works against PostgreSQL (full gateway) or native SQLite (aetherlite single
+// and cluster). The token's creator is the _system principal; the ACL grant
+// gives _system the requested access level on all workspaces, which the token
+// inherits.
+//
+// grant may be nil to skip ACL seeding (e.g. when the backend already seeds
+// adequate default policies and no elevated bootstrap grant is required).
+func CreateInitialTokenWithStore(ctx context.Context, store auth.APITokenStore, grant ACLGrantFunc, cfg *config.Config, tokenName string, principalType models.PrincipalType, accessLevel int) (string, error) {
+	if store == nil {
+		return "", fmt.Errorf("token store required to create initial token")
+	}
+
 	// Ensure HMAC key is initialised so the token hash is consistent
-	if cfg.Auth.TokenHMACKey != "" {
+	if cfg != nil && cfg.Auth.TokenHMACKey != "" {
 		crypto.InitTokenHMAC([]byte(cfg.Auth.TokenHMACKey))
 	}
 
-	store := auth.NewAPITokenStore(db)
 	result, err := store.CreateToken(
 		ctx,
 		tokenName,
@@ -182,25 +226,21 @@ func CreateInitialToken(ctx context.Context, db *sql.DB, cfg *config.Config, tok
 		return "", fmt.Errorf("creating initial token: %w", err)
 	}
 
-	// Seed an ACL rule granting the _system principal the requested access level
-	// on all workspaces. The token inherits permissions from its creator (_system),
-	// so this rule enables the token holder to perform admin operations.
-	aclService := acl.NewService(db, acl.SystemPrincipal)
-	defer aclService.Close()
-
-	_, err = aclService.GrantAccess(
-		ctx,
-		acl.PrincipalTypeForModel(principalType), // principal type (lowercase for DB convention)
-		acl.SystemPrincipal,                      // principal ID (_system — the token's creator)
-		acl.ResourceTypeWorkspace,                // resource type
-		acl.WildcardAnyResource,                  // resource ID (* = all workspaces)
-		accessLevel,                              // access level
-		acl.SystemPrincipal,                      // granted by
-		"bootstrap ACL for _system principal via init-secrets", // reason
-		nil, // no expiration
-	)
-	if err != nil {
-		return "", fmt.Errorf("creating ACL rule for initial token: %w", err)
+	if grant != nil {
+		err = grant(
+			ctx,
+			acl.PrincipalTypeForModel(principalType), // principal type (lowercase for DB convention)
+			acl.SystemPrincipal,                      // principal ID (_system — the token's creator)
+			acl.ResourceTypeWorkspace,                // resource type
+			acl.WildcardAnyResource,                  // resource ID (* = all workspaces)
+			accessLevel,                              // access level
+			acl.SystemPrincipal,                      // granted by
+			"bootstrap ACL for _system principal via init-secrets", // reason
+			nil, // no expiration
+		)
+		if err != nil {
+			return "", fmt.Errorf("creating ACL rule for initial token: %w", err)
+		}
 	}
 
 	return result.Token, nil

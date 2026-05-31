@@ -39,10 +39,12 @@ from scitrera_aether_client._common import (
     SELF_ASSIGN,
     TARGETED,
     create_topic_agent,
+    create_topic_service,
     create_topic_task,
     create_topic_user,
     create_topic_global_agents,
     create_topic_global_users,
+    SERVICE_WILDCARD,
 )
 from scitrera_aether_client.exceptions import (
     AuthenticationError,
@@ -1407,6 +1409,36 @@ class TestTopicCreation:
         """Test global users broadcast topic creation."""
         topic = create_topic_global_users("workspace")
         assert topic == "gu::workspace"
+
+    def test_create_topic_service_concrete(self):
+        """A concrete specifier emits the canonical 3-segment service topic."""
+        topic = create_topic_service("platform-bridge", "bridge-1")
+        assert topic == "sv::platform-bridge::bridge-1"
+
+    def test_create_topic_service_empty_specifier_stays_concrete(self):
+        """An empty-string specifier stays 3-segment (NOT a wildcard).
+
+        ``sv::platform-bridge::`` (trailing ``::``) is a concrete target the
+        gateway treats as non-wildcard — guarding against the trailing-``::``
+        footgun where "" silently became a wildcard.
+        """
+        topic = create_topic_service("platform-bridge", "")
+        assert topic == "sv::platform-bridge::"
+
+    def test_create_topic_service_wildcard_sentinel(self):
+        """The SERVICE_WILDCARD sentinel emits the bare 2-segment wildcard.
+
+        ``sv::platform-bridge`` is what the gateway's ParseSendTarget resolves
+        to any registered ``sv::platform-bridge::<spec>`` instance.
+        """
+        topic = create_topic_service("platform-bridge", SERVICE_WILDCARD)
+        assert topic == "sv::platform-bridge"
+
+    def test_service_wildcard_is_singleton(self):
+        """SERVICE_WILDCARD is a stable, repr-friendly identity sentinel."""
+        assert repr(SERVICE_WILDCARD) == "SERVICE_WILDCARD"
+        # Identity comparison is the intended check (used by create_topic_service).
+        assert SERVICE_WILDCARD is SERVICE_WILDCARD
 
 
 # =============================================================================

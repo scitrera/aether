@@ -230,18 +230,57 @@ def create_service_init(implementation: str, specifier: str,
 IDENTITY_SEP = "::"
 
 
+class _ServiceWildcard:
+    """Sentinel type for the service-addressing wildcard specifier.
+
+    A single module-level instance (:data:`SERVICE_WILDCARD`) is the only
+    value that should ever exist; identity comparison (``is``) is the
+    intended check. ``repr`` is descriptive so it reads clearly in logs
+    and assertion failures.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - trivial
+        return "SERVICE_WILDCARD"
+
+
+# Explicit, opt-in wildcard for service addressing. Pass this as the
+# ``specifier`` to :func:`create_topic_service` (or to a client's
+# ``send_message_to_service``) to emit the bare ``sv::{impl}`` wildcard
+# target. The gateway (``models.topics.ParseSendTarget``) resolves a bare
+# 2-segment ``sv::{impl}`` to any registered ``sv::{impl}::{spec}`` instance.
+#
+# This MUST be opted into deliberately: a normal non-empty specifier emits
+# the canonical 3-segment ``sv::{impl}::{spec}`` and an empty string ``""``
+# STAYS 3-segment (``sv::{impl}::``) — only this sentinel produces the
+# 2-segment wildcard, so "" can never silently become a wildcard.
+SERVICE_WILDCARD = _ServiceWildcard()
+
+
 def create_topic_agent(workspace: str, implementation: str, specifier: str) -> str:
     """Create a topic string for a specific agent."""
     return f"ag{IDENTITY_SEP}{workspace}{IDENTITY_SEP}{implementation}{IDENTITY_SEP}{specifier}"
 
 
-def create_topic_service(implementation: str, specifier: str) -> str:
-    """Create a topic string for a specific service principal.
+def create_topic_service(implementation, specifier) -> str:
+    """Create a topic string for a service principal.
 
-    Service principals are workspace-less (canonical identity is
-    ``sv::{implementation}::{specifier}``); the topic mirrors that shape.
-    Mirrors :func:`models.topics.ServiceTopic` on the gateway side.
+    Two shapes, selected by ``specifier``:
+
+    * A concrete ``specifier`` (any ``str``, including the empty string)
+      emits the canonical 3-segment ``sv::{implementation}::{specifier}``.
+      An empty string therefore yields ``sv::{implementation}::`` (a
+      concrete, trailing-``::`` target) — it is NOT treated as a wildcard.
+    * The :data:`SERVICE_WILDCARD` sentinel emits the bare 2-segment
+      ``sv::{implementation}`` wildcard, which the gateway resolves to any
+      registered ``sv::{implementation}::{spec}`` instance.
+
+    Mirrors :func:`models.topics.ServiceTopic` (concrete) and
+    :func:`models.topics.ParseSendTarget` (wildcard) on the gateway side.
     """
+    if specifier is SERVICE_WILDCARD:
+        return f"sv{IDENTITY_SEP}{implementation}"
     return f"sv{IDENTITY_SEP}{implementation}{IDENTITY_SEP}{specifier}"
 
 

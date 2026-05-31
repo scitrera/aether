@@ -104,6 +104,20 @@ export enum TaskAssignmentMode {
   Pool = 2,
 }
 
+/**
+ * Dispatch priority for tasks. Higher priority pending tasks are delivered
+ * before lower ones (ties break FIFO). Values are spaced to allow inserting
+ * new levels later. Unspecified (0) is normalized to Normal by the server.
+ */
+export enum TaskPriority {
+  Unspecified = 0,
+  XLow = 10,
+  Low = 20,
+  Normal = 30,
+  High = 40,
+  Preempt = 50,
+}
+
 // =============================================================================
 // Signal Types
 // =============================================================================

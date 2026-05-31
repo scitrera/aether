@@ -1248,12 +1248,15 @@ func (s *Store) InsertDLQEntryTx(ctx context.Context, tx tasks.StoreTx, taskID, 
 // Non-transactional queue operations (orchestrated_task_queue)
 // =============================================================================
 
-func (s *Store) InsertQueueEntry(ctx context.Context, queueID, taskID, targetImplementation, workspace, profile string, launchParamsJSON []byte) error {
+func (s *Store) InsertQueueEntry(ctx context.Context, queueID, taskID, targetImplementation, workspace, profile string, launchParamsJSON []byte, priority int) error {
+	if priority == 0 {
+		priority = int(tasks.PriorityNormal)
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO orchestrated_task_queue
-		(queue_id, task_id, target_implementation, workspace, profile, launch_params, status)
-		VALUES (?, ?, ?, ?, ?, ?, 'pending')
-	`, queueID, taskID, targetImplementation, workspace, profile, launchParamsJSON)
+		(queue_id, task_id, target_implementation, workspace, profile, launch_params, status, priority)
+		VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+	`, queueID, taskID, targetImplementation, workspace, profile, launchParamsJSON, priority)
 	return err
 }
 
@@ -1266,7 +1269,7 @@ func (s *Store) PollPendingQueueEntries(ctx context.Context, limit int) ([]*task
 		SELECT queue_id, task_id, profile, workspace, target_implementation
 		FROM orchestrated_task_queue
 		WHERE status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= ?)
-		ORDER BY created_at ASC
+		ORDER BY priority DESC, created_at ASC
 		LIMIT ?
 	`, nowStr, limit)
 	if err != nil {

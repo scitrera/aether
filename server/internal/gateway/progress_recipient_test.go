@@ -142,6 +142,57 @@ func TestHandleProgressReport_ServiceSenderAccepted(t *testing.T) {
 	}
 }
 
+// TestHandleProgressReport_UserSenderRejected verifies that principals outside
+// the allowed set (agents, tasks, services) — here a user principal — are still
+// rejected with ERR_INVALID_PRINCIPAL and the updated message wording, and that
+// no progress update is published. This guards both the principal-type gate and
+// the error message that was widened to include services.
+func TestHandleProgressReport_UserSenderRejected(t *testing.T) {
+	router := newMockMessageRouter()
+	s := newProgressTestServer(router)
+
+	stream := &mockStream{}
+	sender := models.Identity{
+		Type: models.PrincipalUser,
+		ID:   "dev@example.com",
+	}
+	client := newProgressTestClient(sender)
+	client.Stream = stream
+
+	report := &pb.ProgressReport{
+		TaskId:    "task-user-1",
+		State:     "running",
+		Recipient: "us::dev@example.com",
+		Kind:      pb.ProgressKind_PROGRESS_KIND_CHAT,
+	}
+
+	s.handleProgressReport(context.Background(), client, report)
+
+	router.mu.Lock()
+	published := len(router.publishedMessages)
+	router.mu.Unlock()
+	if published != 0 {
+		t.Fatalf("expected 0 published messages for rejected user sender, got %d", published)
+	}
+
+	if stream.sentCount() != 1 {
+		t.Fatalf("expected 1 error response, got %d", stream.sentCount())
+	}
+	stream.mu.Lock()
+	errResp := stream.sent[0].GetError()
+	stream.mu.Unlock()
+	if errResp == nil {
+		t.Fatal("expected DownstreamMessage_Error payload")
+	}
+	if errResp.Code != "ERR_INVALID_PRINCIPAL" {
+		t.Errorf("error code = %q, want ERR_INVALID_PRINCIPAL", errResp.Code)
+	}
+	if errResp.Message != "only agents, tasks, and services can report progress" {
+		t.Errorf("error message = %q, want %q", errResp.Message,
+			"only agents, tasks, and services can report progress")
+	}
+}
+
 // TestHandleProgressReport_BareUserRecipientPublishesToUserTopic verifies that
 // a bare user-level recipient (us::{user}, no window specifier) routes to the
 // same pg::us::{user} topic as the window-specific form. The filter at delivery

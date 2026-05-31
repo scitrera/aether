@@ -656,3 +656,73 @@ func TestRecoverStaleClaims(t *testing.T) {
 		}
 	})
 }
+
+// TestPollPendingQueueEntries_PriorityOrdering verifies that the orchestrated
+// task queue is polled highest-priority-first, FIFO within a level. It inserts
+// entries whose creation order is the inverse of their priority order, so a
+// FIFO-only poll would return them in the wrong order.
+func TestPollPendingQueueEntries_PriorityOrdering(t *testing.T) {
+	testDB, cleanup := testutil.SetupTestDB(t)
+	if testDB == nil {
+		return // Skip was called in SetupTestDB
+	}
+	defer testDB.Close()
+	defer cleanup()
+
+	ctx := context.Background()
+	store := taskpg.New(testDB.DB)
+
+	// Insert three pending entries. created_at ascending = normal, high, preempt
+	// so a FIFO poll would yield [normal, high, preempt]; priority ordering must
+	// instead yield [preempt(50), high(40), normal(30)].
+	type seed struct {
+		label    string
+		priority int
+		created  string // explicit timestamp to control FIFO order
+	}
+	seeds := []seed{
+		{"normal", int(tasks.PriorityNormal), "2026-01-01T00:00:01Z"},
+		{"high", int(tasks.PriorityHigh), "2026-01-01T00:00:02Z"},
+		{"preempt", int(tasks.PriorityPreempt), "2026-01-01T00:00:03Z"},
+	}
+	byTaskID := map[string]string{}
+	for _, s := range seeds {
+		taskID := uuid.New().String()
+		queueID := uuid.New().String()
+		byTaskID[taskID] = s.label
+		if _, err := testDB.DB.ExecContext(ctx, `
+			INSERT INTO tasks (task_id, task_type, workspace, implementation, status, priority)
+			VALUES ($1, 'agent_startup', 'test-workspace', 'test-impl', 'pending', $2)
+		`, taskID, s.priority); err != nil {
+			t.Fatalf("insert task %s: %v", s.label, err)
+		}
+		if _, err := testDB.DB.ExecContext(ctx, `
+			INSERT INTO orchestrated_task_queue
+			(queue_id, task_id, target_implementation, workspace, profile, status, priority, created_at)
+			VALUES ($1, $2, 'test-impl', 'test-workspace', 'kubernetes', 'pending', $3, $4)
+		`, queueID, taskID, s.priority, s.created); err != nil {
+			t.Fatalf("insert queue entry %s: %v", s.label, err)
+		}
+	}
+
+	entries, err := store.PollPendingQueueEntries(ctx, 10)
+	if err != nil {
+		t.Fatalf("PollPendingQueueEntries: %v", err)
+	}
+
+	var got []string
+	for _, e := range entries {
+		if label, ok := byTaskID[e.TaskID]; ok {
+			got = append(got, label)
+		}
+	}
+	want := []string{"preempt", "high", "normal"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d ordered entries, got %d (%v)", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("poll order[%d] = %q, want %q (full order: %v)", i, got[i], want[i], got)
+		}
+	}
+}

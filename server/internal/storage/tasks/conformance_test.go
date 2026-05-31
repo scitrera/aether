@@ -873,7 +873,7 @@ func insertQueueEntryWithParams(t *testing.T, store tasks.Store, queueID, taskID
 	if launchParamsJSON != "" {
 		lp = []byte(launchParamsJSON)
 	}
-	if err := store.InsertQueueEntry(context.Background(), queueID, taskID, impl, workspace, profile, lp); err != nil {
+	if err := store.InsertQueueEntry(context.Background(), queueID, taskID, impl, workspace, profile, lp, int(tasks.PriorityNormal)); err != nil {
 		t.Fatalf("insert queue entry: %v", err)
 	}
 }

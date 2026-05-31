@@ -1208,7 +1208,8 @@ class BaseAetherClient:
                     metadata: Optional[Dict[str, str]] = None,
                     payload: Optional[bytes] = None,
                     assignment_mode: int = SELF_ASSIGN,
-                    context_id: str = "") -> None:
+                    context_id: str = "",
+                    priority: int = 0) -> None:
         """
         Create a new task.
 
@@ -1223,6 +1224,9 @@ class BaseAetherClient:
             assignment_mode: SELF_ASSIGN (0), TARGETED (1), or POOL (2) [automatically handled in most cases]
             context_id: Optional client-minted session identifier (A2A contextId). Tasks
                 sharing a context_id are groupable via TaskFilter.context_id.
+            priority: Optional dispatch priority (TaskPriority enum value). Higher
+                priority pending tasks are delivered before lower ones. 0 (UNSPECIFIED)
+                is normalized to NORMAL by the server.
         """
         if target_agent_id and assignment_mode == SELF_ASSIGN:
             assignment_mode = TARGETED
@@ -1238,6 +1242,7 @@ class BaseAetherClient:
             metadata=metadata or {},
             payload=payload or b"",
             context_id=context_id,
+            priority=priority,  # type: ignore[arg-type]
         )
         self.request_queue.put(aether_pb2.UpstreamMessage(create_task=req))
 
@@ -1250,6 +1255,7 @@ class BaseAetherClient:
                          assignment_mode: int = SELF_ASSIGN,
                          authorization: Optional[aether_pb2.AuthorizationContext] = None,
                          context_id: str = "",
+                         priority: int = 0,
                          timeout: float = 10.0) -> Optional[aether_pb2.CreateTaskResponse]:
         """
         Create a new task and wait for the server's response containing the task_id.
@@ -1295,6 +1301,7 @@ class BaseAetherClient:
             authorization=authorization,
             context_id=context_id,
             request_id=request_id,
+            priority=priority,  # type: ignore[arg-type]
         )
         return self._send_sync_op(
             aether_pb2.UpstreamMessage(create_task=req), request_id, timeout,

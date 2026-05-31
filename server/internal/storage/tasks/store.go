@@ -339,7 +339,7 @@ type Store interface {
 	// postgres, the row INSERT fires a LISTEN/NOTIFY trigger that wakes
 	// orchestrators immediately; on sqlite, the polling dispatcher picks
 	// the row up on its next scan.
-	InsertQueueEntry(ctx context.Context, queueID, taskID, targetImplementation, workspace, profile string, launchParamsJSON []byte) error
+	InsertQueueEntry(ctx context.Context, queueID, taskID, targetImplementation, workspace, profile string, launchParamsJSON []byte, priority int) error
 
 	// PollPendingQueueEntries returns up to limit orchestrated_task_queue
 	// rows that are pending and eligible for dispatch (next_retry_at is

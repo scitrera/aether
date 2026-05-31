@@ -135,6 +135,7 @@ export interface ProtoGrpcType {
       TaskInfo: MessageTypeDefinition
       TaskOperation: MessageTypeDefinition
       TaskOperationResponse: MessageTypeDefinition
+      TaskPriority: EnumTypeDefinition
       TaskProgressEvent: MessageTypeDefinition
       TaskQuery: MessageTypeDefinition
       TaskQueryResponse: MessageTypeDefinition

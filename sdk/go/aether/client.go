@@ -2366,6 +2366,7 @@ func (c *BaseClient) CreateTask(taskType, workspace string, opts CreateTaskOptio
 		Metadata:             opts.Metadata,
 		Payload:              opts.Payload,
 		RetryPolicy:          opts.RetryPolicy,
+		Priority:             opts.Priority,
 	}
 	return c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_CreateTask{CreateTask: req},
@@ -2396,6 +2397,7 @@ func (c *BaseClient) CreateTaskSync(ctx context.Context, taskType, workspace str
 		Metadata:             opts.Metadata,
 		Payload:              opts.Payload,
 		RetryPolicy:          opts.RetryPolicy,
+		Priority:             opts.Priority,
 		RequestId:            requestID,
 	}
 	if err := c.Send(&pb.UpstreamMessage{

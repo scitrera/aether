@@ -601,6 +601,20 @@ enum TaskClass {
                                //   terminal state (completed / failed).
 }
 
+// TaskPriority orders task dispatch. Unlike TaskClass (a UI hint), the server
+// USES priority for scheduling: among pending tasks eligible for delivery,
+// higher priority is dispatched first; ties break FIFO (oldest created_at).
+// Underlying values are intentionally spaced so new levels can be inserted
+// later, and the numeric value is used directly as the descending sort key.
+enum TaskPriority {
+  TASK_PRIORITY_UNSPECIFIED = 0;   // Treated as NORMAL for back-compat.
+  TASK_PRIORITY_XLOW        = 10;  // Lowest; best-effort, yields to everything.
+  TASK_PRIORITY_LOW         = 20;  // Below normal.
+  TASK_PRIORITY_NORMAL      = 30;  // Default.
+  TASK_PRIORITY_HIGH        = 40;  // Above normal; jumps ahead of normal/low.
+  TASK_PRIORITY_PREEMPT     = 50;  // Highest; reserved for future true preemption.
+}
+
 // BackoffStrategy describes how the task store scales delays across retry
 // attempts when a RetryPolicy is attached to a task. Defaults to
 // EXPONENTIAL when unspecified (preserves current behavior).
@@ -691,6 +705,10 @@ message CreateTaskRequest {
   // max_attempts). Absent = legacy behavior (immediate re-pend, hardcoded
   // max_retries=3).
   RetryPolicy retry_policy = 14;
+
+  // Optional dispatch priority. Defaults to UNSPECIFIED ⇒ NORMAL. Higher
+  // priority pending tasks are delivered before lower ones (ties break FIFO).
+  TaskPriority priority = 15;
 }
 
 // CreateTaskResponse is sent in response to CreateTaskRequest when the
@@ -1094,6 +1112,14 @@ message TaskFilter {
   // not just direct children. Default false: direct children only, preserving
   // the existing parent_task_id behavior.
   bool include_descendants = 20;
+
+  // Exact dispatch-priority filter. UNSPECIFIED (0) = no filter; otherwise
+  // returns only tasks whose stored priority equals this level.
+  TaskPriority priority = 21;
+  // Minimum dispatch-priority threshold. UNSPECIFIED (0) = no filter;
+  // otherwise returns tasks whose priority is >= this level (e.g. pass HIGH
+  // to get everything HIGH and PREEMPT). Combinable with other filters.
+  TaskPriority min_priority = 22;
 }
 
 // TaskInfo represents a task.
@@ -1149,6 +1175,10 @@ message TaskInfo {
   // Unix seconds when the task entered a WAITING_* / HIBERNATED state.
   // 0 means the task has never been paused.
   int64 paused_at = 30;
+
+  // Dispatch priority. UNSPECIFIED is normalized to NORMAL on creation, so
+  // persisted tasks always report a concrete level.
+  TaskPriority priority = 31;
 }
 
 // TaskQueryResponse is sent in response to TaskQuery operations.

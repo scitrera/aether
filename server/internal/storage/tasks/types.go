@@ -106,6 +106,21 @@ type (
 	// BackoffStrategy enumerates the retry-delay shapes consumed by
 	// ComputeNextRetryAt.
 	BackoffStrategy = legacy.BackoffStrategy
+
+	// TaskPriority is the dispatch-priority weight stored in tasks.priority
+	// and orchestrated_task_queue.priority.
+	TaskPriority = legacy.TaskPriority
+)
+
+// Dispatch-priority levels — re-exported so storage-layer code can normalize
+// and order by priority without a second import on pkg/tasks.
+const (
+	PriorityUnspecified = legacy.PriorityUnspecified
+	PriorityXLow        = legacy.PriorityXLow
+	PriorityLow         = legacy.PriorityLow
+	PriorityNormal      = legacy.PriorityNormal
+	PriorityHigh        = legacy.PriorityHigh
+	PriorityPreempt     = legacy.PriorityPreempt
 )
 
 // BackoffStrategy enum values — re-exported so callers depending only on

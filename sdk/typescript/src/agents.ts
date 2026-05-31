@@ -11,7 +11,7 @@
 
 import { AetherClient } from "./client.js";
 import type { AetherClientOptions } from "./client.js";
-import { MessageType, TaskAssignmentMode } from "./types.js";
+import { MessageType, TaskAssignmentMode, TaskPriority } from "./types.js";
 import type { MessageHandler } from "./types.js";
 import { InvalidArgumentError } from "./errors.js";
 import {
@@ -65,6 +65,12 @@ export interface CreateTaskOptions {
   metadata?: Record<string, string>;
   /** Assignment mode. Default: SelfAssign. */
   assignmentMode?: TaskAssignmentMode;
+  /**
+   * Optional dispatch priority. Higher priority pending tasks are delivered
+   * before lower ones. Defaults to Unspecified, which the server normalizes
+   * to Normal.
+   */
+  priority?: TaskPriority;
 }
 
 // =============================================================================
@@ -387,6 +393,7 @@ export class AgentClient extends AetherClient {
         targetImplementation: opts.targetImplementation ?? "",
         launchParamOverrides: opts.launchParamOverrides ?? {},
         metadata: opts.metadata ?? {},
+        priority: opts.priority ?? TaskPriority.Unspecified,
       },
     });
   }

@@ -191,7 +191,7 @@ func (f *fakeTaskStore) FailQueueEntryByTaskID(ctx context.Context, taskID, erro
 
 // --- Unused methods (panic to surface unexpected calls) ---
 
-func (f *fakeTaskStore) InsertQueueEntry(_ context.Context, _, _, _, _, _ string, _ []byte) error {
+func (f *fakeTaskStore) InsertQueueEntry(_ context.Context, _, _, _, _, _ string, _ []byte, _ int) error {
 	panic("InsertQueueEntry unexpected in jetstream dispatcher tests")
 }
 func (f *fakeTaskStore) PollPendingQueueEntries(_ context.Context, _ int) ([]*taskstore.QueueEntryNotification, error) {

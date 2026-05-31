@@ -1380,6 +1380,7 @@ func taskToProto(t *tasks.Task) *pb.TaskInfo {
 		TaskId:                 t.TaskID,
 		TaskType:               t.TaskType,
 		TaskClass:              pb.TaskClass(t.TaskClass),
+		Priority:               pb.TaskPriority(t.Priority),
 		DisconnectedAt:         unixOrZero(t.DisconnectedAt),
 		GraceWindowMs:          t.GraceWindowMs,
 		Status:                 taskStatusToProto(t.Status),
@@ -1620,6 +1621,8 @@ func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSessi
 			filter.StatusTimestampAfterUnixMs = query.Filter.StatusTimestampAfterUnixMs
 			filter.PageToken = query.Filter.PageToken
 			filter.IncludeDescendants = query.Filter.IncludeDescendants
+			filter.Priority = int32(query.Filter.Priority)
+			filter.MinPriority = int32(query.Filter.MinPriority)
 			if query.Filter.Limit > 0 {
 				filter.Limit = int(query.Filter.Limit)
 				if filter.Limit > 1000 {

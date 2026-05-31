@@ -44,6 +44,9 @@ from ._common import (
     # Auth credentials builder
     Credentials,
 
+    # Service-addressing wildcard sentinel
+    SERVICE_WILDCARD,
+
     # internal
     _logging_lite_hook,
 )
@@ -393,6 +396,9 @@ __all__ = (
 
     # Types - Other
     'Credentials',
+
+    # Service-addressing wildcard sentinel
+    'SERVICE_WILDCARD',
 
     # Metric builder
     'MetricBuilder',

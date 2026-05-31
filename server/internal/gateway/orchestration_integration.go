@@ -485,6 +485,7 @@ func (s *GatewayServer) handleCreateTask(
 		CreatorIdentity:      identity,
 		ParentTaskID:         client.AssociatedTaskID,
 		RetryPolicy:          retryPolicyFromProto(req.GetRetryPolicy()),
+		Priority:             int32(req.GetPriority()),
 	}
 	// Fix AA: seed the task's Authority.SubjectType/SubjectID from the resolved
 	// OBO subject so downstream consumers (buildTaskContext →

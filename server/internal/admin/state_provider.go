@@ -184,6 +184,8 @@ type TaskFilter struct {
 	AuthorityGrantID     string  `json:"authority_grant_id,omitempty"`
 	RootAuthorityGrantID string  `json:"root_authority_grant_id,omitempty"`
 	ParentTaskID         string  `json:"parent_task_id,omitempty"`
+	Priority             int32   `json:"priority,omitempty"`     // exact dispatch-priority filter; 0 = no filter
+	MinPriority          int32   `json:"min_priority,omitempty"` // minimum dispatch-priority threshold; 0 = no filter
 	Limit                int     `json:"limit,omitempty"`
 	Offset               int     `json:"offset,omitempty"`
 }
@@ -193,6 +195,7 @@ type TaskInfo struct {
 	TaskID         string                 `json:"task_id"`
 	TaskType       string                 `json:"task_type"`
 	TaskClass      int32                  `json:"task_class,omitempty"`
+	Priority       int32                  `json:"priority,omitempty"`
 	DisconnectedAt *time.Time             `json:"disconnected_at,omitempty"`
 	GraceWindowMs  int64                  `json:"grace_window_ms,omitempty"`
 	Status         string                 `json:"status"`

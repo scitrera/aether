@@ -177,6 +177,11 @@ type CreateTaskRequest struct {
 	// MaxAttempts). Absent = legacy behavior (immediate re-pend,
 	// hardcoded max_retries=3).
 	RetryPolicy *tasks.RetryPolicy
+
+	// Priority is the dispatch-priority weight (mirrors proto TaskPriority;
+	// 0 = UNSPECIFIED, normalized to NORMAL by the store on create). Higher
+	// priority pending tasks are delivered before lower ones.
+	Priority int32
 }
 
 // principalTypeStringForTask maps a models.PrincipalType to the lowercase
@@ -284,6 +289,7 @@ func (tas *TaskAssignmentService) handleSelfAssign(ctx context.Context, req *Cre
 		TaskClass:      req.TaskClass,
 		GraceWindowMs:  DefaultGraceWindowMs(req.TaskClass),
 		Workspace:      req.Workspace,
+		Priority:       int(req.Priority),
 		AssignmentMode: tasks.AssignmentModeSelfAssign,
 		TaskCategory:   tasks.TaskCategoryRegular,
 		Status:         tasks.TaskStatusPending,
@@ -348,6 +354,7 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 		TaskClass:      req.TaskClass,
 		GraceWindowMs:  DefaultGraceWindowMs(req.TaskClass),
 		Workspace:      req.Workspace,
+		Priority:       int(req.Priority),
 		AssignmentMode: tasks.AssignmentModeTargeted,
 		TaskCategory:   tasks.TaskCategoryRegular,
 		TargetAgentID:  req.TargetAgentID,
@@ -557,7 +564,7 @@ func (tas *TaskAssignmentService) createOrchestratedStartupTask(
 		return "", fmt.Errorf("failed to marshal launch params: %w", err)
 	}
 
-	if err := tas.taskStore.InsertQueueEntry(ctx, queueID, startupTaskID, targetIdentity.Implementation, workspace, profile, launchParamsJSON); err != nil {
+	if err := tas.taskStore.InsertQueueEntry(ctx, queueID, startupTaskID, targetIdentity.Implementation, workspace, profile, launchParamsJSON, task.Priority); err != nil {
 		return "", fmt.Errorf("failed to insert orchestrated task into queue: %w", err)
 	}
 
@@ -651,6 +658,7 @@ func (tas *TaskAssignmentService) handlePool(ctx context.Context, req *CreateTas
 		TaskClass:            req.TaskClass,
 		GraceWindowMs:        DefaultGraceWindowMs(req.TaskClass),
 		Workspace:            req.Workspace,
+		Priority:             int(req.Priority),
 		AssignmentMode:       tasks.AssignmentModePool,
 		TaskCategory:         tasks.TaskCategoryRegular,
 		TargetImplementation: req.TargetImplementation,
@@ -1021,7 +1029,7 @@ func (tas *TaskAssignmentService) WakeHibernatedTask(ctx context.Context, taskID
 	if err != nil {
 		return fmt.Errorf("WakeHibernatedTask: marshal launch params for %s: %w", taskID, err)
 	}
-	if err := tas.taskStore.InsertQueueEntry(ctx, queueID, taskID, task.TargetImplementation, task.Workspace, profile, launchParamsJSON); err != nil {
+	if err := tas.taskStore.InsertQueueEntry(ctx, queueID, taskID, task.TargetImplementation, task.Workspace, profile, launchParamsJSON, task.Priority); err != nil {
 		return fmt.Errorf("WakeHibernatedTask: insert queue entry for %s: %w", taskID, err)
 	}
 

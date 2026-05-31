@@ -100,6 +100,52 @@ const (
 	AssignmentModeBroadcast  AssignmentMode = "broadcast"   // Sent to all matching agents
 )
 
+// TaskPriority is the dispatch-priority weight stored in the tasks.priority
+// column. It mirrors the proto TaskPriority enum: the numeric value doubles as
+// the descending sort key, so higher = dispatched first. Values are spaced so
+// new levels can be inserted later without a data migration.
+type TaskPriority int
+
+const (
+	PriorityUnspecified TaskPriority = 0  // Normalized to PriorityNormal on write.
+	PriorityXLow        TaskPriority = 10 // Lowest; best-effort.
+	PriorityLow         TaskPriority = 20 // Below normal.
+	PriorityNormal      TaskPriority = 30 // Default.
+	PriorityHigh        TaskPriority = 40 // Above normal.
+	PriorityPreempt     TaskPriority = 50 // Highest; reserved for future preemption.
+)
+
+// Normalize maps the zero/UNSPECIFIED value to PriorityNormal so persisted and
+// compared priorities are always concrete. Other values pass through unchanged
+// (including future unspaced values), preserving forward compatibility.
+func (p TaskPriority) Normalize() TaskPriority {
+	if p == PriorityUnspecified {
+		return PriorityNormal
+	}
+	return p
+}
+
+// String renders the canonical level name, falling back to the numeric weight
+// for any value that is not one of the named levels.
+func (p TaskPriority) String() string {
+	switch p {
+	case PriorityUnspecified:
+		return "unspecified"
+	case PriorityXLow:
+		return "xlow"
+	case PriorityLow:
+		return "low"
+	case PriorityNormal:
+		return "normal"
+	case PriorityHigh:
+		return "high"
+	case PriorityPreempt:
+		return "preempt"
+	default:
+		return fmt.Sprintf("priority(%d)", int(p))
+	}
+}
+
 // TaskAuthorityInfo captures the on-behalf-of authority lineage currently bound
 // to a task. These fields mirror the persisted grant lineage needed for
 // renewal, reassignment, audit correlation, and lifecycle cleanup.
@@ -365,6 +411,18 @@ type TaskFilter struct {
 	// task tree below the named parent. False (default) preserves the
 	// existing direct-children-only behavior.
 	IncludeDescendants bool
+
+	// Priority filters to tasks whose stored priority equals this exact level.
+	// 0 (UNSPECIFIED) = no filter.
+	Priority int32
+	// MinPriority filters to tasks whose stored priority is >= this level
+	// (e.g. PriorityHigh returns HIGH and PREEMPT). 0 = no filter.
+	MinPriority int32
+	// OrderByPriority, when true, orders results by priority DESC, created_at
+	// ASC (highest priority first, FIFO within a level) instead of the default
+	// created_at DESC. Used by the dispatch-selection paths; general listings
+	// keep newest-first.
+	OrderByPriority bool
 }
 
 // =============================================================================

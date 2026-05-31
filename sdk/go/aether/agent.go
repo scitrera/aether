@@ -436,6 +436,7 @@ func (c *AgentClient) CreateTask(opts CreateTaskOptions) error {
 				LaunchParamOverrides: opts.LaunchParamOverrides,
 				Metadata:             opts.Metadata,
 				Payload:              opts.Payload,
+				Priority:             opts.Priority,
 			},
 		},
 	}

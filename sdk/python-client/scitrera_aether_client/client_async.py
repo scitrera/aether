@@ -25,6 +25,7 @@ from ._common import (
     create_service_init,
     create_topic_agent,
     create_topic_service,
+    SERVICE_WILDCARD,
     create_topic_task,
     create_topic_user,
     create_topic_global_agents,
@@ -119,10 +120,11 @@ _PRINCIPAL_TYPE_FROM_STRING = {
 
 def _principal_type_from_string(t: str) -> "aether_pb2.PrincipalType":
     return _PRINCIPAL_TYPE_FROM_STRING.get((t or "").lower(),
-                                            aether_pb2.PrincipalType.PRINCIPAL_TYPE_UNSPECIFIED)
+                                           aether_pb2.PrincipalType.PRINCIPAL_TYPE_UNSPECIFIED)
 
 
-def _authority_resource_scope_entries(resource_scope: Optional[Dict[str, List[str]]]) -> List[aether_pb2.ACLAuthorityGrantResourceScopeEntry]:
+def _authority_resource_scope_entries(resource_scope: Optional[Dict[str, List[str]]]) -> List[
+    aether_pb2.ACLAuthorityGrantResourceScopeEntry]:
     if not resource_scope:
         return []
 
@@ -1460,7 +1462,8 @@ class BaseAsyncAetherClient:
                           assignment_mode: int = SELF_ASSIGN,
                           authorization: Optional[aether_pb2.AuthorizationContext] = None,
                           task_class: int = 0,
-                          context_id: str = "") -> None:
+                          context_id: str = "",
+                          priority: int = 0) -> None:
         """
         Create a new task.
 
@@ -1495,6 +1498,7 @@ class BaseAsyncAetherClient:
             authorization=authorization,
             task_class=task_class,  # type: ignore[arg-type]
             context_id=context_id,
+            priority=priority,  # type: ignore[arg-type]
         )
         await self._request_queue.put(aether_pb2.UpstreamMessage(create_task=req))
 
@@ -1509,6 +1513,7 @@ class BaseAsyncAetherClient:
                                target_identity: str = "",
                                task_class: int = 0,
                                context_id: str = "",
+                               priority: int = 0,
                                timeout: float = 10.0) -> Optional[aether_pb2.CreateTaskResponse]:
         """
         Create a new task and wait for the server's response containing the task_id.
@@ -1558,6 +1563,7 @@ class BaseAsyncAetherClient:
             task_class=task_class,  # type: ignore[arg-type]
             context_id=context_id,
             request_id=request_id,
+            priority=priority,  # type: ignore[arg-type]
         )
         return await self._send_sync_op(
             aether_pb2.UpstreamMessage(create_task=req), request_id, timeout,
@@ -3236,17 +3242,17 @@ class BaseAsyncAetherClient:
     # =========================================================================
 
     async def resolve_authority(
-        self,
-        grant_id: str,
-        subject_type: str,
-        subject_id: str,
-        *,
-        actor_type: Optional[str] = None,
-        actor_id: Optional[str] = None,
-        audience_type: str = "",
-        audience_id: str = "",
-        request_id: Optional[str] = None,
-        timeout: Optional[float] = None,
+            self,
+            grant_id: str,
+            subject_type: str,
+            subject_id: str,
+            *,
+            actor_type: Optional[str] = None,
+            actor_id: Optional[str] = None,
+            audience_type: str = "",
+            audience_id: str = "",
+            request_id: Optional[str] = None,
+            timeout: Optional[float] = None,
     ) -> Optional[aether_pb2.ResolveAuthorityResponse]:
         """Resolve a runtime authority grant for a (subject, actor) pair.
 
@@ -3289,12 +3295,12 @@ class BaseAsyncAetherClient:
         )
 
     async def connection_status(
-        self,
-        principal_type: str,
-        principal_id: str,
-        *,
-        request_id: Optional[str] = None,
-        timeout: Optional[float] = None,
+            self,
+            principal_type: str,
+            principal_id: str,
+            *,
+            request_id: Optional[str] = None,
+            timeout: Optional[float] = None,
     ) -> Optional[aether_pb2.ConnectionStatusResponse]:
         """Query connection status for a principal.
 
@@ -3878,7 +3884,7 @@ class AsyncAgentClient(BaseAsyncAetherClient):
             payload, message_type=message_type, authorization=authorization,
         )
 
-    async def send_message_to_service(self, implementation: str, specifier: str,
+    async def send_message_to_service(self, implementation: str, specifier,
                                       payload: bytes, message_type: int = aether_pb2.OPAQUE,
                                       authorization: Optional[aether_pb2.AuthorizationContext] = None):
         """Send a message to a service principal (``sv::{impl}::{specifier}``).
@@ -3887,6 +3893,12 @@ class AsyncAgentClient(BaseAsyncAetherClient):
         traffic on the service topic to the registered service connection
         (typically a proxy-sidecar relay+terminator). Useful when an agent
         replies to an RPC originated from a service identity.
+
+        ``specifier`` accepts a concrete ``str`` (canonical 3-segment
+        target; an empty string stays concrete as ``sv::{impl}::``) or the
+        :data:`SERVICE_WILDCARD` sentinel for the bare 2-segment
+        ``sv::{impl}`` wildcard the gateway resolves to any registered
+        instance of that implementation.
         """
         await self._send_message(
             create_topic_service(implementation, specifier),
@@ -4046,10 +4058,17 @@ class AsyncServiceClient(BaseAsyncAetherClient):
             payload, message_type=message_type, authorization=authorization,
         )
 
-    async def send_message_to_service(self, implementation: str, specifier: str,
+    async def send_message_to_service(self, implementation: str, specifier,
                                       payload: bytes, message_type: int = aether_pb2.OPAQUE,
                                       authorization: Optional[aether_pb2.AuthorizationContext] = None):
-        """Send a message to another service principal."""
+        """Send a message to another service principal.
+
+        ``specifier`` accepts a concrete ``str`` (canonical 3-segment
+        target; an empty string stays concrete as ``sv::{impl}::``) or the
+        :data:`SERVICE_WILDCARD` sentinel for the bare 2-segment
+        ``sv::{impl}`` wildcard the gateway resolves to any registered
+        instance of that implementation.
+        """
         await self._send_message(
             create_topic_service(implementation, specifier),
             payload, message_type=message_type, authorization=authorization,

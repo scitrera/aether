@@ -78,7 +78,7 @@ func (f *fakeTaskStore) CountPendingQueueEntries(_ context.Context) (int, error)
 // --- Methods that should never be touched in these tests; panic to surface
 //     unexpected calls during integration ---
 
-func (f *fakeTaskStore) InsertQueueEntry(_ context.Context, _, _, _, _, _ string, _ []byte) error {
+func (f *fakeTaskStore) InsertQueueEntry(_ context.Context, _, _, _, _, _ string, _ []byte, _ int) error {
 	panic("InsertQueueEntry unexpected in cluster integration tests")
 }
 func (f *fakeTaskStore) PollPendingQueueEntries(_ context.Context, _ int) ([]*taskstore.QueueEntryNotification, error) {

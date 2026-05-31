@@ -46,6 +46,8 @@ func (p *GatewayStateProvider) GetTasks(ctx context.Context, filter *admin.TaskF
 		taskFilter.AuthorityGrantID = filter.AuthorityGrantID
 		taskFilter.RootAuthorityGrantID = filter.RootAuthorityGrantID
 		taskFilter.ParentTaskID = filter.ParentTaskID
+		taskFilter.Priority = filter.Priority
+		taskFilter.MinPriority = filter.MinPriority
 	}
 
 	records, err := p.taskStore.ListTasks(ctx, taskFilter)
@@ -79,6 +81,7 @@ func taskToAdminInfo(r *tasks.Task) *admin.TaskInfo {
 		TaskID:                 r.TaskID,
 		TaskType:               r.TaskType,
 		TaskClass:              r.TaskClass,
+		Priority:               int32(r.Priority),
 		DisconnectedAt:         r.DisconnectedAt,
 		GraceWindowMs:          r.GraceWindowMs,
 		Status:                 string(r.Status),
