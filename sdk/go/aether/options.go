@@ -688,6 +688,17 @@ type CreateTaskOptions struct {
 	// FIFO). Defaults to UNSPECIFIED, which the server normalizes to NORMAL.
 	// Use the pb.TaskPriority_TASK_PRIORITY_* constants.
 	Priority pb.TaskPriority
+
+	// Authorization, when non-nil, is forwarded verbatim as the created
+	// task's AuthorizationContext. The gateway runs it through
+	// resolveAuthorizationContext and seeds the task's Authority subject from
+	// it, so an on-behalf-of context here makes the task act on behalf of the
+	// named subject (e.g. seeding task.Authority.Subject* for subject-
+	// participation notifications). When nil the gateway falls back to its
+	// own inheritance chain (nested-task authority or none). Typically the
+	// caller forwards an inbound ProxyHttpRequest.GetAuthorization() to make a
+	// service-created notification task carry the originating user's subject.
+	Authorization *pb.AuthorizationContext
 }
 
 // =============================================================================

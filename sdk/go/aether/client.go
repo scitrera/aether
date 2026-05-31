@@ -2367,6 +2367,7 @@ func (c *BaseClient) CreateTask(taskType, workspace string, opts CreateTaskOptio
 		Payload:              opts.Payload,
 		RetryPolicy:          opts.RetryPolicy,
 		Priority:             opts.Priority,
+		Authorization:        opts.Authorization,
 	}
 	return c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_CreateTask{CreateTask: req},
@@ -2398,6 +2399,7 @@ func (c *BaseClient) CreateTaskSync(ctx context.Context, taskType, workspace str
 		Payload:              opts.Payload,
 		RetryPolicy:          opts.RetryPolicy,
 		Priority:             opts.Priority,
+		Authorization:        opts.Authorization,
 		RequestId:            requestID,
 	}
 	if err := c.Send(&pb.UpstreamMessage{
@@ -2819,6 +2821,17 @@ func (c *BaseClient) CompleteTask(ctx context.Context, taskID string, timeout ti
 // FailTask sends a task FAIL operation and returns the response synchronously.
 func (c *BaseClient) FailTask(ctx context.Context, taskID, reason string, timeout time.Duration) (*TaskOperationResponse, error) {
 	return c.doTaskOperation(ctx, pb.TaskOperation_FAIL, taskID, reason, timeout)
+}
+
+// ClaimTask sends a task CLAIM operation and returns the response synchronously.
+// CLAIM transitions an assigned/pending task to RUNNING; the caller must be the
+// task's assignee, creator, OBO subject, or a workspace admin (gateway
+// authorizeTaskOp). For a SELF_ASSIGN task the creator is also the assignee, so
+// the creating client may CLAIM its own task — which is what drives the
+// gateway's "running" lifecycle notice and (for subject-participating tasks)
+// the per-user subject auto-subscribe.
+func (c *BaseClient) ClaimTask(ctx context.Context, taskID string, timeout time.Duration) (*TaskOperationResponse, error) {
+	return c.doTaskOperation(ctx, pb.TaskOperation_CLAIM, taskID, "", timeout)
 }
 
 // =============================================================================
