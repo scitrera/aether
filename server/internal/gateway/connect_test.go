@@ -357,6 +357,50 @@ func (m *mockKVReadWriter) DecrementIf(_ context.Context, _ models.Identity, _ k
 	return 0, true, nil
 }
 
+// SetNX/CompareAndSet/CompareAndDelete are backed by listData with realistic
+// conditional semantics (TTL ignored) so handler tests can exercise the
+// acquire/refresh/release flow.
+func (m *mockKVReadWriter) SetNX(_ context.Context, _ models.Identity, _ kv.KVScope, key string, value string, _ string, _ string, _ time.Duration) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.setErr != nil {
+		return false, m.setErr
+	}
+	if _, ok := m.listData[key]; ok {
+		return false, nil
+	}
+	m.listData[key] = value
+	return true, nil
+}
+
+func (m *mockKVReadWriter) CompareAndSet(_ context.Context, _ models.Identity, _ kv.KVScope, key string, expected string, value string, _ string, _ string, _ time.Duration) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.setErr != nil {
+		return false, m.setErr
+	}
+	cur, ok := m.listData[key]
+	if !ok || cur != expected {
+		return false, nil
+	}
+	m.listData[key] = value
+	return true, nil
+}
+
+func (m *mockKVReadWriter) CompareAndDelete(_ context.Context, _ models.Identity, _ kv.KVScope, key string, expected string, _ string, _ string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.delErr != nil {
+		return false, m.delErr
+	}
+	cur, ok := m.listData[key]
+	if !ok || cur != expected {
+		return false, nil
+	}
+	delete(m.listData, key)
+	return true, nil
+}
+
 // mockCheckpointManager implements CheckpointManager.
 type mockCheckpointManager struct {
 	mu        sync.Mutex

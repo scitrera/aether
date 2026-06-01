@@ -390,3 +390,166 @@ func (s *BadgerKVStore) addDeltaGuarded(fullKey []byte, delta, guard int64, isCe
 	}
 	return 0, false, fmt.Errorf("guarded counter on %s failed: contention after %d attempts", string(fullKey), maxAttempts)
 }
+
+// casMaxAttempts bounds the optimistic-concurrency retry loop for the
+// conditional write primitives, matching addDeltaGuarded's policy.
+const casMaxAttempts = 100
+
+// readBadgerValue loads the string value at fullKey within txn. Badger honors
+// per-entry TTL natively, so logically-expired keys surface as
+// badger.ErrKeyNotFound (found=false) — no soft-TTL handling required.
+func readBadgerValue(txn *badger.Txn, fullKey []byte) (val string, found bool, err error) {
+	item, err := txn.Get(fullKey)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	err = item.Value(func(v []byte) error {
+		val = string(v)
+		return nil
+	})
+	if err != nil {
+		return "", false, err
+	}
+	return val, true, nil
+}
+
+// SetNX sets key=value only if the key is absent. Returns true iff written.
+//
+// TTL caveat: Badger's WithTTL truncates expiry to whole seconds, so a
+// coordination lease's effective TTL rounds to ±1s on this backend. This is
+// harmless for real coordination TTLs (seconds-scale); avoid sub-second lease
+// TTLs on the single-node backend.
+func (s *BadgerKVStore) SetNX(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	fullKey := s.badgerKey(agent, scope, key, userID, workspace)
+
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		var written bool
+		err := s.db.Update(func(txn *badger.Txn) error {
+			_, found, err := readBadgerValue(txn, fullKey)
+			if err != nil {
+				return err
+			}
+			if found {
+				written = false
+				return nil
+			}
+			entry := badger.NewEntry(fullKey, []byte(value))
+			if ttl > 0 {
+				entry = entry.WithTTL(ttl)
+			}
+			written = true
+			return txn.SetEntry(entry)
+		})
+		if err == nil {
+			return written, nil
+		}
+		if errors.Is(err, badger.ErrConflict) {
+			continue
+		}
+		return false, fmt.Errorf("failed to setnx key %s: %w", key, err)
+	}
+	return false, fmt.Errorf("failed to setnx key %s: contention after %d attempts", key, casMaxAttempts)
+}
+
+// CompareAndSet sets key=value only if the current value equals expected.
+// Returns true iff the swap was applied. A missing key never matches.
+func (s *BadgerKVStore) CompareAndSet(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	expected string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	fullKey := s.badgerKey(agent, scope, key, userID, workspace)
+
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		var applied bool
+		err := s.db.Update(func(txn *badger.Txn) error {
+			current, found, err := readBadgerValue(txn, fullKey)
+			if err != nil {
+				return err
+			}
+			if !found || current != expected {
+				applied = false
+				return nil
+			}
+			entry := badger.NewEntry(fullKey, []byte(value))
+			if ttl > 0 {
+				entry = entry.WithTTL(ttl)
+			}
+			applied = true
+			return txn.SetEntry(entry)
+		})
+		if err == nil {
+			return applied, nil
+		}
+		if errors.Is(err, badger.ErrConflict) {
+			continue
+		}
+		return false, fmt.Errorf("failed to compare-and-set key %s: %w", key, err)
+	}
+	return false, fmt.Errorf("failed to compare-and-set key %s: contention after %d attempts", key, casMaxAttempts)
+}
+
+// CompareAndDelete deletes key only if the current value equals expected.
+// Returns true iff the delete was applied.
+func (s *BadgerKVStore) CompareAndDelete(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	expected string,
+	userID string,
+	workspace string,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	fullKey := s.badgerKey(agent, scope, key, userID, workspace)
+
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		var applied bool
+		err := s.db.Update(func(txn *badger.Txn) error {
+			current, found, err := readBadgerValue(txn, fullKey)
+			if err != nil {
+				return err
+			}
+			if !found || current != expected {
+				applied = false
+				return nil
+			}
+			applied = true
+			return txn.Delete(fullKey)
+		})
+		if err == nil {
+			return applied, nil
+		}
+		if errors.Is(err, badger.ErrConflict) {
+			continue
+		}
+		return false, fmt.Errorf("failed to compare-and-delete key %s: %w", key, err)
+	}
+	return false, fmt.Errorf("failed to compare-and-delete key %s: contention after %d attempts", key, casMaxAttempts)
+}

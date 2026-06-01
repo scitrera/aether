@@ -820,29 +820,42 @@ const (
 	KVOperation_DECREMENT    KVOperation_OpType = 5
 	KVOperation_INCREMENT_IF KVOperation_OpType = 6 // Atomic increment that succeeds only if result <= guard_value
 	KVOperation_DECREMENT_IF KVOperation_OpType = 7 // Atomic decrement that succeeds only if result >= guard_value
+	// Atomic conditional writes — the building blocks for distributed
+	// coordination primitives (mutex, leader election, run-once). All three
+	// are backed across Redis / Badger / NATS-JetStream. KVResponse.applied
+	// reports whether the conditional mutation took effect.
+	KVOperation_SET_NX             KVOperation_OpType = 8  // Set `value` only if the key is absent. applied=true iff written.
+	KVOperation_COMPARE_AND_SET    KVOperation_OpType = 9  // Set `value` only if current == expected_value. applied=true iff swapped.
+	KVOperation_COMPARE_AND_DELETE KVOperation_OpType = 10 // Delete only if current == expected_value. applied=true iff deleted.
 )
 
 // Enum value maps for KVOperation_OpType.
 var (
 	KVOperation_OpType_name = map[int32]string{
-		0: "GET",
-		1: "PUT",
-		2: "LIST",
-		3: "DELETE",
-		4: "INCREMENT",
-		5: "DECREMENT",
-		6: "INCREMENT_IF",
-		7: "DECREMENT_IF",
+		0:  "GET",
+		1:  "PUT",
+		2:  "LIST",
+		3:  "DELETE",
+		4:  "INCREMENT",
+		5:  "DECREMENT",
+		6:  "INCREMENT_IF",
+		7:  "DECREMENT_IF",
+		8:  "SET_NX",
+		9:  "COMPARE_AND_SET",
+		10: "COMPARE_AND_DELETE",
 	}
 	KVOperation_OpType_value = map[string]int32{
-		"GET":          0,
-		"PUT":          1,
-		"LIST":         2,
-		"DELETE":       3,
-		"INCREMENT":    4,
-		"DECREMENT":    5,
-		"INCREMENT_IF": 6,
-		"DECREMENT_IF": 7,
+		"GET":                0,
+		"PUT":                1,
+		"LIST":               2,
+		"DELETE":             3,
+		"INCREMENT":          4,
+		"DECREMENT":          5,
+		"INCREMENT_IF":       6,
+		"DECREMENT_IF":       7,
+		"SET_NX":             8,
+		"COMPARE_AND_SET":    9,
+		"COMPARE_AND_DELETE": 10,
 	}
 )
 
@@ -4905,7 +4918,11 @@ type KVOperation struct {
 	// Step size for INCREMENT_IF / DECREMENT_IF. When 0 the server uses a
 	// default of 1, matching unguarded INCREMENT/DECREMENT. Must be >= 0;
 	// negative deltas are rejected by the server.
-	DeltaValue    int64 `protobuf:"varint,11,opt,name=delta_value,json=deltaValue,proto3" json:"delta_value,omitempty"`
+	DeltaValue int64 `protobuf:"varint,11,opt,name=delta_value,json=deltaValue,proto3" json:"delta_value,omitempty"`
+	// Expected current value for COMPARE_AND_SET / COMPARE_AND_DELETE. The
+	// mutation applies only when the stored value equals these bytes. Unused by
+	// other ops. For an empty/absent comparison use SET_NX instead.
+	ExpectedValue []byte `protobuf:"bytes,12,opt,name=expected_value,json=expectedValue,proto3" json:"expected_value,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5017,6 +5034,13 @@ func (x *KVOperation) GetDeltaValue() int64 {
 	return 0
 }
 
+func (x *KVOperation) GetExpectedValue() []byte {
+	if x != nil {
+		return x.ExpectedValue
+	}
+	return nil
+}
+
 type KVResponse struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Success bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
@@ -5028,10 +5052,15 @@ type KVResponse struct {
 	// transparently, but Python proto deserializes a `string` field as
 	// UTF-8 `str` — destroying or silently mangling non-UTF-8 binary data.
 	// The single-value `bytes value` field above already gets this right.
-	KvMap         map[string][]byte `protobuf:"bytes,4,rep,name=kv_map,json=kvMap,proto3" json:"kv_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	RequestId     string            `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`           // Echoed from the originating KVOperation for correlation
-	CounterValue  int64             `protobuf:"varint,6,opt,name=counter_value,json=counterValue,proto3" json:"counter_value,omitempty"` // Result of INCREMENT/DECREMENT (and INCREMENT_IF/DECREMENT_IF)
-	Applied       bool              `protobuf:"varint,7,opt,name=applied,proto3" json:"applied,omitempty"`                               // True iff INCREMENT_IF/DECREMENT_IF mutation was applied; for unguarded ops always true on success
+	KvMap        map[string][]byte `protobuf:"bytes,4,rep,name=kv_map,json=kvMap,proto3" json:"kv_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	RequestId    string            `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`           // Echoed from the originating KVOperation for correlation
+	CounterValue int64             `protobuf:"varint,6,opt,name=counter_value,json=counterValue,proto3" json:"counter_value,omitempty"` // Result of INCREMENT/DECREMENT (and INCREMENT_IF/DECREMENT_IF)
+	// True iff a conditional mutation was applied. For INCREMENT_IF/DECREMENT_IF
+	// this is the guard result; for SET_NX/COMPARE_AND_SET/COMPARE_AND_DELETE it
+	// reports whether the write/delete took effect. For unguarded ops always
+	// true on success. On a failed COMPARE_AND_SET/COMPARE_AND_DELETE, `value`
+	// carries the live stored value so callers can observe the current holder.
+	Applied       bool `protobuf:"varint,7,opt,name=applied,proto3" json:"applied,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -17102,7 +17131,7 @@ const file_aether_proto_rawDesc = "" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x10\n" +
 	"\x03qty\x18\x03 \x01(\x01R\x03qty\";\n" +
 	"\x0fSwitchWorkspace\x12(\n" +
-	"\x10new_workspace_id\x18\x01 \x01(\tR\x0enewWorkspaceId\"\xb2\x05\n" +
+	"\x10new_workspace_id\x18\x01 \x01(\tR\x0enewWorkspaceId\"\x93\x06\n" +
 	"\vKVOperation\x12-\n" +
 	"\x02op\x18\x01 \x01(\x0e2\x1d.aether.v1.KVOperation.OpTypeR\x02op\x122\n" +
 	"\x05scope\x18\x02 \x01(\x0e2\x1c.aether.v1.KVOperation.ScopeR\x05scope\x12\x10\n" +
@@ -17118,7 +17147,8 @@ const file_aether_proto_rawDesc = "" +
 	" \x01(\x03R\n" +
 	"guardValue\x12\x1f\n" +
 	"\vdelta_value\x18\v \x01(\x03R\n" +
-	"deltaValue\"r\n" +
+	"deltaValue\x12%\n" +
+	"\x0eexpected_value\x18\f \x01(\fR\rexpectedValue\"\xab\x01\n" +
 	"\x06OpType\x12\a\n" +
 	"\x03GET\x10\x00\x12\a\n" +
 	"\x03PUT\x10\x01\x12\b\n" +
@@ -17128,7 +17158,12 @@ const file_aether_proto_rawDesc = "" +
 	"\tINCREMENT\x10\x04\x12\r\n" +
 	"\tDECREMENT\x10\x05\x12\x10\n" +
 	"\fINCREMENT_IF\x10\x06\x12\x10\n" +
-	"\fDECREMENT_IF\x10\a\"\xb2\x01\n" +
+	"\fDECREMENT_IF\x10\a\x12\n" +
+	"\n" +
+	"\x06SET_NX\x10\b\x12\x13\n" +
+	"\x0fCOMPARE_AND_SET\x10\t\x12\x16\n" +
+	"\x12COMPARE_AND_DELETE\x10\n" +
+	"\"\xb2\x01\n" +
 	"\x05Scope\x12\x15\n" +
 	"\x11SCOPE_UNSPECIFIED\x10\x00\x12\n" +
 	"\n" +

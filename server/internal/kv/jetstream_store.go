@@ -545,6 +545,144 @@ func (s *JetStreamKVStore) casCounter(
 	return 0, false, fmt.Errorf("casCounter %s: too much contention after %d attempts", key, jsMaxCASAttempts)
 }
 
+// SetNX sets key=value only if the key is absent. Returns true iff written.
+//
+// Soft-TTL subtlety: NATS KV has no native per-key TTL, so an entry whose
+// encoded soft-TTL has elapsed still physically exists. kv.Create would then
+// return ErrKeyExists for a key that is *logically* free. We therefore Get
+// first: on a logically-expired entry we Update-over its revision (treating it
+// as a fresh acquire); only a present, non-expired entry blocks the SetNX.
+func (s *JetStreamKVStore) SetNX(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	fullKey := buildJSKey(agent, scope, userID, workspace, key)
+
+	for attempt := 0; attempt < jsMaxCASAttempts; attempt++ {
+		encoded := []byte(encodeStoredValue(value, ttl))
+		entry, err := s.kv.Get(ctx, fullKey)
+		if err != nil {
+			if !errors.Is(err, jetstream.ErrKeyNotFound) {
+				return false, fmt.Errorf("setnx get %s: %w", key, err)
+			}
+			// Absent → atomic create-if-absent.
+			if _, cErr := s.kv.Create(ctx, fullKey, encoded); cErr != nil {
+				if isRevisionConflict(cErr) {
+					continue // someone created concurrently; re-evaluate
+				}
+				return false, fmt.Errorf("setnx create %s: %w", key, cErr)
+			}
+			return true, nil
+		}
+		// Present: free only if the soft-TTL has elapsed.
+		_, _, expired := decodeStoredValue(string(entry.Value()), time.Now())
+		if !expired {
+			return false, nil
+		}
+		if _, uErr := s.kv.Update(ctx, fullKey, encoded, entry.Revision()); uErr != nil {
+			if isRevisionConflict(uErr) {
+				continue
+			}
+			return false, fmt.Errorf("setnx update-expired %s: %w", key, uErr)
+		}
+		return true, nil
+	}
+	return false, fmt.Errorf("setnx %s: too much contention after %d attempts", key, jsMaxCASAttempts)
+}
+
+// CompareAndSet sets key=value only if the current (non-expired) value equals
+// expected. Returns true iff the swap was applied. A missing or logically
+// expired key never matches.
+func (s *JetStreamKVStore) CompareAndSet(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	expected string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	fullKey := buildJSKey(agent, scope, userID, workspace, key)
+
+	for attempt := 0; attempt < jsMaxCASAttempts; attempt++ {
+		entry, err := s.kv.Get(ctx, fullKey)
+		if err != nil {
+			if errors.Is(err, jetstream.ErrKeyNotFound) {
+				return false, nil // missing never matches a non-empty expected
+			}
+			return false, fmt.Errorf("compare-and-set get %s: %w", key, err)
+		}
+		decoded, _, expired := decodeStoredValue(string(entry.Value()), time.Now())
+		if expired || decoded != expected {
+			return false, nil
+		}
+		encoded := []byte(encodeStoredValue(value, ttl))
+		if _, uErr := s.kv.Update(ctx, fullKey, encoded, entry.Revision()); uErr != nil {
+			if isRevisionConflict(uErr) {
+				continue
+			}
+			return false, fmt.Errorf("compare-and-set update %s: %w", key, uErr)
+		}
+		return true, nil
+	}
+	return false, fmt.Errorf("compare-and-set %s: too much contention after %d attempts", key, jsMaxCASAttempts)
+}
+
+// CompareAndDelete deletes key only if the current (non-expired) value equals
+// expected. Returns true iff the delete was applied.
+func (s *JetStreamKVStore) CompareAndDelete(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	expected string,
+	userID string,
+	workspace string,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	fullKey := buildJSKey(agent, scope, userID, workspace, key)
+
+	for attempt := 0; attempt < jsMaxCASAttempts; attempt++ {
+		entry, err := s.kv.Get(ctx, fullKey)
+		if err != nil {
+			if errors.Is(err, jetstream.ErrKeyNotFound) {
+				return false, nil
+			}
+			return false, fmt.Errorf("compare-and-delete get %s: %w", key, err)
+		}
+		decoded, _, expired := decodeStoredValue(string(entry.Value()), time.Now())
+		if expired || decoded != expected {
+			return false, nil
+		}
+		// Revision-guarded delete: fail closed (retry) if a concurrent writer
+		// bumped the revision between Get and Delete.
+		if dErr := s.kv.Delete(ctx, fullKey, jetstream.LastRevision(entry.Revision())); dErr != nil {
+			if isRevisionConflict(dErr) {
+				continue
+			}
+			return false, fmt.Errorf("compare-and-delete delete %s: %w", key, dErr)
+		}
+		return true, nil
+	}
+	return false, fmt.Errorf("compare-and-delete %s: too much contention after %d attempts", key, jsMaxCASAttempts)
+}
+
 // isRevisionConflict returns true for errors that indicate a concurrent
 // update beat us to the revision — safe to retry.
 //

@@ -3,9 +3,13 @@ package workflow
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/scitrera/aether/internal/coordkv"
+	"github.com/scitrera/aether/internal/kv"
 )
 
 func newTestRedisClient(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
@@ -15,122 +19,140 @@ func newTestRedisClient(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 	return client, mr
 }
 
-func TestLeaderElector_IsLeader_falseBeforeAcquire(t *testing.T) {
+// newTestLocker returns a coordkv backend over a miniredis-backed KV store,
+// exercising the real Redis SetNX/CompareAndSet/CompareAndDelete primitives.
+func newTestLocker(t *testing.T) *coordkv.Backend {
+	t.Helper()
 	client, _ := newTestRedisClient(t)
-	le := NewRedisLeaderElector(client, "wf:leader:test", "instance-1")
-
-	if le.IsLeader() {
-		t.Error("IsLeader() = true before TryAcquire, want false")
-	}
+	return coordkv.NewGlobal(kv.NewStoreFromClient(client))
 }
 
-func TestLeaderElector_TryAcquire_succeedsWhenLockFree(t *testing.T) {
-	client, _ := newTestRedisClient(t)
-	le := NewRedisLeaderElector(client, "wf:leader:test", "instance-1")
+func TestCoordkvBackend_SetNX_MutualExclusion(t *testing.T) {
+	b := newTestLocker(t)
 	ctx := context.Background()
 
-	got := le.TryAcquire(ctx)
-	if !got {
-		t.Error("TryAcquire() = false on free lock, want true")
+	ok, err := b.TryAcquire(ctx, "workflow:leader", "owner-a", 30*time.Second)
+	if err != nil || !ok {
+		t.Fatalf("first TryAcquire ok=%v err=%v", ok, err)
 	}
-	if !le.IsLeader() {
-		t.Error("IsLeader() = false after successful TryAcquire, want true")
+	ok, err = b.TryAcquire(ctx, "workflow:leader", "owner-b", 30*time.Second)
+	if err != nil {
+		t.Fatalf("second TryAcquire err=%v", err)
+	}
+	if ok {
+		t.Fatal("second TryAcquire should fail while held")
+	}
+	holder, err := b.Peek(ctx, "workflow:leader")
+	if err != nil {
+		t.Fatalf("Peek: %v", err)
+	}
+	if holder != "owner-a" {
+		t.Errorf("holder = %q, want owner-a", holder)
 	}
 }
 
-func TestLeaderElector_TryAcquire_secondInstanceFailsWhenLockHeld(t *testing.T) {
-	client, _ := newTestRedisClient(t)
-	le1 := NewRedisLeaderElector(client, "wf:leader:test", "instance-1")
-	le2 := NewRedisLeaderElector(client, "wf:leader:test", "instance-2")
+func TestCoordkvBackend_RefreshAndRelease(t *testing.T) {
+	b := newTestLocker(t)
 	ctx := context.Background()
 
-	if !le1.TryAcquire(ctx) {
-		t.Fatal("le1.TryAcquire() = false, want true")
+	if ok, _ := b.TryAcquire(ctx, "k", "owner-a", 30*time.Second); !ok {
+		t.Fatal("acquire failed")
 	}
-
-	got := le2.TryAcquire(ctx)
-	if got {
-		t.Error("le2.TryAcquire() = true when lock held by le1, want false")
+	// Owner can refresh.
+	if ok, err := b.Refresh(ctx, "k", "owner-a", 30*time.Second); err != nil || !ok {
+		t.Fatalf("Refresh ok=%v err=%v", ok, err)
 	}
-	if le2.IsLeader() {
-		t.Error("le2.IsLeader() = true after failed acquire, want false")
+	// A non-owner cannot refresh.
+	if ok, _ := b.Refresh(ctx, "k", "owner-b", 30*time.Second); ok {
+		t.Fatal("non-owner Refresh should fail")
 	}
-}
-
-func TestLeaderElector_TryAcquire_refreshesExistingLock(t *testing.T) {
-	client, _ := newTestRedisClient(t)
-	le := NewRedisLeaderElector(client, "wf:leader:test", "instance-1")
-	ctx := context.Background()
-
-	if !le.TryAcquire(ctx) {
-		t.Fatal("first TryAcquire() = false, want true")
+	// A non-owner cannot release.
+	if ok, _ := b.Release(ctx, "k", "owner-b"); ok {
+		t.Fatal("non-owner Release should fail")
 	}
-	// Second call should refresh (not drop) the lock
-	if !le.TryAcquire(ctx) {
-		t.Error("second TryAcquire() = false, want true (refresh)")
+	// Owner releases; key becomes free.
+	if ok, err := b.Release(ctx, "k", "owner-a"); err != nil || !ok {
+		t.Fatalf("Release ok=%v err=%v", ok, err)
 	}
-	if !le.IsLeader() {
-		t.Error("IsLeader() = false after refresh, want true")
+	if ok, _ := b.TryAcquire(ctx, "k", "owner-b", 30*time.Second); !ok {
+		t.Fatal("re-acquire after release should succeed")
 	}
 }
 
-func TestLeaderElector_Release_clearsLeaderState(t *testing.T) {
-	client, _ := newTestRedisClient(t)
-	le := NewRedisLeaderElector(client, "wf:leader:test", "instance-1")
-	ctx := context.Background()
-
-	if !le.TryAcquire(ctx) {
-		t.Fatal("TryAcquire() = false, want true")
-	}
-	le.Release(ctx)
-
-	if le.IsLeader() {
-		t.Error("IsLeader() = true after Release, want false")
-	}
-}
-
-func TestLeaderElector_Release_allowsOtherInstanceToAcquire(t *testing.T) {
-	client, _ := newTestRedisClient(t)
-	le1 := NewRedisLeaderElector(client, "wf:leader:test", "instance-1")
-	le2 := NewRedisLeaderElector(client, "wf:leader:test", "instance-2")
-	ctx := context.Background()
-
-	if !le1.TryAcquire(ctx) {
-		t.Fatal("le1.TryAcquire() = false")
-	}
-	le1.Release(ctx)
-
-	if !le2.TryAcquire(ctx) {
-		t.Error("le2.TryAcquire() = false after le1 released, want true")
-	}
-}
-
-func TestLeaderElector_Release_isNoOpWhenNotLeader(t *testing.T) {
-	client, _ := newTestRedisClient(t)
-	le := NewRedisLeaderElector(client, "wf:leader:test", "instance-1")
-	ctx := context.Background()
-
-	// Should not panic or error when not leader
-	le.Release(ctx)
-	if le.IsLeader() {
-		t.Error("IsLeader() = true after Release on non-leader, want false")
-	}
-}
-
-func TestLeaderElector_TryAcquire_reacquiresAfterLockExpiry(t *testing.T) {
+func TestCoordkvBackend_LeaseExpiryReacquire(t *testing.T) {
 	client, mr := newTestRedisClient(t)
-	le1 := NewRedisLeaderElector(client, "wf:leader:test", "instance-1")
-	le2 := NewRedisLeaderElector(client, "wf:leader:test", "instance-2")
+	b := coordkv.NewGlobal(kv.NewStoreFromClient(client))
 	ctx := context.Background()
 
-	if !le1.TryAcquire(ctx) {
-		t.Fatal("le1.TryAcquire() = false")
+	if ok, _ := b.TryAcquire(ctx, "k", "owner-a", 30*time.Second); !ok {
+		t.Fatal("acquire failed")
+	}
+	// Simulate lease TTL expiry.
+	mr.FastForward(31 * time.Second)
+	if ok, err := b.TryAcquire(ctx, "k", "owner-b", 30*time.Second); err != nil || !ok {
+		t.Fatalf("re-acquire after lease expiry ok=%v err=%v", ok, err)
+	}
+}
+
+func TestCoordLeaderElector_SingleLeaderAndFailover(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping timing-based leader failover test in -short mode")
+	}
+	// Shared backend across two electors (same miniredis).
+	client, _ := newTestRedisClient(t)
+	mk := func(id string) LeaderElector {
+		locker := coordkv.NewGlobal(kv.NewStoreFromClient(client))
+		// Short lease for a fast test.
+		return NewCoordLeaderElector(locker, "workflow:leader", id)
 	}
 
-	// Simulate lock TTL expiry via miniredis fast-forward
-	mr.FastForward(31 * 1e9) // 31 seconds in nanoseconds
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	if !le2.TryAcquire(ctx) {
-		t.Error("le2.TryAcquire() = false after le1 lock expired, want true")
+	a := mk("instance-a")
+	a.Start(ctx)
+
+	// a should win leadership.
+	if !waitFor(2*time.Second, a.IsLeader) {
+		t.Fatal("instance-a did not become leader")
 	}
+
+	b := mk("instance-b")
+	b.Start(ctx)
+	// b must NOT become leader while a holds it.
+	time.Sleep(300 * time.Millisecond)
+	if b.IsLeader() {
+		t.Fatal("instance-b became leader while instance-a holds leadership")
+	}
+
+	// a steps down; b should take over (eager release on shutdown).
+	if err := a.Shutdown(context.Background()); err != nil {
+		t.Fatalf("a.Shutdown: %v", err)
+	}
+	if !waitFor(workflowLeaderTTL+5*time.Second, b.IsLeader) {
+		t.Fatal("instance-b did not take over after instance-a shutdown")
+	}
+	_ = b.Shutdown(context.Background())
+}
+
+func TestSingleNodeLeaderElector_AlwaysLeader(t *testing.T) {
+	le := NewSingleNodeLeaderElector()
+	le.Start(context.Background())
+	if !le.IsLeader() {
+		t.Error("single-node elector should always be leader")
+	}
+	if err := le.Shutdown(context.Background()); err != nil {
+		t.Errorf("Shutdown: %v", err)
+	}
+}
+
+func waitFor(timeout time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return cond()
 }

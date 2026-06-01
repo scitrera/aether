@@ -466,6 +466,13 @@ message KVOperation {
     DECREMENT = 5;
     INCREMENT_IF = 6;  // Atomic increment that succeeds only if result <= guard_value
     DECREMENT_IF = 7;  // Atomic decrement that succeeds only if result >= guard_value
+    // Atomic conditional writes — the building blocks for distributed
+    // coordination primitives (mutex, leader election, run-once). All three
+    // are backed across Redis / Badger / NATS-JetStream. KVResponse.applied
+    // reports whether the conditional mutation took effect.
+    SET_NX = 8;             // Set `value` only if the key is absent. applied=true iff written.
+    COMPARE_AND_SET = 9;    // Set `value` only if current == expected_value. applied=true iff swapped.
+    COMPARE_AND_DELETE = 10; // Delete only if current == expected_value. applied=true iff deleted.
   }
   // Scope identifies the (identity x sharing) cell of the KV matrix.
   //
@@ -504,6 +511,10 @@ message KVOperation {
   // default of 1, matching unguarded INCREMENT/DECREMENT. Must be >= 0;
   // negative deltas are rejected by the server.
   int64 delta_value = 11;
+  // Expected current value for COMPARE_AND_SET / COMPARE_AND_DELETE. The
+  // mutation applies only when the stored value equals these bytes. Unused by
+  // other ops. For an empty/absent comparison use SET_NX instead.
+  bytes expected_value = 12;
 }
 
 message KVResponse {
@@ -519,7 +530,12 @@ message KVResponse {
   map<string, bytes> kv_map = 4;
   string request_id = 5;  // Echoed from the originating KVOperation for correlation
   int64 counter_value = 6;  // Result of INCREMENT/DECREMENT (and INCREMENT_IF/DECREMENT_IF)
-  bool applied = 7;        // True iff INCREMENT_IF/DECREMENT_IF mutation was applied; for unguarded ops always true on success
+  // True iff a conditional mutation was applied. For INCREMENT_IF/DECREMENT_IF
+  // this is the guard result; for SET_NX/COMPARE_AND_SET/COMPARE_AND_DELETE it
+  // reports whether the write/delete took effect. For unguarded ops always
+  // true on success. On a failed COMPARE_AND_SET/COMPARE_AND_DELETE, `value`
+  // carries the live stored value so callers can observe the current holder.
+  bool applied = 7;
 }
 
 message IncomingMessage {

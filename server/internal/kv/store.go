@@ -637,6 +637,134 @@ func (s *Store) runGuardedCounter(ctx context.Context, script *redis.Script, ful
 	return value, applied == 1, nil
 }
 
+// compareAndSetLuaScript sets KEYS[1]=ARGV[2] only when the current value
+// equals ARGV[1]. ARGV[3] is the TTL in milliseconds (<=0 means no expiry).
+// Returns 1 when the swap was applied, 0 otherwise.
+var compareAndSetLuaScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  if tonumber(ARGV[3]) > 0 then
+    redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+  else
+    redis.call('SET', KEYS[1], ARGV[2])
+  end
+  return 1
+end
+return 0
+`)
+
+// compareAndDeleteLuaScript deletes KEYS[1] only when the current value equals
+// ARGV[1]. Returns 1 when the delete was applied, 0 otherwise.
+var compareAndDeleteLuaScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`)
+
+// SetNX sets key=value only if the key is absent. Returns true iff written.
+//
+// Coordination ops (SetNX/CompareAndSet/CompareAndDelete) intentionally do NOT
+// apply the "enc:" at-rest encryption transform: the encryption nonce makes
+// ciphertext non-deterministic, which would break the value comparison the
+// compare-and-* ops rely on. Coordination keys carry opaque owner tokens, not
+// user secrets, so storing them in the clear is appropriate.
+func (s *Store) SetNX(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	namespace := BuildNamespace(agent, scope, userID, workspace)
+	fullKey := fmt.Sprintf("%s:%s", namespace, key)
+
+	effectiveTTL := ttl
+	if effectiveTTL <= 0 && s.defaultTTL > 0 {
+		effectiveTTL = s.defaultTTL
+	}
+
+	var ok bool
+	if err := s.execCB(func() error {
+		var setErr error
+		ok, setErr = s.client.SetNX(ctx, fullKey, value, effectiveTTL).Result()
+		return setErr
+	}); err != nil {
+		return false, fmt.Errorf("failed to setnx key %s: %w", key, err)
+	}
+	return ok, nil
+}
+
+// CompareAndSet sets key=value only if the current value equals expected.
+// Returns true iff the swap was applied.
+func (s *Store) CompareAndSet(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	expected string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	namespace := BuildNamespace(agent, scope, userID, workspace)
+	fullKey := fmt.Sprintf("%s:%s", namespace, key)
+
+	effectiveTTL := ttl
+	if effectiveTTL <= 0 && s.defaultTTL > 0 {
+		effectiveTTL = s.defaultTTL
+	}
+
+	var raw interface{}
+	if err := s.execCB(func() error {
+		var runErr error
+		raw, runErr = compareAndSetLuaScript.Run(ctx, s.client, []string{fullKey}, expected, value, effectiveTTL.Milliseconds()).Result()
+		return runErr
+	}); err != nil {
+		return false, fmt.Errorf("failed to compare-and-set key %s: %w", key, err)
+	}
+	applied, _ := raw.(int64)
+	return applied == 1, nil
+}
+
+// CompareAndDelete deletes key only if the current value equals expected.
+// Returns true iff the delete was applied.
+func (s *Store) CompareAndDelete(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	expected string,
+	userID string,
+	workspace string,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	namespace := BuildNamespace(agent, scope, userID, workspace)
+	fullKey := fmt.Sprintf("%s:%s", namespace, key)
+
+	var raw interface{}
+	if err := s.execCB(func() error {
+		var runErr error
+		raw, runErr = compareAndDeleteLuaScript.Run(ctx, s.client, []string{fullKey}, expected).Result()
+		return runErr
+	}); err != nil {
+		return false, fmt.Errorf("failed to compare-and-delete key %s: %w", key, err)
+	}
+	applied, _ := raw.(int64)
+	return applied == 1, nil
+}
+
 // GetJSON retrieves and unmarshals a JSON value
 func (s *Store) GetJSON(
 	ctx context.Context,

@@ -458,6 +458,129 @@ func (kv *KV) DecrementIfSync(ctx context.Context, key string, scope KVScope, us
 }
 
 // =============================================================================
+// Conditional-write Operations (coordination primitives)
+// =============================================================================
+//
+// SetNX / CompareAndSet / CompareAndDelete are the atomic building blocks for
+// distributed coordination (see the coord package for Mutex / LeaderElection /
+// Once helpers built on them). The lease TTL is carried over the wire in whole
+// seconds, so sub-second lock leases are not representable — use seconds-scale
+// TTLs (the coord defaults are 30s lease / 10s renew).
+
+// SetNXSync sets key=value only if the key is absent. Returns applied=true iff
+// the value was written. ttl is the lease lifetime (truncated to whole
+// seconds; 0 means no expiry).
+func (kv *KV) SetNXSync(ctx context.Context, key string, value []byte, scope KVScope, userID, workspace string, ttl, timeout time.Duration) (bool, error) {
+	kv.syncMu.Lock()
+	defer kv.syncMu.Unlock()
+
+	if timeout == 0 {
+		timeout = DefaultKVTimeout
+	}
+	if scope == "" {
+		scope = KVScopeGlobal
+	}
+
+	requestID := kv.client.NextRequestID()
+	ch := kv.client.RegisterPendingKVRequest(requestID)
+	defer kv.client.pendingKVRequests.Delete(requestID)
+
+	op := &pb.KVOperation{
+		Op:        pb.KVOperation_SET_NX,
+		Scope:     kvScopeToProto(scope),
+		Key:       key,
+		Value:     value,
+		UserId:    userID,
+		Workspace: workspace,
+		Ttl:       int64(ttl.Seconds()),
+		RequestId: requestID,
+	}
+	if err := kv.client.Send(&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_KvOp{KvOp: op}}); err != nil {
+		return false, err
+	}
+	resp, err := kv.waitForCorrelatedResponse(ctx, ch, timeout)
+	if err != nil {
+		return false, err
+	}
+	return resp.Applied, nil
+}
+
+// CompareAndSetSync sets key=value only if the current stored value equals
+// expected. Returns applied=true iff the swap was applied. ttl is the new lease
+// lifetime (whole seconds; 0 means no expiry).
+func (kv *KV) CompareAndSetSync(ctx context.Context, key string, expected, value []byte, scope KVScope, userID, workspace string, ttl, timeout time.Duration) (bool, error) {
+	kv.syncMu.Lock()
+	defer kv.syncMu.Unlock()
+
+	if timeout == 0 {
+		timeout = DefaultKVTimeout
+	}
+	if scope == "" {
+		scope = KVScopeGlobal
+	}
+
+	requestID := kv.client.NextRequestID()
+	ch := kv.client.RegisterPendingKVRequest(requestID)
+	defer kv.client.pendingKVRequests.Delete(requestID)
+
+	op := &pb.KVOperation{
+		Op:            pb.KVOperation_COMPARE_AND_SET,
+		Scope:         kvScopeToProto(scope),
+		Key:           key,
+		ExpectedValue: expected,
+		Value:         value,
+		UserId:        userID,
+		Workspace:     workspace,
+		Ttl:           int64(ttl.Seconds()),
+		RequestId:     requestID,
+	}
+	if err := kv.client.Send(&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_KvOp{KvOp: op}}); err != nil {
+		return false, err
+	}
+	resp, err := kv.waitForCorrelatedResponse(ctx, ch, timeout)
+	if err != nil {
+		return false, err
+	}
+	return resp.Applied, nil
+}
+
+// CompareAndDeleteSync deletes key only if the current stored value equals
+// expected. Returns applied=true iff the delete was applied.
+func (kv *KV) CompareAndDeleteSync(ctx context.Context, key string, expected []byte, scope KVScope, userID, workspace string, timeout time.Duration) (bool, error) {
+	kv.syncMu.Lock()
+	defer kv.syncMu.Unlock()
+
+	if timeout == 0 {
+		timeout = DefaultKVTimeout
+	}
+	if scope == "" {
+		scope = KVScopeGlobal
+	}
+
+	requestID := kv.client.NextRequestID()
+	ch := kv.client.RegisterPendingKVRequest(requestID)
+	defer kv.client.pendingKVRequests.Delete(requestID)
+
+	op := &pb.KVOperation{
+		Op:            pb.KVOperation_COMPARE_AND_DELETE,
+		Scope:         kvScopeToProto(scope),
+		Key:           key,
+		ExpectedValue: expected,
+		UserId:        userID,
+		Workspace:     workspace,
+		RequestId:     requestID,
+	}
+	if err := kv.client.Send(&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_KvOp{KvOp: op}}); err != nil {
+		return false, err
+	}
+	resp, err := kv.waitForCorrelatedResponse(ctx, ch, timeout)
+	if err != nil {
+		return false, err
+	}
+	return resp.Applied, nil
+}
+
+// =============================================================================
 // Synchronous KV Operations
 // =============================================================================
 

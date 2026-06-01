@@ -215,6 +215,15 @@ func (h *KVHandler) HandleKVOperation(
 	case pb.KVOperation_DECREMENT_IF:
 		opErr = h.handleDecrementIf(ctx, identity, authority, sessionID, scope, op.Key, userID, workspace, op.DeltaValue, op.GuardValue, requestID, sendResponse)
 
+	case pb.KVOperation_SET_NX:
+		opErr = h.handleSetNX(ctx, identity, authority, sessionID, scope, op.Key, string(op.Value), userID, workspace, ttl, requestID, sendResponse)
+
+	case pb.KVOperation_COMPARE_AND_SET:
+		opErr = h.handleCompareAndSet(ctx, identity, authority, sessionID, scope, op.Key, string(op.ExpectedValue), string(op.Value), userID, workspace, ttl, requestID, sendResponse)
+
+	case pb.KVOperation_COMPARE_AND_DELETE:
+		opErr = h.handleCompareAndDelete(ctx, identity, authority, sessionID, scope, op.Key, string(op.ExpectedValue), userID, workspace, requestID, sendResponse)
+
 	default:
 		opErr = status.Error(codes.InvalidArgument, "unknown KV operation")
 	}
@@ -968,6 +977,181 @@ func (h *KVHandler) handleDecrementIf(
 		},
 	})
 	return nil
+}
+
+func (h *KVHandler) handleSetNX(
+	ctx context.Context,
+	identity models.Identity,
+	authority *acl.ResolvedAuthority,
+	sessionID uuid.UUID,
+	scope kv.KVScope,
+	key string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+	requestID string,
+	sendResponse func(*pb.DownstreamMessage),
+) error {
+	ctx, span := tracing.Tracer.Start(ctx, "aether.kv.set_nx")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("aether.kv.scope", string(scope)),
+		attribute.String("aether.kv.key", key),
+		attribute.String("aether.kv.workspace", workspace),
+	)
+
+	if err := h.checkKeyPermission(ctx, identity, authority, scope, key, audit.OpKVSetNX, workspace, sessionID, acl.AccessReadWrite); err != nil {
+		return err
+	}
+
+	applied, err := h.kvStore.SetNX(ctx, identity, scope, key, value, userID, workspace, ttl)
+	h.auditConditionalWrite(ctx, identity, authority, sessionID, audit.OpKVSetNX, scope, key, userID, workspace, applied, ttl, err)
+	if err != nil {
+		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Str("key", key).Msg("KV SET_NX failed")
+		return status.Errorf(codes.Internal, "failed to setnx key: %v", err)
+	}
+
+	sendResponse(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Kv{
+			Kv: &pb.KVResponse{Success: true, Applied: applied, RequestId: requestID},
+		},
+	})
+	return nil
+}
+
+func (h *KVHandler) handleCompareAndSet(
+	ctx context.Context,
+	identity models.Identity,
+	authority *acl.ResolvedAuthority,
+	sessionID uuid.UUID,
+	scope kv.KVScope,
+	key string,
+	expected string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+	requestID string,
+	sendResponse func(*pb.DownstreamMessage),
+) error {
+	ctx, span := tracing.Tracer.Start(ctx, "aether.kv.compare_and_set")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("aether.kv.scope", string(scope)),
+		attribute.String("aether.kv.key", key),
+		attribute.String("aether.kv.workspace", workspace),
+	)
+
+	if err := h.checkKeyPermission(ctx, identity, authority, scope, key, audit.OpKVCompareAndSet, workspace, sessionID, acl.AccessReadWrite); err != nil {
+		return err
+	}
+
+	applied, err := h.kvStore.CompareAndSet(ctx, identity, scope, key, expected, value, userID, workspace, ttl)
+	h.auditConditionalWrite(ctx, identity, authority, sessionID, audit.OpKVCompareAndSet, scope, key, userID, workspace, applied, ttl, err)
+	if err != nil {
+		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Str("key", key).Msg("KV COMPARE_AND_SET failed")
+		return status.Errorf(codes.Internal, "failed to compare-and-set key: %v", err)
+	}
+
+	sendResponse(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Kv{
+			Kv: &pb.KVResponse{Success: true, Applied: applied, RequestId: requestID},
+		},
+	})
+	return nil
+}
+
+func (h *KVHandler) handleCompareAndDelete(
+	ctx context.Context,
+	identity models.Identity,
+	authority *acl.ResolvedAuthority,
+	sessionID uuid.UUID,
+	scope kv.KVScope,
+	key string,
+	expected string,
+	userID string,
+	workspace string,
+	requestID string,
+	sendResponse func(*pb.DownstreamMessage),
+) error {
+	ctx, span := tracing.Tracer.Start(ctx, "aether.kv.compare_and_delete")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("aether.kv.scope", string(scope)),
+		attribute.String("aether.kv.key", key),
+		attribute.String("aether.kv.workspace", workspace),
+	)
+
+	if err := h.checkKeyPermission(ctx, identity, authority, scope, key, audit.OpKVCompareAndDelete, workspace, sessionID, acl.AccessReadWrite); err != nil {
+		return err
+	}
+
+	applied, err := h.kvStore.CompareAndDelete(ctx, identity, scope, key, expected, userID, workspace)
+	h.auditConditionalWrite(ctx, identity, authority, sessionID, audit.OpKVCompareAndDelete, scope, key, userID, workspace, applied, 0, err)
+	if err != nil {
+		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Str("key", key).Msg("KV COMPARE_AND_DELETE failed")
+		return status.Errorf(codes.Internal, "failed to compare-and-delete key: %v", err)
+	}
+
+	sendResponse(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Kv{
+			Kv: &pb.KVResponse{Success: true, Applied: applied, RequestId: requestID},
+		},
+	})
+	return nil
+}
+
+// auditConditionalWrite emits an audit event for the SetNX/CompareAndSet/
+// CompareAndDelete conditional-write ops, centralizing the shared metadata
+// shape (op, scope, key, workspace, applied, ttl).
+func (h *KVHandler) auditConditionalWrite(
+	ctx context.Context,
+	identity models.Identity,
+	authority *acl.ResolvedAuthority,
+	sessionID uuid.UUID,
+	operation string,
+	scope kv.KVScope,
+	key, userID, workspace string,
+	applied bool,
+	ttl time.Duration,
+	opErr error,
+) {
+	if h.auditLogger == nil {
+		return
+	}
+	success := opErr == nil
+	errorMsg := ""
+	if opErr != nil {
+		errorMsg = opErr.Error()
+	}
+	metadata := map[string]interface{}{
+		"scope":     string(scope),
+		"key":       key,
+		"workspace": workspace,
+	}
+	if userID != "" {
+		metadata["user_id"] = userID
+	}
+	if ttl > 0 {
+		metadata["ttl_seconds"] = int(ttl.Seconds())
+	}
+	if success {
+		metadata["applied"] = applied
+	}
+	event := audit.NewKVEvent(
+		string(identity.Type),
+		identity.String(),
+		operation,
+		key,
+		workspace,
+		sessionID,
+		success,
+		errorMsg,
+		metadata,
+	)
+	applyResolvedAuthorityToAuditEvent(event, authority)
+	h.auditLogger.LogEvent(ctx, event)
 }
 
 // itemsToKeys extracts just the keys from a map (for backward compatibility)

@@ -85,6 +85,23 @@ type KVReadWriter interface {
 	Decrement(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, userID string, workspace string) (int64, error)
 	IncrementIf(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, userID string, workspace string, delta int64, ceiling int64) (int64, bool, error)
 	DecrementIf(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, userID string, workspace string, delta int64, floor int64) (int64, bool, error)
+
+	// Atomic conditional writes — the building blocks for distributed
+	// coordination primitives (mutex, leader election, run-once). Each is
+	// implemented natively across all three backends (Redis / Badger /
+	// NATS-JetStream). A TTL lease lock is expressed as: acquire = SetNX,
+	// refresh = CompareAndSet(token→token), release = CompareAndDelete(token).
+
+	// SetNX sets key=value only if the key is currently absent. Returns true
+	// iff the value was written.
+	SetNX(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, value string, userID string, workspace string, ttl time.Duration) (bool, error)
+	// CompareAndSet sets key=value only if the current stored value equals
+	// expected. Returns true iff the swap was applied. A non-existent key never
+	// matches a non-empty expected (use SetNX for the absent case).
+	CompareAndSet(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, expected string, value string, userID string, workspace string, ttl time.Duration) (bool, error)
+	// CompareAndDelete deletes key only if the current stored value equals
+	// expected. Returns true iff the delete was applied.
+	CompareAndDelete(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, expected string, userID string, workspace string) (bool, error)
 }
 
 // CheckpointManager abstracts checkpoint store operations used by the gateway.

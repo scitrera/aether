@@ -74,14 +74,17 @@ const (
 	OpTunnelClosed          = "tunnel_closed"
 
 	// KV operations
-	OpKVGet         = "kv_get"
-	OpKVPut         = "kv_put"
-	OpKVDelete      = "kv_delete"
-	OpKVList        = "kv_list"
-	OpKVIncrement   = "kv_increment"
-	OpKVDecrement   = "kv_decrement"
-	OpKVIncrementIf = "kv_increment_if"
-	OpKVDecrementIf = "kv_decrement_if"
+	OpKVGet              = "kv_get"
+	OpKVPut              = "kv_put"
+	OpKVDelete           = "kv_delete"
+	OpKVList             = "kv_list"
+	OpKVIncrement        = "kv_increment"
+	OpKVDecrement        = "kv_decrement"
+	OpKVIncrementIf      = "kv_increment_if"
+	OpKVDecrementIf      = "kv_decrement_if"
+	OpKVSetNX            = "kv_set_nx"
+	OpKVCompareAndSet    = "kv_compare_and_set"
+	OpKVCompareAndDelete = "kv_compare_and_delete"
 
 	// Task operations
 	OpTaskCreate     = "task_create"

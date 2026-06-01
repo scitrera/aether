@@ -116,17 +116,10 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}()
 
-	// 8. Start leader election refresh loop (Redis mode only)
-	if redisLeader, ok := s.leader.(*RedisLeaderElector); ok {
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Error().Interface("panic", r).Msg("recovered from panic in leader election goroutine")
-				}
-			}()
-			redisLeader.RunRefreshLoop(ctx)
-		}()
-	}
+	// 8. Start the leader election loop. The coord-backed elector handles
+	// acquisition AND lease renewal internally (the single-node elector is a
+	// no-op that is always leader), so no separate refresh goroutine is needed.
+	s.leader.Start(ctx)
 
 	// Wait for leadership before starting scheduler and monitor
 	s.waitForLeadership(ctx)
@@ -201,7 +194,9 @@ func (s *Server) Run(ctx context.Context) error {
 			log.Warn().Err(err).Msg("workflow admin server shutdown returned error")
 		}
 	}
-	s.leader.Release(context.Background())
+	if err := s.leader.Shutdown(context.Background()); err != nil {
+		log.Warn().Err(err).Msg("leader election shutdown returned error")
+	}
 	return nil
 }
 
@@ -401,14 +396,16 @@ func (s *Server) runStateMachineMonitor(ctx context.Context) {
 }
 
 func (s *Server) waitForLeadership(ctx context.Context) {
+	// The election loop (started via s.leader.Start) acquires leadership
+	// asynchronously; poll until this instance leads or ctx is cancelled.
 	for {
-		if s.leader.TryAcquire(ctx) {
+		if s.leader.IsLeader() {
 			return
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(5 * time.Second):
+		case <-time.After(time.Second):
 		}
 	}
 }
