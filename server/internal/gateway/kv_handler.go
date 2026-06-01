@@ -75,6 +75,14 @@ func (h *KVHandler) checkKeyPermission(ctx context.Context, identity models.Iden
 		// direct authority; ownership is implicit by storage layout.
 		return nil
 	}
+	// Infra-coordination fast-path: trusted infrastructure principals operating
+	// on the reserved coordination namespace (distributed locks / leader-
+	// election leases) are allowed without an ACL lookup. These are internal
+	// coordination keys, not application data. Cross-principal (OBO) access
+	// still flows through the regular ACL path.
+	if authority == nil && isInfraCoordAccess(identity, key) {
+		return nil
+	}
 	if h.aclService == nil {
 		return nil
 	}
@@ -105,6 +113,24 @@ func (h *KVHandler) checkKeyPermission(ctx context.Context, identity models.Iden
 	return nil
 }
 
+// isInfraCoordAccess reports whether identity is a trusted infrastructure
+// principal accessing a key in the reserved coordination namespace
+// (kv.ReservedCoordKeyPrefix). Used to grant the WorkflowEngine (and any future
+// infra principal) lock/leader-election access without seeding per-key ACL
+// grants. Application principals never match — they are gated normally even on
+// reserved keys.
+func isInfraCoordAccess(identity models.Identity, key string) bool {
+	if !strings.HasPrefix(key, kv.ReservedCoordKeyPrefix) {
+		return false
+	}
+	switch identity.Type {
+	case models.PrincipalWorkflowEngine:
+		return true
+	default:
+		return false
+	}
+}
+
 // checkScopeReadPermission checks scope-level read permission (used for LIST which has no specific key).
 func (h *KVHandler) checkScopeReadPermission(ctx context.Context, identity models.Identity, authority *acl.ResolvedAuthority, scope kv.KVScope, operation, workspace string, sessionID uuid.UUID) error {
 	if h.aclService == nil {
@@ -131,9 +157,17 @@ func (h *KVHandler) HandleKVOperation(
 	op *pb.KVOperation,
 	sendResponse func(*pb.DownstreamMessage),
 ) error {
-	// Agents, tasks, and services can access the KV store.
-	if identity.Type != models.PrincipalAgent && identity.Type != models.PrincipalTask && identity.Type != models.PrincipalService {
-		return status.Error(codes.PermissionDenied, "only agents, tasks, and services can access KV store")
+	// Agents, tasks, and services store application state in the KV store.
+	// The WorkflowEngine is additionally permitted so it can use the KV-backed
+	// coordination primitives (leader election) over the shared store in every
+	// backend mode; its access is effectively limited to the reserved
+	// coordination namespace by the infra fast-path in checkKeyPermission
+	// (other keys still require an ACL grant it does not hold).
+	if identity.Type != models.PrincipalAgent &&
+		identity.Type != models.PrincipalTask &&
+		identity.Type != models.PrincipalService &&
+		identity.Type != models.PrincipalWorkflowEngine {
+		return status.Error(codes.PermissionDenied, "only agents, tasks, services, and the workflow engine can access KV store")
 	}
 
 	// Map proto enum scope to internal KVScope (default to workspace for backward compatibility)

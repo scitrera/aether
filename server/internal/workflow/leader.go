@@ -4,9 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
-	"github.com/scitrera/aether/internal/coordkv"
 	"github.com/scitrera/aether/internal/kv"
 	"github.com/scitrera/aether/sdk/go/coord"
 )
@@ -14,11 +11,12 @@ import (
 // LeaderElector elects a single active workflow-server instance among replicas
 // so only one runs the scheduler and DAG monitor at a time.
 //
-// Implementations: a coord-backed elector (standard mode, over a shared KV
-// backend) and a no-op single-node elector (lite mode). The election now runs
-// on the shared coord primitive (atomic SetNX/CompareAndSet lease lock), so the
-// same battle-tested logic backs every deployment mode rather than a
-// Redis-only SET NX path.
+// The election runs on the shared coord primitive (atomic SetNX/CompareAndSet
+// lease lock) over a coord.Locker. In production the locker is the
+// WorkflowEngine client's KV locker, so leadership is coordinated through the
+// gateway's KV store — Redis in standard mode, Badger/JetStream in aetherlite —
+// without the workflow server holding its own Redis connection. The same logic
+// therefore yields a correct single leader in every deployment mode.
 type LeaderElector interface {
 	// Start launches the election loop in the background. Idempotent.
 	Start(ctx context.Context)
@@ -37,19 +35,15 @@ const (
 	workflowLeaderRenew = 10 * time.Second
 )
 
-// NewRedisLeaderElector builds a leader elector for the standard (Redis)
-// deployment mode. Despite the name (retained for call-site compatibility), the
-// election runs on the shared coord primitive over a Redis-backed KV store —
-// the same code path that backs Badger/JetStream — so behaviour is uniform
-// across backends. instanceID is folded into the fencing token for log
-// attribution; a random suffix guarantees per-replica uniqueness.
-func NewRedisLeaderElector(client redis.UniversalClient, key, instanceID string) LeaderElector {
-	locker := coordkv.NewGlobal(kv.NewStoreFromClient(client))
-	return NewCoordLeaderElector(locker, key, instanceID)
-}
+// workflowLeaderKey is the coordination key the election lock lives under, in
+// the reserved infra-coordination namespace (so the gateway grants the
+// WorkflowEngine access via its infra fast-path). Used on the shared global
+// scope so every replica rendezvous on the same key.
+var workflowLeaderKey = kv.ReservedCoordKeyPrefix + "workflow/leader"
 
 // NewCoordLeaderElector builds a leader elector over any coord.Locker (and thus
-// any KV backend). Exposed for tests and for non-Redis deployments.
+// any KV backend). instanceID is folded into the fencing token for log
+// attribution; a random suffix guarantees per-replica uniqueness.
 func NewCoordLeaderElector(locker coord.Locker, key, instanceID string) LeaderElector {
 	owner := instanceID + ":" + coord.NewOwnerID()
 	return coord.NewLeaderElection(locker, key,

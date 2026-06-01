@@ -6,7 +6,74 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
+	"github.com/scitrera/aether/internal/kv"
+	"github.com/scitrera/aether/pkg/models"
 )
+
+var workflowEngineIdentity = models.Identity{Type: models.PrincipalWorkflowEngine}
+
+// TestKVHandler_WorkflowEngine_AllowedOnCoordKey verifies the WorkflowEngine
+// principal — previously blocked from KV entirely — can operate on the reserved
+// coordination namespace, and that the infra fast-path bypasses a denying ACL
+// for those keys.
+func TestKVHandler_WorkflowEngine_AllowedOnCoordKey(t *testing.T) {
+	aclMock := newMockACLChecker()
+	aclMock.setScopeRule(string(kv.ScopeGlobal), false, 0) // deny global scope broadly
+	h := newTestKVHandlerWithACL(newMockKVReadWriter(), aclMock)
+
+	op := &pb.KVOperation{
+		Op:    pb.KVOperation_SET_NX,
+		Scope: pb.KVOperation_GLOBAL,
+		Key:   kv.ReservedCoordKeyPrefix + "workflow/leader",
+		Value: []byte("owner-a"),
+	}
+	cb, msgs := captureResponses()
+	if err := h.HandleKVOperation(context.Background(), workflowEngineIdentity, uuid.New(), nil, op, cb); err != nil {
+		t.Fatalf("WFE SET_NX on coord key should be allowed via fast-path, got: %v", err)
+	}
+	if r := lastKV(t, *msgs); !r.Success || !r.Applied {
+		t.Fatalf("WFE coord SET_NX success=%v applied=%v, want true/true", r.Success, r.Applied)
+	}
+}
+
+// TestKVHandler_WorkflowEngine_DeniedOffCoordKey verifies the fast-path is
+// scoped to the reserved namespace: a WFE op on a non-reserved key still goes
+// through ACL and is denied when no grant exists.
+func TestKVHandler_WorkflowEngine_DeniedOffCoordKey(t *testing.T) {
+	aclMock := newMockACLChecker()
+	aclMock.setScopeRule(string(kv.ScopeGlobal), false, 0)
+	h := newTestKVHandlerWithACL(newMockKVReadWriter(), aclMock)
+
+	op := &pb.KVOperation{
+		Op:    pb.KVOperation_SET_NX,
+		Scope: pb.KVOperation_GLOBAL,
+		Key:   "app/data/key", // not under the reserved coord prefix
+		Value: []byte("x"),
+	}
+	cb, _ := captureResponses()
+	if err := h.HandleKVOperation(context.Background(), workflowEngineIdentity, uuid.New(), nil, op, cb); err == nil {
+		t.Fatal("WFE SET_NX on a non-reserved key should be denied by ACL")
+	}
+}
+
+// TestKVHandler_Agent_NoCoordFastPath verifies the infra fast-path is
+// WFE-only: an Agent on a reserved coord key with a denying ACL is still denied.
+func TestKVHandler_Agent_NoCoordFastPath(t *testing.T) {
+	aclMock := newMockACLChecker()
+	aclMock.setScopeRule(string(kv.ScopeGlobal), false, 0)
+	h := newTestKVHandlerWithACL(newMockKVReadWriter(), aclMock)
+
+	op := &pb.KVOperation{
+		Op:    pb.KVOperation_SET_NX,
+		Scope: pb.KVOperation_GLOBAL,
+		Key:   kv.ReservedCoordKeyPrefix + "workflow/leader",
+		Value: []byte("x"),
+	}
+	cb, _ := captureResponses()
+	if err := h.HandleKVOperation(context.Background(), agentIdentity, uuid.New(), nil, op, cb); err == nil {
+		t.Fatal("Agent on reserved coord key should NOT get the infra fast-path; expected ACL denial")
+	}
+}
 
 // lastKV returns the KVResponse from the most recent captured downstream msg.
 func lastKV(t *testing.T, msgs []*pb.DownstreamMessage) *pb.KVResponse {

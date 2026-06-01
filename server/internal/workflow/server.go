@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/sdk/go/aether"
@@ -17,7 +16,6 @@ import (
 // Server is the top-level workflow server that orchestrates all components.
 type Server struct {
 	cfg       *Config
-	redis     redis.UniversalClient
 	client    *aether.WorkflowEngineClient
 	store     WorkflowStore
 	router    *Router
@@ -50,11 +48,8 @@ func (s *Server) Run(ctx context.Context) error {
 	// 1. The store is already constructed and migrated by the caller.
 	//    The workflow package never opens databases or runs migrations.
 
-	// 2. Connect to Redis (skipped in lite mode)
-	if s.cfg.Mode != ModeLite {
-		s.initRedis()
-		defer s.redis.Close()
-	}
+	// 2. (Leader election no longer needs a dedicated Redis connection — it runs
+	//    over the gateway's KV via the WorkflowEngine client; see initComponents.)
 
 	// 4. Create Aether WorkflowEngineClient
 	if err := s.initAetherClient(); err != nil {
@@ -200,22 +195,6 @@ func (s *Server) Run(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) initRedis() {
-	addrs := s.cfg.Redis.Cluster
-	if len(addrs) == 1 {
-		s.redis = redis.NewClient(&redis.Options{
-			Addr:     addrs[0],
-			Password: s.cfg.Redis.Password,
-		})
-	} else {
-		s.redis = redis.NewUniversalClient(&redis.UniversalOptions{
-			Addrs:    addrs,
-			Password: s.cfg.Redis.Password,
-		})
-	}
-	log.Info().Strs("addrs", addrs).Msg("Redis client initialized")
-}
-
 func (s *Server) initAetherClient() error {
 	opts := aether.WorkflowEngineOptions{
 		ClientOptions: aether.ClientOptions{
@@ -296,11 +275,13 @@ func (s *Server) initComponents() {
 
 	// s.store is guaranteed non-nil by NewServer.
 	s.executor = NewExecutor(s.client, s.cfg.Aether.Workspace)
-	if s.cfg.Mode == ModeLite {
-		s.leader = NewSingleNodeLeaderElector()
-	} else {
-		s.leader = NewRedisLeaderElector(s.redis, "workflow:leader", impl)
-	}
+	// Leader election runs over the gateway's KV store via the WorkflowEngine
+	// client, on the shared global scope under the reserved coordination key.
+	// One leader is elected across replicas in every backend mode (Redis /
+	// Badger / JetStream) with no dedicated Redis connection. In single-node
+	// deployments the sole instance simply wins the lock immediately.
+	leaderLocker := s.client.KV().Locker(aether.CoordScope{Scope: aether.KVScopeGlobal})
+	s.leader = NewCoordLeaderElector(leaderLocker, workflowLeaderKey, impl)
 
 	exprEng := NewExprEngine(s.cfg.Workflow.GetRuleCacheSize())
 	tmplEng := NewTemplateEngine(s.cfg.Workflow.GetRuleCacheSize())
