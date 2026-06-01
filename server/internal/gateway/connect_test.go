@@ -321,8 +321,14 @@ func (m *mockKVReadWriter) Set(_ context.Context, _ models.Identity, _ kv.KVScop
 	return m.setErr
 }
 
-func (m *mockKVReadWriter) Delete(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, _ string) error {
-	return m.delErr
+func (m *mockKVReadWriter) Delete(_ context.Context, _ models.Identity, _ kv.KVScope, key string, _ string, _ string) error {
+	if m.delErr != nil {
+		return m.delErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.listData, key)
+	return nil
 }
 
 func (m *mockKVReadWriter) List(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string) (map[string]string, error) {

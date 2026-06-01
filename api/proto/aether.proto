@@ -473,6 +473,16 @@ message KVOperation {
     SET_NX = 8;             // Set `value` only if the key is absent. applied=true iff written.
     COMPARE_AND_SET = 9;    // Set `value` only if current == expected_value. applied=true iff swapped.
     COMPARE_AND_DELETE = 10; // Delete only if current == expected_value. applied=true iff deleted.
+    // REMOVAL-ONLY purge of ANOTHER principal's KV namespace, for lifecycle
+    // managers reaping ephemeral principals (e.g. sandbox-provider clearing a
+    // destroyed sidecar's private state). Deletes every key in
+    // (target_identity, scope) optionally filtered by `key` as a prefix.
+    // Gated by the capability/kv_purge_identity ACL grant. By design it
+    // returns ONLY KVResponse.counter_value (count deleted) — never keys or
+    // values — so the grant cannot be used to exfiltrate another principal's
+    // data. Maintains component separation: the gateway has no sandbox-specific
+    // knowledge; the caller decides what to purge and when.
+    PURGE_IDENTITY = 11;
   }
   // Scope identifies the (identity x sharing) cell of the KV matrix.
   //
@@ -522,6 +532,12 @@ message KVOperation {
   // server-side BEFORE the limit. Unused by non-LIST ops.
   int32 limit = 13;
   string cursor = 14;
+  // PURGE_IDENTITY only: the principal whose KV namespace to purge (e.g.
+  // "sv::sandbox-sidecar::<sandbox_id>"). The caller's OWN identity authorizes
+  // the op via capability/kv_purge_identity; this names the TARGET namespace.
+  // `key` (field 3) acts as an optional prefix filter; `scope` selects which
+  // scope to purge. Ignored by all other ops.
+  string target_identity = 15;
 }
 
 message KVResponse {

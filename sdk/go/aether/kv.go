@@ -298,6 +298,46 @@ func (kv *KV) DecrementWithRequestID(key string, scope KVScope, userID, workspac
 	})
 }
 
+// PurgeIdentitySync REMOVAL-ONLY purges every key in another principal's KV
+// namespace (opts.TargetIdentity, opts.Scope), optionally filtered by
+// opts.KeyPrefix, and waits for the response. Requires the
+// capability/kv_purge_identity grant on THIS client's identity. The response
+// carries only the deleted count (KVResponse.CounterValue) — never keys or
+// values — so the capability cannot be used to read another principal's data.
+func (kv *KV) PurgeIdentitySync(ctx context.Context, opts KVPurgeOptions) (*KVResponse, error) {
+	kv.syncMu.Lock()
+	defer kv.syncMu.Unlock()
+
+	timeout := opts.Timeout
+	if timeout == 0 {
+		timeout = DefaultKVTimeout
+	}
+
+	requestID := kv.client.NextRequestID()
+	ch := kv.client.RegisterPendingKVRequest(requestID)
+	defer kv.client.pendingKVRequests.Delete(requestID)
+
+	scope := opts.Scope
+	if scope == "" {
+		scope = KVScopeGlobal
+	}
+
+	op := &pb.KVOperation{
+		Op:             pb.KVOperation_PURGE_IDENTITY,
+		Scope:          kvScopeToProto(scope),
+		Key:            opts.KeyPrefix,
+		TargetIdentity: opts.TargetIdentity,
+		RequestId:      requestID,
+	}
+	if err := kv.client.Send(&pb.UpstreamMessage{
+		Payload: &pb.UpstreamMessage_KvOp{KvOp: op},
+	}); err != nil {
+		return nil, err
+	}
+
+	return kv.waitForCorrelatedResponse(ctx, ch, timeout)
+}
+
 // IncrementSync atomically increments a counter and waits for the response.
 func (kv *KV) IncrementSync(ctx context.Context, key string, scope KVScope, userID, workspace string, timeout time.Duration) (*KVResponse, error) {
 	kv.syncMu.Lock()

@@ -164,6 +164,7 @@ const (
 	PermissionAuditSubmit             = legacy.PermissionAuditSubmit
 	PermissionResolveAuthority        = legacy.PermissionResolveAuthority
 	PermissionQueryConnections        = legacy.PermissionQueryConnections
+	PermissionKVPurgeIdentity         = legacy.PermissionKVPurgeIdentity
 )
 
 // WorkspaceScopeSubjectInherited is the magic value for

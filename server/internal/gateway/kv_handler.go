@@ -258,6 +258,9 @@ func (h *KVHandler) HandleKVOperation(
 	case pb.KVOperation_COMPARE_AND_DELETE:
 		opErr = h.handleCompareAndDelete(ctx, identity, authority, sessionID, scope, op.Key, string(op.ExpectedValue), userID, workspace, requestID, sendResponse)
 
+	case pb.KVOperation_PURGE_IDENTITY:
+		opErr = h.handlePurgeIdentity(ctx, identity, sessionID, scope, op.GetTargetIdentity(), op.Key, requestID, sendResponse)
+
 	default:
 		opErr = status.Error(codes.InvalidArgument, "unknown KV operation")
 	}
@@ -669,6 +672,115 @@ func (h *KVHandler) handleList(
 		},
 	})
 
+	return nil
+}
+
+// handlePurgeIdentity REMOVAL-ONLY purges every key in another principal's KV
+// namespace (target_identity, scope), optionally filtered by keyPrefix. It is
+// the privileged primitive a lifecycle manager (e.g. sandbox-provider reaping a
+// sidecar) uses to clear an ephemeral principal's stranded state.
+//
+// Security contract:
+//   - Gated by the capability/kv_purge_identity grant on the CALLER's own
+//     identity (no authority/OBO path). The caller never authorizes "as" the
+//     target — it holds a narrow, explicit capability to delete-on-its-behalf.
+//   - REMOVAL-ONLY: keys are read internally solely to delete them; NEITHER
+//     keys NOR values are returned to the caller — only the deleted count.
+//     So the capability cannot be repurposed to exfiltrate another principal's
+//     data, which keeps the components decoupled (the gateway needs no
+//     sandbox-specific knowledge; the caller owns the what/when).
+func (h *KVHandler) handlePurgeIdentity(
+	ctx context.Context,
+	identity models.Identity,
+	sessionID uuid.UUID,
+	scope kv.KVScope,
+	targetIdentityStr string,
+	keyPrefix string,
+	requestID string,
+	sendResponse func(*pb.DownstreamMessage),
+) error {
+	ctx, span := tracing.Tracer.Start(ctx, "aether.kv.purge_identity")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("aether.kv.scope", string(scope)),
+		attribute.String("aether.kv.target_identity", targetIdentityStr),
+	)
+
+	if targetIdentityStr == "" {
+		return status.Error(codes.InvalidArgument, "purge_identity requires target_identity")
+	}
+	target, err := models.ParseIdentity(targetIdentityStr)
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "invalid target_identity %q: %v", targetIdentityStr, err)
+	}
+
+	// Capability gate. ACL-disabled (nil service) follows the package-wide
+	// dev convention of allow-all, same as the other KV handlers.
+	if h.aclService != nil {
+		decision, derr := h.aclService.CheckAccess(
+			ctx, identity, acl.ResourceTypeCapability, acl.PermissionKVPurgeIdentity,
+			audit.OpKVDelete, "", sessionID, acl.AccessManage,
+		)
+		if derr != nil {
+			logging.Logger.Error().Err(derr).Str("identity", identity.String()).Msg("ACL check failed for kv purge-identity, denying")
+			return status.Errorf(codes.Internal, "ACL check failed: %v", derr)
+		}
+		if decision.Denied() {
+			return status.Errorf(codes.PermissionDenied, "kv purge-identity denied: %s", decision.Reason)
+		}
+	}
+
+	// Delete in rounds, re-listing from the start each round: the set shrinks
+	// as we delete, so a fresh capped List returns the next batch until empty.
+	// This sidesteps cursor invalidation under concurrent deletes and needs no
+	// pagination state. The ceiling + no-progress break are runaway guards.
+	const purgePageLimit = 1000
+	const purgeRoundCeiling = 10000
+	deleted := 0
+	for round := 0; round < purgeRoundCeiling; round++ {
+		result, lerr := h.kvStore.ListPaginated(ctx, target, scope, "", "", &kv.ListOptions{
+			KeyPrefix: keyPrefix,
+			Limit:     purgePageLimit,
+		})
+		if lerr != nil {
+			return status.Errorf(codes.Internal, "purge list failed: %v", lerr)
+		}
+		if result == nil || len(result.Items) == 0 {
+			break
+		}
+		deletedThisRound := 0
+		for key := range result.Items {
+			if derr := h.kvStore.Delete(ctx, target, scope, key, "", ""); derr != nil {
+				logging.Logger.Warn().Err(derr).Str("target", target.String()).Str("scope", string(scope)).Str("key", key).Msg("kv purge-identity: delete failed")
+				continue
+			}
+			deleted++
+			deletedThisRound++
+		}
+		if deletedThisRound == 0 {
+			// Could not delete anything this round — avoid spinning on keys we
+			// can see but not remove.
+			break
+		}
+	}
+
+	logging.Logger.Info().
+		Str("caller", identity.String()).
+		Str("target", target.String()).
+		Str("scope", string(scope)).
+		Str("key_prefix", keyPrefix).
+		Int("deleted", deleted).
+		Msg("kv purge-identity")
+
+	sendResponse(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Kv{
+			Kv: &pb.KVResponse{
+				Success:      true,
+				CounterValue: int64(deleted),
+				RequestId:    requestID,
+			},
+		},
+	})
 	return nil
 }
 

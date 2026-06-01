@@ -572,6 +572,26 @@ type KVDeleteOptions struct {
 	Timeout time.Duration
 }
 
+// KVPurgeOptions configures a REMOVAL-ONLY PURGE_IDENTITY operation: delete
+// every key in ANOTHER principal's KV namespace. Requires the
+// capability/kv_purge_identity grant on the calling client's identity. The
+// response carries only the deleted count — never keys or values.
+type KVPurgeOptions struct {
+	// TargetIdentity is the principal whose namespace to purge, e.g.
+	// "sv::sandbox-sidecar::<sandbox_id>". Required.
+	TargetIdentity string
+
+	// Scope selects which scope to purge. Default: KVScopeGlobal.
+	Scope KVScope
+
+	// KeyPrefix, when set, restricts the purge to keys beginning with it.
+	// Empty purges the entire (target, scope) namespace.
+	KeyPrefix string
+
+	// Timeout for the synchronous operation. 0 → default.
+	Timeout time.Duration
+}
+
 // =============================================================================
 // Message Type
 // =============================================================================

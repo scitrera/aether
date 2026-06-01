@@ -424,6 +424,58 @@ func TestKVHandler_List_SuccessSendsKVResponseWithItems(t *testing.T) {
 	}
 }
 
+func TestKVHandler_PurgeIdentity_DeletesMatchingAndReturnsCount(t *testing.T) {
+	store := newMockKVReadWriter()
+	store.listData = map[string]string{
+		"sidecar::proxy_config":      "cfg",
+		"workclaw::turn::agent:main": "turn",
+		"unrelated::key":             "keep",
+	}
+	h := newTestKVHandler(store)
+	cb, msgs := captureResponses()
+
+	op := &pb.KVOperation{
+		Op:             pb.KVOperation_PURGE_IDENTITY,
+		Scope:          pb.KVOperation_GLOBAL_EXCLUSIVE,
+		TargetIdentity: "sv::sandbox-sidecar::abc123",
+		Key:            "workclaw::", // prefix filter
+		RequestId:      "req-purge-1",
+	}
+	if err := h.HandleKVOperation(context.Background(), agentIdentity, uuid.New(), nil, op, cb); err != nil {
+		t.Fatalf("unexpected error for PURGE_IDENTITY: %v", err)
+	}
+	kvResp := (*msgs)[0].GetKv()
+	if kvResp == nil || !kvResp.Success {
+		t.Fatalf("expected successful KVResponse, got %+v", kvResp)
+	}
+	if kvResp.CounterValue != 1 {
+		t.Errorf("expected 1 key deleted (workclaw:: prefix), got %d", kvResp.CounterValue)
+	}
+	// Removal-only: response must NOT leak keys or values.
+	if len(kvResp.Keys) != 0 || len(kvResp.KvMap) != 0 {
+		t.Errorf("purge response leaked data: keys=%v kv_map=%v", kvResp.Keys, kvResp.KvMap)
+	}
+	if _, ok := store.listData["workclaw::turn::agent:main"]; ok {
+		t.Error("expected workclaw:: key to be deleted")
+	}
+	if _, ok := store.listData["unrelated::key"]; !ok {
+		t.Error("unrelated key must survive a prefixed purge")
+	}
+}
+
+func TestKVHandler_PurgeIdentity_RequiresTargetIdentity(t *testing.T) {
+	h := newTestKVHandler(newMockKVReadWriter())
+	cb, _ := captureResponses()
+	op := &pb.KVOperation{
+		Op:        pb.KVOperation_PURGE_IDENTITY,
+		Scope:     pb.KVOperation_GLOBAL_EXCLUSIVE,
+		RequestId: "req-purge-2",
+	}
+	if err := h.HandleKVOperation(context.Background(), agentIdentity, uuid.New(), nil, op, cb); err == nil {
+		t.Fatal("expected error when target_identity is empty")
+	}
+}
+
 func TestKVHandler_List_StoreError_ReturnsError(t *testing.T) {
 	store := newMockKVReadWriter()
 	store.listErr = errors.New("list failed")

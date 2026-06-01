@@ -597,7 +597,7 @@ class SwitchWorkspace(_message.Message):
     def __init__(self, new_workspace_id: _Optional[str] = ...) -> None: ...
 
 class KVOperation(_message.Message):
-    __slots__ = ("op", "scope", "key", "value", "user_id", "workspace", "ttl", "request_id", "authorization", "guard_value", "delta_value", "expected_value", "limit", "cursor")
+    __slots__ = ("op", "scope", "key", "value", "user_id", "workspace", "ttl", "request_id", "authorization", "guard_value", "delta_value", "expected_value", "limit", "cursor", "target_identity")
     class OpType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         GET: _ClassVar[KVOperation.OpType]
@@ -611,6 +611,7 @@ class KVOperation(_message.Message):
         SET_NX: _ClassVar[KVOperation.OpType]
         COMPARE_AND_SET: _ClassVar[KVOperation.OpType]
         COMPARE_AND_DELETE: _ClassVar[KVOperation.OpType]
+        PURGE_IDENTITY: _ClassVar[KVOperation.OpType]
     GET: KVOperation.OpType
     PUT: KVOperation.OpType
     LIST: KVOperation.OpType
@@ -622,6 +623,7 @@ class KVOperation(_message.Message):
     SET_NX: KVOperation.OpType
     COMPARE_AND_SET: KVOperation.OpType
     COMPARE_AND_DELETE: KVOperation.OpType
+    PURGE_IDENTITY: KVOperation.OpType
     class Scope(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         SCOPE_UNSPECIFIED: _ClassVar[KVOperation.Scope]
@@ -656,6 +658,7 @@ class KVOperation(_message.Message):
     EXPECTED_VALUE_FIELD_NUMBER: _ClassVar[int]
     LIMIT_FIELD_NUMBER: _ClassVar[int]
     CURSOR_FIELD_NUMBER: _ClassVar[int]
+    TARGET_IDENTITY_FIELD_NUMBER: _ClassVar[int]
     op: KVOperation.OpType
     scope: KVOperation.Scope
     key: str
@@ -670,7 +673,8 @@ class KVOperation(_message.Message):
     expected_value: bytes
     limit: int
     cursor: str
-    def __init__(self, op: _Optional[_Union[KVOperation.OpType, str]] = ..., scope: _Optional[_Union[KVOperation.Scope, str]] = ..., key: _Optional[str] = ..., value: _Optional[bytes] = ..., user_id: _Optional[str] = ..., workspace: _Optional[str] = ..., ttl: _Optional[int] = ..., request_id: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., guard_value: _Optional[int] = ..., delta_value: _Optional[int] = ..., expected_value: _Optional[bytes] = ..., limit: _Optional[int] = ..., cursor: _Optional[str] = ...) -> None: ...
+    target_identity: str
+    def __init__(self, op: _Optional[_Union[KVOperation.OpType, str]] = ..., scope: _Optional[_Union[KVOperation.Scope, str]] = ..., key: _Optional[str] = ..., value: _Optional[bytes] = ..., user_id: _Optional[str] = ..., workspace: _Optional[str] = ..., ttl: _Optional[int] = ..., request_id: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., guard_value: _Optional[int] = ..., delta_value: _Optional[int] = ..., expected_value: _Optional[bytes] = ..., limit: _Optional[int] = ..., cursor: _Optional[str] = ..., target_identity: _Optional[str] = ...) -> None: ...
 
 class KVResponse(_message.Message):
     __slots__ = ("success", "value", "keys", "kv_map", "request_id", "counter_value", "applied", "next_cursor", "has_more")

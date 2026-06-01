@@ -35,6 +35,18 @@ export const _aether_v1_KVOperation_OpType = {
    * Delete only if current == expected_value. applied=true iff deleted.
    */
   COMPARE_AND_DELETE: 'COMPARE_AND_DELETE',
+  /**
+   * REMOVAL-ONLY purge of ANOTHER principal's KV namespace, for lifecycle
+   * managers reaping ephemeral principals (e.g. sandbox-provider clearing a
+   * destroyed sidecar's private state). Deletes every key in
+   * (target_identity, scope) optionally filtered by `key` as a prefix.
+   * Gated by the capability/kv_purge_identity ACL grant. By design it
+   * returns ONLY KVResponse.counter_value (count deleted) — never keys or
+   * values — so the grant cannot be used to exfiltrate another principal's
+   * data. Maintains component separation: the gateway has no sandbox-specific
+   * knowledge; the caller decides what to purge and when.
+   */
+  PURGE_IDENTITY: 'PURGE_IDENTITY',
 } as const;
 
 export type _aether_v1_KVOperation_OpType =
@@ -78,6 +90,19 @@ export type _aether_v1_KVOperation_OpType =
    */
   | 'COMPARE_AND_DELETE'
   | 10
+  /**
+   * REMOVAL-ONLY purge of ANOTHER principal's KV namespace, for lifecycle
+   * managers reaping ephemeral principals (e.g. sandbox-provider clearing a
+   * destroyed sidecar's private state). Deletes every key in
+   * (target_identity, scope) optionally filtered by `key` as a prefix.
+   * Gated by the capability/kv_purge_identity ACL grant. By design it
+   * returns ONLY KVResponse.counter_value (count deleted) — never keys or
+   * values — so the grant cannot be used to exfiltrate another principal's
+   * data. Maintains component separation: the gateway has no sandbox-specific
+   * knowledge; the caller decides what to purge and when.
+   */
+  | 'PURGE_IDENTITY'
+  | 11
 
 export type _aether_v1_KVOperation_OpType__Output = typeof _aether_v1_KVOperation_OpType[keyof typeof _aether_v1_KVOperation_OpType]
 
@@ -258,6 +283,14 @@ export interface KVOperation {
    */
   'limit'?: (number);
   'cursor'?: (string);
+  /**
+   * PURGE_IDENTITY only: the principal whose KV namespace to purge (e.g.
+   * "sv::sandbox-sidecar::<sandbox_id>"). The caller's OWN identity authorizes
+   * the op via capability/kv_purge_identity; this names the TARGET namespace.
+   * `key` (field 3) acts as an optional prefix filter; `scope` selects which
+   * scope to purge. Ignored by all other ops.
+   */
+  'targetIdentity'?: (string);
 }
 
 /**
@@ -311,4 +344,12 @@ export interface KVOperation__Output {
    */
   'limit': (number);
   'cursor': (string);
+  /**
+   * PURGE_IDENTITY only: the principal whose KV namespace to purge (e.g.
+   * "sv::sandbox-sidecar::<sandbox_id>"). The caller's OWN identity authorizes
+   * the op via capability/kv_purge_identity; this names the TARGET namespace.
+   * `key` (field 3) acts as an optional prefix filter; `scope` selects which
+   * scope to purge. Ignored by all other ops.
+   */
+  'targetIdentity': (string);
 }

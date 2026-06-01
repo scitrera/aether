@@ -827,6 +827,16 @@ const (
 	KVOperation_SET_NX             KVOperation_OpType = 8  // Set `value` only if the key is absent. applied=true iff written.
 	KVOperation_COMPARE_AND_SET    KVOperation_OpType = 9  // Set `value` only if current == expected_value. applied=true iff swapped.
 	KVOperation_COMPARE_AND_DELETE KVOperation_OpType = 10 // Delete only if current == expected_value. applied=true iff deleted.
+	// REMOVAL-ONLY purge of ANOTHER principal's KV namespace, for lifecycle
+	// managers reaping ephemeral principals (e.g. sandbox-provider clearing a
+	// destroyed sidecar's private state). Deletes every key in
+	// (target_identity, scope) optionally filtered by `key` as a prefix.
+	// Gated by the capability/kv_purge_identity ACL grant. By design it
+	// returns ONLY KVResponse.counter_value (count deleted) — never keys or
+	// values — so the grant cannot be used to exfiltrate another principal's
+	// data. Maintains component separation: the gateway has no sandbox-specific
+	// knowledge; the caller decides what to purge and when.
+	KVOperation_PURGE_IDENTITY KVOperation_OpType = 11
 )
 
 // Enum value maps for KVOperation_OpType.
@@ -843,6 +853,7 @@ var (
 		8:  "SET_NX",
 		9:  "COMPARE_AND_SET",
 		10: "COMPARE_AND_DELETE",
+		11: "PURGE_IDENTITY",
 	}
 	KVOperation_OpType_value = map[string]int32{
 		"GET":                0,
@@ -856,6 +867,7 @@ var (
 		"SET_NX":             8,
 		"COMPARE_AND_SET":    9,
 		"COMPARE_AND_DELETE": 10,
+		"PURGE_IDENTITY":     11,
 	}
 )
 
@@ -4928,10 +4940,16 @@ type KVOperation struct {
 	// KVResponse.next_cursor to fetch the next page; empty starts from the
 	// beginning. For LIST, `key` (field 3) is the key prefix filter, applied
 	// server-side BEFORE the limit. Unused by non-LIST ops.
-	Limit         int32  `protobuf:"varint,13,opt,name=limit,proto3" json:"limit,omitempty"`
-	Cursor        string `protobuf:"bytes,14,opt,name=cursor,proto3" json:"cursor,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Limit  int32  `protobuf:"varint,13,opt,name=limit,proto3" json:"limit,omitempty"`
+	Cursor string `protobuf:"bytes,14,opt,name=cursor,proto3" json:"cursor,omitempty"`
+	// PURGE_IDENTITY only: the principal whose KV namespace to purge (e.g.
+	// "sv::sandbox-sidecar::<sandbox_id>"). The caller's OWN identity authorizes
+	// the op via capability/kv_purge_identity; this names the TARGET namespace.
+	// `key` (field 3) acts as an optional prefix filter; `scope` selects which
+	// scope to purge. Ignored by all other ops.
+	TargetIdentity string `protobuf:"bytes,15,opt,name=target_identity,json=targetIdentity,proto3" json:"target_identity,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *KVOperation) Reset() {
@@ -5058,6 +5076,13 @@ func (x *KVOperation) GetLimit() int32 {
 func (x *KVOperation) GetCursor() string {
 	if x != nil {
 		return x.Cursor
+	}
+	return ""
+}
+
+func (x *KVOperation) GetTargetIdentity() string {
+	if x != nil {
+		return x.TargetIdentity
 	}
 	return ""
 }
@@ -17171,7 +17196,7 @@ const file_aether_proto_rawDesc = "" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x10\n" +
 	"\x03qty\x18\x03 \x01(\x01R\x03qty\";\n" +
 	"\x0fSwitchWorkspace\x12(\n" +
-	"\x10new_workspace_id\x18\x01 \x01(\tR\x0enewWorkspaceId\"\xc1\x06\n" +
+	"\x10new_workspace_id\x18\x01 \x01(\tR\x0enewWorkspaceId\"\xfe\x06\n" +
 	"\vKVOperation\x12-\n" +
 	"\x02op\x18\x01 \x01(\x0e2\x1d.aether.v1.KVOperation.OpTypeR\x02op\x122\n" +
 	"\x05scope\x18\x02 \x01(\x0e2\x1c.aether.v1.KVOperation.ScopeR\x05scope\x12\x10\n" +
@@ -17190,7 +17215,8 @@ const file_aether_proto_rawDesc = "" +
 	"deltaValue\x12%\n" +
 	"\x0eexpected_value\x18\f \x01(\fR\rexpectedValue\x12\x14\n" +
 	"\x05limit\x18\r \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06cursor\x18\x0e \x01(\tR\x06cursor\"\xab\x01\n" +
+	"\x06cursor\x18\x0e \x01(\tR\x06cursor\x12'\n" +
+	"\x0ftarget_identity\x18\x0f \x01(\tR\x0etargetIdentity\"\xbf\x01\n" +
 	"\x06OpType\x12\a\n" +
 	"\x03GET\x10\x00\x12\a\n" +
 	"\x03PUT\x10\x01\x12\b\n" +
@@ -17205,7 +17231,8 @@ const file_aether_proto_rawDesc = "" +
 	"\x06SET_NX\x10\b\x12\x13\n" +
 	"\x0fCOMPARE_AND_SET\x10\t\x12\x16\n" +
 	"\x12COMPARE_AND_DELETE\x10\n" +
-	"\"\xb2\x01\n" +
+	"\x12\x12\n" +
+	"\x0ePURGE_IDENTITY\x10\v\"\xb2\x01\n" +
 	"\x05Scope\x12\x15\n" +
 	"\x11SCOPE_UNSPECIFIED\x10\x00\x12\n" +
 	"\n" +
