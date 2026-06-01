@@ -235,7 +235,7 @@ func (h *KVHandler) HandleKVOperation(
 		opErr = h.handleDelete(ctx, identity, authority, sessionID, scope, op.Key, userID, workspace, requestID, sendResponse)
 
 	case pb.KVOperation_LIST:
-		opErr = h.handleList(ctx, identity, authority, sessionID, scope, op.Key, userID, workspace, requestID, sendResponse)
+		opErr = h.handleList(ctx, identity, authority, sessionID, scope, op.Key, userID, workspace, op.GetLimit(), op.GetCursor(), requestID, sendResponse)
 
 	case pb.KVOperation_INCREMENT:
 		opErr = h.handleIncrement(ctx, identity, authority, sessionID, scope, op.Key, userID, workspace, ttl, requestID, sendResponse)
@@ -568,6 +568,8 @@ func (h *KVHandler) handleList(
 	keyPrefix string,
 	userID string,
 	workspace string,
+	limit int32,
+	cursor string,
 	requestID string,
 	sendResponse func(*pb.DownstreamMessage),
 ) error {
@@ -584,23 +586,26 @@ func (h *KVHandler) handleList(
 		return err
 	}
 
-	items, err := h.kvStore.List(ctx, identity, scope, userID, workspace)
-	// Apply caller-supplied key prefix filter. Pre-Solution-A this was
-	// implicitly handled by the per-agent storage namespace (each caller
-	// only saw its own writes). With shared global/workspace namespaces
-	// the store now returns every key in the scope; the prefix filter
-	// must be enforced explicitly so callers like
-	// AetherKVHelper.get_by_prefix actually see only the keys they asked
-	// for and don't try to deserialize unrelated payloads from sibling
-	// agents.
-	if err == nil && keyPrefix != "" && len(items) > 0 {
-		filtered := make(map[string]string, len(items))
-		for k, v := range items {
-			if strings.HasPrefix(k, keyPrefix) {
-				filtered[k] = v
-			}
-		}
-		items = filtered
+	// Apply the key prefix filter INSIDE the store's paginated scan so the
+	// limit bounds matching keys, not all keys in the scope. Previously this
+	// called the unpaginated List() and prefix-filtered afterwards — but List()
+	// caps at DefaultListLimit over the whole (shared) scope, so a caller
+	// listing a small prefixed subset of a large scope (e.g. "sandbox:" in the
+	// _sandbox workspace) could have all its matches fall outside the cap and
+	// see an empty result. ListPaginated with KeyPrefix fixes that and also
+	// exposes cursor/has_more so callers can page through >limit matches.
+	result, err := h.kvStore.ListPaginated(ctx, identity, scope, userID, workspace, &kv.ListOptions{
+		KeyPrefix: keyPrefix,
+		Limit:     int(limit),
+		Cursor:    cursor,
+	})
+	var items map[string]string
+	var nextCursor string
+	var hasMore bool
+	if result != nil {
+		items = result.Items
+		nextCursor = result.NextCursor
+		hasMore = result.HasMore
 	}
 
 	// Audit logging
@@ -654,10 +659,12 @@ func (h *KVHandler) handleList(
 	sendResponse(&pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_Kv{
 			Kv: &pb.KVResponse{
-				Success:   true,
-				Keys:      itemsToKeys(items),
-				KvMap:     itemsBytes,
-				RequestId: requestID,
+				Success:    true,
+				Keys:       itemsToKeys(items),
+				KvMap:      itemsBytes,
+				RequestId:  requestID,
+				NextCursor: nextCursor,
+				HasMore:    hasMore,
 			},
 		},
 	})

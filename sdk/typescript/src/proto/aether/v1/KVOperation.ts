@@ -20,6 +20,21 @@ export const _aether_v1_KVOperation_OpType = {
    * Atomic decrement that succeeds only if result >= guard_value
    */
   DECREMENT_IF: 'DECREMENT_IF',
+  /**
+   * Atomic conditional writes — the building blocks for distributed
+   * coordination primitives (mutex, leader election, run-once). All three
+   * are backed across Redis / Badger / NATS-JetStream. KVResponse.applied
+   * reports whether the conditional mutation took effect.
+   */
+  SET_NX: 'SET_NX',
+  /**
+   * Set `value` only if current == expected_value. applied=true iff swapped.
+   */
+  COMPARE_AND_SET: 'COMPARE_AND_SET',
+  /**
+   * Delete only if current == expected_value. applied=true iff deleted.
+   */
+  COMPARE_AND_DELETE: 'COMPARE_AND_DELETE',
 } as const;
 
 export type _aether_v1_KVOperation_OpType =
@@ -45,6 +60,24 @@ export type _aether_v1_KVOperation_OpType =
    */
   | 'DECREMENT_IF'
   | 7
+  /**
+   * Atomic conditional writes — the building blocks for distributed
+   * coordination primitives (mutex, leader election, run-once). All three
+   * are backed across Redis / Badger / NATS-JetStream. KVResponse.applied
+   * reports whether the conditional mutation took effect.
+   */
+  | 'SET_NX'
+  | 8
+  /**
+   * Set `value` only if current == expected_value. applied=true iff swapped.
+   */
+  | 'COMPARE_AND_SET'
+  | 9
+  /**
+   * Delete only if current == expected_value. applied=true iff deleted.
+   */
+  | 'COMPARE_AND_DELETE'
+  | 10
 
 export type _aether_v1_KVOperation_OpType__Output = typeof _aether_v1_KVOperation_OpType[keyof typeof _aether_v1_KVOperation_OpType]
 
@@ -210,6 +243,21 @@ export interface KVOperation {
    * negative deltas are rejected by the server.
    */
   'deltaValue'?: (number | string | Long);
+  /**
+   * Expected current value for COMPARE_AND_SET / COMPARE_AND_DELETE. The
+   * mutation applies only when the stored value equals these bytes. Unused by
+   * other ops. For an empty/absent comparison use SET_NX instead.
+   */
+  'expectedValue'?: (Buffer | Uint8Array | string);
+  /**
+   * LIST pagination. limit caps the keys returned in one LIST response (<=0 →
+   * server default). cursor pages through results: pass the previous
+   * KVResponse.next_cursor to fetch the next page; empty starts from the
+   * beginning. For LIST, `key` (field 3) is the key prefix filter, applied
+   * server-side BEFORE the limit. Unused by non-LIST ops.
+   */
+  'limit'?: (number);
+  'cursor'?: (string);
 }
 
 /**
@@ -248,4 +296,19 @@ export interface KVOperation__Output {
    * negative deltas are rejected by the server.
    */
   'deltaValue': (string);
+  /**
+   * Expected current value for COMPARE_AND_SET / COMPARE_AND_DELETE. The
+   * mutation applies only when the stored value equals these bytes. Unused by
+   * other ops. For an empty/absent comparison use SET_NX instead.
+   */
+  'expectedValue': (Buffer);
+  /**
+   * LIST pagination. limit caps the keys returned in one LIST response (<=0 →
+   * server default). cursor pages through results: pass the previous
+   * KVResponse.next_cursor to fetch the next page; empty starts from the
+   * beginning. For LIST, `key` (field 3) is the key prefix filter, applied
+   * server-side BEFORE the limit. Unused by non-LIST ops.
+   */
+  'limit': (number);
+  'cursor': (string);
 }

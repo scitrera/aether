@@ -4923,6 +4923,13 @@ type KVOperation struct {
 	// mutation applies only when the stored value equals these bytes. Unused by
 	// other ops. For an empty/absent comparison use SET_NX instead.
 	ExpectedValue []byte `protobuf:"bytes,12,opt,name=expected_value,json=expectedValue,proto3" json:"expected_value,omitempty"`
+	// LIST pagination. limit caps the keys returned in one LIST response (<=0 →
+	// server default). cursor pages through results: pass the previous
+	// KVResponse.next_cursor to fetch the next page; empty starts from the
+	// beginning. For LIST, `key` (field 3) is the key prefix filter, applied
+	// server-side BEFORE the limit. Unused by non-LIST ops.
+	Limit         int32  `protobuf:"varint,13,opt,name=limit,proto3" json:"limit,omitempty"`
+	Cursor        string `protobuf:"bytes,14,opt,name=cursor,proto3" json:"cursor,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5041,6 +5048,20 @@ func (x *KVOperation) GetExpectedValue() []byte {
 	return nil
 }
 
+func (x *KVOperation) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *KVOperation) GetCursor() string {
+	if x != nil {
+		return x.Cursor
+	}
+	return ""
+}
+
 type KVResponse struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Success bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
@@ -5060,7 +5081,12 @@ type KVResponse struct {
 	// reports whether the write/delete took effect. For unguarded ops always
 	// true on success. On a failed COMPARE_AND_SET/COMPARE_AND_DELETE, `value`
 	// carries the live stored value so callers can observe the current holder.
-	Applied       bool `protobuf:"varint,7,opt,name=applied,proto3" json:"applied,omitempty"`
+	Applied bool `protobuf:"varint,7,opt,name=applied,proto3" json:"applied,omitempty"`
+	// LIST pagination. next_cursor is an opaque token to pass as
+	// KVOperation.cursor for the next page; empty when iteration is complete.
+	// has_more is true when more matching keys remain beyond this page.
+	NextCursor    string `protobuf:"bytes,8,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"`
+	HasMore       bool   `protobuf:"varint,9,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5140,6 +5166,20 @@ func (x *KVResponse) GetCounterValue() int64 {
 func (x *KVResponse) GetApplied() bool {
 	if x != nil {
 		return x.Applied
+	}
+	return false
+}
+
+func (x *KVResponse) GetNextCursor() string {
+	if x != nil {
+		return x.NextCursor
+	}
+	return ""
+}
+
+func (x *KVResponse) GetHasMore() bool {
+	if x != nil {
+		return x.HasMore
 	}
 	return false
 }
@@ -17131,7 +17171,7 @@ const file_aether_proto_rawDesc = "" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x10\n" +
 	"\x03qty\x18\x03 \x01(\x01R\x03qty\";\n" +
 	"\x0fSwitchWorkspace\x12(\n" +
-	"\x10new_workspace_id\x18\x01 \x01(\tR\x0enewWorkspaceId\"\x93\x06\n" +
+	"\x10new_workspace_id\x18\x01 \x01(\tR\x0enewWorkspaceId\"\xc1\x06\n" +
 	"\vKVOperation\x12-\n" +
 	"\x02op\x18\x01 \x01(\x0e2\x1d.aether.v1.KVOperation.OpTypeR\x02op\x122\n" +
 	"\x05scope\x18\x02 \x01(\x0e2\x1c.aether.v1.KVOperation.ScopeR\x05scope\x12\x10\n" +
@@ -17148,7 +17188,9 @@ const file_aether_proto_rawDesc = "" +
 	"guardValue\x12\x1f\n" +
 	"\vdelta_value\x18\v \x01(\x03R\n" +
 	"deltaValue\x12%\n" +
-	"\x0eexpected_value\x18\f \x01(\fR\rexpectedValue\"\xab\x01\n" +
+	"\x0eexpected_value\x18\f \x01(\fR\rexpectedValue\x12\x14\n" +
+	"\x05limit\x18\r \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06cursor\x18\x0e \x01(\tR\x06cursor\"\xab\x01\n" +
 	"\x06OpType\x12\a\n" +
 	"\x03GET\x10\x00\x12\a\n" +
 	"\x03PUT\x10\x01\x12\b\n" +
@@ -17174,7 +17216,7 @@ const file_aether_proto_rawDesc = "" +
 	"\x10GLOBAL_EXCLUSIVE\x10\x05\x12\x17\n" +
 	"\x13WORKSPACE_EXCLUSIVE\x10\x06\x12\x0f\n" +
 	"\vUSER_SHARED\x10\a\x12\x19\n" +
-	"\x15USER_WORKSPACE_SHARED\x10\b\"\xa1\x02\n" +
+	"\x15USER_WORKSPACE_SHARED\x10\b\"\xdd\x02\n" +
 	"\n" +
 	"KVResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
@@ -17184,7 +17226,10 @@ const file_aether_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\x05 \x01(\tR\trequestId\x12#\n" +
 	"\rcounter_value\x18\x06 \x01(\x03R\fcounterValue\x12\x18\n" +
-	"\aapplied\x18\a \x01(\bR\aapplied\x1a8\n" +
+	"\aapplied\x18\a \x01(\bR\aapplied\x12\x1f\n" +
+	"\vnext_cursor\x18\b \x01(\tR\n" +
+	"nextCursor\x12\x19\n" +
+	"\bhas_more\x18\t \x01(\bR\ahasMore\x1a8\n" +
 	"\n" +
 	"KvMapEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +

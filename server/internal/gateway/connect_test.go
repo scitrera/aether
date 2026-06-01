@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -337,8 +338,23 @@ func (m *mockKVReadWriter) List(_ context.Context, _ models.Identity, _ kv.KVSco
 	return result, nil
 }
 
-func (m *mockKVReadWriter) ListPaginated(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, _ *kv.ListOptions) (*kv.ListResult, error) {
-	return &kv.ListResult{}, nil
+func (m *mockKVReadWriter) ListPaginated(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, opts *kv.ListOptions) (*kv.ListResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	keyPrefix := ""
+	if opts != nil {
+		keyPrefix = opts.KeyPrefix
+	}
+	items := make(map[string]string, len(m.listData))
+	for k, v := range m.listData {
+		if keyPrefix == "" || strings.HasPrefix(k, keyPrefix) {
+			items[k] = v
+		}
+	}
+	return &kv.ListResult{Items: items}, nil
 }
 
 func (m *mockKVReadWriter) Increment(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, _ string) (int64, error) {

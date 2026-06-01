@@ -597,7 +597,7 @@ class SwitchWorkspace(_message.Message):
     def __init__(self, new_workspace_id: _Optional[str] = ...) -> None: ...
 
 class KVOperation(_message.Message):
-    __slots__ = ("op", "scope", "key", "value", "user_id", "workspace", "ttl", "request_id", "authorization", "guard_value", "delta_value")
+    __slots__ = ("op", "scope", "key", "value", "user_id", "workspace", "ttl", "request_id", "authorization", "guard_value", "delta_value", "expected_value", "limit", "cursor")
     class OpType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         GET: _ClassVar[KVOperation.OpType]
@@ -608,6 +608,9 @@ class KVOperation(_message.Message):
         DECREMENT: _ClassVar[KVOperation.OpType]
         INCREMENT_IF: _ClassVar[KVOperation.OpType]
         DECREMENT_IF: _ClassVar[KVOperation.OpType]
+        SET_NX: _ClassVar[KVOperation.OpType]
+        COMPARE_AND_SET: _ClassVar[KVOperation.OpType]
+        COMPARE_AND_DELETE: _ClassVar[KVOperation.OpType]
     GET: KVOperation.OpType
     PUT: KVOperation.OpType
     LIST: KVOperation.OpType
@@ -616,6 +619,9 @@ class KVOperation(_message.Message):
     DECREMENT: KVOperation.OpType
     INCREMENT_IF: KVOperation.OpType
     DECREMENT_IF: KVOperation.OpType
+    SET_NX: KVOperation.OpType
+    COMPARE_AND_SET: KVOperation.OpType
+    COMPARE_AND_DELETE: KVOperation.OpType
     class Scope(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         SCOPE_UNSPECIFIED: _ClassVar[KVOperation.Scope]
@@ -647,6 +653,9 @@ class KVOperation(_message.Message):
     AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
     GUARD_VALUE_FIELD_NUMBER: _ClassVar[int]
     DELTA_VALUE_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_VALUE_FIELD_NUMBER: _ClassVar[int]
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    CURSOR_FIELD_NUMBER: _ClassVar[int]
     op: KVOperation.OpType
     scope: KVOperation.Scope
     key: str
@@ -658,10 +667,13 @@ class KVOperation(_message.Message):
     authorization: AuthorizationContext
     guard_value: int
     delta_value: int
-    def __init__(self, op: _Optional[_Union[KVOperation.OpType, str]] = ..., scope: _Optional[_Union[KVOperation.Scope, str]] = ..., key: _Optional[str] = ..., value: _Optional[bytes] = ..., user_id: _Optional[str] = ..., workspace: _Optional[str] = ..., ttl: _Optional[int] = ..., request_id: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., guard_value: _Optional[int] = ..., delta_value: _Optional[int] = ...) -> None: ...
+    expected_value: bytes
+    limit: int
+    cursor: str
+    def __init__(self, op: _Optional[_Union[KVOperation.OpType, str]] = ..., scope: _Optional[_Union[KVOperation.Scope, str]] = ..., key: _Optional[str] = ..., value: _Optional[bytes] = ..., user_id: _Optional[str] = ..., workspace: _Optional[str] = ..., ttl: _Optional[int] = ..., request_id: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., guard_value: _Optional[int] = ..., delta_value: _Optional[int] = ..., expected_value: _Optional[bytes] = ..., limit: _Optional[int] = ..., cursor: _Optional[str] = ...) -> None: ...
 
 class KVResponse(_message.Message):
-    __slots__ = ("success", "value", "keys", "kv_map", "request_id", "counter_value", "applied")
+    __slots__ = ("success", "value", "keys", "kv_map", "request_id", "counter_value", "applied", "next_cursor", "has_more")
     class KvMapEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -676,6 +688,8 @@ class KVResponse(_message.Message):
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
     COUNTER_VALUE_FIELD_NUMBER: _ClassVar[int]
     APPLIED_FIELD_NUMBER: _ClassVar[int]
+    NEXT_CURSOR_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
     success: bool
     value: bytes
     keys: _containers.RepeatedScalarFieldContainer[str]
@@ -683,7 +697,9 @@ class KVResponse(_message.Message):
     request_id: str
     counter_value: int
     applied: bool
-    def __init__(self, success: bool = ..., value: _Optional[bytes] = ..., keys: _Optional[_Iterable[str]] = ..., kv_map: _Optional[_Mapping[str, bytes]] = ..., request_id: _Optional[str] = ..., counter_value: _Optional[int] = ..., applied: bool = ...) -> None: ...
+    next_cursor: str
+    has_more: bool
+    def __init__(self, success: bool = ..., value: _Optional[bytes] = ..., keys: _Optional[_Iterable[str]] = ..., kv_map: _Optional[_Mapping[str, bytes]] = ..., request_id: _Optional[str] = ..., counter_value: _Optional[int] = ..., applied: bool = ..., next_cursor: _Optional[str] = ..., has_more: bool = ...) -> None: ...
 
 class IncomingMessage(_message.Message):
     __slots__ = ("source_topic", "payload", "message_type", "workspace")

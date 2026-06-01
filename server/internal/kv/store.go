@@ -224,6 +224,14 @@ type ListOptions struct {
 	// Limit is the maximum number of keys to return in a single call.
 	// If <= 0, DefaultListLimit is used.
 	Limit int
+	// KeyPrefix, when non-empty, restricts results to keys whose user-facing
+	// key begins with this prefix. Crucially the prefix is applied BEFORE the
+	// Limit cap (server-side where the backend supports it), so the cap bounds
+	// the number of MATCHING keys rather than all keys in the scope. Without
+	// this, a caller listing a small prefixed subset of a large shared scope
+	// (e.g. "sandbox:" within the _sandbox workspace) could have its matches
+	// fall outside the first page of a scope-wide scan and vanish.
+	KeyPrefix string
 }
 
 // ListResult is the return type for ListPaginated.
@@ -231,6 +239,24 @@ type ListResult struct {
 	Items      map[string]string
 	NextCursor string
 	HasMore    bool
+}
+
+// escapeRedisGlob escapes the glob metacharacters Redis SCAN MATCH recognizes
+// (* ? [ ] \) so a key prefix is matched literally.
+func escapeRedisGlob(s string) string {
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 4)
+	for _, r := range s {
+		switch r {
+		case '*', '?', '[', ']', '\\':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // ListPaginated returns up to opts.Limit keys in a namespace with their values,
@@ -262,8 +288,16 @@ func (s *Store) ListPaginated(
 	}
 
 	namespace := BuildNamespace(agent, scope, userID, workspace)
-	pattern := fmt.Sprintf("%s:*", namespace)
 	prefix := namespace + ":"
+	// Apply the caller's key prefix in the SCAN MATCH pattern so the server
+	// only returns matching keys — the Limit then bounds matches, not the whole
+	// scope. Glob metacharacters in the prefix are escaped so a literal prefix
+	// like "sandbox:" matches literally.
+	keyPrefix := ""
+	if opts != nil {
+		keyPrefix = opts.KeyPrefix
+	}
+	pattern := fmt.Sprintf("%s:%s*", namespace, escapeRedisGlob(keyPrefix))
 
 	var collected []string
 	cursor := startCursor

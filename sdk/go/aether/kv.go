@@ -181,6 +181,13 @@ func (kv *KV) List(keyPrefix string, scope KVScope, userID, workspace string) er
 
 // ListWithRequestID lists keys with a specific request ID for correlation.
 func (kv *KV) ListWithRequestID(keyPrefix string, scope KVScope, userID, workspace, requestID string) error {
+	return kv.listWithOpts(keyPrefix, scope, userID, workspace, requestID, 0, "")
+}
+
+// listWithOpts is the internal LIST builder carrying pagination (limit/cursor).
+// ListWithRequestID passes the zero values (server default, first page);
+// ListSync forwards KVListOptions.Limit/Cursor.
+func (kv *KV) listWithOpts(keyPrefix string, scope KVScope, userID, workspace, requestID string, limit int32, cursor string) error {
 	if scope == "" {
 		scope = KVScopeGlobal
 	}
@@ -192,6 +199,8 @@ func (kv *KV) ListWithRequestID(keyPrefix string, scope KVScope, userID, workspa
 		UserId:    userID,
 		Workspace: workspace,
 		RequestId: requestID,
+		Limit:     limit,
+		Cursor:    cursor,
 	}
 
 	return kv.client.Send(&pb.UpstreamMessage{
@@ -705,7 +714,7 @@ func (kv *KV) ListSync(ctx context.Context, opts KVListOptions) (*KVResponse, er
 		scope = KVScopeGlobal
 	}
 
-	if err := kv.ListWithRequestID(opts.KeyPrefix, scope, opts.UserID, opts.Workspace, requestID); err != nil {
+	if err := kv.listWithOpts(opts.KeyPrefix, scope, opts.UserID, opts.Workspace, requestID, opts.Limit, opts.Cursor); err != nil {
 		return nil, err
 	}
 

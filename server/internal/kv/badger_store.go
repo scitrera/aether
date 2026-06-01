@@ -155,6 +155,7 @@ func (s *BadgerKVStore) ListPaginated(
 ) (*ListResult, error) {
 	limit := DefaultListLimit
 	var startAfter []byte
+	keyPrefix := ""
 	if opts != nil {
 		if opts.Limit > 0 {
 			limit = opts.Limit
@@ -162,9 +163,17 @@ func (s *BadgerKVStore) ListPaginated(
 		if opts.Cursor != "" && opts.Cursor != "0" {
 			startAfter = []byte(opts.Cursor)
 		}
+		keyPrefix = opts.KeyPrefix
 	}
 
 	prefix := s.badgerPrefix(agent, scope, userID, workspace)
+	// scanPrefix narrows iteration to keys whose user-facing portion begins with
+	// keyPrefix, so the limit bounds matches rather than the whole namespace.
+	// shortKey extraction below still strips only the namespace `prefix`.
+	scanPrefix := prefix
+	if keyPrefix != "" {
+		scanPrefix = append(append([]byte{}, prefix...), keyPrefix...)
+	}
 
 	items := make(map[string]string)
 	var nextCursor string
@@ -172,7 +181,7 @@ func (s *BadgerKVStore) ListPaginated(
 
 	err := s.db.View(func(txn *badger.Txn) error {
 		iterOpts := badger.DefaultIteratorOptions
-		iterOpts.Prefix = prefix
+		iterOpts.Prefix = scanPrefix
 
 		it := txn.NewIterator(iterOpts)
 		defer it.Close()
@@ -186,7 +195,7 @@ func (s *BadgerKVStore) ListPaginated(
 				it.Next()
 			}
 		} else {
-			it.Seek(prefix)
+			it.Seek(scanPrefix)
 		}
 
 		count := 0

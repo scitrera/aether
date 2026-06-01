@@ -535,6 +535,16 @@ type KVListOptions struct {
 	// If empty, uses the client's current workspace.
 	Workspace string
 
+	// Limit caps the number of keys returned in a single LIST response.
+	// 0 = server default. The KeyPrefix filter is applied server-side BEFORE
+	// the limit, so the cap bounds matching keys, not all keys in the scope.
+	Limit int32
+
+	// Cursor pages through LIST results larger than Limit: pass the previous
+	// KVResponse.NextCursor to fetch the next page; empty starts from the
+	// beginning. Iterate until KVResponse.HasMore is false.
+	Cursor string
+
 	// Timeout for synchronous operations.
 	// If 0, uses a default timeout.
 	Timeout time.Duration

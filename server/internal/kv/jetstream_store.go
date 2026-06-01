@@ -311,6 +311,7 @@ func (s *JetStreamKVStore) ListPaginated(
 ) (*ListResult, error) {
 	limit := DefaultListLimit
 	offset := 0
+	keyPrefix := ""
 	if opts != nil {
 		if opts.Limit > 0 {
 			limit = opts.Limit
@@ -320,6 +321,7 @@ func (s *JetStreamKVStore) ListPaginated(
 				offset = n
 			}
 		}
+		keyPrefix = opts.KeyPrefix
 	}
 
 	prefix := buildJSPrefix(agent, scope, userID, workspace)
@@ -345,7 +347,19 @@ func (s *JetStreamKVStore) ListPaginated(
 		// non-fatal: we already collected what we can
 		_ = err
 	}
-	sort.Strings(matching)
+	// Apply the user-key prefix filter BEFORE offset/limit so the page bounds
+	// matching keys, not all keys in the scope. Keys are decoded to their
+	// user-facing form (the NATS key is per-segment escaped) for the compare.
+	if keyPrefix != "" {
+		filtered := make([]string, 0, len(matching))
+		for _, k := range matching {
+			if uk, ok := extractUserKey(k, prefix); ok && strings.HasPrefix(uk, keyPrefix) {
+				filtered = append(filtered, k)
+			}
+		}
+		matching = filtered
+	}
+
 	sort.Strings(matching)
 
 	// Apply offset.

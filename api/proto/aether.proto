@@ -515,6 +515,13 @@ message KVOperation {
   // mutation applies only when the stored value equals these bytes. Unused by
   // other ops. For an empty/absent comparison use SET_NX instead.
   bytes expected_value = 12;
+  // LIST pagination. limit caps the keys returned in one LIST response (<=0 →
+  // server default). cursor pages through results: pass the previous
+  // KVResponse.next_cursor to fetch the next page; empty starts from the
+  // beginning. For LIST, `key` (field 3) is the key prefix filter, applied
+  // server-side BEFORE the limit. Unused by non-LIST ops.
+  int32 limit = 13;
+  string cursor = 14;
 }
 
 message KVResponse {
@@ -536,6 +543,11 @@ message KVResponse {
   // true on success. On a failed COMPARE_AND_SET/COMPARE_AND_DELETE, `value`
   // carries the live stored value so callers can observe the current holder.
   bool applied = 7;
+  // LIST pagination. next_cursor is an opaque token to pass as
+  // KVOperation.cursor for the next page; empty when iteration is complete.
+  // has_more is true when more matching keys remain beyond this page.
+  string next_cursor = 8;
+  bool has_more = 9;
 }
 
 message IncomingMessage {

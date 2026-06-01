@@ -2096,6 +2096,8 @@ func (c *BaseClient) handleKVResponse(ctx context.Context, kv *pb.KVResponse) er
 		RequestId:    kv.GetRequestId(),
 		CounterValue: kv.GetCounterValue(),
 		Applied:      kv.GetApplied(),
+		NextCursor:   kv.GetNextCursor(),
+		HasMore:      kv.GetHasMore(),
 	}
 
 	// If response has a request_id, try to resolve a pending correlated request first

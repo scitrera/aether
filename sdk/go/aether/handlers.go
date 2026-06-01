@@ -106,6 +106,13 @@ type KVResponse struct {
 
 	// Applied is true iff an INCREMENT_IF/DECREMENT_IF mutation was applied.
 	Applied bool
+
+	// NextCursor (LIST) is an opaque token to pass as KVListOptions.Cursor for
+	// the next page; empty when iteration is complete.
+	NextCursor string
+
+	// HasMore (LIST) is true when more matching keys remain beyond this page.
+	HasMore bool
 }
 
 // TaskAssignment represents a task assignment from the gateway.
