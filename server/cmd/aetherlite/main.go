@@ -42,13 +42,16 @@ import (
 	auditsqlite "github.com/scitrera/aether/internal/storage/audit/sqlite"
 	regsqlite "github.com/scitrera/aether/internal/storage/registry/sqlite"
 	tasksqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
+	wfpg "github.com/scitrera/aether/internal/storage/workflow/postgres"
 	wfsqlite "github.com/scitrera/aether/internal/storage/workflow/sqlite"
 	"github.com/scitrera/aether/internal/tracing"
 	versionpkg "github.com/scitrera/aether/internal/version"
 	"github.com/scitrera/aether/internal/workflow"
+	wfmigrations "github.com/scitrera/aether/internal/workflow/migrations"
 	sqliteregistrymigrations "github.com/scitrera/aether/migrations/sqlite_registry"
 	pb_health "google.golang.org/grpc/health/grpc_health_v1"
 
+	_ "github.com/lib/pq" // postgres driver for the optional shared workflow store
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/scitrera/aether/pkg/crypto"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -876,20 +879,16 @@ func main() {
 		// bufconn in-process listener — no TLS, no localhost dial, no
 		// reconnect-loop trap.
 		wfCfg := buildWorkflowConfig(inProcConn)
-		// Open workflow.db with the bare "sqlite" driver and construct the
-		// native sqlite store (Stage 2). wfsqlite.New runs migrations from
-		// migrations/sqlite_workflow/ internally. We then inject the store
-		// into the workflow server via NewServerWithStore so the engine
-		// skips its legacy sqlite_compat path entirely (§15.4).
-		wfDB, err := openSQLiteNative(ctx, wfCfg.SQLite.Path)
+		// Select the workflow store backend: a shared PostgreSQL when the
+		// workflow config supplies a postgres host (the recommended path for
+		// multi-node aetherlite-cluster, so the elected leader and its
+		// successors share durable state), otherwise the local native SQLite
+		// store (the zero-dependency single-node default).
+		wfStore, closeWFStore, err := buildEmbeddedWorkflowStore(ctx, wfCfg)
 		if err != nil {
-			logging.Logger.Fatal().Err(err).Str("path", wfCfg.SQLite.Path).Msg("failed to open workflow SQLite database")
+			logging.Logger.Fatal().Err(err).Msg("failed to construct workflow store")
 		}
-		defer wfDB.Close()
-		wfStore, err := wfsqlite.New(wfDB)
-		if err != nil {
-			logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite workflow store")
-		}
+		defer closeWFStore()
 		wfSrv, err := workflow.NewServer(wfCfg, wfStore)
 		if err != nil {
 			logging.Logger.Fatal().Err(err).Msg("failed to create workflow server")
@@ -1085,6 +1084,53 @@ func buildWorkflowConfig(inProcConn *grpc.ClientConn) *workflow.Config {
 // impls — they own their own SQL and don't need dbcompat translation.
 // (Stage 3 retired the sibling openSQLite/sqlite_compat path along with
 // aether.db itself; pkg/dbcompat is no longer imported by aetherlite.)
+// buildEmbeddedWorkflowStore selects the workflow store backend for the embedded
+// engine. When the workflow config supplies a PostgreSQL host it opens a shared
+// Postgres (running the workflow PG migrations), which lets multi-node
+// aetherlite-cluster deployments share durable workflow state across leader
+// failover. Otherwise it opens the local native SQLite store — the
+// zero-dependency single-node default. Returns the store plus a close func.
+func buildEmbeddedWorkflowStore(ctx context.Context, wfCfg *workflow.Config) (workflow.WorkflowStore, func(), error) {
+	if wfCfg.Postgres.Host != "" {
+		db, err := sql.Open("postgres", wfCfg.Postgres.DSN())
+		if err != nil {
+			return nil, nil, fmt.Errorf("open workflow postgres: %w", err)
+		}
+		if wfCfg.Postgres.MaxConnections > 0 {
+			db.SetMaxOpenConns(wfCfg.Postgres.MaxConnections)
+		}
+		if wfCfg.Postgres.MaxIdleConnections > 0 {
+			db.SetMaxIdleConns(wfCfg.Postgres.MaxIdleConnections)
+		}
+		if err := db.PingContext(ctx); err != nil {
+			_ = db.Close()
+			return nil, nil, fmt.Errorf("ping workflow postgres: %w", err)
+		}
+		if err := wfmigrations.Run(ctx, db); err != nil {
+			_ = db.Close()
+			return nil, nil, fmt.Errorf("run workflow postgres migrations: %w", err)
+		}
+		logging.Logger.Info().
+			Str("host", wfCfg.Postgres.Host).
+			Str("database", wfCfg.Postgres.Database).
+			Msg("embedded workflow engine using shared PostgreSQL store")
+		return wfpg.New(db, false), func() { _ = db.Close() }, nil
+	}
+
+	// Default: local native SQLite. wfsqlite.New runs its own migration set.
+	db, err := openSQLiteNative(ctx, wfCfg.SQLite.Path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open workflow sqlite %s: %w", wfCfg.SQLite.Path, err)
+	}
+	store, err := wfsqlite.New(db)
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("construct native sqlite workflow store: %w", err)
+	}
+	logging.Logger.Info().Str("path", wfCfg.SQLite.Path).Msg("embedded workflow engine using local SQLite store")
+	return store, func() { _ = db.Close() }, nil
+}
+
 func openSQLiteNative(ctx context.Context, path string) (*sql.DB, error) {
 	return openSQLiteWithDriver(ctx, path, "sqlite")
 }
