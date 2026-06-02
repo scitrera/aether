@@ -28,12 +28,25 @@ func NewTemplateEngine(maxCacheSize int) *TemplateEngine {
 }
 
 // TransformResult is the parsed output of a template transformation.
+//
+// The first block (agent/tool_name/arguments) drives the default "message"
+// (tool-call) dispatch. The create_task block lets an event-triggered rule
+// dispatch an Aether POOL task instead — e.g. fire a memorylayer worker task
+// in response to an ingest-complete event. When Type == "create_task" the
+// executor routes to dispatchCreateTask using task_type/target_implementation/
+// payload; otherwise these fields are zero and the legacy message path runs.
 type TransformResult struct {
 	Agent     string            `yaml:"agent" json:"agent"`
 	ToolName  string            `yaml:"tool_name" json:"tool_name"`
 	Arguments map[string]any    `yaml:"arguments" json:"arguments"`
 	Workspace string            `yaml:"workspace" json:"workspace"`
 	Metadata  map[string]string `yaml:"metadata" json:"metadata"`
+	// create_task dispatch (event -> POOL task). Empty Type preserves the
+	// historical "message" behavior, so existing rules are unaffected.
+	Type                 string `yaml:"type" json:"type"`
+	TaskType             string `yaml:"task_type" json:"task_type"`
+	TargetImplementation string `yaml:"target_implementation" json:"target_implementation"`
+	Payload              any    `yaml:"payload" json:"payload"`
 }
 
 // Transform renders a Go text/template with the given data, then parses

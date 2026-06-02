@@ -180,13 +180,21 @@ func (e *Executor) DispatchActionToTopic(topic string, action *ActionDef) error 
 }
 
 // DispatchTransformResult sends the result of a template transformation.
+//
+// Carries the create_task fields through so an event-triggered rule can spawn
+// an Aether POOL task (Type == "create_task"). When Type is empty the action
+// falls through to the historical "message" (tool-call) dispatch.
 func (e *Executor) DispatchTransformResult(result *TransformResult) error {
 	action := &ActionDef{
-		Agent:     result.Agent,
-		ToolName:  result.ToolName,
-		Arguments: result.Arguments,
-		Workspace: result.Workspace,
-		Metadata:  result.Metadata,
+		Type:                 result.Type,
+		Agent:                result.Agent,
+		ToolName:             result.ToolName,
+		Arguments:            result.Arguments,
+		Workspace:            result.Workspace,
+		Metadata:             result.Metadata,
+		TaskType:             result.TaskType,
+		TargetImplementation: result.TargetImplementation,
+		Payload:              result.Payload,
 	}
 	return e.DispatchAction(action)
 }
