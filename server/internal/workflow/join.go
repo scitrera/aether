@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -267,6 +268,82 @@ func (je *JoinEngine) fire(ctx context.Context, spec *JoinSpec, row *Join, base 
 	return je.store.MarkJoinTerminal(ctx, row.ID, JoinStatusFired, time.Now().Add(je.retentionLinger(spec)))
 }
 
+// HandleDeadline is invoked by the scheduler sweep for an open join past its
+// deadline. Policy on_partial_failure: "abort" marks timed_out without firing;
+// "proceed"/"proceed_degraded"/"" fire the persisted on_timeout action (falling
+// back to on_complete) exactly once via the fire-marker gate, then mark timed_out.
+func (je *JoinEngine) HandleDeadline(ctx context.Context, j *Join) error {
+	if j.Status != JoinStatusOpen {
+		return nil
+	}
+
+	base := joinBaseKey(j.JoinName, j.Workspace, j.CorrelationKey)
+	linger := joinDefaultLinger
+	term := time.Now().Add(linger)
+
+	// Abort policy: the barrier failed — go terminal without firing any action.
+	if j.OnPartialFailure == "abort" {
+		if err := je.store.MarkJoinTerminal(ctx, j.ID, JoinStatusTimedOut, term); err != nil {
+			return fmt.Errorf("join %q: mark timed_out: %w", j.JoinName, err)
+		}
+		log.Info().Str("join", j.JoinName).Str("corr", j.CorrelationKey).Msg("join: deadline reached, abort policy — timed out without firing")
+		return nil
+	}
+
+	// Proceed (possibly degraded): fire the timeout action, falling back to the
+	// completion action when no dedicated timeout action was persisted.
+	actionJSON := j.OnTimeout
+	if actionJSON == "" {
+		actionJSON = j.OnComplete
+	}
+	if actionJSON == "" {
+		// Nothing to fire — just go terminal.
+		if err := je.store.MarkJoinTerminal(ctx, j.ID, JoinStatusTimedOut, term); err != nil {
+			return fmt.Errorf("join %q: mark timed_out: %w", j.JoinName, err)
+		}
+		log.Info().Str("join", j.JoinName).Str("corr", j.CorrelationKey).Msg("join: deadline reached, no timeout action — timed out")
+		return nil
+	}
+
+	var action ActionDef
+	if err := json.Unmarshal([]byte(actionJSON), &action); err != nil {
+		return fmt.Errorf("join %q: unmarshal timeout action: %w", j.JoinName, err)
+	}
+
+	// Fire-marker gate: bounded TTL prevents a double-fire against a late
+	// completion arrival that might also reach the barrier.
+	won, err := je.locker.TryAcquire(ctx, base+"/fired", "1", joinDefaultLinger+time.Hour)
+	if err != nil {
+		return fmt.Errorf("join %q: deadline fire gate: %w", j.JoinName, err)
+	}
+	if won {
+		log.Info().Str("join", j.JoinName).Str("corr", j.CorrelationKey).Msg("join: deadline reached, firing timeout action")
+		if aerr := je.runAction(ctx, &JoinSpec{Name: j.JoinName}, &action); aerr != nil {
+			return fmt.Errorf("join %q: run timeout action: %w", j.JoinName, aerr)
+		}
+	}
+
+	// The instance is terminal regardless of who won the fire-marker.
+	if err := je.store.MarkJoinTerminal(ctx, j.ID, JoinStatusTimedOut, term); err != nil {
+		return fmt.Errorf("join %q: mark timed_out: %w", j.JoinName, err)
+	}
+	return nil
+}
+
+// marshalAction serializes an ActionDef to JSON text for durable persistence on
+// the join row. nil yields "". A marshal error logs a warning and yields "".
+func marshalAction(action *ActionDef) string {
+	if action == nil {
+		return ""
+	}
+	b, err := json.Marshal(action)
+	if err != nil {
+		log.Warn().Err(err).Msg("join: marshal action failed (non-fatal); action will not be persisted")
+		return ""
+	}
+	return string(b)
+}
+
 // runAction dispatches an OnComplete/OnTimeout action: a create_task or
 // emit_event. nil is a no-op.
 func (je *JoinEngine) runAction(ctx context.Context, spec *JoinSpec, action *ActionDef) error {
@@ -282,11 +359,14 @@ func (je *JoinEngine) runAction(ctx context.Context, spec *JoinSpec, action *Act
 // ensureRow inserts the durable mirror row if absent.
 func (je *JoinEngine) ensureRow(ctx context.Context, spec *JoinSpec, mode, workspace, corr string, expected int64, expectedKnown bool) (*Join, error) {
 	j := &Join{
-		JoinName:       spec.Name,
-		Workspace:      workspace,
-		CorrelationKey: corr,
-		Mode:           mode,
-		Status:         JoinStatusOpen,
+		JoinName:         spec.Name,
+		Workspace:        workspace,
+		CorrelationKey:   corr,
+		Mode:             mode,
+		Status:           JoinStatusOpen,
+		OnComplete:       marshalAction(spec.OnComplete),
+		OnTimeout:        marshalAction(spec.OnTimeout),
+		OnPartialFailure: spec.OnPartialFailure,
 	}
 	if expectedKnown {
 		j.ExpectedCount = &expected

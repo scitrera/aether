@@ -631,7 +631,13 @@ type Join struct {
 	ArrivedCount   int64
 	Dirty          bool   // coalesce re-arm flag
 	Status         string // "open" | "fired" | "timed_out" | "cancelled"
-	DeadlineAt     *time.Time
+	// Persisted firing actions so the deadline sweep (which has no live event to
+	// re-render from) can fire on_timeout/on_complete. OnComplete/OnTimeout hold
+	// the JSON-serialized ActionDef; OnPartialFailure holds the policy string.
+	OnComplete       string
+	OnTimeout        string
+	OnPartialFailure string
+	DeadlineAt       *time.Time
 	LingerUntil    *time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -648,17 +654,28 @@ const (
 	JoinStatusCancelled = "cancelled"
 )
 
+// nullableText stores an empty string as SQL NULL so optional TEXT columns
+// (on_complete/on_timeout/on_partial_failure) stay NULL rather than '' when unset.
+func nullableText(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 func (s *Store) EnsureJoin(ctx context.Context, j *Join) (*Join, error) {
 	query := `
 		INSERT INTO workflow_joins (join_name, workspace, correlation_key, mode,
 		                            expected_count, arrived_count, dirty, status,
+		                            on_complete, on_timeout, on_partial_failure,
 		                            deadline_at, linger_until)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (join_name, workspace, correlation_key) DO NOTHING
 	`
 	_, err := s.db.ExecContext(ctx, query,
 		j.JoinName, j.Workspace, j.CorrelationKey, j.Mode,
 		j.ExpectedCount, j.ArrivedCount, j.Dirty, j.Status,
+		nullableText(j.OnComplete), nullableText(j.OnTimeout), nullableText(j.OnPartialFailure),
 		j.DeadlineAt, j.LingerUntil,
 	)
 	if err != nil {
@@ -670,16 +687,17 @@ func (s *Store) EnsureJoin(ctx context.Context, j *Join) (*Join, error) {
 func (s *Store) GetJoin(ctx context.Context, joinName, workspace, correlationKey string) (*Join, error) {
 	query := `
 		SELECT id, join_name, workspace, correlation_key, mode, expected_count,
-		       arrived_count, dirty, status, deadline_at, linger_until,
-		       created_at, updated_at
+		       arrived_count, dirty, status, on_complete, on_timeout, on_partial_failure,
+		       deadline_at, linger_until, created_at, updated_at
 		FROM workflow_joins
 		WHERE join_name = $1 AND workspace = $2 AND correlation_key = $3
 	`
 	var j Join
+	var onComplete, onTimeout, onPartialFailure sql.NullString
 	err := s.db.QueryRowContext(ctx, query, joinName, workspace, correlationKey).Scan(
 		&j.ID, &j.JoinName, &j.Workspace, &j.CorrelationKey, &j.Mode, &j.ExpectedCount,
-		&j.ArrivedCount, &j.Dirty, &j.Status, &j.DeadlineAt, &j.LingerUntil,
-		&j.CreatedAt, &j.UpdatedAt,
+		&j.ArrivedCount, &j.Dirty, &j.Status, &onComplete, &onTimeout, &onPartialFailure,
+		&j.DeadlineAt, &j.LingerUntil, &j.CreatedAt, &j.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -687,6 +705,9 @@ func (s *Store) GetJoin(ctx context.Context, joinName, workspace, correlationKey
 	if err != nil {
 		return nil, fmt.Errorf("get join: %w", err)
 	}
+	j.OnComplete = onComplete.String
+	j.OnTimeout = onTimeout.String
+	j.OnPartialFailure = onPartialFailure.String
 	return &j, nil
 }
 
@@ -717,8 +738,8 @@ func (s *Store) MarkJoinTerminal(ctx context.Context, id int64, status string, l
 func (s *Store) GetDueJoinDeadlines(ctx context.Context, now time.Time) ([]Join, error) {
 	query := `
 		SELECT id, join_name, workspace, correlation_key, mode, expected_count,
-		       arrived_count, dirty, status, deadline_at, linger_until,
-		       created_at, updated_at
+		       arrived_count, dirty, status, on_complete, on_timeout, on_partial_failure,
+		       deadline_at, linger_until, created_at, updated_at
 		FROM workflow_joins
 		WHERE status = 'open' AND deadline_at IS NOT NULL AND deadline_at <= $1
 		ORDER BY deadline_at ASC
@@ -735,13 +756,17 @@ func (s *Store) GetDueJoinDeadlines(ctx context.Context, now time.Time) ([]Join,
 	var joins []Join
 	for rows.Next() {
 		var j Join
+		var onComplete, onTimeout, onPartialFailure sql.NullString
 		if err := rows.Scan(
 			&j.ID, &j.JoinName, &j.Workspace, &j.CorrelationKey, &j.Mode, &j.ExpectedCount,
-			&j.ArrivedCount, &j.Dirty, &j.Status, &j.DeadlineAt, &j.LingerUntil,
-			&j.CreatedAt, &j.UpdatedAt,
+			&j.ArrivedCount, &j.Dirty, &j.Status, &onComplete, &onTimeout, &onPartialFailure,
+			&j.DeadlineAt, &j.LingerUntil, &j.CreatedAt, &j.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan join: %w", err)
 		}
+		j.OnComplete = onComplete.String
+		j.OnTimeout = onTimeout.String
+		j.OnPartialFailure = onPartialFailure.String
 		joins = append(joins, j)
 	}
 	return joins, rows.Err()
@@ -750,8 +775,8 @@ func (s *Store) GetDueJoinDeadlines(ctx context.Context, now time.Time) ([]Join,
 func (s *Store) ListJoins(ctx context.Context, workspace string) ([]Join, error) {
 	query := `
 		SELECT id, join_name, workspace, correlation_key, mode, expected_count,
-		       arrived_count, dirty, status, deadline_at, linger_until,
-		       created_at, updated_at
+		       arrived_count, dirty, status, on_complete, on_timeout, on_partial_failure,
+		       deadline_at, linger_until, created_at, updated_at
 		FROM workflow_joins
 	`
 	var rows *sql.Rows
@@ -771,13 +796,17 @@ func (s *Store) ListJoins(ctx context.Context, workspace string) ([]Join, error)
 	var joins []Join
 	for rows.Next() {
 		var j Join
+		var onComplete, onTimeout, onPartialFailure sql.NullString
 		if err := rows.Scan(
 			&j.ID, &j.JoinName, &j.Workspace, &j.CorrelationKey, &j.Mode, &j.ExpectedCount,
-			&j.ArrivedCount, &j.Dirty, &j.Status, &j.DeadlineAt, &j.LingerUntil,
-			&j.CreatedAt, &j.UpdatedAt,
+			&j.ArrivedCount, &j.Dirty, &j.Status, &onComplete, &onTimeout, &onPartialFailure,
+			&j.DeadlineAt, &j.LingerUntil, &j.CreatedAt, &j.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan join: %w", err)
 		}
+		j.OnComplete = onComplete.String
+		j.OnTimeout = onTimeout.String
+		j.OnPartialFailure = onPartialFailure.String
 		joins = append(joins, j)
 	}
 	return joins, rows.Err()

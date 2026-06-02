@@ -819,13 +819,15 @@ func (s *Store) EnsureJoin(ctx context.Context, j *Join) (*Join, error) {
 	query := `
 		INSERT INTO workflow_joins (join_name, workspace, correlation_key, mode,
 		                            expected_count, arrived_count, dirty, status,
+		                            on_complete, on_timeout, on_partial_failure,
 		                            deadline_at, linger_until, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (join_name, workspace, correlation_key) DO NOTHING
 	`
 	_, err := s.db.ExecContext(ctx, query,
 		j.JoinName, j.Workspace, j.CorrelationKey, j.Mode,
 		j.ExpectedCount, j.ArrivedCount, boolToInt(j.Dirty), j.Status,
+		nullableText(j.OnComplete), nullableText(j.OnTimeout), nullableText(j.OnPartialFailure),
 		formatTimePtr(j.DeadlineAt), formatTimePtr(j.LingerUntil), now, now,
 	)
 	if err != nil {
@@ -837,8 +839,8 @@ func (s *Store) EnsureJoin(ctx context.Context, j *Join) (*Join, error) {
 func (s *Store) GetJoin(ctx context.Context, joinName, workspace, correlationKey string) (*Join, error) {
 	query := `
 		SELECT id, join_name, workspace, correlation_key, mode, expected_count,
-		       arrived_count, dirty, status, deadline_at, linger_until,
-		       created_at, updated_at
+		       arrived_count, dirty, status, on_complete, on_timeout, on_partial_failure,
+		       deadline_at, linger_until, created_at, updated_at
 		FROM workflow_joins
 		WHERE join_name = ? AND workspace = ? AND correlation_key = ?
 	`
@@ -887,8 +889,8 @@ func (s *Store) GetDueJoinDeadlines(ctx context.Context, now time.Time) ([]Join,
 	// is the only consumer of due deadlines in lite mode.
 	query := `
 		SELECT id, join_name, workspace, correlation_key, mode, expected_count,
-		       arrived_count, dirty, status, deadline_at, linger_until,
-		       created_at, updated_at
+		       arrived_count, dirty, status, on_complete, on_timeout, on_partial_failure,
+		       deadline_at, linger_until, created_at, updated_at
 		FROM workflow_joins
 		WHERE status = 'open' AND deadline_at IS NOT NULL AND deadline_at <= ?
 		ORDER BY deadline_at ASC
@@ -904,8 +906,8 @@ func (s *Store) GetDueJoinDeadlines(ctx context.Context, now time.Time) ([]Join,
 func (s *Store) ListJoins(ctx context.Context, workspace string) ([]Join, error) {
 	query := `
 		SELECT id, join_name, workspace, correlation_key, mode, expected_count,
-		       arrived_count, dirty, status, deadline_at, linger_until,
-		       created_at, updated_at
+		       arrived_count, dirty, status, on_complete, on_timeout, on_partial_failure,
+		       deadline_at, linger_until, created_at, updated_at
 		FROM workflow_joins
 	`
 	var rows *sql.Rows
@@ -933,16 +935,20 @@ func scanJoins(rows *sql.Rows) ([]Join, error) {
 		var j Join
 		var dirtyInt int
 		var expectedRaw sql.NullInt64
+		var onComplete, onTimeout, onPartialFailure sql.NullString
 		var deadlineAtRaw, lingerUntilRaw sql.NullString
 		var createdAtStr, updatedAtStr string
 		if err := rows.Scan(
 			&j.ID, &j.JoinName, &j.Workspace, &j.CorrelationKey, &j.Mode, &expectedRaw,
-			&j.ArrivedCount, &dirtyInt, &j.Status, &deadlineAtRaw, &lingerUntilRaw,
-			&createdAtStr, &updatedAtStr,
+			&j.ArrivedCount, &dirtyInt, &j.Status, &onComplete, &onTimeout, &onPartialFailure,
+			&deadlineAtRaw, &lingerUntilRaw, &createdAtStr, &updatedAtStr,
 		); err != nil {
 			return nil, fmt.Errorf("scan join: %w", err)
 		}
 		j.Dirty = dirtyInt != 0
+		j.OnComplete = onComplete.String
+		j.OnTimeout = onTimeout.String
+		j.OnPartialFailure = onPartialFailure.String
 		if expectedRaw.Valid {
 			v := expectedRaw.Int64
 			j.ExpectedCount = &v
@@ -1363,6 +1369,15 @@ func isDuplicateColumnError(err error) bool {
 // =============================================================================
 // Helpers
 // =============================================================================
+
+// nullableText stores an empty string as SQL NULL so optional TEXT columns
+// (on_complete/on_timeout/on_partial_failure) stay NULL rather than '' when unset.
+func nullableText(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
 
 // boolToInt converts a Go bool to a SQLite INTEGER (0/1).
 func boolToInt(b bool) int {

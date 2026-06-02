@@ -294,7 +294,7 @@ func (s *Server) initComponents() {
 
 	s.router = NewRouter(s.store, exprEng, tmplEng, s.executor, joinEng, s.cfg.Workflow.GetRuleCacheTTL())
 	s.dagEng = NewDAGEngine(s.store, exprEng, tmplEng, s.executor, &s.cfg.Workflow)
-	s.scheduler = NewScheduler(s.store, s.executor, s.dagEng, s.leader, s.cfg.Workflow.GetSchedulerPollInterval())
+	s.scheduler = NewScheduler(s.store, s.executor, s.dagEng, s.leader, joinEng, s.cfg.Workflow.GetSchedulerPollInterval())
 	s.stateMach = NewStateMachineEngine(s.store, s.executor)
 }
 

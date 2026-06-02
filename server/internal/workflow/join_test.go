@@ -344,3 +344,96 @@ func TestJoinCoalesce_FirstFiresRestMarkDirty(t *testing.T) {
 		t.Fatalf("coalesce: expected dirty=true after coalesced arrivals, got row=%+v", row)
 	}
 }
+
+// seedJoin inserts an open join row via EnsureJoin and returns it (with its
+// assigned ID) so deadline tests can drive HandleDeadline against a real row.
+func seedJoin(t *testing.T, store *fakeJoinStore, j *Join) *Join {
+	t.Helper()
+	row, err := store.EnsureJoin(context.Background(), j)
+	if err != nil {
+		t.Fatalf("seed join: %v", err)
+	}
+	return row
+}
+
+func mustMarshalAction(t *testing.T, a *ActionDef) string {
+	t.Helper()
+	s := marshalAction(a)
+	if s == "" {
+		t.Fatalf("marshalAction returned empty for %+v", a)
+	}
+	return s
+}
+
+func TestJoinDeadline_FiresOnTimeoutAction(t *testing.T) {
+	je, disp, store := newTestJoinEngine()
+	ctx := context.Background()
+	row := seedJoin(t, store, &Join{
+		JoinName:       "barrier",
+		Workspace:      "ws",
+		CorrelationKey: "A",
+		Mode:           JoinModeCount,
+		Status:         JoinStatusOpen,
+		OnTimeout:      mustMarshalAction(t, &ActionDef{Type: "create_task", TaskType: "kb-degraded"}),
+	})
+
+	if err := je.HandleDeadline(ctx, row); err != nil {
+		t.Fatalf("HandleDeadline: %v", err)
+	}
+	if disp.count() != 1 {
+		t.Fatalf("on_timeout firing: dispatched=%d, want 1", disp.count())
+	}
+	got, _ := store.GetJoin(ctx, "barrier", "ws", "A")
+	if got == nil || got.Status != JoinStatusTimedOut {
+		t.Fatalf("expected status=%q, got row=%+v", JoinStatusTimedOut, got)
+	}
+}
+
+func TestJoinDeadline_AbortPolicySkipsFiring(t *testing.T) {
+	je, disp, store := newTestJoinEngine()
+	ctx := context.Background()
+	row := seedJoin(t, store, &Join{
+		JoinName:         "barrier",
+		Workspace:        "ws",
+		CorrelationKey:   "A",
+		Mode:             JoinModeCount,
+		Status:           JoinStatusOpen,
+		OnTimeout:        mustMarshalAction(t, &ActionDef{Type: "create_task", TaskType: "kb-degraded"}),
+		OnPartialFailure: "abort",
+	})
+
+	if err := je.HandleDeadline(ctx, row); err != nil {
+		t.Fatalf("HandleDeadline: %v", err)
+	}
+	if disp.count() != 0 {
+		t.Fatalf("abort policy: dispatched=%d, want 0", disp.count())
+	}
+	got, _ := store.GetJoin(ctx, "barrier", "ws", "A")
+	if got == nil || got.Status != JoinStatusTimedOut {
+		t.Fatalf("expected status=%q, got row=%+v", JoinStatusTimedOut, got)
+	}
+}
+
+func TestJoinDeadline_FallbackToOnComplete(t *testing.T) {
+	je, disp, store := newTestJoinEngine()
+	ctx := context.Background()
+	row := seedJoin(t, store, &Join{
+		JoinName:       "barrier",
+		Workspace:      "ws",
+		CorrelationKey: "A",
+		Mode:           JoinModeCount,
+		Status:         JoinStatusOpen,
+		OnComplete:     mustMarshalAction(t, &ActionDef{Type: "create_task", TaskType: "kb"}),
+	})
+
+	if err := je.HandleDeadline(ctx, row); err != nil {
+		t.Fatalf("HandleDeadline: %v", err)
+	}
+	if disp.count() != 1 {
+		t.Fatalf("on_complete fallback: dispatched=%d, want 1", disp.count())
+	}
+	got, _ := store.GetJoin(ctx, "barrier", "ws", "A")
+	if got == nil || got.Status != JoinStatusTimedOut {
+		t.Fatalf("expected status=%q, got row=%+v", JoinStatusTimedOut, got)
+	}
+}
