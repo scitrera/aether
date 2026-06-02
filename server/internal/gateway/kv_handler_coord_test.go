@@ -213,3 +213,62 @@ func TestKVHandler_UserIdentity_DeniedForSetNX(t *testing.T) {
 		t.Fatal("expected permission denied for User principal on SET_NX")
 	}
 }
+
+// TestKVHandler_SetAdd_And_SetCard verifies SET_ADD reports applied + the
+// running cardinality, dedupes a repeat member, and that SET_CARD reads back
+// the set cardinality without mutating it.
+func TestKVHandler_SetAdd_And_SetCard(t *testing.T) {
+	store := newMockKVReadWriter()
+	h := newTestKVHandler(store)
+	id := uuid.New()
+
+	// First member: newly added, cardinality 1.
+	add1 := &pb.KVOperation{Op: pb.KVOperation_SET_ADD, Scope: pb.KVOperation_GLOBAL, Key: "members", Value: []byte("a"), Workspace: "ws1"}
+	cb1, msgs1 := captureResponses()
+	if err := h.HandleKVOperation(context.Background(), agentIdentity, id, nil, add1, cb1); err != nil {
+		t.Fatalf("SET_ADD a: %v", err)
+	}
+	if r := lastKV(t, *msgs1); !r.Success || !r.Applied || r.CounterValue != 1 {
+		t.Fatalf("SET_ADD a success=%v applied=%v card=%d, want true/true/1", r.Success, r.Applied, r.CounterValue)
+	}
+
+	// Second distinct member: newly added, cardinality 2.
+	add2 := &pb.KVOperation{Op: pb.KVOperation_SET_ADD, Scope: pb.KVOperation_GLOBAL, Key: "members", Value: []byte("b"), Workspace: "ws1"}
+	cb2, msgs2 := captureResponses()
+	if err := h.HandleKVOperation(context.Background(), agentIdentity, id, nil, add2, cb2); err != nil {
+		t.Fatalf("SET_ADD b: %v", err)
+	}
+	if r := lastKV(t, *msgs2); !r.Success || !r.Applied || r.CounterValue != 2 {
+		t.Fatalf("SET_ADD b success=%v applied=%v card=%d, want true/true/2", r.Success, r.Applied, r.CounterValue)
+	}
+
+	// Repeat member: not newly added, cardinality unchanged at 2.
+	add1Again := &pb.KVOperation{Op: pb.KVOperation_SET_ADD, Scope: pb.KVOperation_GLOBAL, Key: "members", Value: []byte("a"), Workspace: "ws1"}
+	cb3, msgs3 := captureResponses()
+	if err := h.HandleKVOperation(context.Background(), agentIdentity, id, nil, add1Again, cb3); err != nil {
+		t.Fatalf("SET_ADD a (repeat): %v", err)
+	}
+	if r := lastKV(t, *msgs3); !r.Success || r.Applied || r.CounterValue != 2 {
+		t.Fatalf("SET_ADD a repeat success=%v applied=%v card=%d, want true/false/2", r.Success, r.Applied, r.CounterValue)
+	}
+
+	// SET_CARD reads the cardinality back (read-only, no Applied semantics).
+	card := &pb.KVOperation{Op: pb.KVOperation_SET_CARD, Scope: pb.KVOperation_GLOBAL, Key: "members", Workspace: "ws1"}
+	cb4, msgs4 := captureResponses()
+	if err := h.HandleKVOperation(context.Background(), agentIdentity, id, nil, card, cb4); err != nil {
+		t.Fatalf("SET_CARD: %v", err)
+	}
+	if r := lastKV(t, *msgs4); !r.Success || r.CounterValue != 2 {
+		t.Fatalf("SET_CARD success=%v card=%d, want true/2", r.Success, r.CounterValue)
+	}
+
+	// SET_CARD on an absent key returns 0.
+	cardAbsent := &pb.KVOperation{Op: pb.KVOperation_SET_CARD, Scope: pb.KVOperation_GLOBAL, Key: "missing", Workspace: "ws1"}
+	cb5, msgs5 := captureResponses()
+	if err := h.HandleKVOperation(context.Background(), agentIdentity, id, nil, cardAbsent, cb5); err != nil {
+		t.Fatalf("SET_CARD absent: %v", err)
+	}
+	if r := lastKV(t, *msgs5); !r.Success || r.CounterValue != 0 {
+		t.Fatalf("SET_CARD absent success=%v card=%d, want true/0", r.Success, r.CounterValue)
+	}
+}

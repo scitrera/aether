@@ -37,6 +37,13 @@ type JoinSpec struct {
 	// DedupKey: expr-lang yielding this arrival's dedup id. Empty disables dedup.
 	DedupKey string `yaml:"dedup_key" json:"dedup_key"`
 
+	// ExpectedSet (set mode): expr-lang yielding a list of member ids; the join
+	// completes when every distinct member has reported (cardinality == len).
+	ExpectedSet string `yaml:"expected_set" json:"expected_set"`
+	// MemberKey (set mode): expr-lang yielding THIS arrival's member id. The set
+	// dedups members inherently, so set mode needs no separate dedup_key.
+	MemberKey string `yaml:"member_key" json:"member_key"`
+
 	// Window (coalesce mode): debounce/cooldown duration, e.g. "5s". Within the
 	// window after a firing, further arrivals coalesce (set dirty) instead of
 	// firing. Empty/0 ⇒ no debounce (each arrival fires).
@@ -82,6 +89,14 @@ type actionDispatcher interface {
 	EmitEvent(action *ActionDef) error
 }
 
+// joinSet is the atomic set primitive backing set-mode membership: SetAdd
+// returns whether the member was newly added and the cardinality after the add.
+// Production adapts *aether.KV (SetAddSync) to it; tests inject a fake. nil when
+// set mode is unavailable (e.g. a backend without the gRPC set ops wired).
+type joinSet interface {
+	SetAdd(ctx context.Context, key, member string, ttl time.Duration) (added bool, cardinality int64, err error)
+}
+
 // JoinEngine drives fan-in joins. It depends on abstract coord primitives
 // (Counter for the atomic arrival counter, Locker for SetNX-style dedup and
 // fire-marker gates) so it is unit-testable without a live gateway; production
@@ -93,19 +108,23 @@ type JoinEngine struct {
 	dispatcher actionDispatcher
 	counter    coord.Counter
 	locker     coord.Locker
+	set        joinSet
 
 	defaultWorkspace string
 }
 
-// NewJoinEngine constructs a JoinEngine. counter/locker must be bound to a
+// NewJoinEngine constructs a JoinEngine. counter/locker/set must be bound to a
 // shared scope (typically global) so all replicas rendezvous on the same keys.
-func NewJoinEngine(store joinStore, expr *ExprEngine, dispatcher actionDispatcher, counter coord.Counter, locker coord.Locker, defaultWorkspace string) *JoinEngine {
+// set may be nil if the deployment has not wired the gRPC set ops (set-mode
+// joins then return an error rather than silently mis-firing).
+func NewJoinEngine(store joinStore, expr *ExprEngine, dispatcher actionDispatcher, counter coord.Counter, locker coord.Locker, set joinSet, defaultWorkspace string) *JoinEngine {
 	return &JoinEngine{
 		store:            store,
 		expr:             expr,
 		dispatcher:       dispatcher,
 		counter:          counter,
 		locker:           locker,
+		set:              set,
 		defaultWorkspace: defaultWorkspace,
 	}
 }
@@ -172,7 +191,7 @@ func (je *JoinEngine) HandleArrival(ctx context.Context, spec *JoinSpec, env map
 	case JoinModeCount:
 		return je.handleCountArrival(ctx, spec, row, base, eventName, env, ttl)
 	case JoinModeSet:
-		return fmt.Errorf("join %q: set mode not yet supported (pending SetAdd gRPC exposure)", spec.Name)
+		return je.handleSetArrival(ctx, spec, row, base, env, ttl)
 	default:
 		return fmt.Errorf("join %q: unknown mode %q", spec.Name, mode)
 	}
@@ -342,6 +361,68 @@ func marshalAction(action *ActionDef) string {
 		return ""
 	}
 	return string(b)
+}
+
+// handleSetArrival implements the set barrier: each arrival adds its member id
+// to a KV set (which inherently dedups), and the join fires when the set's
+// cardinality reaches the expected_set size. The member whose add completes the
+// set is the unique firer (added && cardinality>=size), gated by the fire-marker.
+func (je *JoinEngine) handleSetArrival(ctx context.Context, spec *JoinSpec, row *Join, base string, env map[string]any, ttl time.Duration) error {
+	if je.set == nil {
+		return fmt.Errorf("join %q: set mode unavailable (set backend not wired)", spec.Name)
+	}
+	member, err := je.evalString(spec.MemberKey, env)
+	if err != nil {
+		return fmt.Errorf("join %q: member_key eval: %w", spec.Name, err)
+	}
+	if member == "" {
+		return fmt.Errorf("join %q: set mode requires a non-empty member_key", spec.Name)
+	}
+
+	added, card, err := je.set.SetAdd(ctx, base+"/members", member, ttl)
+	if err != nil {
+		return fmt.Errorf("join %q: set add: %w", spec.Name, err)
+	}
+	if err := je.store.UpdateJoinArrived(ctx, row.ID, card); err != nil {
+		log.Warn().Err(err).Str("join", spec.Name).Msg("join: mirror set cardinality failed (non-fatal)")
+	}
+
+	size, known, err := je.evalSetSize(spec, env)
+	if err != nil {
+		return fmt.Errorf("join %q: expected_set eval: %w", spec.Name, err)
+	}
+	if known && (row.ExpectedCount == nil || *row.ExpectedCount != size) {
+		if perr := je.store.SetJoinExpected(ctx, row.ID, size); perr != nil {
+			log.Warn().Err(perr).Str("join", spec.Name).Msg("join: mirror expected size failed (non-fatal)")
+		}
+	}
+
+	if added && known && card >= size {
+		return je.fire(ctx, spec, row, base, ttl, spec.OnComplete, false)
+	}
+	return nil
+}
+
+// evalSetSize evaluates expected_set to a list and returns its length. ok=false
+// when the expression is empty or yields nil (size not yet known).
+func (je *JoinEngine) evalSetSize(spec *JoinSpec, env map[string]any) (int64, bool, error) {
+	if spec.ExpectedSet == "" {
+		return 0, false, nil
+	}
+	v, err := je.expr.EvaluateAny(spec.ExpectedSet, env)
+	if err != nil {
+		return 0, false, err
+	}
+	switch list := v.(type) {
+	case nil:
+		return 0, false, nil
+	case []any:
+		return int64(len(list)), true, nil
+	case []string:
+		return int64(len(list)), true, nil
+	default:
+		return 0, false, fmt.Errorf("expected_set evaluated to %T, want a list", v)
+	}
 }
 
 // runAction dispatches an OnComplete/OnTimeout action: a create_task or

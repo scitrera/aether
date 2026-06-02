@@ -252,6 +252,12 @@ func (h *KVHandler) HandleKVOperation(
 	case pb.KVOperation_SET_NX:
 		opErr = h.handleSetNX(ctx, identity, authority, sessionID, scope, op.Key, string(op.Value), userID, workspace, ttl, requestID, sendResponse)
 
+	case pb.KVOperation_SET_ADD:
+		opErr = h.handleSetAdd(ctx, identity, authority, sessionID, scope, op.Key, op.Value, userID, workspace, ttl, requestID, sendResponse)
+
+	case pb.KVOperation_SET_CARD:
+		opErr = h.handleSetCard(ctx, identity, authority, sessionID, scope, op.Key, userID, workspace, requestID, sendResponse)
+
 	case pb.KVOperation_COMPARE_AND_SET:
 		opErr = h.handleCompareAndSet(ctx, identity, authority, sessionID, scope, op.Key, string(op.ExpectedValue), string(op.Value), userID, workspace, ttl, requestID, sendResponse)
 
@@ -1168,6 +1174,119 @@ func (h *KVHandler) handleSetNX(
 	sendResponse(&pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_Kv{
 			Kv: &pb.KVResponse{Success: true, Applied: applied, RequestId: requestID},
+		},
+	})
+	return nil
+}
+
+func (h *KVHandler) handleSetAdd(
+	ctx context.Context,
+	identity models.Identity,
+	authority *acl.ResolvedAuthority,
+	sessionID uuid.UUID,
+	scope kv.KVScope,
+	key string,
+	value []byte,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+	requestID string,
+	sendResponse func(*pb.DownstreamMessage),
+) error {
+	ctx, span := tracing.Tracer.Start(ctx, "aether.kv.set_add")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("aether.kv.scope", string(scope)),
+		attribute.String("aether.kv.key", key),
+		attribute.String("aether.kv.workspace", workspace),
+	)
+
+	if err := h.checkKeyPermission(ctx, identity, authority, scope, key, audit.OpKVSetAdd, workspace, sessionID, acl.AccessReadWrite); err != nil {
+		return err
+	}
+
+	added, cardinality, err := h.kvStore.SetAdd(ctx, identity, scope, key, string(value), userID, workspace, ttl)
+	h.auditConditionalWrite(ctx, identity, authority, sessionID, audit.OpKVSetAdd, scope, key, userID, workspace, added, ttl, err)
+	if err != nil {
+		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Str("key", key).Msg("KV SET_ADD failed")
+		return status.Errorf(codes.Internal, "failed to set_add key: %v", err)
+	}
+
+	sendResponse(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Kv{
+			Kv: &pb.KVResponse{Success: true, RequestId: requestID, CounterValue: cardinality, Applied: added},
+		},
+	})
+	return nil
+}
+
+func (h *KVHandler) handleSetCard(
+	ctx context.Context,
+	identity models.Identity,
+	authority *acl.ResolvedAuthority,
+	sessionID uuid.UUID,
+	scope kv.KVScope,
+	key string,
+	userID string,
+	workspace string,
+	requestID string,
+	sendResponse func(*pb.DownstreamMessage),
+) error {
+	ctx, span := tracing.Tracer.Start(ctx, "aether.kv.set_card")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("aether.kv.scope", string(scope)),
+		attribute.String("aether.kv.key", key),
+		attribute.String("aether.kv.workspace", workspace),
+	)
+
+	if err := h.checkKeyPermission(ctx, identity, authority, scope, key, audit.OpKVSetCard, workspace, sessionID, acl.AccessRead); err != nil {
+		return err
+	}
+
+	cardinality, err := h.kvStore.SetCard(ctx, identity, scope, key, userID, workspace)
+
+	// Audit logging (reads are audited, mirroring handleGet)
+	if h.auditLogger != nil {
+		success := err == nil
+		errorMsg := ""
+		if err != nil {
+			errorMsg = err.Error()
+		}
+		metadata := map[string]interface{}{
+			"scope":     string(scope),
+			"key":       key,
+			"workspace": workspace,
+		}
+		if userID != "" {
+			metadata["user_id"] = userID
+		}
+		if success {
+			metadata["cardinality"] = cardinality
+		}
+		event := audit.NewKVEvent(
+			string(identity.Type),
+			identity.String(),
+			audit.OpKVSetCard,
+			key,
+			workspace,
+			sessionID,
+			success,
+			errorMsg,
+			metadata,
+		)
+		applyResolvedAuthorityToAuditEvent(event, authority)
+		h.auditLogger.LogEvent(ctx, event)
+	}
+
+	if err != nil {
+		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Str("key", key).Msg("KV SET_CARD failed")
+		return status.Errorf(codes.Internal, "failed to set_card key: %v", err)
+	}
+
+	sendResponse(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Kv{
+			Kv: &pb.KVResponse{Success: true, RequestId: requestID, CounterValue: cardinality},
 		},
 	})
 	return nil

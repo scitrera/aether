@@ -193,18 +193,41 @@ func (d *fakeDispatcher) count() int {
 	return len(d.dispatched)
 }
 
+type fakeSet struct {
+	mu sync.Mutex
+	m  map[string]map[string]struct{}
+}
+
+func newFakeSet() *fakeSet { return &fakeSet{m: map[string]map[string]struct{}{}} }
+
+func (s *fakeSet) SetAdd(_ context.Context, key, member string, _ time.Duration) (bool, int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	set, ok := s.m[key]
+	if !ok {
+		set = map[string]struct{}{}
+		s.m[key] = set
+	}
+	_, exists := set[member]
+	if !exists {
+		set[member] = struct{}{}
+	}
+	return !exists, int64(len(set)), nil
+}
+
 // Compile-time conformance for the fakes.
 var (
 	_ coord.Counter    = (*fakeCounter)(nil)
 	_ coord.Locker     = (*fakeLocker)(nil)
 	_ joinStore        = (*fakeJoinStore)(nil)
 	_ actionDispatcher = (*fakeDispatcher)(nil)
+	_ joinSet          = (*fakeSet)(nil)
 )
 
 func newTestJoinEngine() (*JoinEngine, *fakeDispatcher, *fakeJoinStore) {
 	disp := &fakeDispatcher{}
 	store := newFakeJoinStore()
-	je := NewJoinEngine(store, NewExprEngine(64), disp, newFakeCounter(), newFakeLocker(), "default")
+	je := NewJoinEngine(store, NewExprEngine(64), disp, newFakeCounter(), newFakeLocker(), newFakeSet(), "default")
 	return je, disp, store
 }
 
@@ -216,6 +239,36 @@ func env(input map[string]any, ws string) map[string]any {
 }
 
 // ---- tests ----
+
+func TestJoinSet_FiresWhenAllMembersArrive(t *testing.T) {
+	je, disp, _ := newTestJoinEngine()
+	ctx := context.Background()
+	spec := &JoinSpec{
+		Name:           "setbar",
+		Mode:           JoinModeSet,
+		CorrelationKey: "input.batch",
+		ExpectedSet:    `["a","b","c"]`,
+		MemberKey:      "input.member",
+		OnComplete:     &ActionDef{Type: "create_task", TaskType: "kb"},
+	}
+	mk := func(m string) map[string]any { return map[string]any{"batch": "A", "member": m} }
+
+	_ = je.HandleArrival(ctx, spec, env(mk("a"), "ws"), "member", "ws")
+	_ = je.HandleArrival(ctx, spec, env(mk("b"), "ws"), "member", "ws")
+	_ = je.HandleArrival(ctx, spec, env(mk("a"), "ws"), "member", "ws") // duplicate member — no progress
+	if disp.count() != 0 {
+		t.Fatalf("after a,b,a(dup): dispatched=%d, want 0", disp.count())
+	}
+	_ = je.HandleArrival(ctx, spec, env(mk("c"), "ws"), "member", "ws") // completes {a,b,c}
+	if disp.count() != 1 {
+		t.Fatalf("after a,b,c: dispatched=%d, want 1", disp.count())
+	}
+	// A late extra member must not re-fire (fire-marker gate).
+	_ = je.HandleArrival(ctx, spec, env(mk("d"), "ws"), "member", "ws")
+	if disp.count() != 1 {
+		t.Fatalf("after extra member d: dispatched=%d, want 1 (exactly-once)", disp.count())
+	}
+}
 
 func TestJoinCount_FiresOnceWhenComplete(t *testing.T) {
 	je, disp, _ := newTestJoinEngine()

@@ -83,6 +83,8 @@ const (
 	OpKVIncrementIf      = "kv_increment_if"
 	OpKVDecrementIf      = "kv_decrement_if"
 	OpKVSetNX            = "kv_set_nx"
+	OpKVSetAdd           = "kv_set_add"
+	OpKVSetCard          = "kv_set_card"
 	OpKVCompareAndSet    = "kv_compare_and_set"
 	OpKVCompareAndDelete = "kv_compare_and_delete"
 

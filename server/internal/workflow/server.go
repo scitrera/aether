@@ -290,12 +290,24 @@ func (s *Server) initComponents() {
 	// coordination namespace) for its atomic arrival counter, dedup ledger, and
 	// fire-marker — portable across Redis / Badger / JetStream like the leader lock.
 	joinScope := aether.CoordScope{Scope: aether.KVScopeGlobal}
-	joinEng := NewJoinEngine(s.store, exprEng, s.executor, s.client.KV().Counter(joinScope), s.client.KV().Locker(joinScope), s.cfg.Aether.Workspace)
+	joinSetBackend := &kvJoinSet{kv: s.client.KV(), scope: joinScope}
+	joinEng := NewJoinEngine(s.store, exprEng, s.executor, s.client.KV().Counter(joinScope), s.client.KV().Locker(joinScope), joinSetBackend, s.cfg.Aether.Workspace)
 
 	s.router = NewRouter(s.store, exprEng, tmplEng, s.executor, joinEng, s.cfg.Workflow.GetRuleCacheTTL())
 	s.dagEng = NewDAGEngine(s.store, exprEng, tmplEng, s.executor, &s.cfg.Workflow)
 	s.scheduler = NewScheduler(s.store, s.executor, s.dagEng, s.leader, joinEng, s.cfg.Workflow.GetSchedulerPollInterval())
 	s.stateMach = NewStateMachineEngine(s.store, s.executor)
+}
+
+// kvJoinSet adapts the WorkflowEngine client's KV to the join engine's joinSet
+// interface, issuing the gRPC SetAdd primitive on the shared coordination scope.
+type kvJoinSet struct {
+	kv    *aether.KV
+	scope aether.CoordScope
+}
+
+func (s *kvJoinSet) SetAdd(ctx context.Context, key, member string, ttl time.Duration) (bool, int64, error) {
+	return s.kv.SetAddSync(ctx, key, []byte(member), s.scope.Scope, s.scope.UserID, s.scope.Workspace, ttl, aether.DefaultKVTimeout)
 }
 
 func (s *Server) handleMessage(ctx context.Context, msg *aether.Message) error {
