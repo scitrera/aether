@@ -47,6 +47,10 @@ type TransformResult struct {
 	TaskType             string `yaml:"task_type" json:"task_type"`
 	TargetImplementation string `yaml:"target_implementation" json:"target_implementation"`
 	Payload              any    `yaml:"payload" json:"payload"`
+	// Fan-out tagging for spawned tasks: a correlation id (the join's barrier
+	// key) and an optional feed-B completion-event opt-in.
+	CorrelationID   string                 `yaml:"correlation_id" json:"correlation_id"`
+	CompletionEvent *CompletionEventConfig `yaml:"completion_event" json:"completion_event"`
 	// Join destination (Type == "join"): a fan-in / barrier / coalesce. nil for
 	// every other destination kind, so existing rules are unaffected.
 	Join *JoinSpec `yaml:"join" json:"join"`

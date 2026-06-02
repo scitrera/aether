@@ -47,6 +47,7 @@ import (
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/pkg/sharding"
 	"github.com/scitrera/aether/pkg/tasks"
 	"github.com/scitrera/aether/sdk/go/aether"
 	"google.golang.org/protobuf/proto"
@@ -314,6 +315,28 @@ func (s *GatewayServer) publishTaskEventBytes(ctx context.Context, workspace, ta
 // gateway-side router/topic conversion concrete.
 func (s *GatewayServer) PublishTaskEvent(ctx context.Context, workspace, taskID string, event *pb.TaskEvent) error {
 	return s.publishTaskEventBytes(ctx, workspace, taskID, event)
+}
+
+// PublishDomainEvent satisfies orchestration.DomainEventPublisher: it publishes
+// a "feed B" domain event onto the event plane so the workflow engine (or any
+// rule) can gather over task completions. The payload is the raw, pre-marshaled
+// JSON bytes of an EventPayload (source_agent/event_names/data/workspace) —
+// identical to what a client's SendEvent produces — published to the workspace's
+// fan-in shard topic (event::receiver{shard}) via the same router + circuit
+// breaker path publishTaskEventBytes uses. Best-effort: nil router / empty
+// workspace / nil payload short-circuit to nil so a publish failure never blocks
+// the originating terminal transition.
+func (s *GatewayServer) PublishDomainEvent(ctx context.Context, workspace string, payload []byte) error {
+	if s.router == nil || workspace == "" || len(payload) == 0 {
+		return nil
+	}
+	topic := sharding.ReceiverTopic("event", sharding.ShardForWorkspace(workspace, sharding.TotalShards()))
+	if s.publishBreaker != nil {
+		return s.publishBreaker.Execute(func() error {
+			return s.router.Publish(ctx, topic, payload)
+		})
+	}
+	return s.router.Publish(ctx, topic, payload)
 }
 
 // publishProgressTaskEvent emits a TaskProgressEvent on the task-events topic

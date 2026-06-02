@@ -427,6 +427,9 @@ func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVR
 	// logged at debug inside the helpers; no callers observe the error.
 	if s.orchestration != nil && s.orchestration.TaskService != nil {
 		s.orchestration.TaskService.SetEventPublisher(s)
+		// Feed B: the gateway is also the domain event publisher, emitting
+		// completion_event domain events onto the event plane (event::*).
+		s.orchestration.TaskService.SetDomainEventPublisher(s)
 	}
 
 	// Seed default-allow fallback for KV scope permissions (agent + task).
@@ -634,6 +637,9 @@ func (s *GatewayServer) SetOrchestrationServices(orchestration *OrchestrationSer
 	// lifecycle transitions fan onto tk::{workspace}::{task_id}::events.
 	if orchestration.TaskService != nil {
 		orchestration.TaskService.SetEventPublisher(s)
+		// Feed B: the gateway is also the domain event publisher, emitting
+		// completion_event domain events onto the event plane (event::*).
+		orchestration.TaskService.SetDomainEventPublisher(s)
 	}
 
 	// Configure dispatcher callback to route tasks to connected orchestrators

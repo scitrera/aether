@@ -65,6 +65,11 @@ type TaskAssignmentService struct {
 	// (tk::{workspace}::{task_id}::events). Phase 4 Stage B. Nil = disabled, every
 	// publish call becomes a no-op. Injected via SetEventPublisher.
 	eventPub TaskEventPublisher
+	// domainEventPub publishes "feed B" domain events (raw EventPayload JSON
+	// bytes) onto the event plane (event::*) when a task with a completion_event
+	// config reaches a selected terminal status. Nil = disabled. Injected via
+	// SetDomainEventPublisher.
+	domainEventPub DomainEventPublisher
 }
 
 // queueRetirementDispatcher is the narrow interface TaskAssignmentService needs
