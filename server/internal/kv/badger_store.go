@@ -562,3 +562,92 @@ func (s *BadgerKVStore) CompareAndDelete(
 	}
 	return false, fmt.Errorf("failed to compare-and-delete key %s: contention after %d attempts", key, casMaxAttempts)
 }
+
+// SetAdd atomically adds member to the JSON-encoded set stored at key. Returns
+// whether the member was newly added (false if already present) and the set's
+// cardinality after the add. When ttl > 0 the key's expiry is (re)set on a
+// newly-added member (Badger truncates TTL to whole seconds). Duplicate adds are
+// pure reads and never write, so they neither refresh the TTL nor cause churn.
+func (s *BadgerKVStore) SetAdd(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	member string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, int64, error) {
+	if err := validateKey(key); err != nil {
+		return false, 0, err
+	}
+	fullKey := s.badgerKey(agent, scope, key, userID, workspace)
+
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		var (
+			added bool
+			card  int64
+		)
+		err := s.db.Update(func(txn *badger.Txn) error {
+			raw, _, err := readBadgerValue(txn, fullKey)
+			if err != nil {
+				return err
+			}
+			set := parseMemberSet(raw)
+			if _, ok := set[member]; ok {
+				added = false
+				card = int64(len(set))
+				return nil // member already present — no write
+			}
+			set[member] = struct{}{}
+			added = true
+			card = int64(len(set))
+			entry := badger.NewEntry(fullKey, []byte(encodeMemberSet(set)))
+			if ttl > 0 {
+				entry = entry.WithTTL(ttl)
+			}
+			return txn.SetEntry(entry)
+		})
+		if err == nil {
+			return added, card, nil
+		}
+		if errors.Is(err, badger.ErrConflict) {
+			continue
+		}
+		return false, 0, fmt.Errorf("set-add on %s failed: %w", string(fullKey), err)
+	}
+	return false, 0, fmt.Errorf("set-add on %s failed: contention after %d attempts", string(fullKey), casMaxAttempts)
+}
+
+// SetCard returns the cardinality of the set stored at key (0 if absent or
+// logically expired via Badger's native TTL).
+func (s *BadgerKVStore) SetCard(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	userID string,
+	workspace string,
+) (int64, error) {
+	if err := validateKey(key); err != nil {
+		return 0, err
+	}
+	fullKey := s.badgerKey(agent, scope, key, userID, workspace)
+
+	var card int64
+	err := s.db.View(func(txn *badger.Txn) error {
+		raw, found, err := readBadgerValue(txn, fullKey)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return nil
+		}
+		card = int64(len(parseMemberSet(raw)))
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("set-card on %s failed: %w", string(fullKey), err)
+	}
+	return card, nil
+}

@@ -799,6 +799,87 @@ func (s *Store) CompareAndDelete(
 	return applied == 1, nil
 }
 
+// setAddLuaScript atomically adds ARGV[1] to the set at KEYS[1], (re)setting the
+// key's TTL to ARGV[2] milliseconds when the member is newly added and ARGV[2] > 0,
+// and returns {addedFlag, cardinality}. addedFlag is 1 when the member was newly
+// added, 0 when it was already present. TTL is refreshed only on a real write so
+// duplicate adds are pure reads (matching the Badger/JetStream backends).
+var setAddLuaScript = redis.NewScript(`
+local added = redis.call('SADD', KEYS[1], ARGV[1])
+if added == 1 and tonumber(ARGV[2]) > 0 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[2])
+end
+local card = redis.call('SCARD', KEYS[1])
+return {added, card}
+`)
+
+// SetAdd atomically adds member to the set stored at key and returns whether the
+// member was newly added (false if already present) plus the set's cardinality
+// after the add. See KVReadWriter.SetAdd for the firing/dedup semantics.
+//
+// Set values are stored in the clear (no "enc:" at-rest transform): members are
+// opaque correlation/dedup tokens, not user secrets, and SADD over
+// non-deterministic ciphertext would break membership semantics — the same
+// rationale as the SetNX/CompareAndSet coordination ops above.
+func (s *Store) SetAdd(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	member string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, int64, error) {
+	if err := validateKey(key); err != nil {
+		return false, 0, err
+	}
+	namespace := BuildNamespace(agent, scope, userID, workspace)
+	fullKey := fmt.Sprintf("%s:%s", namespace, key)
+
+	var raw interface{}
+	if err := s.execCB(func() error {
+		var runErr error
+		raw, runErr = setAddLuaScript.Run(ctx, s.client, []string{fullKey}, member, ttl.Milliseconds()).Result()
+		return runErr
+	}); err != nil {
+		return false, 0, fmt.Errorf("set-add on %s failed: %w", key, err)
+	}
+	arr, ok := raw.([]interface{})
+	if !ok || len(arr) != 2 {
+		return false, 0, fmt.Errorf("unexpected set-add result shape: %T", raw)
+	}
+	added, _ := arr[0].(int64)
+	card, _ := arr[1].(int64)
+	return added == 1, card, nil
+}
+
+// SetCard returns the cardinality of the set stored at key (0 if absent).
+func (s *Store) SetCard(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	userID string,
+	workspace string,
+) (int64, error) {
+	if err := validateKey(key); err != nil {
+		return 0, err
+	}
+	namespace := BuildNamespace(agent, scope, userID, workspace)
+	fullKey := fmt.Sprintf("%s:%s", namespace, key)
+
+	var card int64
+	if err := s.execCB(func() error {
+		var cErr error
+		card, cErr = s.client.SCard(ctx, fullKey).Result()
+		return cErr
+	}); err != nil {
+		return 0, fmt.Errorf("set-card on %s failed: %w", key, err)
+	}
+	return card, nil
+}
+
 // GetJSON retrieves and unmarshals a JSON value
 func (s *Store) GetJSON(
 	ctx context.Context,

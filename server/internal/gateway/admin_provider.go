@@ -310,10 +310,12 @@ func formatDuration(d time.Duration) string {
 // Ensure GatewayStateProvider implements StateProvider
 var _ admin.StateProvider = (*GatewayStateProvider)(nil)
 
-// Compile-time assertions: both KV backends must satisfy KVReadWriter so that
-// callers can pass either *kv.Store (Redis/full mode) or *kv.BadgerKVStore
-// (Badger/lite mode) to NewGatewayStateProvider without a nil placeholder.
+// Compile-time assertions: all KV backends must satisfy KVReadWriter so that
+// callers can pass *kv.Store (Redis/full mode), *kv.BadgerKVStore (single-node
+// lite mode), or *kv.JetStreamKVStore (cluster lite mode) to
+// NewGatewayStateProvider without a nil placeholder.
 var (
 	_ KVReadWriter = (*kv.Store)(nil)
 	_ KVReadWriter = (*kv.BadgerKVStore)(nil)
+	_ KVReadWriter = (*kv.JetStreamKVStore)(nil)
 )
