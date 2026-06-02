@@ -64,6 +64,11 @@ func NewAdminServer(port int, apiKey string, store WorkflowStore, router *Router
 	api.HandleFunc("/executions/{id}", s.getExecution).Methods("GET")
 	api.HandleFunc("/executions/{id}/cancel", s.cancelExecution).Methods("POST")
 
+	// Joins
+	api.HandleFunc("/joins", s.listJoins).Methods("GET")
+	api.HandleFunc("/joins/{name}/{correlationKey}", s.getJoin).Methods("GET")
+	api.HandleFunc("/joins/{name}/{correlationKey}/cancel", s.cancelJoin).Methods("POST")
+
 	// State Machines
 	api.HandleFunc("/statemachines", s.listStateMachines).Methods("GET")
 	api.HandleFunc("/statemachines", s.createStateMachine).Methods("POST")
@@ -425,6 +430,57 @@ func (s *AdminServer) cancelExecution(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+}
+
+// =============================================================================
+// Join endpoints
+// =============================================================================
+
+func (s *AdminServer) listJoins(w http.ResponseWriter, r *http.Request) {
+	workspace := r.URL.Query().Get("workspace")
+	joins, err := s.store.ListJoins(r.Context(), workspace)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, toJoinViews(joins))
+}
+
+func (s *AdminServer) getJoin(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	j, err := s.store.GetJoin(r.Context(), vars["name"], r.URL.Query().Get("workspace"), vars["correlationKey"])
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if j == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "join not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, toJoinView(*j))
+}
+
+func (s *AdminServer) cancelJoin(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	j, err := s.store.GetJoin(r.Context(), vars["name"], r.URL.Query().Get("workspace"), vars["correlationKey"])
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if j == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "join not found"})
+		return
+	}
+	if j.Status != JoinStatusOpen {
+		// Already terminal — cancellation is idempotent.
+		writeJSON(w, http.StatusOK, map[string]string{"status": j.Status})
+		return
+	}
+	if err := s.store.MarkJoinTerminal(r.Context(), j.ID, JoinStatusCancelled, time.Now().Add(time.Minute)); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": JoinStatusCancelled})
 }
 
 // =============================================================================
