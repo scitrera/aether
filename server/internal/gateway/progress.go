@@ -131,9 +131,24 @@ func (s *GatewayServer) handleProgressReport(ctx context.Context, client *Client
 	// For empty or non-user recipients, fall back to pg::{sender.Workspace}
 	// broadcast — preserving orchestrator/parent-agent consumption patterns
 	// for task-kind progress.
-	progressTopic, err := models.ProgressTopic(sender.Workspace)
+	// For task-bound progress from a workspace-less sender (e.g. a Service
+	// principal like the in-process ingest worker, sv::memorylayer), the sender
+	// has no workspace, so pg::{sender.Workspace} collapses to the empty "pg::"
+	// topic — which has no JetStream stream under AetherLite, so the publish
+	// hard-fails. Derive the broadcast workspace from the task row instead, so
+	// progress routes to pg::{task.workspace} and reaches that workspace's
+	// subscribers (the user/window sessions). Only consulted when the sender
+	// itself is workspace-less, so workspace-scoped agent senders are unchanged.
+	broadcastWorkspace := sender.Workspace
+	if broadcastWorkspace == "" && report.TaskId != "" && s.taskStore != nil {
+		if t, terr := s.taskStore.GetTask(ctx, report.TaskId); terr == nil && t != nil && t.Workspace != "" {
+			broadcastWorkspace = t.Workspace
+		}
+	}
+
+	progressTopic, err := models.ProgressTopic(broadcastWorkspace)
 	if err != nil {
-		logging.Logger.Warn().Err(err).Str("workspace", sender.Workspace).Msg("invalid workspace for progress topic; dropping report")
+		logging.Logger.Warn().Err(err).Str("workspace", broadcastWorkspace).Msg("invalid workspace for progress topic; dropping report")
 		return
 	}
 	if report.Recipient != "" {
@@ -169,7 +184,7 @@ func (s *GatewayServer) handleProgressReport(ctx context.Context, client *Client
 		Summary:     report.Summary,
 		Step:        report.Step,
 		TimestampMs: now.UnixMilli(),
-		Workspace:   sender.Workspace,
+		Workspace:   broadcastWorkspace,
 		RequestId:   report.RequestId,
 		Metadata:    report.Metadata,
 		Recipient:   report.Recipient,

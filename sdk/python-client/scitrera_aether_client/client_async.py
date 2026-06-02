@@ -4098,6 +4098,10 @@ class AsyncServiceClient(BaseAsyncAetherClient):
             payload, message_type=message_type, authorization=authorization,
         )
 
+    async def send_event(self, payload: bytes):
+        """Send an event to the workflow engine (``event::*`` plane)."""
+        await self._send_message("event::*", payload, message_type=aether_pb2.EVENT)
+
     async def send_metric(self, metric):
         """Send a metric to the metrics bridge.
 
