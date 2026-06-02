@@ -332,6 +332,51 @@ the count barrier and register `decompose_complete → join` in **coalesce** mod
 relying on `kb_update`'s self-healing. Use count mode only when the downstream
 does **not** self-heal (batch-import summary, scatter/gather aggregation).
 
+### 3.13 Feed B — gathering over task completions
+
+A join can gather over **task completions** without the worker emitting its own
+event. A task opts in via a `completion_event` config (persisted on the task);
+when it reaches a selected terminal status the server emits a JSON `EventPayload`
+onto `event::*`:
+
+```json
+{ "source_agent": "orchestrator", "workspace": "ws-1",
+  "event_names": ["memorylayer.decompose_complete"],
+  "data": { "task_id": "...", "status": "completed", "task_type": "...",
+            "correlation_id": "job-42", "root_task_id": "...", "metadata": {…} } }
+```
+
+A **fan-out rule** tags the member tasks it spawns by setting `correlation_id`
+and `completion_event` on its `create_task` destination:
+
+```yaml
+type: create_task
+task_type: decompose_facts
+target_implementation: memorylayer
+correlation_id: "{{ .input.job_id }}"
+completion_event:
+  enabled: true
+  event_name: memorylayer.decompose_complete   # empty ⇒ task.completed/failed/cancelled
+```
+
+The **join's member rule** then matches `memorylayer.decompose_complete` with
+`correlation_key: input.correlation_id`. No worker code changes — the member task
+just completes.
+
+- `completion_event.on_statuses` (proto) restricts emission to specific terminal
+  statuses; empty ⇒ all (`completed`, `failed`, `cancelled`). The emitted event
+  name defaults to `task.<status>` when `event_name` is empty.
+- Emission is best-effort and non-fatal: a publish failure never blocks the task
+  transition.
+- `correlation_id` / `root_task_id` are persisted on the task (both stores) and
+  queryable via `TaskFilter`; `root_task_id` defaults to the task's own id when a
+  task has no supplied root (it is its own flow root).
+
+**Feed A vs feed B.** Feed A (the worker emits a domain event) gives full control
+over the event name and payload. Feed B (the server emits on terminal status)
+needs no worker code — useful for POOL tasks you don't own. Both land on
+`event::*` as `EventPayload`s and are matched identically.
+
 ---
 
 ## 4. Scheduler
@@ -395,23 +440,24 @@ the gateway (forwarded to the WFE).
   (≈ `root_task_id`, threaded like the existing Authority Root/Parent lineage) is
   the model; the join's `correlation_key` composes them per nesting level — which
   is forward-compatible as the DAG run id.
-- **Feed A over feed B for now.** Joins gather over **explicit domain events**
-  (feed A) — exactly how MemoryLayer already emits `ingest_complete`. Gathering
-  over **task completions** (feed B) would require new server-side emission of
-  terminal transitions onto `event::*`; it is designed but deferred (§8) because
-  feed A plus correlation-in-payload already make joins fully usable.
+- **Two feeds, one plane.** Joins gather over **explicit domain events** (feed A —
+  how MemoryLayer emits `ingest_complete`) **and** over **task completions** (feed
+  B — a task with an enabled `completion_event` emits a synthetic event onto
+  `event::*` at its terminal status, §3.13). Both arrive as JSON `EventPayload`s
+  on the same plane, so the Router and join matching treat them identically; no
+  per-task topic subscription is involved.
 
 ---
 
 ## 8. Forward / deferred work
 
-- **Feed B** — opt-in emission of terminal task transitions onto `event::*`
-  (gated by task metadata) so joins can gather over task completions without the
-  worker emitting a domain event.
-- **Correlation propagation** — persist `correlation_id`/`root_task_id` on tasks,
-  auto-propagate `flow_id` on spawn (reserved namespace), and add the
-  `TaskFilter` predicates ("list all tasks in flow X"). The proto fields
-  (`CreateTaskRequest`/`TaskInfo`/`TaskFilter`) are already in place.
+Implemented in v1: feed B (§3.13), and `correlation_id`/`root_task_id`
+persistence + `TaskFilter` predicates (§3.13). Still deferred:
+
+- **Automatic `flow_id` propagation on spawn.** Today a task is its own flow root
+  when no `root_task_id` is supplied, and a fan-out rule stamps `correlation_id`
+  explicitly; full reserved-namespace inheritance of `flow_id` across nested
+  spawns is future work.
 - **Scatter destination & DAG AND-join** — a `scatter` destination that mints a
   `flow_id` and creates N tasks in one step, and AND-join *nodes* keyed on
   `(flow_id, upstream_node_set)`. The v1 `correlation_id`/`flow_id` becomes the
@@ -426,8 +472,11 @@ the gateway (forwarded to the WFE).
 - `WorkflowOperation.OpType`: `LIST_JOINS = 24`, `GET_JOIN = 25`,
   `CANCEL_JOIN = 26` (`id` = join_name, `secondary_id` = correlation_key).
 - `CreateTaskRequest`: `idempotency_key = 16`, `correlation_id = 17`,
-  `root_task_id = 18`. `TaskInfo`: `correlation_id = 32`, `root_task_id = 33`.
-  `TaskFilter`: `correlation_id = 23`, `root_task_id = 24`.
+  `root_task_id = 18`, `completion_event = 19`. `TaskInfo`: `correlation_id = 32`,
+  `root_task_id = 33`, `completion_event = 34`. `TaskFilter`:
+  `correlation_id = 23`, `root_task_id = 24`.
+- `TaskCompletionEvent { bool enabled; string event_name; repeated TaskStatus
+  on_statuses }` — the feed-B opt-in carried on a task.
 
 All additive (new enum values / optional fields); existing wire semantics
 unchanged.
