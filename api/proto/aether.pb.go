@@ -837,6 +837,14 @@ const (
 	// data. Maintains component separation: the gateway has no sandbox-specific
 	// knowledge; the caller decides what to purge and when.
 	KVOperation_PURGE_IDENTITY KVOperation_OpType = 11
+	// Atomic set primitives backing fan-in joins (set-completeness) and
+	// at-most-once dedup ledgers, native across Redis / Badger / NATS-JetStream.
+	// SET_ADD adds `value` (the member) to the set at `key`, (re)setting `ttl`
+	// on a newly-added member: KVResponse.applied=true iff newly added,
+	// counter_value=cardinality after the add. SET_CARD returns
+	// counter_value=cardinality (0 if absent).
+	KVOperation_SET_ADD  KVOperation_OpType = 12
+	KVOperation_SET_CARD KVOperation_OpType = 13
 )
 
 // Enum value maps for KVOperation_OpType.
@@ -854,6 +862,8 @@ var (
 		9:  "COMPARE_AND_SET",
 		10: "COMPARE_AND_DELETE",
 		11: "PURGE_IDENTITY",
+		12: "SET_ADD",
+		13: "SET_CARD",
 	}
 	KVOperation_OpType_value = map[string]int32{
 		"GET":                0,
@@ -868,6 +878,8 @@ var (
 		"COMPARE_AND_SET":    9,
 		"COMPARE_AND_DELETE": 10,
 		"PURGE_IDENTITY":     11,
+		"SET_ADD":            12,
+		"SET_CARD":           13,
 	}
 )
 
@@ -1801,6 +1813,10 @@ const (
 	WorkflowOperation_SEND_SM_EVENT      WorkflowOperation_OpType = 22
 	// Schedule upsert (idempotent create-or-update)
 	WorkflowOperation_UPSERT_SCHEDULE WorkflowOperation_OpType = 23
+	// Fan-in / barrier / coalesce join observability + operator control.
+	WorkflowOperation_LIST_JOINS  WorkflowOperation_OpType = 24 // in-flight + recently-terminal join instances (workspace filter)
+	WorkflowOperation_GET_JOIN    WorkflowOperation_OpType = 25 // inspect one instance: id=join_name, secondary_id=correlation_key
+	WorkflowOperation_CANCEL_JOIN WorkflowOperation_OpType = 26 // operator GC of a wedged instance
 )
 
 // Enum value maps for WorkflowOperation_OpType.
@@ -1830,6 +1846,9 @@ var (
 		21: "CREATE_SM_INSTANCE",
 		22: "SEND_SM_EVENT",
 		23: "UPSERT_SCHEDULE",
+		24: "LIST_JOINS",
+		25: "GET_JOIN",
+		26: "CANCEL_JOIN",
 	}
 	WorkflowOperation_OpType_value = map[string]int32{
 		"LIST_RULES":           0,
@@ -1856,6 +1875,9 @@ var (
 		"CREATE_SM_INSTANCE":   21,
 		"SEND_SM_EVENT":        22,
 		"UPSERT_SCHEDULE":      23,
+		"LIST_JOINS":           24,
+		"GET_JOIN":             25,
+		"CANCEL_JOIN":          26,
 	}
 )
 
@@ -5664,7 +5686,21 @@ type CreateTaskRequest struct {
 	RetryPolicy *RetryPolicy `protobuf:"bytes,14,opt,name=retry_policy,json=retryPolicy,proto3" json:"retry_policy,omitempty"`
 	// Optional dispatch priority. Defaults to UNSPECIFIED ⇒ NORMAL. Higher
 	// priority pending tasks are delivered before lower ones (ties break FIFO).
-	Priority      TaskPriority `protobuf:"varint,15,opt,name=priority,proto3,enum=aether.v1.TaskPriority" json:"priority,omitempty"`
+	Priority TaskPriority `protobuf:"varint,15,opt,name=priority,proto3,enum=aether.v1.TaskPriority" json:"priority,omitempty"`
+	// Optional idempotency key for exactly-once task creation. When non-empty the
+	// gateway dedupes creation on this key: a duplicate request returns the
+	// existing task identity instead of creating a second task. Workflow joins
+	// set it to make an on_complete create_task fire exactly once under retries
+	// or engine restart.
+	IdempotencyKey string `protobuf:"bytes,16,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	// Optional fan-out/fan-in correlation identity, distinct from task_id. When
+	// non-empty it is persisted on the task and propagated to child spawns, and is
+	// queryable via TaskFilter.correlation_id. The barrier/group id a join matches.
+	CorrelationId string `protobuf:"bytes,17,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	// Optional top-of-fan-out-tree identity (the flow / run id). Defaults to the
+	// task's own id when it is a root; inherited by descendants on spawn. Becomes
+	// the DAG run id when the join engine grows into full fan-out/fan-in.
+	RootTaskId    string `protobuf:"bytes,18,opt,name=root_task_id,json=rootTaskId,proto3" json:"root_task_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5802,6 +5838,27 @@ func (x *CreateTaskRequest) GetPriority() TaskPriority {
 		return x.Priority
 	}
 	return TaskPriority_TASK_PRIORITY_UNSPECIFIED
+}
+
+func (x *CreateTaskRequest) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+func (x *CreateTaskRequest) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *CreateTaskRequest) GetRootTaskId() string {
+	if x != nil {
+		return x.RootTaskId
+	}
+	return ""
 }
 
 // CreateTaskResponse is sent in response to CreateTaskRequest when the
@@ -7379,7 +7436,10 @@ type TaskFilter struct {
 	// Minimum dispatch-priority threshold. UNSPECIFIED (0) = no filter;
 	// otherwise returns tasks whose priority is >= this level (e.g. pass HIGH
 	// to get everything HIGH and PREEMPT). Combinable with other filters.
-	MinPriority   TaskPriority `protobuf:"varint,22,opt,name=min_priority,json=minPriority,proto3,enum=aether.v1.TaskPriority" json:"min_priority,omitempty"`
+	MinPriority TaskPriority `protobuf:"varint,22,opt,name=min_priority,json=minPriority,proto3,enum=aether.v1.TaskPriority" json:"min_priority,omitempty"`
+	// Filter by fan-out/fan-in correlation identity / flow id. Empty = no filter.
+	CorrelationId string `protobuf:"bytes,23,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	RootTaskId    string `protobuf:"bytes,24,opt,name=root_task_id,json=rootTaskId,proto3" json:"root_task_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7568,6 +7628,20 @@ func (x *TaskFilter) GetMinPriority() TaskPriority {
 	return TaskPriority_TASK_PRIORITY_UNSPECIFIED
 }
 
+func (x *TaskFilter) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *TaskFilter) GetRootTaskId() string {
+	if x != nil {
+		return x.RootTaskId
+	}
+	return ""
+}
+
 // TaskInfo represents a task.
 // Matches the TaskInfo struct in state_provider.go.
 type TaskInfo struct {
@@ -7621,7 +7695,13 @@ type TaskInfo struct {
 	PausedAt int64 `protobuf:"varint,30,opt,name=paused_at,json=pausedAt,proto3" json:"paused_at,omitempty"`
 	// Dispatch priority. UNSPECIFIED is normalized to NORMAL on creation, so
 	// persisted tasks always report a concrete level.
-	Priority      TaskPriority `protobuf:"varint,31,opt,name=priority,proto3,enum=aether.v1.TaskPriority" json:"priority,omitempty"`
+	Priority TaskPriority `protobuf:"varint,31,opt,name=priority,proto3,enum=aether.v1.TaskPriority" json:"priority,omitempty"`
+	// Fan-out/fan-in correlation identity (the barrier/group id a join matches),
+	// distinct from task_id and propagated to child spawns. Empty = none.
+	CorrelationId string `protobuf:"bytes,32,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	// Top-of-fan-out-tree identity (flow / run id); defaults to the task's own id
+	// for a root, inherited by descendants. Empty = none.
+	RootTaskId    string `protobuf:"bytes,33,opt,name=root_task_id,json=rootTaskId,proto3" json:"root_task_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7871,6 +7951,20 @@ func (x *TaskInfo) GetPriority() TaskPriority {
 		return x.Priority
 	}
 	return TaskPriority_TASK_PRIORITY_UNSPECIFIED
+}
+
+func (x *TaskInfo) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *TaskInfo) GetRootTaskId() string {
+	if x != nil {
+		return x.RootTaskId
+	}
+	return ""
 }
 
 // TaskQueryResponse is sent in response to TaskQuery operations.
@@ -17196,7 +17290,7 @@ const file_aether_proto_rawDesc = "" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x10\n" +
 	"\x03qty\x18\x03 \x01(\x01R\x03qty\";\n" +
 	"\x0fSwitchWorkspace\x12(\n" +
-	"\x10new_workspace_id\x18\x01 \x01(\tR\x0enewWorkspaceId\"\xfe\x06\n" +
+	"\x10new_workspace_id\x18\x01 \x01(\tR\x0enewWorkspaceId\"\x99\a\n" +
 	"\vKVOperation\x12-\n" +
 	"\x02op\x18\x01 \x01(\x0e2\x1d.aether.v1.KVOperation.OpTypeR\x02op\x122\n" +
 	"\x05scope\x18\x02 \x01(\x0e2\x1c.aether.v1.KVOperation.ScopeR\x05scope\x12\x10\n" +
@@ -17216,7 +17310,7 @@ const file_aether_proto_rawDesc = "" +
 	"\x0eexpected_value\x18\f \x01(\fR\rexpectedValue\x12\x14\n" +
 	"\x05limit\x18\r \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06cursor\x18\x0e \x01(\tR\x06cursor\x12'\n" +
-	"\x0ftarget_identity\x18\x0f \x01(\tR\x0etargetIdentity\"\xbf\x01\n" +
+	"\x0ftarget_identity\x18\x0f \x01(\tR\x0etargetIdentity\"\xda\x01\n" +
 	"\x06OpType\x12\a\n" +
 	"\x03GET\x10\x00\x12\a\n" +
 	"\x03PUT\x10\x01\x12\b\n" +
@@ -17232,7 +17326,9 @@ const file_aether_proto_rawDesc = "" +
 	"\x0fCOMPARE_AND_SET\x10\t\x12\x16\n" +
 	"\x12COMPARE_AND_DELETE\x10\n" +
 	"\x12\x12\n" +
-	"\x0ePURGE_IDENTITY\x10\v\"\xb2\x01\n" +
+	"\x0ePURGE_IDENTITY\x10\v\x12\v\n" +
+	"\aSET_ADD\x10\f\x12\f\n" +
+	"\bSET_CARD\x10\r\"\xb2\x01\n" +
 	"\x05Scope\x12\x15\n" +
 	"\x11SCOPE_UNSPECIFIED\x10\x00\x12\n" +
 	"\n" +
@@ -17311,7 +17407,7 @@ const file_aether_proto_rawDesc = "" +
 	"\vschedule_ms\x18\x06 \x03(\x03R\n" +
 	"scheduleMs\x124\n" +
 	"\x16retryable_status_codes\x18\a \x03(\x05R\x14retryableStatusCodes\x12*\n" +
-	"\x11honor_retry_after\x18\b \x01(\bR\x0fhonorRetryAfter\"\x9c\a\n" +
+	"\x11honor_retry_after\x18\b \x01(\bR\x0fhonorRetryAfter\"\x8e\b\n" +
 	"\x11CreateTaskRequest\x12\x1b\n" +
 	"\ttask_type\x18\x01 \x01(\tR\btaskType\x12\x1c\n" +
 	"\tworkspace\x18\x02 \x01(\tR\tworkspace\x12F\n" +
@@ -17331,7 +17427,11 @@ const file_aether_proto_rawDesc = "" +
 	"\n" +
 	"context_id\x18\r \x01(\tR\tcontextId\x129\n" +
 	"\fretry_policy\x18\x0e \x01(\v2\x16.aether.v1.RetryPolicyR\vretryPolicy\x123\n" +
-	"\bpriority\x18\x0f \x01(\x0e2\x17.aether.v1.TaskPriorityR\bpriority\x1aG\n" +
+	"\bpriority\x18\x0f \x01(\x0e2\x17.aether.v1.TaskPriorityR\bpriority\x12'\n" +
+	"\x0fidempotency_key\x18\x10 \x01(\tR\x0eidempotencyKey\x12%\n" +
+	"\x0ecorrelation_id\x18\x11 \x01(\tR\rcorrelationId\x12 \n" +
+	"\froot_task_id\x18\x12 \x01(\tR\n" +
+	"rootTaskId\x1aG\n" +
 	"\x19LaunchParamOverridesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a;\n" +
@@ -17523,7 +17623,7 @@ const file_aether_proto_rawDesc = "" +
 	"request_id\x18\x04 \x01(\tR\trequestId\"\x1b\n" +
 	"\x06OpType\x12\b\n" +
 	"\x04LIST\x10\x00\x12\a\n" +
-	"\x03GET\x10\x01\"\xec\a\n" +
+	"\x03GET\x10\x01\"\xb5\b\n" +
 	"\n" +
 	"TaskFilter\x12-\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x15.aether.v1.TaskStatusR\x06status\x12\x1c\n" +
@@ -17552,7 +17652,11 @@ const file_aether_proto_rawDesc = "" +
 	"page_token\x18\x13 \x01(\tR\tpageToken\x12/\n" +
 	"\x13include_descendants\x18\x14 \x01(\bR\x12includeDescendants\x123\n" +
 	"\bpriority\x18\x15 \x01(\x0e2\x17.aether.v1.TaskPriorityR\bpriority\x12:\n" +
-	"\fmin_priority\x18\x16 \x01(\x0e2\x17.aether.v1.TaskPriorityR\vminPriority\"\xf6\t\n" +
+	"\fmin_priority\x18\x16 \x01(\x0e2\x17.aether.v1.TaskPriorityR\vminPriority\x12%\n" +
+	"\x0ecorrelation_id\x18\x17 \x01(\tR\rcorrelationId\x12 \n" +
+	"\froot_task_id\x18\x18 \x01(\tR\n" +
+	"rootTaskId\"\xbf\n" +
+	"\n" +
 	"\bTaskInfo\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1b\n" +
 	"\ttask_type\x18\x02 \x01(\tR\btaskType\x12-\n" +
@@ -17592,7 +17696,10 @@ const file_aether_proto_rawDesc = "" +
 	"\n" +
 	"context_id\x18\x1d \x01(\tR\tcontextId\x12\x1b\n" +
 	"\tpaused_at\x18\x1e \x01(\x03R\bpausedAt\x123\n" +
-	"\bpriority\x18\x1f \x01(\x0e2\x17.aether.v1.TaskPriorityR\bpriority\x1a;\n" +
+	"\bpriority\x18\x1f \x01(\x0e2\x17.aether.v1.TaskPriorityR\bpriority\x12%\n" +
+	"\x0ecorrelation_id\x18  \x01(\tR\rcorrelationId\x12 \n" +
+	"\froot_task_id\x18! \x01(\tR\n" +
+	"rootTaskId\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xff\x01\n" +
@@ -18363,7 +18470,7 @@ const file_aether_proto_rawDesc = "" +
 	"\x04kind\x18\f \x01(\x0e2\x17.aether.v1.ProgressKindR\x04kind\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe9\x05\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x98\x06\n" +
 	"\x11WorkflowOperation\x123\n" +
 	"\x02op\x18\x01 \x01(\x0e2#.aether.v1.WorkflowOperation.OpTypeR\x02op\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12!\n" +
@@ -18372,7 +18479,7 @@ const file_aether_proto_rawDesc = "" +
 	"\x04data\x18\x05 \x01(\fR\x04data\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x06 \x01(\tR\trequestId\x12#\n" +
-	"\rstatus_filter\x18\a \x01(\tR\fstatusFilter\"\xf5\x03\n" +
+	"\rstatus_filter\x18\a \x01(\tR\fstatusFilter\"\xa4\x04\n" +
 	"\x06OpType\x12\x0e\n" +
 	"\n" +
 	"LIST_RULES\x10\x00\x12\f\n" +
@@ -18399,7 +18506,11 @@ const file_aether_proto_rawDesc = "" +
 	"\x0fGET_SM_INSTANCE\x10\x14\x12\x16\n" +
 	"\x12CREATE_SM_INSTANCE\x10\x15\x12\x11\n" +
 	"\rSEND_SM_EVENT\x10\x16\x12\x13\n" +
-	"\x0fUPSERT_SCHEDULE\x10\x17\"\xb0\x01\n" +
+	"\x0fUPSERT_SCHEDULE\x10\x17\x12\x0e\n" +
+	"\n" +
+	"LIST_JOINS\x10\x18\x12\f\n" +
+	"\bGET_JOIN\x10\x19\x12\x0f\n" +
+	"\vCANCEL_JOIN\x10\x1a\"\xb0\x01\n" +
 	"\x10WorkflowResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12\x18\n" +

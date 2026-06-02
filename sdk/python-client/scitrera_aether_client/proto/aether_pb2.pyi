@@ -612,6 +612,8 @@ class KVOperation(_message.Message):
         COMPARE_AND_SET: _ClassVar[KVOperation.OpType]
         COMPARE_AND_DELETE: _ClassVar[KVOperation.OpType]
         PURGE_IDENTITY: _ClassVar[KVOperation.OpType]
+        SET_ADD: _ClassVar[KVOperation.OpType]
+        SET_CARD: _ClassVar[KVOperation.OpType]
     GET: KVOperation.OpType
     PUT: KVOperation.OpType
     LIST: KVOperation.OpType
@@ -624,6 +626,8 @@ class KVOperation(_message.Message):
     COMPARE_AND_SET: KVOperation.OpType
     COMPARE_AND_DELETE: KVOperation.OpType
     PURGE_IDENTITY: KVOperation.OpType
+    SET_ADD: KVOperation.OpType
+    SET_CARD: KVOperation.OpType
     class Scope(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         SCOPE_UNSPECIFIED: _ClassVar[KVOperation.Scope]
@@ -815,7 +819,7 @@ class RetryPolicy(_message.Message):
     def __init__(self, max_attempts: _Optional[int] = ..., backoff: _Optional[_Union[BackoffStrategy, str]] = ..., initial_delay_ms: _Optional[int] = ..., max_delay_ms: _Optional[int] = ..., jitter_factor: _Optional[float] = ..., schedule_ms: _Optional[_Iterable[int]] = ..., retryable_status_codes: _Optional[_Iterable[int]] = ..., honor_retry_after: bool = ...) -> None: ...
 
 class CreateTaskRequest(_message.Message):
-    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id", "retry_policy", "priority")
+    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id", "retry_policy", "priority", "idempotency_key", "correlation_id", "root_task_id")
     class LaunchParamOverridesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -845,6 +849,9 @@ class CreateTaskRequest(_message.Message):
     CONTEXT_ID_FIELD_NUMBER: _ClassVar[int]
     RETRY_POLICY_FIELD_NUMBER: _ClassVar[int]
     PRIORITY_FIELD_NUMBER: _ClassVar[int]
+    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
+    CORRELATION_ID_FIELD_NUMBER: _ClassVar[int]
+    ROOT_TASK_ID_FIELD_NUMBER: _ClassVar[int]
     task_type: str
     workspace: str
     assignment_mode: TaskAssignmentMode
@@ -860,7 +867,10 @@ class CreateTaskRequest(_message.Message):
     context_id: str
     retry_policy: RetryPolicy
     priority: TaskPriority
-    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]] = ..., priority: _Optional[_Union[TaskPriority, str]] = ...) -> None: ...
+    idempotency_key: str
+    correlation_id: str
+    root_task_id: str
+    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]] = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., idempotency_key: _Optional[str] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ...) -> None: ...
 
 class CreateTaskResponse(_message.Message):
     __slots__ = ("success", "task_id", "status", "error_code", "error_message", "request_id", "assigned_to", "task_token", "authority_grant_id")
@@ -1196,7 +1206,7 @@ class TaskQuery(_message.Message):
     def __init__(self, op: _Optional[_Union[TaskQuery.OpType, str]] = ..., task_id: _Optional[str] = ..., filter: _Optional[_Union[TaskFilter, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class TaskFilter(_message.Message):
-    __slots__ = ("status", "workspace", "task_type", "limit", "offset", "statuses", "subject_type", "subject_id", "authority_mode", "authority_grant_id", "root_authority_grant_id", "parent_task_id", "task_class", "exclude_task_classes", "context_id", "exclude_statuses", "creator_actor", "status_timestamp_after_unix_ms", "page_token", "include_descendants", "priority", "min_priority")
+    __slots__ = ("status", "workspace", "task_type", "limit", "offset", "statuses", "subject_type", "subject_id", "authority_mode", "authority_grant_id", "root_authority_grant_id", "parent_task_id", "task_class", "exclude_task_classes", "context_id", "exclude_statuses", "creator_actor", "status_timestamp_after_unix_ms", "page_token", "include_descendants", "priority", "min_priority", "correlation_id", "root_task_id")
     STATUS_FIELD_NUMBER: _ClassVar[int]
     WORKSPACE_FIELD_NUMBER: _ClassVar[int]
     TASK_TYPE_FIELD_NUMBER: _ClassVar[int]
@@ -1219,6 +1229,8 @@ class TaskFilter(_message.Message):
     INCLUDE_DESCENDANTS_FIELD_NUMBER: _ClassVar[int]
     PRIORITY_FIELD_NUMBER: _ClassVar[int]
     MIN_PRIORITY_FIELD_NUMBER: _ClassVar[int]
+    CORRELATION_ID_FIELD_NUMBER: _ClassVar[int]
+    ROOT_TASK_ID_FIELD_NUMBER: _ClassVar[int]
     status: TaskStatus
     workspace: str
     task_type: str
@@ -1241,10 +1253,12 @@ class TaskFilter(_message.Message):
     include_descendants: bool
     priority: TaskPriority
     min_priority: TaskPriority
-    def __init__(self, status: _Optional[_Union[TaskStatus, str]] = ..., workspace: _Optional[str] = ..., task_type: _Optional[str] = ..., limit: _Optional[int] = ..., offset: _Optional[int] = ..., statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., authority_mode: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., parent_task_id: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., exclude_task_classes: _Optional[_Iterable[_Union[TaskClass, str]]] = ..., context_id: _Optional[str] = ..., exclude_statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ..., creator_actor: _Optional[_Union[PrincipalRef, _Mapping]] = ..., status_timestamp_after_unix_ms: _Optional[int] = ..., page_token: _Optional[str] = ..., include_descendants: bool = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., min_priority: _Optional[_Union[TaskPriority, str]] = ...) -> None: ...
+    correlation_id: str
+    root_task_id: str
+    def __init__(self, status: _Optional[_Union[TaskStatus, str]] = ..., workspace: _Optional[str] = ..., task_type: _Optional[str] = ..., limit: _Optional[int] = ..., offset: _Optional[int] = ..., statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., authority_mode: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., parent_task_id: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., exclude_task_classes: _Optional[_Iterable[_Union[TaskClass, str]]] = ..., context_id: _Optional[str] = ..., exclude_statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ..., creator_actor: _Optional[_Union[PrincipalRef, _Mapping]] = ..., status_timestamp_after_unix_ms: _Optional[int] = ..., page_token: _Optional[str] = ..., include_descendants: bool = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., min_priority: _Optional[_Union[TaskPriority, str]] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ...) -> None: ...
 
 class TaskInfo(_message.Message):
-    __slots__ = ("task_id", "task_type", "status", "workspace", "target_topic", "assigned_to", "created_at", "started_at", "completed_at", "attempt", "max_attempts", "error", "metadata", "authority_mode", "subject_type", "subject_id", "root_subject_type", "root_subject_id", "authority_grant_id", "root_authority_grant_id", "parent_authority_grant_id", "creator_actor_id", "parent_task_id", "task_class", "disconnected_at", "grace_window_ms", "wait_spec", "depends_on", "context_id", "paused_at", "priority")
+    __slots__ = ("task_id", "task_type", "status", "workspace", "target_topic", "assigned_to", "created_at", "started_at", "completed_at", "attempt", "max_attempts", "error", "metadata", "authority_mode", "subject_type", "subject_id", "root_subject_type", "root_subject_id", "authority_grant_id", "root_authority_grant_id", "parent_authority_grant_id", "creator_actor_id", "parent_task_id", "task_class", "disconnected_at", "grace_window_ms", "wait_spec", "depends_on", "context_id", "paused_at", "priority", "correlation_id", "root_task_id")
     class MetadataEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -1283,6 +1297,8 @@ class TaskInfo(_message.Message):
     CONTEXT_ID_FIELD_NUMBER: _ClassVar[int]
     PAUSED_AT_FIELD_NUMBER: _ClassVar[int]
     PRIORITY_FIELD_NUMBER: _ClassVar[int]
+    CORRELATION_ID_FIELD_NUMBER: _ClassVar[int]
+    ROOT_TASK_ID_FIELD_NUMBER: _ClassVar[int]
     task_id: str
     task_type: str
     status: TaskStatus
@@ -1314,7 +1330,9 @@ class TaskInfo(_message.Message):
     context_id: str
     paused_at: int
     priority: TaskPriority
-    def __init__(self, task_id: _Optional[str] = ..., task_type: _Optional[str] = ..., status: _Optional[_Union[TaskStatus, str]] = ..., workspace: _Optional[str] = ..., target_topic: _Optional[str] = ..., assigned_to: _Optional[str] = ..., created_at: _Optional[int] = ..., started_at: _Optional[int] = ..., completed_at: _Optional[int] = ..., attempt: _Optional[int] = ..., max_attempts: _Optional[int] = ..., error: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., authority_mode: _Optional[str] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., root_subject_type: _Optional[str] = ..., root_subject_id: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., parent_authority_grant_id: _Optional[str] = ..., creator_actor_id: _Optional[str] = ..., parent_task_id: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., disconnected_at: _Optional[int] = ..., grace_window_ms: _Optional[int] = ..., wait_spec: _Optional[_Union[WaitSpec, _Mapping]] = ..., depends_on: _Optional[_Iterable[str]] = ..., context_id: _Optional[str] = ..., paused_at: _Optional[int] = ..., priority: _Optional[_Union[TaskPriority, str]] = ...) -> None: ...
+    correlation_id: str
+    root_task_id: str
+    def __init__(self, task_id: _Optional[str] = ..., task_type: _Optional[str] = ..., status: _Optional[_Union[TaskStatus, str]] = ..., workspace: _Optional[str] = ..., target_topic: _Optional[str] = ..., assigned_to: _Optional[str] = ..., created_at: _Optional[int] = ..., started_at: _Optional[int] = ..., completed_at: _Optional[int] = ..., attempt: _Optional[int] = ..., max_attempts: _Optional[int] = ..., error: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., authority_mode: _Optional[str] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., root_subject_type: _Optional[str] = ..., root_subject_id: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., parent_authority_grant_id: _Optional[str] = ..., creator_actor_id: _Optional[str] = ..., parent_task_id: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., disconnected_at: _Optional[int] = ..., grace_window_ms: _Optional[int] = ..., wait_spec: _Optional[_Union[WaitSpec, _Mapping]] = ..., depends_on: _Optional[_Iterable[str]] = ..., context_id: _Optional[str] = ..., paused_at: _Optional[int] = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ...) -> None: ...
 
 class TaskQueryResponse(_message.Message):
     __slots__ = ("success", "error", "task", "tasks", "total_count", "request_id", "next_page_token")
@@ -2755,6 +2773,9 @@ class WorkflowOperation(_message.Message):
         CREATE_SM_INSTANCE: _ClassVar[WorkflowOperation.OpType]
         SEND_SM_EVENT: _ClassVar[WorkflowOperation.OpType]
         UPSERT_SCHEDULE: _ClassVar[WorkflowOperation.OpType]
+        LIST_JOINS: _ClassVar[WorkflowOperation.OpType]
+        GET_JOIN: _ClassVar[WorkflowOperation.OpType]
+        CANCEL_JOIN: _ClassVar[WorkflowOperation.OpType]
     LIST_RULES: WorkflowOperation.OpType
     GET_RULE: WorkflowOperation.OpType
     CREATE_RULE: WorkflowOperation.OpType
@@ -2779,6 +2800,9 @@ class WorkflowOperation(_message.Message):
     CREATE_SM_INSTANCE: WorkflowOperation.OpType
     SEND_SM_EVENT: WorkflowOperation.OpType
     UPSERT_SCHEDULE: WorkflowOperation.OpType
+    LIST_JOINS: WorkflowOperation.OpType
+    GET_JOIN: WorkflowOperation.OpType
+    CANCEL_JOIN: WorkflowOperation.OpType
     OP_FIELD_NUMBER: _ClassVar[int]
     ID_FIELD_NUMBER: _ClassVar[int]
     SECONDARY_ID_FIELD_NUMBER: _ClassVar[int]
