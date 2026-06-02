@@ -705,6 +705,23 @@ message RetryPolicy {
   bool honor_retry_after = 8;
 }
 
+// TaskCompletionEvent opts a task into "feed B": when it reaches a terminal
+// status the server publishes a domain event onto the event plane (event::*)
+// so a workflow join (or any rule) can gather over task completions without the
+// worker emitting its own event. The emitted payload carries
+// {task_id, status, workspace, correlation_id, metadata}.
+message TaskCompletionEvent {
+  // enabled turns the feature on. When false (default) no completion event is
+  // emitted (today's behavior).
+  bool enabled = 1;
+  // event_name is the event name to publish. Empty ⇒ derived as
+  // "task.completed" / "task.failed" / "task.cancelled" from the terminal status.
+  string event_name = 2;
+  // on_statuses restricts emission to these terminal statuses. Empty ⇒ all
+  // terminal statuses (completed, failed, cancelled).
+  repeated TaskStatus on_statuses = 3;
+}
+
 message CreateTaskRequest {
   string task_type = 1;
   string workspace = 2;
@@ -778,6 +795,10 @@ message CreateTaskRequest {
   // task's own id when it is a root; inherited by descendants on spawn. Becomes
   // the DAG run id when the join engine grows into full fan-out/fan-in.
   string root_task_id = 18;
+
+  // Optional "feed B" config: emit a domain event onto event::* when this task
+  // reaches a (selected) terminal status. Absent/disabled = no emission.
+  TaskCompletionEvent completion_event = 19;
 }
 
 // CreateTaskResponse is sent in response to CreateTaskRequest when the
@@ -1259,6 +1280,9 @@ message TaskInfo {
   // Top-of-fan-out-tree identity (flow / run id); defaults to the task's own id
   // for a root, inherited by descendants. Empty = none.
   string root_task_id = 33;
+  // "Feed B" config persisted on the task; read at the terminal transition to
+  // decide whether/what to emit onto event::*.
+  TaskCompletionEvent completion_event = 34;
 }
 
 // TaskQueryResponse is sent in response to TaskQuery operations.
