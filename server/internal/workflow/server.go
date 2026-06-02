@@ -286,7 +286,13 @@ func (s *Server) initComponents() {
 	exprEng := NewExprEngine(s.cfg.Workflow.GetRuleCacheSize())
 	tmplEng := NewTemplateEngine(s.cfg.Workflow.GetRuleCacheSize())
 
-	s.router = NewRouter(s.store, exprEng, tmplEng, s.executor, s.cfg.Workflow.GetRuleCacheTTL())
+	// Join engine shares the WorkflowEngine client's KV (global scope, reserved
+	// coordination namespace) for its atomic arrival counter, dedup ledger, and
+	// fire-marker — portable across Redis / Badger / JetStream like the leader lock.
+	joinScope := aether.CoordScope{Scope: aether.KVScopeGlobal}
+	joinEng := NewJoinEngine(s.store, exprEng, s.executor, s.client.KV().Counter(joinScope), s.client.KV().Locker(joinScope), s.cfg.Aether.Workspace)
+
+	s.router = NewRouter(s.store, exprEng, tmplEng, s.executor, joinEng, s.cfg.Workflow.GetRuleCacheTTL())
 	s.dagEng = NewDAGEngine(s.store, exprEng, tmplEng, s.executor, &s.cfg.Workflow)
 	s.scheduler = NewScheduler(s.store, s.executor, s.dagEng, s.leader, s.cfg.Workflow.GetSchedulerPollInterval())
 	s.stateMach = NewStateMachineEngine(s.store, s.executor)

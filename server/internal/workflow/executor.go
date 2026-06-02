@@ -27,6 +27,10 @@ type ActionDef struct {
 	// store re-pends the task with a policy-driven next_retry_at on
 	// FailTask. Omitted = legacy hard-coded max_retries=3 behavior.
 	Retry *RetryConfig `json:"retry,omitempty" yaml:"retry,omitempty"`
+	// emit_event field: the event name to publish onto the event plane (Type ==
+	// "emit_event"). Payload carries the event data. Enables join on_complete to
+	// chain into further rules/joins.
+	EventName string `json:"event_name,omitempty" yaml:"event_name,omitempty"`
 }
 
 // ToolCallPayload is the JSON structure sent as the message payload
@@ -129,6 +133,31 @@ func (e *Executor) dispatchCreateTask(action *ActionDef) error {
 		Msg("dispatching create_task action")
 
 	return e.CreateTaskWithType(workspace, action.TaskType, targetImpl, metadata, payload, action.Retry)
+}
+
+// EmitEvent publishes a synthetic event onto the event plane (event.*) as a
+// MessageType_EVENT message, mirroring an SDK client's SendEvent. Used by a
+// join's on_complete (Type == "emit_event") to chain into further rules/joins.
+func (e *Executor) EmitEvent(action *ActionDef) error {
+	if action.EventName == "" {
+		return fmt.Errorf("emit_event requires event_name")
+	}
+	workspace := action.Workspace
+	if workspace == "" {
+		workspace = e.defaultWorkspace
+	}
+	payload := map[string]any{
+		"source_agent": "workflow-engine",
+		"workspace":    workspace,
+		"event_names":  []string{action.EventName},
+		"data":         action.Payload,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal emit_event payload: %w", err)
+	}
+	log.Debug().Str("event", action.EventName).Str("workspace", workspace).Msg("emitting event")
+	return e.client.SendMessage(aether.EventWildcardTopic(), data, pb.MessageType_EVENT)
 }
 
 // CreateTaskWithType creates an Aether task with the given task type. When

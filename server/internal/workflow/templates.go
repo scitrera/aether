@@ -47,6 +47,9 @@ type TransformResult struct {
 	TaskType             string `yaml:"task_type" json:"task_type"`
 	TargetImplementation string `yaml:"target_implementation" json:"target_implementation"`
 	Payload              any    `yaml:"payload" json:"payload"`
+	// Join destination (Type == "join"): a fan-in / barrier / coalesce. nil for
+	// every other destination kind, so existing rules are unaffected.
+	Join *JoinSpec `yaml:"join" json:"join"`
 }
 
 // Transform renders a Go text/template with the given data, then parses
