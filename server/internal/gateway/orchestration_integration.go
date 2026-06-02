@@ -463,7 +463,19 @@ func (s *GatewayServer) handleCreateTask(
 		resolvedAuthority = inherited
 	}
 
-	if s.acl != nil {
+	// The WorkflowEngine is a system principal whose core function is to create
+	// tasks in response to events, in any workspace it routes for. It holds no
+	// per-workspace ACL grants (and is not meant to), so it is implicitly
+	// authorized for OpTaskCreate — mirroring the system-principal handling in
+	// connect.go ("workspace ACL not applicable") and the WFE KV-coord allowance
+	// in kv_handler.go. The bypass is scoped to task creation only; the WFE gains
+	// no other workspace access here. Without this, event-triggered workflow
+	// rules (e.g. create a pool task on an event) are silently ACL-denied.
+	isImplicitTaskCreator := identity.Type == models.PrincipalWorkflowEngine
+
+	if isImplicitTaskCreator {
+		s.logTaskCreateAudit(ctx, identity, client.SessionUUID, taskWorkspace, "", true, "workflow engine implicitly authorized for task creation (system principal)", buildTaskCreateAuditMetadata(req, assignmentMode, taskWorkspace), resolvedAuthority)
+	} else if s.acl != nil {
 		var decision *acl.ACLDecision
 		if resolvedAuthority != nil {
 			decision, err = s.acl.CheckAccessWithAuthority(ctx, identity, resolvedAuthority, acl.ResourceTypeWorkspace, taskWorkspace, audit.OpTaskCreate, taskWorkspace, client.SessionUUID, acl.AccessReadWrite)
@@ -504,6 +516,9 @@ func (s *GatewayServer) handleCreateTask(
 		ParentTaskID:         client.AssociatedTaskID,
 		RetryPolicy:          retryPolicyFromProto(req.GetRetryPolicy()),
 		Priority:             int32(req.GetPriority()),
+		CorrelationID:        req.GetCorrelationId(),
+		RootTaskID:           req.GetRootTaskId(),
+		CompletionEvent:      completionConfigFromProto(req.GetCompletionEvent()),
 	}
 	// Fix AA: seed the task's Authority.SubjectType/SubjectID from the resolved
 	// OBO subject so downstream consumers (buildTaskContext →

@@ -855,6 +855,89 @@ func TestTaskStoreIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("CorrelationAndCompletionEventRoundTrip", func(t *testing.T) {
+		correlationID := uuid.New().String()
+		rootID := uuid.New().String()
+		task := &Task{
+			TaskType:      "join-child",
+			Workspace:     "test-workspace",
+			CorrelationID: correlationID,
+			RootTaskID:    rootID,
+			CompletionEvent: &TaskCompletionConfig{
+				Enabled:    true,
+				EventName:  "task.join.done",
+				OnStatuses: []TaskStatus{TaskStatusCompleted, TaskStatusFailed},
+			},
+		}
+		if err := store.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask() error = %v", err)
+		}
+		retrieved, err := store.GetTask(ctx, task.TaskID)
+		if err != nil {
+			t.Fatalf("GetTask() error = %v", err)
+		}
+		if retrieved.CorrelationID != correlationID {
+			t.Errorf("GetTask() CorrelationID = %q, want %q", retrieved.CorrelationID, correlationID)
+		}
+		if retrieved.RootTaskID != rootID {
+			t.Errorf("GetTask() RootTaskID = %q, want %q", retrieved.RootTaskID, rootID)
+		}
+		if retrieved.CompletionEvent == nil {
+			t.Fatal("GetTask() CompletionEvent = nil, want non-nil")
+		}
+		if !retrieved.CompletionEvent.Enabled || retrieved.CompletionEvent.EventName != "task.join.done" {
+			t.Errorf("GetTask() CompletionEvent = %+v, want enabled with event_name task.join.done", retrieved.CompletionEvent)
+		}
+		if len(retrieved.CompletionEvent.OnStatuses) != 2 ||
+			retrieved.CompletionEvent.OnStatuses[0] != TaskStatusCompleted ||
+			retrieved.CompletionEvent.OnStatuses[1] != TaskStatusFailed {
+			t.Errorf("GetTask() CompletionEvent.OnStatuses = %v, want [completed failed]", retrieved.CompletionEvent.OnStatuses)
+		}
+
+		// A task created without a completion event reads back nil (SQL NULL).
+		plain := &Task{TaskType: "plain", Workspace: "test-workspace"}
+		if err := store.CreateTask(ctx, plain); err != nil {
+			t.Fatalf("CreateTask(plain) error = %v", err)
+		}
+		retrievedPlain, err := store.GetTask(ctx, plain.TaskID)
+		if err != nil {
+			t.Fatalf("GetTask(plain) error = %v", err)
+		}
+		if retrievedPlain.CompletionEvent != nil {
+			t.Errorf("GetTask(plain) CompletionEvent = %+v, want nil", retrievedPlain.CompletionEvent)
+		}
+	})
+
+	t.Run("FilterByCorrelationID", func(t *testing.T) {
+		correlationID := uuid.New().String()
+		match := &Task{
+			TaskType:      "join-member",
+			Workspace:     "corr-ws",
+			CorrelationID: correlationID,
+		}
+		other := &Task{
+			TaskType:      "join-member",
+			Workspace:     "corr-ws",
+			CorrelationID: uuid.New().String(),
+		}
+		if err := store.CreateTask(ctx, match); err != nil {
+			t.Fatalf("CreateTask(match) error = %v", err)
+		}
+		if err := store.CreateTask(ctx, other); err != nil {
+			t.Fatalf("CreateTask(other) error = %v", err)
+		}
+		results, err := store.ListTasks(ctx, &TaskFilter{
+			Workspace:     "corr-ws",
+			CorrelationID: correlationID,
+		})
+		if err != nil {
+			t.Fatalf("ListTasks(correlation_id) error = %v", err)
+		}
+		if len(results) != 1 || results[0].TaskID != match.TaskID {
+			t.Fatalf("filter by correlation_id returned wrong tasks: got %+v", results)
+		}
+	})
+
 	// Track B: the new authority/lineage filters on TaskFilter actually filter in SQL.
 	t.Run("FilterBySubjectAndAuthority", func(t *testing.T) {
 		parentID := uuid.New().String()

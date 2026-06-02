@@ -182,6 +182,16 @@ type CreateTaskRequest struct {
 	// 0 = UNSPECIFIED, normalized to NORMAL by the store on create). Higher
 	// priority pending tasks are delivered before lower ones.
 	Priority int32
+
+	// CorrelationID is the fan-out/fan-in correlation identity (the barrier/group
+	// id a workflow join matches against), distinct from the task id.
+	CorrelationID string
+	// RootTaskID is the flow-root task id. Children carry it from their spawner;
+	// a task with no provided root becomes its own flow root (set in the handlers).
+	RootTaskID string
+	// CompletionEvent, when non-nil, opts the task into "feed B": the server emits
+	// a domain event onto event::* when the task reaches a selected terminal status.
+	CompletionEvent *tasks.TaskCompletionConfig
 }
 
 // principalTypeStringForTask maps a models.PrincipalType to the lowercase
@@ -249,6 +259,22 @@ func applyRetryPolicyToTask(task *tasks.ExtendedTask) {
 	task.MaxRetries = int(task.RetryPolicy.EffectiveMaxAttempts())
 }
 
+// applyCorrelationToTask copies the correlation/feed-B fields from the request
+// onto the task and resolves root_task_id propagation: children carry the root
+// from their spawner, while a task created with no provided root becomes its own
+// flow root. Must run after task.TaskID is set.
+func applyCorrelationToTask(task *tasks.ExtendedTask, req *CreateTaskRequest) {
+	if task == nil || req == nil {
+		return
+	}
+	task.CorrelationID = req.CorrelationID
+	task.CompletionEvent = req.CompletionEvent
+	task.RootTaskID = req.RootTaskID
+	if task.RootTaskID == "" {
+		task.RootTaskID = task.TaskID // a task with no provided root is its own flow root
+	}
+}
+
 // CreateTaskResponse represents the result of task creation
 type CreateTaskResponse struct {
 	TaskID     string
@@ -302,6 +328,7 @@ func (tas *TaskAssignmentService) handleSelfAssign(ctx context.Context, req *Cre
 	}
 	applySubjectIdentityToAuthority(task, req.SubjectIdentity)
 	applyRetryPolicyToTask(task)
+	applyCorrelationToTask(task, req)
 
 	// Create task in database as pending
 	if err := tas.taskStore.CreateTask(ctx, task); err != nil {
@@ -368,6 +395,7 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 	}
 	applySubjectIdentityToAuthority(task, req.SubjectIdentity)
 	applyRetryPolicyToTask(task)
+	applyCorrelationToTask(task, req)
 
 	// Special case: if this IS a startup task (e.g., from admin API), go directly to
 	// createOrchestratedStartupTask which handles all duplicate prevention:
@@ -673,6 +701,7 @@ func (tas *TaskAssignmentService) handlePool(ctx context.Context, req *CreateTas
 	}
 	applySubjectIdentityToAuthority(task, req.SubjectIdentity)
 	applyRetryPolicyToTask(task)
+	applyCorrelationToTask(task, req)
 
 	if err := tas.taskStore.CreateTask(ctx, task); err != nil {
 		return nil, fmt.Errorf("failed to create pool task: %w", err)

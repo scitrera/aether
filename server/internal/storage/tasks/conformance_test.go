@@ -146,6 +146,11 @@ func TestStoreConformance(t *testing.T) {
 				defer cleanup()
 				runCursorPagination(t, store)
 			})
+			t.Run("CorrelationAndCompletion", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runCorrelationAndCompletion(t, store)
+			})
 		})
 	}
 }
@@ -1382,4 +1387,102 @@ func containsTimer(timers []*tasks.TimerRecord, timerID string) bool {
 		}
 	}
 	return false
+}
+
+// runCorrelationAndCompletion verifies that CorrelationID, RootTaskID, and
+// CompletionEvent round-trip through CreateTask/GetTask and that the
+// CorrelationID and RootTaskID filter predicates work correctly.
+func runCorrelationAndCompletion(t *testing.T, store tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	const corrID = "corr-group-abc"
+	const rootID = "root-task-xyz"
+
+	// Task with all three new fields populated.
+	task := newTestTask(t, "corr-full")
+	task.CorrelationID = corrID
+	task.RootTaskID = rootID
+	task.CompletionEvent = &tasks.TaskCompletionConfig{
+		Enabled:    true,
+		EventName:  "task.done",
+		OnStatuses: []tasks.TaskStatus{tasks.TaskStatusCompleted, tasks.TaskStatusFailed},
+	}
+	if err := store.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask (full): %v", err)
+	}
+
+	// Second task: same correlation group, no CompletionEvent.
+	task2 := newTestTask(t, "corr-sibling")
+	task2.CorrelationID = corrID
+	task2.RootTaskID = rootID
+	if err := store.CreateTask(ctx, task2); err != nil {
+		t.Fatalf("CreateTask (sibling): %v", err)
+	}
+
+	// Task outside the correlation group.
+	taskOther := newTestTask(t, "corr-other")
+	if err := store.CreateTask(ctx, taskOther); err != nil {
+		t.Fatalf("CreateTask (other): %v", err)
+	}
+
+	// --- GetTask round-trip for all three fields ---
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.CorrelationID != corrID {
+		t.Errorf("CorrelationID: got %q, want %q", got.CorrelationID, corrID)
+	}
+	if got.RootTaskID != rootID {
+		t.Errorf("RootTaskID: got %q, want %q", got.RootTaskID, rootID)
+	}
+	if got.CompletionEvent == nil {
+		t.Fatal("CompletionEvent: got nil, want non-nil")
+	}
+	if !got.CompletionEvent.Enabled {
+		t.Error("CompletionEvent.Enabled: got false, want true")
+	}
+	if got.CompletionEvent.EventName != "task.done" {
+		t.Errorf("CompletionEvent.EventName: got %q, want %q", got.CompletionEvent.EventName, "task.done")
+	}
+	if len(got.CompletionEvent.OnStatuses) != 2 {
+		t.Errorf("CompletionEvent.OnStatuses len: got %d, want 2", len(got.CompletionEvent.OnStatuses))
+	}
+
+	// Task without CompletionEvent must come back nil.
+	got2, err := store.GetTask(ctx, task2.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask (sibling): %v", err)
+	}
+	if got2.CompletionEvent != nil {
+		t.Errorf("CompletionEvent: got non-nil for task without completion_event")
+	}
+
+	// --- CorrelationID filter ---
+	listed, err := store.ListTasks(ctx, &tasks.TaskFilter{CorrelationID: corrID, Limit: 100})
+	if err != nil {
+		t.Fatalf("ListTasks(CorrelationID): %v", err)
+	}
+	if !containsTask(listed, task.TaskID) {
+		t.Errorf("CorrelationID filter: missing task %s", task.TaskID)
+	}
+	if !containsTask(listed, task2.TaskID) {
+		t.Errorf("CorrelationID filter: missing sibling %s", task2.TaskID)
+	}
+	if containsTask(listed, taskOther.TaskID) {
+		t.Errorf("CorrelationID filter: unexpectedly includes other task %s", taskOther.TaskID)
+	}
+
+	// --- RootTaskID filter ---
+	listedRoot, err := store.ListTasks(ctx, &tasks.TaskFilter{RootTaskID: rootID, Limit: 100})
+	if err != nil {
+		t.Fatalf("ListTasks(RootTaskID): %v", err)
+	}
+	if !containsTask(listedRoot, task.TaskID) {
+		t.Errorf("RootTaskID filter: missing task %s", task.TaskID)
+	}
+	if containsTask(listedRoot, taskOther.TaskID) {
+		t.Errorf("RootTaskID filter: unexpectedly includes other task %s", taskOther.TaskID)
+	}
 }

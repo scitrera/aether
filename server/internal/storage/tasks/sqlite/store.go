@@ -136,6 +136,14 @@ func (s *Store) CreateTask(ctx context.Context, task *tasks.Task) error {
 		}
 		retryPolicyStr = sql.NullString{String: string(b), Valid: true}
 	}
+	var completionEventStr sql.NullString
+	if task.CompletionEvent != nil {
+		b, merr := json.Marshal(task.CompletionEvent)
+		if merr != nil {
+			return fmt.Errorf("failed to marshal completion_event: %w", merr)
+		}
+		completionEventStr = sql.NullString{String: string(b), Valid: true}
+	}
 
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO tasks (
@@ -151,14 +159,16 @@ func (s *Store) CreateTask(ctx context.Context, task *tasks.Task) error {
 			authority_audience_type, authority_audience_id, authority_delegate_type, authority_delegate_id,
 			task_class, grace_window_ms,
 			wait_spec, depends_on, context_id, paused_at,
-			retry_policy_json
+			retry_policy_json,
+			correlation_id, root_task_id, completion_event
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?,
 			?, ?, ?, ?,
-			?
+			?,
+			?, ?, ?
 		)
 	`,
 		task.TaskID,
@@ -209,6 +219,9 @@ func (s *Store) CreateTask(ctx context.Context, task *tasks.Task) error {
 		nullStr(task.ContextID),
 		pausedAtMs,
 		retryPolicyStr,
+		nullStr(task.CorrelationID),
+		nullStr(task.RootTaskID),
+		completionEventStr,
 	)
 	return err
 }
@@ -619,6 +632,14 @@ func buildFilterClausesSQLite(filter *tasks.TaskFilter, args []interface{}, skip
 	if filter.ContextID != "" {
 		query += " AND context_id = ?"
 		args = append(args, filter.ContextID)
+	}
+	if filter.CorrelationID != "" {
+		query += " AND correlation_id = ?"
+		args = append(args, filter.CorrelationID)
+	}
+	if filter.RootTaskID != "" {
+		query += " AND root_task_id = ?"
+		args = append(args, filter.RootTaskID)
 	}
 	if len(filter.ExcludeStatuses) > 0 {
 		placeholders := make([]string, len(filter.ExcludeStatuses))
@@ -1575,7 +1596,8 @@ const taskSelectColumns = `
 	task_class,
 	disconnected_at, grace_window_ms,
 	wait_spec, depends_on, context_id, paused_at,
-	retry_policy_json
+	retry_policy_json,
+	correlation_id, root_task_id, completion_event
 `
 
 // taskScanner is satisfied by both *sql.Row and *sql.Rows.
@@ -1591,6 +1613,7 @@ func scanTaskInto(s taskScanner) (*tasks.Task, error) {
 	var authorityGrantID, rootAuthorityGrantID, parentAuthorityGrantID sql.NullString
 	var authorityAudienceType, authorityAudienceID, authorityDelegateType, authorityDelegateID sql.NullString
 	var contextID sql.NullString
+	var correlationID, rootTaskID, completionEventJSON sql.NullString
 	var createdAtStr, updatedAtStr string
 	var scheduledForStr, startedAtStr, completedAtStr, failedAtStr, assignedAtStr, nextRetryAtStr, lastHeartbeatStr, disconnectedAtStr sql.NullString
 	var pausedAtMs sql.NullInt64
@@ -1619,6 +1642,7 @@ func scanTaskInto(s taskScanner) (*tasks.Task, error) {
 		&disconnectedAtStr, &task.GraceWindowMs,
 		&waitSpecJSON, &dependsOnJSON, &contextID, &pausedAtMs,
 		&retryPolicyJSON,
+		&correlationID, &rootTaskID, &completionEventJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -1833,6 +1857,19 @@ func scanTaskInto(s taskScanner) (*tasks.Task, error) {
 	if pausedAtMs.Valid {
 		t := time.UnixMilli(pausedAtMs.Int64).UTC()
 		task.PausedAt = &t
+	}
+	if correlationID.Valid {
+		task.CorrelationID = correlationID.String
+	}
+	if rootTaskID.Valid {
+		task.RootTaskID = rootTaskID.String
+	}
+	if completionEventJSON.Valid && len(completionEventJSON.String) > 0 {
+		var ce tasks.TaskCompletionConfig
+		if err := json.Unmarshal([]byte(completionEventJSON.String), &ce); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal completion_event: %w", err)
+		}
+		task.CompletionEvent = &ce
 	}
 
 	return &task, nil
