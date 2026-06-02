@@ -615,6 +615,175 @@ func (s *Store) SetScheduleActiveTask(ctx context.Context, scheduleID, taskID st
 }
 
 // =============================================================================
+// Join types and operations
+// =============================================================================
+
+// Join is the durable mirror of a fan-in/barrier/coalesce join instance. The
+// authoritative arrival counter lives in KV; this row is the observability +
+// deadline-sweep surface. One row per (join_name, workspace, correlation_key).
+type Join struct {
+	ID             int64
+	JoinName       string
+	Workspace      string
+	CorrelationKey string
+	Mode           string // "count" | "set" | "coalesce"
+	ExpectedCount  *int64 // nil until armed (dynamic-N)
+	ArrivedCount   int64
+	Dirty          bool   // coalesce re-arm flag
+	Status         string // "open" | "fired" | "timed_out" | "cancelled"
+	DeadlineAt     *time.Time
+	LingerUntil    *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+const (
+	JoinModeCount    = "count"
+	JoinModeSet      = "set"
+	JoinModeCoalesce = "coalesce"
+
+	JoinStatusOpen      = "open"
+	JoinStatusFired     = "fired"
+	JoinStatusTimedOut  = "timed_out"
+	JoinStatusCancelled = "cancelled"
+)
+
+func (s *Store) EnsureJoin(ctx context.Context, j *Join) (*Join, error) {
+	query := `
+		INSERT INTO workflow_joins (join_name, workspace, correlation_key, mode,
+		                            expected_count, arrived_count, dirty, status,
+		                            deadline_at, linger_until)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (join_name, workspace, correlation_key) DO NOTHING
+	`
+	_, err := s.db.ExecContext(ctx, query,
+		j.JoinName, j.Workspace, j.CorrelationKey, j.Mode,
+		j.ExpectedCount, j.ArrivedCount, j.Dirty, j.Status,
+		j.DeadlineAt, j.LingerUntil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ensure join: %w", err)
+	}
+	return s.GetJoin(ctx, j.JoinName, j.Workspace, j.CorrelationKey)
+}
+
+func (s *Store) GetJoin(ctx context.Context, joinName, workspace, correlationKey string) (*Join, error) {
+	query := `
+		SELECT id, join_name, workspace, correlation_key, mode, expected_count,
+		       arrived_count, dirty, status, deadline_at, linger_until,
+		       created_at, updated_at
+		FROM workflow_joins
+		WHERE join_name = $1 AND workspace = $2 AND correlation_key = $3
+	`
+	var j Join
+	err := s.db.QueryRowContext(ctx, query, joinName, workspace, correlationKey).Scan(
+		&j.ID, &j.JoinName, &j.Workspace, &j.CorrelationKey, &j.Mode, &j.ExpectedCount,
+		&j.ArrivedCount, &j.Dirty, &j.Status, &j.DeadlineAt, &j.LingerUntil,
+		&j.CreatedAt, &j.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get join: %w", err)
+	}
+	return &j, nil
+}
+
+func (s *Store) UpdateJoinArrived(ctx context.Context, id int64, arrivedCount int64) error {
+	query := `UPDATE workflow_joins SET arrived_count = $2, updated_at = now() WHERE id = $1`
+	_, err := s.db.ExecContext(ctx, query, id, arrivedCount)
+	return err
+}
+
+func (s *Store) SetJoinExpected(ctx context.Context, id int64, expected int64) error {
+	query := `UPDATE workflow_joins SET expected_count = $2, updated_at = now() WHERE id = $1`
+	_, err := s.db.ExecContext(ctx, query, id, expected)
+	return err
+}
+
+func (s *Store) SetJoinDirty(ctx context.Context, id int64, dirty bool) error {
+	query := `UPDATE workflow_joins SET dirty = $2, updated_at = now() WHERE id = $1`
+	_, err := s.db.ExecContext(ctx, query, id, dirty)
+	return err
+}
+
+func (s *Store) MarkJoinTerminal(ctx context.Context, id int64, status string, lingerUntil time.Time) error {
+	query := `UPDATE workflow_joins SET status = $2, linger_until = $3, updated_at = now() WHERE id = $1`
+	_, err := s.db.ExecContext(ctx, query, id, status, lingerUntil)
+	return err
+}
+
+func (s *Store) GetDueJoinDeadlines(ctx context.Context, now time.Time) ([]Join, error) {
+	query := `
+		SELECT id, join_name, workspace, correlation_key, mode, expected_count,
+		       arrived_count, dirty, status, deadline_at, linger_until,
+		       created_at, updated_at
+		FROM workflow_joins
+		WHERE status = 'open' AND deadline_at IS NOT NULL AND deadline_at <= $1
+		ORDER BY deadline_at ASC
+	`
+	if !s.isSQLite {
+		query += " FOR UPDATE SKIP LOCKED"
+	}
+	rows, err := s.db.QueryContext(ctx, query, now)
+	if err != nil {
+		return nil, fmt.Errorf("get due join deadlines: %w", err)
+	}
+	defer rows.Close()
+
+	var joins []Join
+	for rows.Next() {
+		var j Join
+		if err := rows.Scan(
+			&j.ID, &j.JoinName, &j.Workspace, &j.CorrelationKey, &j.Mode, &j.ExpectedCount,
+			&j.ArrivedCount, &j.Dirty, &j.Status, &j.DeadlineAt, &j.LingerUntil,
+			&j.CreatedAt, &j.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan join: %w", err)
+		}
+		joins = append(joins, j)
+	}
+	return joins, rows.Err()
+}
+
+func (s *Store) ListJoins(ctx context.Context, workspace string) ([]Join, error) {
+	query := `
+		SELECT id, join_name, workspace, correlation_key, mode, expected_count,
+		       arrived_count, dirty, status, deadline_at, linger_until,
+		       created_at, updated_at
+		FROM workflow_joins
+	`
+	var rows *sql.Rows
+	var err error
+	if workspace == "" || workspace == "*" {
+		query += " ORDER BY created_at DESC"
+		rows, err = s.db.QueryContext(ctx, query)
+	} else {
+		query += " WHERE workspace = $1 ORDER BY created_at DESC"
+		rows, err = s.db.QueryContext(ctx, query, workspace)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list joins: %w", err)
+	}
+	defer rows.Close()
+
+	var joins []Join
+	for rows.Next() {
+		var j Join
+		if err := rows.Scan(
+			&j.ID, &j.JoinName, &j.Workspace, &j.CorrelationKey, &j.Mode, &j.ExpectedCount,
+			&j.ArrivedCount, &j.Dirty, &j.Status, &j.DeadlineAt, &j.LingerUntil,
+			&j.CreatedAt, &j.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan join: %w", err)
+		}
+		joins = append(joins, j)
+	}
+	return joins, rows.Err()
+}
+
+// =============================================================================
 // Additional query methods for Admin API
 // =============================================================================
 

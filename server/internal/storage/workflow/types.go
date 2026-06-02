@@ -29,6 +29,8 @@ type (
 	StepState = legacy.StepState
 	// Schedule is a workflow_schedules row.
 	Schedule = legacy.Schedule
+	// Join is a workflow_joins row.
+	Join = legacy.Join
 	// StateMachineDef is a workflow_state_machines row.
 	StateMachineDef = legacy.StateMachineDef
 	// StateMachineInstance is a workflow_state_machine_instances row.
@@ -60,4 +62,19 @@ const (
 	ScheduleTypeInterval     = legacy.ScheduleTypeInterval
 	ScheduleTypeOnce         = legacy.ScheduleTypeOnce
 	ScheduleTypeEventDelayed = legacy.ScheduleTypeEventDelayed
+)
+
+// Join mode values — values that land in workflow_joins.mode.
+const (
+	JoinModeCount    = legacy.JoinModeCount
+	JoinModeSet      = legacy.JoinModeSet
+	JoinModeCoalesce = legacy.JoinModeCoalesce
+)
+
+// Join status values — values that land in workflow_joins.status.
+const (
+	JoinStatusOpen      = legacy.JoinStatusOpen
+	JoinStatusFired     = legacy.JoinStatusFired
+	JoinStatusTimedOut  = legacy.JoinStatusTimedOut
+	JoinStatusCancelled = legacy.JoinStatusCancelled
 )
