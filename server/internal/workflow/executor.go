@@ -31,6 +31,10 @@ type ActionDef struct {
 	// "emit_event"). Payload carries the event data. Enables join on_complete to
 	// chain into further rules/joins.
 	EventName string `json:"event_name,omitempty" yaml:"event_name,omitempty"`
+	// IdempotencyKey, when set on a create_task action, is forwarded to the
+	// gateway which dedups creation on it (exactly-once downstream). Joins set it
+	// to their instance key so a completion and a timeout sweep yield one task.
+	IdempotencyKey string `json:"idempotency_key,omitempty" yaml:"idempotency_key,omitempty"`
 }
 
 // ToolCallPayload is the JSON structure sent as the message payload
@@ -132,7 +136,7 @@ func (e *Executor) dispatchCreateTask(action *ActionDef) error {
 		Str("target_impl", targetImpl).
 		Msg("dispatching create_task action")
 
-	return e.CreateTaskWithType(workspace, action.TaskType, targetImpl, metadata, payload, action.Retry)
+	return e.CreateTaskWithType(workspace, action.TaskType, targetImpl, metadata, payload, action.Retry, action.IdempotencyKey)
 }
 
 // EmitEvent publishes a synthetic event onto the event plane (event.*) as a
@@ -164,7 +168,7 @@ func (e *Executor) EmitEvent(action *ActionDef) error {
 // retry is non-nil, it is translated to a proto RetryPolicy and attached to
 // the request so the task store handles backoff scheduling on FailTask.
 // Pass nil to keep the legacy hard-coded max_retries=3 behavior.
-func (e *Executor) CreateTaskWithType(workspace, taskType, targetImpl string, metadata map[string]string, payload []byte, retry *RetryConfig) error {
+func (e *Executor) CreateTaskWithType(workspace, taskType, targetImpl string, metadata map[string]string, payload []byte, retry *RetryConfig, idempotencyKey string) error {
 	log.Debug().
 		Str("workspace", workspace).
 		Str("task_type", taskType).
@@ -181,6 +185,7 @@ func (e *Executor) CreateTaskWithType(workspace, taskType, targetImpl string, me
 				Metadata:             metadata,
 				Payload:              payload,
 				RetryPolicy:          retryConfigToProto(retry),
+				IdempotencyKey:       idempotencyKey,
 			},
 		},
 	}

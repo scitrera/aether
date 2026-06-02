@@ -315,12 +315,26 @@ func newMockKVReadWriter() *mockKVReadWriter {
 	}
 }
 
-func (m *mockKVReadWriter) Get(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, _ string) (string, error) {
-	return "", m.getErr
+func (m *mockKVReadWriter) Get(_ context.Context, _ models.Identity, _ kv.KVScope, key string, _ string, _ string) (string, error) {
+	if m.getErr != nil {
+		return "", m.getErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Realistic readback so handler tests (e.g. idempotent create-task) can
+	// observe values written via Set/SetNX; absent keys return "" like the
+	// real store's not-found path.
+	return m.listData[key], nil
 }
 
-func (m *mockKVReadWriter) Set(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, _ string, _ string, _ time.Duration) error {
-	return m.setErr
+func (m *mockKVReadWriter) Set(_ context.Context, _ models.Identity, _ kv.KVScope, key string, value string, _ string, _ string, _ time.Duration) error {
+	if m.setErr != nil {
+		return m.setErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.listData[key] = value
+	return nil
 }
 
 func (m *mockKVReadWriter) Delete(_ context.Context, _ models.Identity, _ kv.KVScope, key string, _ string, _ string) error {

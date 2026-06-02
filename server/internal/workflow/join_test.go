@@ -270,6 +270,28 @@ func TestJoinSet_FiresWhenAllMembersArrive(t *testing.T) {
 	}
 }
 
+func TestJoin_SetsIdempotencyKeyOnFire(t *testing.T) {
+	je, disp, _ := newTestJoinEngine()
+	ctx := context.Background()
+	spec := &JoinSpec{
+		Name:           "barrier",
+		Mode:           JoinModeCount,
+		CorrelationKey: "input.batch",
+		ExpectedCount:  "1",
+		OnComplete:     &ActionDef{Type: "create_task", TaskType: "kb"},
+	}
+	_ = je.HandleArrival(ctx, spec, env(map[string]any{"batch": "A"}, "ws"), "member", "ws")
+	if disp.count() != 1 {
+		t.Fatalf("want 1 dispatch, got %d", disp.count())
+	}
+	disp.mu.Lock()
+	got := disp.dispatched[0].IdempotencyKey
+	disp.mu.Unlock()
+	if got != "join:barrier:ws:A" {
+		t.Fatalf("idempotency_key=%q, want join:barrier:ws:A", got)
+	}
+}
+
 func TestJoinCount_FiresOnceWhenComplete(t *testing.T) {
 	je, disp, _ := newTestJoinEngine()
 	ctx := context.Background()

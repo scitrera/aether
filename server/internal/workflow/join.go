@@ -281,6 +281,9 @@ func (je *JoinEngine) fire(ctx context.Context, spec *JoinSpec, row *Join, base 
 		return nil // another arrival already fired this instance
 	}
 	log.Info().Str("join", spec.Name).Str("corr", row.CorrelationKey).Int64("arrived", row.ArrivedCount).Bool("degraded", degraded).Msg("join: firing")
+	if action != nil {
+		action.IdempotencyKey = joinIdemKey(row)
+	}
 	if aerr := je.runAction(ctx, spec, action); aerr != nil {
 		return aerr
 	}
@@ -337,6 +340,7 @@ func (je *JoinEngine) HandleDeadline(ctx context.Context, j *Join) error {
 	}
 	if won {
 		log.Info().Str("join", j.JoinName).Str("corr", j.CorrelationKey).Msg("join: deadline reached, firing timeout action")
+		action.IdempotencyKey = joinIdemKey(j)
 		if aerr := je.runAction(ctx, &JoinSpec{Name: j.JoinName}, &action); aerr != nil {
 			return fmt.Errorf("join %q: run timeout action: %w", j.JoinName, aerr)
 		}
@@ -555,4 +559,12 @@ func joinBaseKey(name, workspace, corr string) string {
 func hashSeg(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:])
+}
+
+// joinIdemKey is the stable idempotency key for a join instance's downstream
+// create_task. It is identical across the on_complete and on_timeout fire paths
+// so a normal completion and a racing deadline sweep produce exactly one task
+// (the gateway dedups CreateTaskRequest.idempotency_key).
+func joinIdemKey(j *Join) string {
+	return "join:" + j.JoinName + ":" + j.Workspace + ":" + j.CorrelationKey
 }
