@@ -175,6 +175,14 @@ const (
 	TimerTypeRetry           TimerType = "retry"
 )
 
+// TaskCompletionConfig is the persisted "feed B" config: emit a domain event
+// onto event::* when the task reaches a (selected) terminal status.
+type TaskCompletionConfig struct {
+	Enabled    bool         `json:"enabled"`
+	EventName  string       `json:"event_name,omitempty"`
+	OnStatuses []TaskStatus `json:"on_statuses,omitempty"`
+}
+
 // Task represents a unified task record in the database
 // This type supports both messaging delivery and orchestration patterns
 type Task struct {
@@ -263,6 +271,17 @@ type Task struct {
 	ContextID string `json:"context_id,omitempty"`
 	// PausedAt records when the task entered a waiting/hibernated state.
 	PausedAt *time.Time `json:"paused_at,omitempty"`
+
+	// CorrelationID is the fan-out/fan-in correlation identity (distinct from
+	// TaskID): the barrier/group id a workflow join matches against.
+	CorrelationID string `json:"correlation_id,omitempty"`
+	// RootTaskID is the flow-root task id propagated from a task's spawner. A
+	// task created without a provided root is its own flow root.
+	RootTaskID string `json:"root_task_id,omitempty"`
+	// CompletionEvent, when non-nil, opts the task into "feed B": the server
+	// emits a domain event onto event::* when the task reaches a (selected)
+	// terminal status.
+	CompletionEvent *TaskCompletionConfig `json:"completion_event,omitempty"`
 
 	// Messaging support (for delivery tasks)
 	TargetTopic string `json:"target_topic,omitempty"`
@@ -384,6 +403,8 @@ type TaskFilter struct {
 	ExcludeTaskClasses   []int32 // any task whose TaskClass is in this list is omitted
 	// Phase 1: A2A-aligned filter fields.
 	ContextID       string       // Filter by client-minted session identifier; empty = no filter
+	CorrelationID   string       // Filter by fan-out/fan-in correlation identity; empty = no filter
+	RootTaskID      string       // Filter by flow-root task id; empty = no filter
 	ExcludeStatuses []TaskStatus // Omit tasks whose status is in this list
 	Limit           int
 	Offset          int

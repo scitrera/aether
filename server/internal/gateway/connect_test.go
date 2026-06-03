@@ -301,6 +301,7 @@ func (m *mockMessageRouter) hasExclusiveTopic(topic string) bool {
 type mockKVReadWriter struct {
 	mu       sync.Mutex
 	listData map[string]string
+	setData  map[string]map[string]struct{}
 	getErr   error
 	setErr   error
 	delErr   error
@@ -310,15 +311,30 @@ type mockKVReadWriter struct {
 func newMockKVReadWriter() *mockKVReadWriter {
 	return &mockKVReadWriter{
 		listData: make(map[string]string),
+		setData:  make(map[string]map[string]struct{}),
 	}
 }
 
-func (m *mockKVReadWriter) Get(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, _ string) (string, error) {
-	return "", m.getErr
+func (m *mockKVReadWriter) Get(_ context.Context, _ models.Identity, _ kv.KVScope, key string, _ string, _ string) (string, error) {
+	if m.getErr != nil {
+		return "", m.getErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Realistic readback so handler tests (e.g. idempotent create-task) can
+	// observe values written via Set/SetNX; absent keys return "" like the
+	// real store's not-found path.
+	return m.listData[key], nil
 }
 
-func (m *mockKVReadWriter) Set(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, _ string, _ string, _ time.Duration) error {
-	return m.setErr
+func (m *mockKVReadWriter) Set(_ context.Context, _ models.Identity, _ kv.KVScope, key string, value string, _ string, _ string, _ time.Duration) error {
+	if m.setErr != nil {
+		return m.setErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.listData[key] = value
+	return nil
 }
 
 func (m *mockKVReadWriter) Delete(_ context.Context, _ models.Identity, _ kv.KVScope, key string, _ string, _ string) error {
@@ -421,6 +437,36 @@ func (m *mockKVReadWriter) CompareAndDelete(_ context.Context, _ models.Identity
 	}
 	delete(m.listData, key)
 	return true, nil
+}
+
+// SetAdd/SetCard are backed by setData with realistic set semantics (TTL
+// ignored) so handler tests can exercise the add/cardinality flow.
+func (m *mockKVReadWriter) SetAdd(_ context.Context, _ models.Identity, _ kv.KVScope, key string, member string, _ string, _ string, _ time.Duration) (bool, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.setErr != nil {
+		return false, 0, m.setErr
+	}
+	members, ok := m.setData[key]
+	if !ok {
+		members = make(map[string]struct{})
+		m.setData[key] = members
+	}
+	added := false
+	if _, exists := members[member]; !exists {
+		members[member] = struct{}{}
+		added = true
+	}
+	return added, int64(len(members)), nil
+}
+
+func (m *mockKVReadWriter) SetCard(_ context.Context, _ models.Identity, _ kv.KVScope, key string, _ string, _ string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getErr != nil {
+		return 0, m.getErr
+	}
+	return int64(len(m.setData[key])), nil
 }
 
 // mockCheckpointManager implements CheckpointManager.

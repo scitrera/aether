@@ -128,6 +128,7 @@ export interface ProtoGrpcType {
       TaskAuthorityRequestEventRelay: MessageTypeDefinition
       TaskChildLifecycleEvent: MessageTypeDefinition
       TaskClass: EnumTypeDefinition
+      TaskCompletionEvent: MessageTypeDefinition
       TaskEvent: MessageTypeDefinition
       TaskFilter: MessageTypeDefinition
       TaskHibernated: MessageTypeDefinition

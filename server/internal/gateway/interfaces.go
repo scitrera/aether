@@ -102,6 +102,22 @@ type KVReadWriter interface {
 	// CompareAndDelete deletes key only if the current stored value equals
 	// expected. Returns true iff the delete was applied.
 	CompareAndDelete(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, expected string, userID string, workspace string) (bool, error)
+
+	// Atomic set primitives — the building block for fan-in joins (set-based
+	// completeness) and at-most-once dedup ledgers. Implemented natively across
+	// all three backends (Redis SADD/SCARD; Badger / NATS-JetStream emulate a
+	// JSON-encoded member set under optimistic concurrency).
+
+	// SetAdd atomically adds member to the set stored at key, returning whether
+	// the member was newly added (false if it was already present) together with
+	// the set's cardinality after the add. When ttl > 0 the key's expiry is
+	// (re)set on a newly-added member. This is the set analogue of IncrementIf:
+	// the unique caller that observes added==true && cardinality==N is the one
+	// whose add completed an N-member set (exactly-once fan-in firing for set
+	// joins), while added==false flags a duplicate arrival for dedup ledgers.
+	SetAdd(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, member string, userID string, workspace string, ttl time.Duration) (bool, int64, error)
+	// SetCard returns the cardinality of the set stored at key (0 if absent).
+	SetCard(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, userID string, workspace string) (int64, error)
 }
 
 // CheckpointManager abstracts checkpoint store operations used by the gateway.

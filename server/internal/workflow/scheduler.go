@@ -9,22 +9,30 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// joinDeadlineHandler fires the timeout path for an open join whose deadline
+// has elapsed. *JoinEngine satisfies it.
+type joinDeadlineHandler interface {
+	HandleDeadline(ctx context.Context, j *Join) error
+}
+
 // Scheduler handles recurring and one-time scheduled tasks.
 type Scheduler struct {
 	store    WorkflowStore
 	executor *Executor
 	dagEng   *DAGEngine
 	leader   LeaderElector
+	joins    joinDeadlineHandler
 	parser   cron.Parser
 	interval time.Duration
 }
 
-func NewScheduler(store WorkflowStore, executor *Executor, dagEng *DAGEngine, leader LeaderElector, pollInterval time.Duration) *Scheduler {
+func NewScheduler(store WorkflowStore, executor *Executor, dagEng *DAGEngine, leader LeaderElector, joins joinDeadlineHandler, pollInterval time.Duration) *Scheduler {
 	return &Scheduler{
 		store:    store,
 		executor: executor,
 		dagEng:   dagEng,
 		leader:   leader,
+		joins:    joins,
 		parser:   cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
 		interval: pollInterval,
 	}
@@ -131,6 +139,22 @@ func (s *Scheduler) poll(ctx context.Context) error {
 		nextFire := s.advanceToFuture(sc, now)
 		if err := s.store.UpdateScheduleAfterFire(ctx, sc.ID, now, nextFire); err != nil {
 			log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to update schedule after fire")
+		}
+	}
+
+	// Join deadline sweep: fire on_timeout (or abort) for open joins past their
+	// deadline. Leader-gated like the schedule sweep above.
+	due, err := s.store.GetDueJoinDeadlines(ctx, now)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to get due join deadlines")
+	} else if s.joins != nil {
+		for i := range due {
+			if err := s.joins.HandleDeadline(ctx, &due[i]); err != nil {
+				log.Warn().Err(err).
+					Str("join", due[i].JoinName).
+					Str("correlation_key", due[i].CorrelationKey).
+					Msg("failed to handle join deadline")
+			}
 		}
 	}
 

@@ -41,7 +41,8 @@ const taskSelectColumns = `
 	task_class,
 	disconnected_at, grace_window_ms,
 	wait_spec, depends_on, context_id, paused_at,
-	retry_policy_json
+	retry_policy_json,
+	correlation_id, root_task_id, completion_event
 `
 
 // =============================================================================
@@ -110,6 +111,13 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 			return fmt.Errorf("failed to marshal retry_policy: %w", err)
 		}
 	}
+	var completionEventJSON []byte
+	if task.CompletionEvent != nil {
+		completionEventJSON, err = json.Marshal(task.CompletionEvent)
+		if err != nil {
+			return fmt.Errorf("failed to marshal completion_event: %w", err)
+		}
+	}
 
 	query := `
 		INSERT INTO tasks (
@@ -125,14 +133,16 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 			authority_audience_type, authority_audience_id, authority_delegate_type, authority_delegate_id,
 			task_class, grace_window_ms,
 			wait_spec, depends_on, context_id, paused_at,
-			retry_policy_json
+			retry_policy_json,
+			correlation_id, root_task_id, completion_event
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
 			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28,
 			$29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41,
 			$42, $43,
 			$44, $45, $46, $47,
-			$48
+			$48,
+			$49, $50, $51
 		)
 	`
 
@@ -185,6 +195,9 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 		nullString(task.ContextID),
 		nullTime(task.PausedAt),
 		retryPolicyJSON,
+		nullString(task.CorrelationID),
+		nullString(task.RootTaskID),
+		completionEventJSON,
 	)
 
 	return err
@@ -910,6 +923,16 @@ func buildTaskFilterClauses(filter *TaskFilter, argNum int, args []interface{}, 
 	if filter.ContextID != "" {
 		query += fmt.Sprintf(" AND context_id = $%d", argNum)
 		args = append(args, filter.ContextID)
+		argNum++
+	}
+	if filter.CorrelationID != "" {
+		query += fmt.Sprintf(" AND correlation_id = $%d", argNum)
+		args = append(args, filter.CorrelationID)
+		argNum++
+	}
+	if filter.RootTaskID != "" {
+		query += fmt.Sprintf(" AND root_task_id = $%d", argNum)
+		args = append(args, filter.RootTaskID)
 		argNum++
 	}
 	if len(filter.ExcludeStatuses) > 0 {
@@ -1696,10 +1719,10 @@ func scanTaskInto(s taskScanner) (*Task, error) {
 	var authorityMode, subjectType, subjectID, rootSubjectType, rootSubjectID sql.NullString
 	var authorityGrantID, rootAuthorityGrantID, parentAuthorityGrantID sql.NullString
 	var authorityAudienceType, authorityAudienceID, authorityDelegateType, authorityDelegateID sql.NullString
-	var contextID sql.NullString
+	var contextID, correlationID, rootTaskID sql.NullString
 	var scheduledFor, startedAt, completedAt, failedAt, assignedAt, nextRetryAt, lastHeartbeat, disconnectedAt, pausedAt sql.NullTime
 	var scheduleToStart, startToClose, heartbeatTimeout, scheduleToClose sql.NullInt64
-	var launchParamsJSON, metadataJSON, checkpointJSON, heartbeatJSON, waitSpecJSON, dependsOnJSON, retryPolicyJSON []byte
+	var launchParamsJSON, metadataJSON, checkpointJSON, heartbeatJSON, waitSpecJSON, dependsOnJSON, retryPolicyJSON, completionEventJSON []byte
 
 	err := s.Scan(
 		&task.TaskID, &task.TaskType, &task.Workspace, &implementation, &specifier,
@@ -1721,6 +1744,7 @@ func scanTaskInto(s taskScanner) (*Task, error) {
 		&disconnectedAt, &task.GraceWindowMs,
 		&waitSpecJSON, &dependsOnJSON, &contextID, &pausedAt,
 		&retryPolicyJSON,
+		&correlationID, &rootTaskID, &completionEventJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -1888,6 +1912,19 @@ func scanTaskInto(s taskScanner) (*Task, error) {
 	}
 	if pausedAt.Valid {
 		task.PausedAt = &pausedAt.Time
+	}
+	if correlationID.Valid {
+		task.CorrelationID = correlationID.String
+	}
+	if rootTaskID.Valid {
+		task.RootTaskID = rootTaskID.String
+	}
+	if len(completionEventJSON) > 0 {
+		var ce TaskCompletionConfig
+		if err := json.Unmarshal(completionEventJSON, &ce); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal completion_event: %w", err)
+		}
+		task.CompletionEvent = &ce
 	}
 
 	return &task, nil

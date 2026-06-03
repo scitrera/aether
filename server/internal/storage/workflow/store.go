@@ -235,6 +235,42 @@ type Store interface {
 	SetScheduleActiveTask(ctx context.Context, scheduleID, taskID string) error
 
 	// =========================================================================
+	// Joins — workflow_joins table
+	// =========================================================================
+
+	// EnsureJoin inserts the row if absent (keyed by
+	// join_name+workspace+correlation_key), otherwise leaves the existing
+	// row untouched; always returns the live row.
+	EnsureJoin(ctx context.Context, j *Join) (*Join, error)
+
+	// GetJoin returns the row identified by (joinName, workspace,
+	// correlationKey), or (nil, nil) when the row is absent.
+	GetJoin(ctx context.Context, joinName, workspace, correlationKey string) (*Join, error)
+
+	// UpdateJoinArrived sets arrived_count (and updated_at) for the row id.
+	UpdateJoinArrived(ctx context.Context, id int64, arrivedCount int64) error
+
+	// SetJoinExpected sets expected_count (arming) for the row id.
+	SetJoinExpected(ctx context.Context, id int64, expected int64) error
+
+	// SetJoinDirty sets the dirty flag for the row id.
+	SetJoinDirty(ctx context.Context, id int64, dirty bool) error
+
+	// MarkJoinTerminal sets status (one of fired|timed_out|cancelled) and
+	// linger_until for the row id.
+	MarkJoinTerminal(ctx context.Context, id int64, status string, lingerUntil time.Time) error
+
+	// GetDueJoinDeadlines returns open joins whose deadline_at is <= now,
+	// ordered by deadline_at ASC. On postgres the query is suffixed with
+	// `FOR UPDATE SKIP LOCKED`; on sqlite the suffix is omitted
+	// (single-writer).
+	GetDueJoinDeadlines(ctx context.Context, now time.Time) ([]Join, error)
+
+	// ListJoins returns joins for a workspace ("" or "*" => all), newest
+	// first (ORDER BY created_at DESC).
+	ListJoins(ctx context.Context, workspace string) ([]Join, error)
+
+	// =========================================================================
 	// State machines — workflow_state_machines + workflow_state_machine_instances
 	// =========================================================================
 

@@ -629,6 +629,78 @@ func (kv *KV) CompareAndDeleteSync(ctx context.Context, key string, expected []b
 	return resp.Applied, nil
 }
 
+// SetAddSync adds member to the set at key, returning whether it was newly
+// added and the set's cardinality after the add. ttl (re)sets expiry on a new
+// member. Mirrors the SetAdd KV primitive.
+func (kv *KV) SetAddSync(ctx context.Context, key string, member []byte, scope KVScope, userID, workspace string, ttl, timeout time.Duration) (bool, int64, error) {
+	kv.syncMu.Lock()
+	defer kv.syncMu.Unlock()
+
+	if timeout == 0 {
+		timeout = DefaultKVTimeout
+	}
+	if scope == "" {
+		scope = KVScopeGlobal
+	}
+
+	requestID := kv.client.NextRequestID()
+	ch := kv.client.RegisterPendingKVRequest(requestID)
+	defer kv.client.pendingKVRequests.Delete(requestID)
+
+	op := &pb.KVOperation{
+		Op:        pb.KVOperation_SET_ADD,
+		Scope:     kvScopeToProto(scope),
+		Key:       key,
+		Value:     member,
+		UserId:    userID,
+		Workspace: workspace,
+		Ttl:       int64(ttl.Seconds()),
+		RequestId: requestID,
+	}
+	if err := kv.client.Send(&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_KvOp{KvOp: op}}); err != nil {
+		return false, 0, err
+	}
+	resp, err := kv.waitForCorrelatedResponse(ctx, ch, timeout)
+	if err != nil {
+		return false, 0, err
+	}
+	return resp.Applied, resp.CounterValue, nil
+}
+
+// SetCardSync returns the cardinality of the set at key (0 if absent).
+func (kv *KV) SetCardSync(ctx context.Context, key string, scope KVScope, userID, workspace string, timeout time.Duration) (int64, error) {
+	kv.syncMu.Lock()
+	defer kv.syncMu.Unlock()
+
+	if timeout == 0 {
+		timeout = DefaultKVTimeout
+	}
+	if scope == "" {
+		scope = KVScopeGlobal
+	}
+
+	requestID := kv.client.NextRequestID()
+	ch := kv.client.RegisterPendingKVRequest(requestID)
+	defer kv.client.pendingKVRequests.Delete(requestID)
+
+	op := &pb.KVOperation{
+		Op:        pb.KVOperation_SET_CARD,
+		Scope:     kvScopeToProto(scope),
+		Key:       key,
+		UserId:    userID,
+		Workspace: workspace,
+		RequestId: requestID,
+	}
+	if err := kv.client.Send(&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_KvOp{KvOp: op}}); err != nil {
+		return 0, err
+	}
+	resp, err := kv.waitForCorrelatedResponse(ctx, ch, timeout)
+	if err != nil {
+		return 0, err
+	}
+	return resp.CounterValue, nil
+}
+
 // =============================================================================
 // Synchronous KV Operations
 // =============================================================================

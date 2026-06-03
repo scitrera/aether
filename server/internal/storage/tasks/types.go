@@ -103,6 +103,11 @@ type (
 	// compute next_retry_at when set.
 	RetryPolicy = legacy.RetryPolicy
 
+	// TaskCompletionConfig is the "feed B" config: emit a domain event when
+	// the task reaches a terminal status. Persisted as JSON in
+	// completion_event.
+	TaskCompletionConfig = legacy.TaskCompletionConfig
+
 	// BackoffStrategy enumerates the retry-delay shapes consumed by
 	// ComputeNextRetryAt.
 	BackoffStrategy = legacy.BackoffStrategy

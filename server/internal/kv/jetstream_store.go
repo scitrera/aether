@@ -697,6 +697,99 @@ func (s *JetStreamKVStore) CompareAndDelete(
 	return false, fmt.Errorf("compare-and-delete %s: too much contention after %d attempts", key, jsMaxCASAttempts)
 }
 
+// SetAdd atomically adds member to the JSON-encoded set stored at key via a
+// revision-guarded CAS loop. Returns whether the member was newly added (false
+// if already present) and the cardinality after the add. When ttl > 0 the
+// soft-TTL window is (re)set on a newly-added member; a logically-expired entry
+// is treated as empty and overwritten. Duplicate adds are pure reads.
+func (s *JetStreamKVStore) SetAdd(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	member string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, int64, error) {
+	if err := validateKey(key); err != nil {
+		return false, 0, err
+	}
+	fullKey := buildJSKey(agent, scope, userID, workspace, key)
+
+	for attempt := 0; attempt < jsMaxCASAttempts; attempt++ {
+		var rev uint64
+		raw := ""
+
+		entry, err := s.kv.Get(ctx, fullKey)
+		if err != nil {
+			if !errors.Is(err, jetstream.ErrKeyNotFound) {
+				return false, 0, fmt.Errorf("set-add get %s: %w", key, err)
+			}
+			// Absent → Create path (rev==0), empty set.
+		} else {
+			rev = entry.Revision()
+			decoded, _, expired := decodeStoredValue(string(entry.Value()), time.Now())
+			if !expired {
+				raw = decoded
+			}
+			// Expired → treat as empty but Update over the stale revision.
+		}
+
+		set := parseMemberSet(raw)
+		if _, ok := set[member]; ok {
+			return false, int64(len(set)), nil // duplicate — no write
+		}
+		set[member] = struct{}{}
+		card := int64(len(set))
+		encoded := []byte(encodeStoredValue(encodeMemberSet(set), ttl))
+
+		var writeErr error
+		if rev == 0 {
+			_, writeErr = s.kv.Create(ctx, fullKey, encoded)
+		} else {
+			_, writeErr = s.kv.Update(ctx, fullKey, encoded, rev)
+		}
+		if writeErr == nil {
+			return true, card, nil
+		}
+		if isRevisionConflict(writeErr) {
+			continue
+		}
+		return false, 0, fmt.Errorf("set-add update %s: %w", key, writeErr)
+	}
+	return false, 0, fmt.Errorf("set-add %s: too much contention after %d attempts", key, jsMaxCASAttempts)
+}
+
+// SetCard returns the cardinality of the set stored at key (0 if absent or
+// logically expired).
+func (s *JetStreamKVStore) SetCard(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	userID string,
+	workspace string,
+) (int64, error) {
+	if err := validateKey(key); err != nil {
+		return 0, err
+	}
+	fullKey := buildJSKey(agent, scope, userID, workspace, key)
+
+	entry, err := s.kv.Get(ctx, fullKey)
+	if err != nil {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("set-card get %s: %w", key, err)
+	}
+	decoded, _, expired := decodeStoredValue(string(entry.Value()), time.Now())
+	if expired {
+		return 0, nil
+	}
+	return int64(len(parseMemberSet(decoded))), nil
+}
+
 // isRevisionConflict returns true for errors that indicate a concurrent
 // update beat us to the revision — safe to retry.
 //

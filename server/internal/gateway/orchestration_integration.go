@@ -2,7 +2,9 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -15,6 +17,7 @@ import (
 	"github.com/scitrera/aether/internal/acl"
 	"github.com/scitrera/aether/internal/audit"
 	"github.com/scitrera/aether/internal/identval"
+	"github.com/scitrera/aether/internal/kv"
 	"github.com/scitrera/aether/internal/logging"
 	"github.com/scitrera/aether/internal/metering"
 	"github.com/scitrera/aether/internal/orchestration"
@@ -298,6 +301,21 @@ func (s *GatewayServer) deliverQueuedTasksToAgent(
 	return nil
 }
 
+// idemTaskKeyPrefix namespaces idempotency-ledger keys for task creation. It
+// sits alongside kv.ReservedCoordKeyPrefix ("_sys/coord/") under the reserved
+// "_sys/" tree so application principals can never collide with it.
+const idemTaskKeyPrefix = "_sys/idem/task/"
+
+// idemTaskTTL bounds how long a creation idempotency_key is remembered. Joins
+// retry/restart within a single workflow run, so 24h comfortably covers the
+// dedup window while letting the ledger self-expire.
+const idemTaskTTL = 24 * time.Hour
+
+// idemTaskPlaceholder is stored at SetNX time (before the task_id is known) so
+// a racing duplicate sees the key claimed; it is overwritten with the real
+// task_id once creation succeeds.
+const idemTaskPlaceholder = "pending"
+
 // handleCreateTask processes CreateTaskRequest messages
 func (s *GatewayServer) handleCreateTask(
 	ctx context.Context,
@@ -445,7 +463,19 @@ func (s *GatewayServer) handleCreateTask(
 		resolvedAuthority = inherited
 	}
 
-	if s.acl != nil {
+	// The WorkflowEngine is a system principal whose core function is to create
+	// tasks in response to events, in any workspace it routes for. It holds no
+	// per-workspace ACL grants (and is not meant to), so it is implicitly
+	// authorized for OpTaskCreate — mirroring the system-principal handling in
+	// connect.go ("workspace ACL not applicable") and the WFE KV-coord allowance
+	// in kv_handler.go. The bypass is scoped to task creation only; the WFE gains
+	// no other workspace access here. Without this, event-triggered workflow
+	// rules (e.g. create a pool task on an event) are silently ACL-denied.
+	isImplicitTaskCreator := identity.Type == models.PrincipalWorkflowEngine
+
+	if isImplicitTaskCreator {
+		s.logTaskCreateAudit(ctx, identity, client.SessionUUID, taskWorkspace, "", true, "workflow engine implicitly authorized for task creation (system principal)", buildTaskCreateAuditMetadata(req, assignmentMode, taskWorkspace), resolvedAuthority)
+	} else if s.acl != nil {
 		var decision *acl.ACLDecision
 		if resolvedAuthority != nil {
 			decision, err = s.acl.CheckAccessWithAuthority(ctx, identity, resolvedAuthority, acl.ResourceTypeWorkspace, taskWorkspace, audit.OpTaskCreate, taskWorkspace, client.SessionUUID, acl.AccessReadWrite)
@@ -486,6 +516,9 @@ func (s *GatewayServer) handleCreateTask(
 		ParentTaskID:         client.AssociatedTaskID,
 		RetryPolicy:          retryPolicyFromProto(req.GetRetryPolicy()),
 		Priority:             int32(req.GetPriority()),
+		CorrelationID:        req.GetCorrelationId(),
+		RootTaskID:           req.GetRootTaskId(),
+		CompletionEvent:      completionConfigFromProto(req.GetCompletionEvent()),
 	}
 	// Fix AA: seed the task's Authority.SubjectType/SubjectID from the resolved
 	// OBO subject so downstream consumers (buildTaskContext →
@@ -500,6 +533,45 @@ func (s *GatewayServer) handleCreateTask(
 		}
 	}
 
+	// Idempotent creation: when the caller supplies a non-empty
+	// idempotency_key, the FIRST create for that key proceeds normally and any
+	// subsequent create with the SAME key is a no-op that returns the original
+	// task's identity. This backs exactly-once downstream firing for workflow
+	// joins, whose on_complete/on_timeout actions may fire more than once under
+	// retries/engine restart/timeout-vs-completion races. Empty key ⇒ unchanged.
+	//
+	// The ledger lives under the reserved "_sys/idem/" tree in the GLOBAL
+	// (tenant-wide) scope, written with the trusted admin identity exactly as
+	// other gateway-internal KV writes do (see admin_workspaces.go). The user
+	// portion is sha256-hexed so arbitrary key bytes can never produce an
+	// invalid/oversized KV key. KV failures FAIL OPEN (proceed with creation):
+	// a rare duplicate under a KV outage is acceptable, a dropped task is not.
+	var idemKey string
+	if rawIdem := req.GetIdempotencyKey(); rawIdem != "" {
+		sum := sha256.Sum256([]byte(rawIdem))
+		idemKey = idemTaskKeyPrefix + hex.EncodeToString(sum[:])
+		fresh, idemErr := s.kv.SetNX(ctx, adminIdentity, kv.ScopeGlobal, idemKey, idemTaskPlaceholder, "", "", idemTaskTTL)
+		if idemErr != nil {
+			logging.Logger.Warn().Err(idemErr).Str("identity", identity.String()).Msg("idempotency SetNX failed, failing open and proceeding with task creation")
+		} else if !fresh {
+			// Duplicate create: do NOT create a second task. Echo the original
+			// task's identity when a response is expected. The stored value may
+			// still be the placeholder if the original create has not finished;
+			// in that case return an empty task_id but still success=true.
+			existingTaskID, getErr := s.kv.Get(ctx, adminIdentity, kv.ScopeGlobal, idemKey, "", "")
+			if getErr != nil {
+				logging.Logger.Warn().Err(getErr).Str("identity", identity.String()).Msg("idempotency ledger read failed for duplicate create")
+				existingTaskID = ""
+			}
+			if existingTaskID == idemTaskPlaceholder {
+				existingTaskID = ""
+			}
+			logging.Logger.Info().Str("identity", identity.String()).Str("task_id", existingTaskID).Msg("duplicate task creation suppressed by idempotency_key")
+			sendCreateTaskResponse(true, existingTaskID, "", "", "", "")
+			return nil
+		}
+	}
+
 	// Create task
 	response, err := s.orchestration.TaskService.CreateTask(ctx, taskReq)
 	if err != nil {
@@ -508,6 +580,16 @@ func (s *GatewayServer) handleCreateTask(
 		sendCreateTaskResponse(false, "", "", "ERR_TASK_CREATE_FAILED", "failed to create task", "")
 		logging.Logger.Error().Err(err).Str("identity", identity.String()).Msg("failed to create task")
 		return errors.WrapError(err, "failed to create task")
+	}
+
+	// Best-effort: overwrite the idempotency placeholder with the real task_id
+	// so a later duplicate create can echo the original task's identity. Failure
+	// here is non-fatal (the ledger already blocks the duplicate via the
+	// placeholder; the duplicate just returns an empty task_id).
+	if idemKey != "" {
+		if idemSetErr := s.kv.Set(ctx, adminIdentity, kv.ScopeGlobal, idemKey, response.TaskID, "", "", idemTaskTTL); idemSetErr != nil {
+			logging.Logger.Warn().Err(idemSetErr).Str("task_id", response.TaskID).Msg("failed to record task_id in idempotency ledger")
+		}
 	}
 
 	if resolvedAuthority != nil {

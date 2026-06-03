@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ type Router struct {
 	expr     *ExprEngine
 	tmpl     *TemplateEngine
 	executor *Executor
+	joins    *JoinEngine
 
 	// Rule cache
 	cacheMu  sync.RWMutex
@@ -29,12 +31,13 @@ type cachedRules struct {
 	fetchedAt time.Time
 }
 
-func NewRouter(store WorkflowStore, expr *ExprEngine, tmpl *TemplateEngine, executor *Executor, cacheTTL time.Duration) *Router {
+func NewRouter(store WorkflowStore, expr *ExprEngine, tmpl *TemplateEngine, executor *Executor, joins *JoinEngine, cacheTTL time.Duration) *Router {
 	return &Router{
 		store:    store,
 		expr:     expr,
 		tmpl:     tmpl,
 		executor: executor,
+		joins:    joins,
 		cache:    make(map[string]cachedRules),
 		cacheTTL: cacheTTL,
 	}
@@ -86,7 +89,7 @@ func (r *Router) HandleEvent(ctx context.Context, sourceTopic string, payload []
 		}
 
 		for _, rule := range rules {
-			if err := r.processRule(ctx, rule, &event); err != nil {
+			if err := r.processRule(ctx, rule, &event, eventName); err != nil {
 				log.Error().Err(err).
 					Int("rule_id", rule.ID).
 					Str("rule_name", rule.RuleName).
@@ -108,13 +111,16 @@ func (r *Router) HandleEvent(ctx context.Context, sourceTopic string, payload []
 	return nil
 }
 
-func (r *Router) processRule(ctx context.Context, rule Rule, event *EventPayload) error {
-	// Build environment for expression evaluation
+func (r *Router) processRule(ctx context.Context, rule Rule, event *EventPayload, eventName string) error {
+	// Build environment for expression evaluation. `source.event` carries the
+	// matched event name so join specs can match arm_on_event and templates can
+	// reference it.
 	env := map[string]any{
 		"input": event.Data,
 		"source": map[string]any{
 			"agent":     event.SourceAgent,
 			"workspace": event.Workspace,
+			"event":     eventName,
 		},
 	}
 
@@ -133,6 +139,18 @@ func (r *Router) processRule(ctx context.Context, rule Rule, event *EventPayload
 	result, err := r.tmpl.Transform(rule.DestinationTemplate, env)
 	if err != nil {
 		return err
+	}
+
+	// Join destinations are handled by the join engine, which needs the arrival
+	// env and event name; all other destinations dispatch directly.
+	if result.Type == "join" {
+		if r.joins == nil {
+			return fmt.Errorf("rule %d: join destination but join engine is not configured", rule.ID)
+		}
+		if result.Join == nil {
+			return fmt.Errorf("rule %d: join destination missing `join:` block", rule.ID)
+		}
+		return r.joins.HandleArrival(ctx, result.Join, env, eventName, event.Workspace)
 	}
 
 	// Dispatch the action

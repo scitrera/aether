@@ -1365,6 +1365,26 @@ func protoTaskStatusToTasks(s pb.TaskStatus) tasks.TaskStatus {
 	}
 }
 
+// completionConfigFromProto converts the proto TaskCompletionEvent into the
+// persisted model config. nil ⇒ nil (task did not opt into feed B). OnStatuses
+// are mapped through the canonical proto↔model status converter.
+func completionConfigFromProto(p *pb.TaskCompletionEvent) *tasks.TaskCompletionConfig {
+	if p == nil {
+		return nil
+	}
+	cfg := &tasks.TaskCompletionConfig{
+		Enabled:   p.GetEnabled(),
+		EventName: p.GetEventName(),
+	}
+	if len(p.GetOnStatuses()) > 0 {
+		cfg.OnStatuses = make([]tasks.TaskStatus, 0, len(p.GetOnStatuses()))
+		for _, s := range p.GetOnStatuses() {
+			cfg.OnStatuses = append(cfg.OnStatuses, protoTaskStatusToTasks(s))
+		}
+	}
+	return cfg
+}
+
 // unixOrZero returns the unix-seconds timestamp of t, or 0 when t is nil.
 // Used in proto conversions where 0 sentinels "absent" for time fields.
 func unixOrZero(t *time.Time) int64 {
@@ -1452,6 +1472,21 @@ func taskToProto(t *tasks.Task) *pb.TaskInfo {
 	}
 	info.ContextId = t.ContextID
 	info.PausedAt = unixOrZero(t.PausedAt)
+	info.CorrelationId = t.CorrelationID
+	info.RootTaskId = t.RootTaskID
+	if t.CompletionEvent != nil {
+		ce := &pb.TaskCompletionEvent{
+			Enabled:   t.CompletionEvent.Enabled,
+			EventName: t.CompletionEvent.EventName,
+		}
+		if len(t.CompletionEvent.OnStatuses) > 0 {
+			ce.OnStatuses = make([]pb.TaskStatus, 0, len(t.CompletionEvent.OnStatuses))
+			for _, s := range t.CompletionEvent.OnStatuses {
+				ce.OnStatuses = append(ce.OnStatuses, taskStatusToProto(s))
+			}
+		}
+		info.CompletionEvent = ce
+	}
 	return info
 }
 
@@ -1607,6 +1642,8 @@ func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSessi
 			filter.ParentTaskID = query.Filter.ParentTaskId
 			// Phase 1: A2A filter fields.
 			filter.ContextID = query.Filter.ContextId
+			filter.CorrelationID = query.Filter.GetCorrelationId()
+			filter.RootTaskID = query.Filter.GetRootTaskId()
 			if len(query.Filter.ExcludeStatuses) > 0 {
 				filter.ExcludeStatuses = make([]tasks.TaskStatus, 0, len(query.Filter.ExcludeStatuses))
 				for _, s := range query.Filter.ExcludeStatuses {

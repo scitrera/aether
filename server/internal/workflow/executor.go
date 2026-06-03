@@ -27,6 +27,28 @@ type ActionDef struct {
 	// store re-pends the task with a policy-driven next_retry_at on
 	// FailTask. Omitted = legacy hard-coded max_retries=3 behavior.
 	Retry *RetryConfig `json:"retry,omitempty" yaml:"retry,omitempty"`
+	// emit_event field: the event name to publish onto the event plane (Type ==
+	// "emit_event"). Payload carries the event data. Enables join on_complete to
+	// chain into further rules/joins.
+	EventName string `json:"event_name,omitempty" yaml:"event_name,omitempty"`
+	// IdempotencyKey, when set on a create_task action, is forwarded to the
+	// gateway which dedups creation on it (exactly-once downstream). Joins set it
+	// to their instance key so a completion and a timeout sweep yield one task.
+	IdempotencyKey string `json:"idempotency_key,omitempty" yaml:"idempotency_key,omitempty"`
+	// CorrelationID stamps the spawned task with a fan-out/fan-in correlation id
+	// (the barrier/group id a downstream join matches on).
+	CorrelationID string `json:"correlation_id,omitempty" yaml:"correlation_id,omitempty"`
+	// CompletionEvent opts the spawned task into "feed B": it emits a domain
+	// event onto the event plane at its terminal status, which a join can gather.
+	CompletionEvent *CompletionEventConfig `json:"completion_event,omitempty" yaml:"completion_event,omitempty"`
+}
+
+// CompletionEventConfig is the create_task-destination form of a task's feed-B
+// opt-in (a subset of the proto TaskCompletionEvent; on_statuses defaults to all
+// terminal statuses server-side).
+type CompletionEventConfig struct {
+	Enabled   bool   `json:"enabled" yaml:"enabled"`
+	EventName string `json:"event_name,omitempty" yaml:"event_name,omitempty"`
 }
 
 // ToolCallPayload is the JSON structure sent as the message payload
@@ -128,14 +150,47 @@ func (e *Executor) dispatchCreateTask(action *ActionDef) error {
 		Str("target_impl", targetImpl).
 		Msg("dispatching create_task action")
 
-	return e.CreateTaskWithType(workspace, action.TaskType, targetImpl, metadata, payload, action.Retry)
+	var completion *pb.TaskCompletionEvent
+	if action.CompletionEvent != nil {
+		completion = &pb.TaskCompletionEvent{
+			Enabled:   action.CompletionEvent.Enabled,
+			EventName: action.CompletionEvent.EventName,
+		}
+	}
+
+	return e.CreateTaskWithType(workspace, action.TaskType, targetImpl, metadata, payload, action.Retry, action.IdempotencyKey, action.CorrelationID, completion)
+}
+
+// EmitEvent publishes a synthetic event onto the event plane (event.*) as a
+// MessageType_EVENT message, mirroring an SDK client's SendEvent. Used by a
+// join's on_complete (Type == "emit_event") to chain into further rules/joins.
+func (e *Executor) EmitEvent(action *ActionDef) error {
+	if action.EventName == "" {
+		return fmt.Errorf("emit_event requires event_name")
+	}
+	workspace := action.Workspace
+	if workspace == "" {
+		workspace = e.defaultWorkspace
+	}
+	payload := map[string]any{
+		"source_agent": "workflow-engine",
+		"workspace":    workspace,
+		"event_names":  []string{action.EventName},
+		"data":         action.Payload,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal emit_event payload: %w", err)
+	}
+	log.Debug().Str("event", action.EventName).Str("workspace", workspace).Msg("emitting event")
+	return e.client.SendMessage(aether.EventWildcardTopic(), data, pb.MessageType_EVENT)
 }
 
 // CreateTaskWithType creates an Aether task with the given task type. When
 // retry is non-nil, it is translated to a proto RetryPolicy and attached to
 // the request so the task store handles backoff scheduling on FailTask.
 // Pass nil to keep the legacy hard-coded max_retries=3 behavior.
-func (e *Executor) CreateTaskWithType(workspace, taskType, targetImpl string, metadata map[string]string, payload []byte, retry *RetryConfig) error {
+func (e *Executor) CreateTaskWithType(workspace, taskType, targetImpl string, metadata map[string]string, payload []byte, retry *RetryConfig, idempotencyKey, correlationID string, completion *pb.TaskCompletionEvent) error {
 	log.Debug().
 		Str("workspace", workspace).
 		Str("task_type", taskType).
@@ -152,6 +207,9 @@ func (e *Executor) CreateTaskWithType(workspace, taskType, targetImpl string, me
 				Metadata:             metadata,
 				Payload:              payload,
 				RetryPolicy:          retryConfigToProto(retry),
+				IdempotencyKey:       idempotencyKey,
+				CorrelationId:        correlationID,
+				CompletionEvent:      completion,
 			},
 		},
 	}
@@ -195,6 +253,8 @@ func (e *Executor) DispatchTransformResult(result *TransformResult) error {
 		TaskType:             result.TaskType,
 		TargetImplementation: result.TargetImplementation,
 		Payload:              result.Payload,
+		CorrelationID:        result.CorrelationID,
+		CompletionEvent:      result.CompletionEvent,
 	}
 	return e.DispatchAction(action)
 }

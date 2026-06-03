@@ -483,6 +483,14 @@ message KVOperation {
     // data. Maintains component separation: the gateway has no sandbox-specific
     // knowledge; the caller decides what to purge and when.
     PURGE_IDENTITY = 11;
+    // Atomic set primitives backing fan-in joins (set-completeness) and
+    // at-most-once dedup ledgers, native across Redis / Badger / NATS-JetStream.
+    // SET_ADD adds `value` (the member) to the set at `key`, (re)setting `ttl`
+    // on a newly-added member: KVResponse.applied=true iff newly added,
+    // counter_value=cardinality after the add. SET_CARD returns
+    // counter_value=cardinality (0 if absent).
+    SET_ADD = 12;
+    SET_CARD = 13;
   }
   // Scope identifies the (identity x sharing) cell of the KV matrix.
   //
@@ -697,6 +705,23 @@ message RetryPolicy {
   bool honor_retry_after = 8;
 }
 
+// TaskCompletionEvent opts a task into "feed B": when it reaches a terminal
+// status the server publishes a domain event onto the event plane (event::*)
+// so a workflow join (or any rule) can gather over task completions without the
+// worker emitting its own event. The emitted payload carries
+// {task_id, status, workspace, correlation_id, metadata}.
+message TaskCompletionEvent {
+  // enabled turns the feature on. When false (default) no completion event is
+  // emitted (today's behavior).
+  bool enabled = 1;
+  // event_name is the event name to publish. Empty ⇒ derived as
+  // "task.completed" / "task.failed" / "task.cancelled" from the terminal status.
+  string event_name = 2;
+  // on_statuses restricts emission to these terminal statuses. Empty ⇒ all
+  // terminal statuses (completed, failed, cancelled).
+  repeated TaskStatus on_statuses = 3;
+}
+
 message CreateTaskRequest {
   string task_type = 1;
   string workspace = 2;
@@ -753,6 +778,27 @@ message CreateTaskRequest {
   // Optional dispatch priority. Defaults to UNSPECIFIED ⇒ NORMAL. Higher
   // priority pending tasks are delivered before lower ones (ties break FIFO).
   TaskPriority priority = 15;
+
+  // Optional idempotency key for exactly-once task creation. When non-empty the
+  // gateway dedupes creation on this key: a duplicate request returns the
+  // existing task identity instead of creating a second task. Workflow joins
+  // set it to make an on_complete create_task fire exactly once under retries
+  // or engine restart.
+  string idempotency_key = 16;
+
+  // Optional fan-out/fan-in correlation identity, distinct from task_id. When
+  // non-empty it is persisted on the task and propagated to child spawns, and is
+  // queryable via TaskFilter.correlation_id. The barrier/group id a join matches.
+  string correlation_id = 17;
+
+  // Optional top-of-fan-out-tree identity (the flow / run id). Defaults to the
+  // task's own id when it is a root; inherited by descendants on spawn. Becomes
+  // the DAG run id when the join engine grows into full fan-out/fan-in.
+  string root_task_id = 18;
+
+  // Optional "feed B" config: emit a domain event onto event::* when this task
+  // reaches a (selected) terminal status. Absent/disabled = no emission.
+  TaskCompletionEvent completion_event = 19;
 }
 
 // CreateTaskResponse is sent in response to CreateTaskRequest when the
@@ -1164,6 +1210,10 @@ message TaskFilter {
   // otherwise returns tasks whose priority is >= this level (e.g. pass HIGH
   // to get everything HIGH and PREEMPT). Combinable with other filters.
   TaskPriority min_priority = 22;
+
+  // Filter by fan-out/fan-in correlation identity / flow id. Empty = no filter.
+  string correlation_id = 23;
+  string root_task_id = 24;
 }
 
 // TaskInfo represents a task.
@@ -1223,6 +1273,16 @@ message TaskInfo {
   // Dispatch priority. UNSPECIFIED is normalized to NORMAL on creation, so
   // persisted tasks always report a concrete level.
   TaskPriority priority = 31;
+
+  // Fan-out/fan-in correlation identity (the barrier/group id a join matches),
+  // distinct from task_id and propagated to child spawns. Empty = none.
+  string correlation_id = 32;
+  // Top-of-fan-out-tree identity (flow / run id); defaults to the task's own id
+  // for a root, inherited by descendants. Empty = none.
+  string root_task_id = 33;
+  // "Feed B" config persisted on the task; read at the terminal transition to
+  // decide whether/what to emit onto event::*.
+  TaskCompletionEvent completion_event = 34;
 }
 
 // TaskQueryResponse is sent in response to TaskQuery operations.
@@ -2594,6 +2654,10 @@ message WorkflowOperation {
     SEND_SM_EVENT = 22;
     // Schedule upsert (idempotent create-or-update)
     UPSERT_SCHEDULE = 23;
+    // Fan-in / barrier / coalesce join observability + operator control.
+    LIST_JOINS = 24;   // in-flight + recently-terminal join instances (workspace filter)
+    GET_JOIN = 25;     // inspect one instance: id=join_name, secondary_id=correlation_key
+    CANCEL_JOIN = 26;  // operator GC of a wedged instance
   }
   OpType op = 1;
   string id = 2;              // Entity ID for GET/UPDATE/DELETE

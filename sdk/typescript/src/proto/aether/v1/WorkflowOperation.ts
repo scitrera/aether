@@ -49,6 +49,18 @@ export const _aether_v1_WorkflowOperation_OpType = {
    * Schedule upsert (idempotent create-or-update)
    */
   UPSERT_SCHEDULE: 'UPSERT_SCHEDULE',
+  /**
+   * Fan-in / barrier / coalesce join observability + operator control.
+   */
+  LIST_JOINS: 'LIST_JOINS',
+  /**
+   * inspect one instance: id=join_name, secondary_id=correlation_key
+   */
+  GET_JOIN: 'GET_JOIN',
+  /**
+   * operator GC of a wedged instance
+   */
+  CANCEL_JOIN: 'CANCEL_JOIN',
 } as const;
 
 export type _aether_v1_WorkflowOperation_OpType =
@@ -121,6 +133,21 @@ export type _aether_v1_WorkflowOperation_OpType =
    */
   | 'UPSERT_SCHEDULE'
   | 23
+  /**
+   * Fan-in / barrier / coalesce join observability + operator control.
+   */
+  | 'LIST_JOINS'
+  | 24
+  /**
+   * inspect one instance: id=join_name, secondary_id=correlation_key
+   */
+  | 'GET_JOIN'
+  | 25
+  /**
+   * operator GC of a wedged instance
+   */
+  | 'CANCEL_JOIN'
+  | 26
 
 export type _aether_v1_WorkflowOperation_OpType__Output = typeof _aether_v1_WorkflowOperation_OpType[keyof typeof _aether_v1_WorkflowOperation_OpType]
 
