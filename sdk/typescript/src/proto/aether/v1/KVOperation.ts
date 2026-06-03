@@ -47,6 +47,16 @@ export const _aether_v1_KVOperation_OpType = {
    * knowledge; the caller decides what to purge and when.
    */
   PURGE_IDENTITY: 'PURGE_IDENTITY',
+  /**
+   * Atomic set primitives backing fan-in joins (set-completeness) and
+   * at-most-once dedup ledgers, native across Redis / Badger / NATS-JetStream.
+   * SET_ADD adds `value` (the member) to the set at `key`, (re)setting `ttl`
+   * on a newly-added member: KVResponse.applied=true iff newly added,
+   * counter_value=cardinality after the add. SET_CARD returns
+   * counter_value=cardinality (0 if absent).
+   */
+  SET_ADD: 'SET_ADD',
+  SET_CARD: 'SET_CARD',
 } as const;
 
 export type _aether_v1_KVOperation_OpType =
@@ -103,6 +113,18 @@ export type _aether_v1_KVOperation_OpType =
    */
   | 'PURGE_IDENTITY'
   | 11
+  /**
+   * Atomic set primitives backing fan-in joins (set-completeness) and
+   * at-most-once dedup ledgers, native across Redis / Badger / NATS-JetStream.
+   * SET_ADD adds `value` (the member) to the set at `key`, (re)setting `ttl`
+   * on a newly-added member: KVResponse.applied=true iff newly added,
+   * counter_value=cardinality after the add. SET_CARD returns
+   * counter_value=cardinality (0 if absent).
+   */
+  | 'SET_ADD'
+  | 12
+  | 'SET_CARD'
+  | 13
 
 export type _aether_v1_KVOperation_OpType__Output = typeof _aether_v1_KVOperation_OpType[keyof typeof _aether_v1_KVOperation_OpType]
 

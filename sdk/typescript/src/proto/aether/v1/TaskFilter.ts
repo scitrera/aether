@@ -121,6 +121,11 @@ export interface TaskFilter {
    * to get everything HIGH and PREEMPT). Combinable with other filters.
    */
   'minPriority'?: (_aether_v1_TaskPriority);
+  /**
+   * Filter by fan-out/fan-in correlation identity / flow id. Empty = no filter.
+   */
+  'correlationId'?: (string);
+  'rootTaskId'?: (string);
 }
 
 /**
@@ -238,4 +243,9 @@ export interface TaskFilter__Output {
    * to get everything HIGH and PREEMPT). Combinable with other filters.
    */
   'minPriority': (_aether_v1_TaskPriority__Output);
+  /**
+   * Filter by fan-out/fan-in correlation identity / flow id. Empty = no filter.
+   */
+  'correlationId': (string);
+  'rootTaskId': (string);
 }
