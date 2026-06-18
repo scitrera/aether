@@ -157,6 +157,12 @@ _HDR_AUDIENCE_ID = "X-Auth-Audience-ID"
 # Backward-compat user/principal headers that downstream services read.
 _HDR_USER_ID = "X-Auth-User-ID"
 _HDR_PRINCIPAL_TYPE = "X-Auth-Principal-Type"
+# Deployment tenant. Unlike the actor/subject headers (derived from the
+# AuthorizationContext / gateway identity), the tenant is a per-deployment value
+# the terminator's owner supplies via ``ProxyHttpTerminator(tenant_id=...)``. The
+# Go sidecar mints this from its configured ``cfg.TenantID`` (identityheaders.go
+# ::MintInto); the Python terminator left it to "upstream layers" until now.
+_HDR_TENANT_ID = "X-Auth-Tenant-ID"
 
 # OBO policy: how strict-mode dispatch handles on_behalf_of requests.
 # - "require_resolver": OBO requires a configured resolver AND a non-None
@@ -631,10 +637,21 @@ class ProxyHttpTerminator:
         body_chunk_size: int = PROXY_BODY_CHUNK_SIZE,
         resolver: Optional[AuthorityResolverProtocol] = None,
         obo_policy: OBOPolicy = "require_resolver",
+        tenant_id: Optional[str] = None,
     ) -> None:
         """Construct a terminator.
 
         Args:
+            tenant_id: Optional deployment tenant. When set AND
+                ``header_mode="strict"``, every minted request is stamped with
+                ``X-Auth-Tenant-ID=<tenant_id>`` (direct AND OBO). This is the
+                per-deployment value the Go sidecar reads from ``cfg.TenantID``;
+                the Python terminator's ``_mint_auth_headers`` does not carry it
+                (it is not on the wire envelope), so a per-tenant service
+                (MemoryLayer, data-connectors) must supply it here — otherwise a
+                fail-closed downstream that requires ``X-Auth-Tenant-ID`` rejects
+                every request. Inbound ``x-auth-*`` headers are stripped first, so
+                this value is authoritative and cannot be spoofed by the caller.
             resolver: Optional :class:`AuthorityResolverProtocol`. When set
                 AND ``header_mode="strict"``, OBO requests have their minted
                 ``X-Auth-*`` set extended with grant-derived fields
@@ -672,6 +689,7 @@ class ProxyHttpTerminator:
         self._body_chunk_size = body_chunk_size
         self._resolver = resolver
         self._obo_policy: OBOPolicy = obo_policy
+        self._tenant_id = tenant_id
         self._dispatcher = _get_terminator_dispatcher(client)
         self._started = False
 
@@ -725,6 +743,14 @@ class ProxyHttpTerminator:
             sanitized = _strip_inbound_identity_headers(inbound_headers)
             authz = req.authorization if req.HasField("authorization") else None
             sanitized.update(_mint_auth_headers(authz))
+            # Stamp the deployment tenant (the one header _mint_auth_headers can
+            # NOT derive from the wire envelope — see _HDR_TENANT_ID). Applies to
+            # both direct and OBO requests; inbound x-auth-* were already stripped
+            # so this is authoritative. A fail-closed downstream (e.g. MemoryLayer's
+            # AetherAuthenticationService) requires X-Auth-Tenant-ID, so a per-tenant
+            # terminator MUST set tenant_id or every request is rejected.
+            if self._tenant_id:
+                sanitized[_HDR_TENANT_ID] = self._tenant_id
             # Overlay actor headers from the client's own gateway identity.
             # The actor reflects the authenticated principal that opened the
             # gateway connection — equivalent to Go's terminator deriving

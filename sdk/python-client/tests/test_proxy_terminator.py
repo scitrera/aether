@@ -225,6 +225,55 @@ async def test_inline_request_dispatched_and_response_framed():
 
 
 @pytest.mark.asyncio
+async def test_strict_mode_stamps_configured_tenant_and_overrides_spoof():
+    """tenant_id is minted as X-Auth-Tenant-ID and a caller value cannot spoof it."""
+    client = _AsyncClientStub()
+    received: List[MintedRequest] = []
+
+    async def handler(req: MintedRequest) -> aether_pb2.ProxyHttpResponse:
+        received.append(req)
+        return aether_pb2.ProxyHttpResponse(request_id=req.request_id, status_code=200, body=b"ok")
+
+    term = ProxyHttpTerminator(
+        client=client, handler=handler, allow_paths=["/v1/*"],
+        header_mode="strict", tenant_id="botwinick",
+    )
+    await term.start()
+
+    # Caller tries to spoof a different tenant; strict mode strips inbound
+    # x-auth-* then the terminator stamps the configured tenant authoritatively.
+    req = _build_request("req-t", path="/v1/echo", headers={"X-Auth-Tenant-ID": "attacker"})
+    dispatcher = _get_terminator_dispatcher(client)
+    await dispatcher.handle_request(req)
+    await dispatcher.wait_idle()
+
+    assert len(received) == 1
+    assert received[0].headers["X-Auth-Tenant-ID"] == "botwinick"
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_without_tenant_id_stamps_no_tenant():
+    """Default (tenant_id=None) preserves the prior behaviour: no tenant header."""
+    client = _AsyncClientStub()
+    received: List[MintedRequest] = []
+
+    async def handler(req: MintedRequest) -> aether_pb2.ProxyHttpResponse:
+        received.append(req)
+        return aether_pb2.ProxyHttpResponse(request_id=req.request_id, status_code=200, body=b"ok")
+
+    term = ProxyHttpTerminator(client=client, handler=handler, allow_paths=["/v1/*"], header_mode="strict")
+    await term.start()
+
+    req = _build_request("req-nt", path="/v1/echo")
+    dispatcher = _get_terminator_dispatcher(client)
+    await dispatcher.handle_request(req)
+    await dispatcher.wait_idle()
+
+    assert len(received) == 1
+    assert "X-Auth-Tenant-ID" not in received[0].headers
+
+
+@pytest.mark.asyncio
 async def test_chunked_request_reassembled_in_seq_order():
     client = _AsyncClientStub()
 
