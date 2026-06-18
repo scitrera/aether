@@ -2967,7 +2967,84 @@ func protoACLResponseToSDK(resp *pb.ACLResponse) *ACLResponse {
 			Message:      cr.GetMessage(),
 		}
 	}
+	if g := resp.GetGroup(); g != nil {
+		r.Group = protoACLGroupInfoToSDK(g)
+	}
+	for _, g := range resp.GetGroups() {
+		r.Groups = append(r.Groups, protoACLGroupInfoToSDK(g))
+	}
+	if role := resp.GetRole(); role != nil {
+		r.Role = protoACLRoleInfoToSDK(role)
+	}
+	for _, role := range resp.GetRoles() {
+		r.Roles = append(r.Roles, protoACLRoleInfoToSDK(role))
+	}
+	for _, m := range resp.GetGroupMembers() {
+		r.GroupMembers = append(r.GroupMembers, &ACLGroupMemberInfo{
+			GroupName:  m.GetGroupName(),
+			MemberType: m.GetMemberType(),
+			MemberID:   m.GetMemberId(),
+			GrantedBy:  m.GetGrantedBy(),
+			GrantedAt:  m.GetGrantedAt(),
+			ExpiresAt:  m.GetExpiresAt(),
+		})
+	}
+	for _, a := range resp.GetRoleAssignments() {
+		r.RoleAssignments = append(r.RoleAssignments, &ACLRoleAssignmentInfo{
+			RoleName:     a.GetRoleName(),
+			AssigneeType: a.GetAssigneeType(),
+			AssigneeID:   a.GetAssigneeId(),
+			GrantedBy:    a.GetGrantedBy(),
+			GrantedAt:    a.GetGrantedAt(),
+			ExpiresAt:    a.GetExpiresAt(),
+		})
+	}
+	if e := resp.GetExplanation(); e != nil {
+		exp := &ACLAccessExplanationInfo{
+			Principal:       e.GetPrincipal(),
+			Subjects:        e.GetSubjects(),
+			Allowed:         e.GetAllowed(),
+			Decision:        e.GetDecision(),
+			EffectiveLevel:  e.GetEffectiveAccessLevel(),
+			FallbackApplied: e.GetFallbackApplied(),
+			Reason:          e.GetReason(),
+		}
+		for _, c := range e.GetContributions() {
+			exp.Contributions = append(exp.Contributions, &ACLAccessContributionInfo{
+				Subject:     c.GetSubject(),
+				RuleID:      c.GetRuleId(),
+				AccessLevel: c.GetAccessLevel(),
+				Resource:    c.GetResource(),
+				Expired:     c.GetExpired(),
+			})
+		}
+		r.Explanation = exp
+	}
 	return r
+}
+
+// protoACLGroupInfoToSDK converts a protobuf ACLGroupInfo to the SDK type.
+func protoACLGroupInfoToSDK(g *pb.ACLGroupInfo) *ACLGroupInfo {
+	return &ACLGroupInfo{
+		GroupID:     g.GetGroupId(),
+		GroupName:   g.GetGroupName(),
+		Description: g.GetDescription(),
+		CreatedBy:   g.GetCreatedBy(),
+		CreatedAt:   g.GetCreatedAt(),
+		Metadata:    g.GetMetadata(),
+	}
+}
+
+// protoACLRoleInfoToSDK converts a protobuf ACLRoleInfo to the SDK type.
+func protoACLRoleInfoToSDK(role *pb.ACLRoleInfo) *ACLRoleInfo {
+	return &ACLRoleInfo{
+		RoleID:      role.GetRoleId(),
+		RoleName:    role.GetRoleName(),
+		Description: role.GetDescription(),
+		CreatedBy:   role.GetCreatedBy(),
+		CreatedAt:   role.GetCreatedAt(),
+		Metadata:    role.GetMetadata(),
+	}
 }
 
 // protoACLRuleInfoToSDK converts a protobuf ACLRuleInfo to the SDK type.

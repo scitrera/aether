@@ -1,10 +1,13 @@
 package admin
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/mux"
+	aclstore "github.com/scitrera/aether/internal/storage/acl"
 )
 
 // =============================================================================
@@ -376,4 +379,416 @@ func (s *Server) handleCleanupOldACLAuditLogs(w http.ResponseWriter, r *http.Req
 		"count":          count,
 		"retention_days": retentionDays,
 	})
+}
+
+// =============================================================================
+// ACL Group Handlers
+// =============================================================================
+
+func (s *Server) handleListACLGroups(w http.ResponseWriter, r *http.Request) {
+	groups, err := s.provider.ListACLGroups(r.Context())
+	if err != nil {
+		s.respondInternalError(w, "failed to list ACL groups", err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"groups": groups,
+		"count":  len(groups),
+	})
+}
+
+func (s *Server) handleCreateACLGroup(w http.ResponseWriter, r *http.Request) {
+	req := decodeJSON[CreateACLGroupRequest](w, r)
+	if req == nil {
+		return
+	}
+	if req.Name == "" {
+		respondError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	group, err := s.provider.CreateACLGroup(r.Context(), req)
+	if err != nil {
+		if errors.Is(err, aclstore.ErrGroupExists) {
+			respondError(w, http.StatusConflict, fmt.Sprintf("group %q already exists", req.Name))
+			return
+		}
+		s.respondInternalError(w, "failed to create ACL group", err)
+		return
+	}
+
+	respondJSON(w, http.StatusCreated, map[string]interface{}{
+		"message": fmt.Sprintf("group %q created", req.Name),
+		"group":   group,
+	})
+}
+
+func (s *Server) handleGetACLGroup(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	group, err := s.provider.GetACLGroup(r.Context(), name)
+	if err != nil {
+		if errors.Is(err, aclstore.ErrGroupNotFound) {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("group %q not found", name))
+			return
+		}
+		s.respondInternalError(w, "failed to get ACL group", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, group)
+}
+
+func (s *Server) handleDeleteACLGroup(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	if err := s.provider.DeleteACLGroup(r.Context(), name); err != nil {
+		if errors.Is(err, aclstore.ErrGroupNotFound) {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("group %q not found", name))
+			return
+		}
+		s.respondInternalError(w, "failed to delete ACL group", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message": fmt.Sprintf("group %q deleted", name),
+	})
+}
+
+func (s *Server) handleListACLGroupMembers(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	members, err := s.provider.ListACLGroupMembers(r.Context(), name)
+	if err != nil {
+		if errors.Is(err, aclstore.ErrGroupNotFound) {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("group %q not found", name))
+			return
+		}
+		s.respondInternalError(w, "failed to list ACL group members", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"group_name": name,
+		"members":    members,
+		"count":      len(members),
+	})
+}
+
+func (s *Server) handleAddACLGroupMember(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	req := decodeJSON[AddACLGroupMemberRequest](w, r)
+	if req == nil {
+		return
+	}
+	if req.MemberType == "" {
+		respondError(w, http.StatusBadRequest, "member_type is required")
+		return
+	}
+	if req.MemberID == "" {
+		respondError(w, http.StatusBadRequest, "member_id is required")
+		return
+	}
+
+	member, err := s.provider.AddACLGroupMember(r.Context(), name, req)
+	if err != nil {
+		if errors.Is(err, aclstore.ErrGroupNotFound) {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("group %q not found", name))
+			return
+		}
+		if errors.Is(err, aclstore.ErrMembershipCycle) {
+			respondError(w, http.StatusBadRequest, "membership would create a cycle")
+			return
+		}
+		s.respondInternalError(w, "failed to add ACL group member", err)
+		return
+	}
+
+	respondJSON(w, http.StatusCreated, map[string]interface{}{
+		"message": fmt.Sprintf("member %s:%s added to group %q", req.MemberType, req.MemberID, name),
+		"member":  member,
+	})
+}
+
+func (s *Server) handleRemoveACLGroupMember(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	query := r.URL.Query()
+	memberType := query.Get("member_type")
+	memberID := query.Get("member_id")
+
+	if memberType == "" || memberID == "" {
+		respondError(w, http.StatusBadRequest, "member_type and member_id are required")
+		return
+	}
+
+	if err := s.provider.RemoveACLGroupMember(r.Context(), name, memberType, memberID); err != nil {
+		if errors.Is(err, aclstore.ErrGroupNotFound) {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("group %q not found", name))
+			return
+		}
+		if errors.Is(err, aclstore.ErrMembershipNotFound) {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("member %s:%s not found in group %q", memberType, memberID, name))
+			return
+		}
+		s.respondInternalError(w, "failed to remove ACL group member", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message": fmt.Sprintf("member %s:%s removed from group %q", memberType, memberID, name),
+	})
+}
+
+// =============================================================================
+// ACL Role Handlers
+// =============================================================================
+
+func (s *Server) handleListACLRoles(w http.ResponseWriter, r *http.Request) {
+	roles, err := s.provider.ListACLRoles(r.Context())
+	if err != nil {
+		s.respondInternalError(w, "failed to list ACL roles", err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"roles": roles,
+		"count": len(roles),
+	})
+}
+
+func (s *Server) handleCreateACLRole(w http.ResponseWriter, r *http.Request) {
+	req := decodeJSON[CreateACLRoleRequest](w, r)
+	if req == nil {
+		return
+	}
+	if req.Name == "" {
+		respondError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	role, err := s.provider.CreateACLRole(r.Context(), req)
+	if err != nil {
+		if errors.Is(err, aclstore.ErrRoleExists) {
+			respondError(w, http.StatusConflict, fmt.Sprintf("role %q already exists", req.Name))
+			return
+		}
+		s.respondInternalError(w, "failed to create ACL role", err)
+		return
+	}
+
+	respondJSON(w, http.StatusCreated, map[string]interface{}{
+		"message": fmt.Sprintf("role %q created", req.Name),
+		"role":    role,
+	})
+}
+
+func (s *Server) handleGetACLRole(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	role, err := s.provider.GetACLRole(r.Context(), name)
+	if err != nil {
+		if errors.Is(err, aclstore.ErrRoleNotFound) {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("role %q not found", name))
+			return
+		}
+		s.respondInternalError(w, "failed to get ACL role", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, role)
+}
+
+func (s *Server) handleDeleteACLRole(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	if err := s.provider.DeleteACLRole(r.Context(), name); err != nil {
+		if errors.Is(err, aclstore.ErrRoleNotFound) {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("role %q not found", name))
+			return
+		}
+		s.respondInternalError(w, "failed to delete ACL role", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message": fmt.Sprintf("role %q deleted", name),
+	})
+}
+
+func (s *Server) handleListACLRoleAssignments(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	assignments, err := s.provider.ListACLRoleAssignments(r.Context(), name)
+	if err != nil {
+		if errors.Is(err, aclstore.ErrRoleNotFound) {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("role %q not found", name))
+			return
+		}
+		s.respondInternalError(w, "failed to list ACL role assignments", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"role_name":   name,
+		"assignments": assignments,
+		"count":       len(assignments),
+	})
+}
+
+func (s *Server) handleAssignACLRole(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	req := decodeJSON[AssignACLRoleRequest](w, r)
+	if req == nil {
+		return
+	}
+	if req.AssigneeType == "" {
+		respondError(w, http.StatusBadRequest, "assignee_type is required")
+		return
+	}
+	if req.AssigneeID == "" {
+		respondError(w, http.StatusBadRequest, "assignee_id is required")
+		return
+	}
+
+	assignment, err := s.provider.AssignACLRole(r.Context(), name, req)
+	if err != nil {
+		if errors.Is(err, aclstore.ErrRoleNotFound) {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("role %q not found", name))
+			return
+		}
+		if errors.Is(err, aclstore.ErrMembershipCycle) {
+			respondError(w, http.StatusBadRequest, "assignment would create a cycle")
+			return
+		}
+		s.respondInternalError(w, "failed to assign ACL role", err)
+		return
+	}
+
+	respondJSON(w, http.StatusCreated, map[string]interface{}{
+		"message":    fmt.Sprintf("role %q assigned to %s:%s", name, req.AssigneeType, req.AssigneeID),
+		"assignment": assignment,
+	})
+}
+
+func (s *Server) handleUnassignACLRole(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	query := r.URL.Query()
+	assigneeType := query.Get("assignee_type")
+	assigneeID := query.Get("assignee_id")
+
+	if assigneeType == "" || assigneeID == "" {
+		respondError(w, http.StatusBadRequest, "assignee_type and assignee_id are required")
+		return
+	}
+
+	if err := s.provider.UnassignACLRole(r.Context(), name, assigneeType, assigneeID); err != nil {
+		if errors.Is(err, aclstore.ErrRoleNotFound) {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("role %q not found", name))
+			return
+		}
+		if errors.Is(err, aclstore.ErrAssignmentNotFound) {
+			respondError(w, http.StatusNotFound, fmt.Sprintf("assignment of %s:%s to role %q not found", assigneeType, assigneeID, name))
+			return
+		}
+		s.respondInternalError(w, "failed to unassign ACL role", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message": fmt.Sprintf("role %q unassigned from %s:%s", name, assigneeType, assigneeID),
+	})
+}
+
+// =============================================================================
+// ACL Principal Handlers
+// =============================================================================
+
+func (s *Server) handleListACLPrincipalGroups(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	memberType := vars["type"]
+	memberID := vars["id"]
+
+	members, err := s.provider.ListACLPrincipalGroups(r.Context(), memberType, memberID)
+	if err != nil {
+		s.respondInternalError(w, "failed to list principal groups", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"member_type": memberType,
+		"member_id":   memberID,
+		"groups":      members,
+		"count":       len(members),
+	})
+}
+
+func (s *Server) handleListACLPrincipalRoles(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	assigneeType := vars["type"]
+	assigneeID := vars["id"]
+
+	assignments, err := s.provider.ListACLPrincipalRoles(r.Context(), assigneeType, assigneeID)
+	if err != nil {
+		s.respondInternalError(w, "failed to list principal roles", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"assignee_type": assigneeType,
+		"assignee_id":   assigneeID,
+		"roles":         assignments,
+		"count":         len(assignments),
+	})
+}
+
+// handleExplainACLAccess explains how a principal's effective access to a
+// resource is decided: the resolved subject set (self + groups/roles), the
+// rules that matched, and the resulting decision. Emits an "explain_access"
+// audit event recording the caller (admin_api + remote addr) and subject.
+// GET /acl/principals/{type}/{id}/effective?resource_type=&resource_id=&required_level=
+func (s *Server) handleExplainACLAccess(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	principalType := vars["type"]
+	principalID := vars["id"]
+
+	q := r.URL.Query()
+	resourceType := q.Get("resource_type")
+	resourceID := q.Get("resource_id")
+	if resourceType == "" || resourceID == "" {
+		respondError(w, http.StatusBadRequest, "resource_type and resource_id query parameters are required")
+		return
+	}
+	requiredLevel := 0
+	if rl := q.Get("required_level"); rl != "" {
+		v, err := strconv.Atoi(rl)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "required_level must be an integer")
+			return
+		}
+		requiredLevel = v
+	}
+
+	// The admin REST API is gated by admin middleware, not a principal
+	// session, so record the source + remote address as the caller for the
+	// audit trail rather than a principal identity.
+	exp, err := s.provider.ExplainACLAccess(r.Context(), principalType, principalID, resourceType, resourceID, requiredLevel, "admin_api", r.RemoteAddr)
+	if err != nil {
+		s.respondInternalError(w, "failed to explain access", err)
+		return
+	}
+	respondJSON(w, http.StatusOK, exp)
 }

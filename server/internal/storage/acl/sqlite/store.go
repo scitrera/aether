@@ -105,6 +105,9 @@ r = sub, obj, act
 [policy_definition]
 p = sub, obj, act, expires, rule_id
 
+[role_definition]
+g = _, _
+
 [policy_effect]
 e = some(where (p.eft == allow))
 
@@ -1296,48 +1299,92 @@ func (s *Store) evaluateAccessNoAudit(ctx context.Context, principal models.Iden
 	return s.applyFallback(ctx, principal, resourceType, requiredLevel)
 }
 
+// evaluateAccess mirrors internal/acl.(*CasbinEnforcer).EvaluateAccess: the
+// principal's own subject plus every group/role it transitively belongs to
+// (resolved via the Casbin role manager) form the subject set, and rules
+// matching ANY subject are combined additively (highest access level wins).
+// With no groups/roles defined the subject set is just the principal, so the
+// behavior is identical to the original per-principal evaluation.
 func (s *Store) evaluateAccess(_ context.Context, principal models.Identity, resourceType, resourceID string, requiredLevel int) (*aclstore.Decision, error) {
-	principalType := aclstore.PrincipalTypeForModel(principal.Type)
-	principalID := principal.CanonicalPrincipalID()
+	return s.evaluateBySubject(aclstore.PrincipalTypeForModel(principal.Type), principal.CanonicalPrincipalID(), resourceType, resourceID, requiredLevel), nil
+}
 
+// evaluateBySubject is the string-keyed core of evaluateAccess — see
+// internal/acl.(*CasbinEnforcer).EvaluateBySubject. Used by both CheckAccess
+// (via evaluateAccess) and ExplainAccess.
+func (s *Store) evaluateBySubject(principalType, principalID, resourceType, resourceID string, requiredLevel int) *aclstore.Decision {
 	sub := principalType + ":" + principalID
 	obj := resourceType + ":" + resourceID
+	subjects := subjectSet(s.enforcer, sub)
 
-	// Step 1: Exact principal + exact resource
-	if decision := findAndEvaluate(s.enforcer, sub, obj, requiredLevel, "Explicit rule"); decision != nil {
-		return decision, nil
+	// Step 1: Subject set (self + groups/roles) + exact resource
+	if decision := findAndEvaluateMulti(s.enforcer, subjects, obj, requiredLevel, "Explicit rule"); decision != nil {
+		return decision
 	}
 
 	// Step 2: Wildcard principal + exact resource
 	for _, wSub := range wildcardSubjects(principalType) {
 		if decision := findAndEvaluate(s.enforcer, wSub, obj, requiredLevel, "Wildcard rule"); decision != nil {
-			return decision, nil
+			return decision
 		}
 	}
 
-	// Step 3: Exact principal + wildcard resource
+	// Step 3: Subject set + wildcard resource
 	if resourceID != aclstore.WildcardAnyResource {
 		wObj := resourceType + ":" + aclstore.WildcardAnyResource
 
-		if decision := findAndEvaluate(s.enforcer, sub, wObj, requiredLevel, "Any-resource rule"); decision != nil {
-			return decision, nil
+		if decision := findAndEvaluateMulti(s.enforcer, subjects, wObj, requiredLevel, "Any-resource rule"); decision != nil {
+			return decision
 		}
 
 		// Step 4: Wildcard principal + wildcard resource
 		for _, wSub := range wildcardSubjects(principalType) {
 			if decision := findAndEvaluate(s.enforcer, wSub, wObj, requiredLevel, "Wildcard any-resource rule"); decision != nil {
-				return decision, nil
+				return decision
 			}
 		}
 	}
 
-	// Step 5: Glob-pattern rules
-	if decision := findGlobMatch(s.enforcer, sub, obj, requiredLevel); decision != nil {
-		return decision, nil
+	// Step 5: Glob-pattern rules (any subject in the set)
+	if decision := findGlobMatch(s.enforcer, subjects, obj, requiredLevel); decision != nil {
+		return decision
 	}
 
 	// Step 6: No match — caller applies fallback
-	return nil, nil
+	return nil
+}
+
+// subjectSet returns the principal's own subject plus every group/role it
+// transitively belongs to. subjects[0] is always the principal's own subject.
+func subjectSet(e *casbin.SyncedEnforcer, sub string) []string {
+	roles, err := e.GetImplicitRolesForUser(sub)
+	if err != nil || len(roles) == 0 {
+		return []string{sub}
+	}
+	return append([]string{sub}, roles...)
+}
+
+// findAndEvaluateMulti evaluates (subject, obj) for every subject and combines
+// additively: the highest non-expired access level wins. When the winning rule
+// was granted to a group/role rather than the principal, the reason is
+// annotated. subjects[0] is assumed to be the principal's own subject.
+func findAndEvaluateMulti(e *casbin.SyncedEnforcer, subjects []string, obj string, requiredLevel int, label string) *aclstore.Decision {
+	var best *aclstore.Decision
+	var bestSubject string
+	for _, s := range subjects {
+		d := findAndEvaluate(e, s, obj, requiredLevel, label)
+		if d == nil {
+			continue
+		}
+		if best == nil || d.EffectiveAccessLevel > best.EffectiveAccessLevel {
+			best = d
+			bestSubject = s
+		}
+	}
+	if best != nil && len(subjects) > 0 && bestSubject != subjects[0] {
+		best.Reason = fmt.Sprintf("%s (via %s)", best.Reason, bestSubject)
+	}
+	return best
 }
 
 func (s *Store) applyFallback(ctx context.Context, principal models.Identity, resourceType string, requiredLevel int) (*aclstore.Decision, error) {
@@ -1423,7 +1470,20 @@ func findAndEvaluate(e *casbin.SyncedEnforcer, sub, obj string, requiredLevel in
 	return decision
 }
 
-func findGlobMatch(e *casbin.SyncedEnforcer, sub, obj string, requiredLevel int) *aclstore.Decision {
+// anyGlobMatch reports whether any of the names matches the glob pattern.
+func anyGlobMatch(names []string, pattern string) bool {
+	for _, n := range names {
+		if acl.GlobMatch(n, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// findGlobMatch scans all policies once for glob-pattern rules matching any
+// subject in the set and the given object. Highest matching level across all
+// subjects wins (additive semantics consistent with findAndEvaluateMulti).
+func findGlobMatch(e *casbin.SyncedEnforcer, subjects []string, obj string, requiredLevel int) *aclstore.Decision {
 	policies, _ := e.GetPolicy()
 	if len(policies) == 0 {
 		return nil
@@ -1439,7 +1499,7 @@ func findGlobMatch(e *casbin.SyncedEnforcer, sub, obj string, requiredLevel int)
 		if !strings.ContainsAny(pSub, "*?") && !strings.ContainsAny(pObj, "*?") {
 			continue
 		}
-		if !acl.GlobMatch(sub, pSub) || !acl.GlobMatch(obj, pObj) {
+		if !acl.GlobMatch(obj, pObj) || !anyGlobMatch(subjects, pSub) {
 			continue
 		}
 		if len(p) > pIdxExpires && p[pIdxExpires] != "" {
@@ -2015,7 +2075,65 @@ func (a *sqliteAdapter) LoadPolicy(m model.Model) error {
 		_ = persist.LoadPolicyArray([]string{"p", sub, obj, act, exp, ruleID}, m)
 	}
 
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// Load role/group membership as Casbin grouping (g) edges. Additive on top
+	// of the per-principal rules; absence of the groups/roles tables must not
+	// break core rule evaluation, so failures here are logged and skipped.
+	a.loadGroupingPolicies(m)
+
+	return nil
+}
+
+// loadGroupingPolicies loads acl_group_members and acl_role_assignments as
+// Casbin g-rules: g("<member_type>:<member_id>", "group:<group_name>") and
+// g("<assignee_type>:<assignee_id>", "role:<role_name>"). Expired edges are
+// excluded. Best-effort: a query error (e.g. missing table) is logged and
+// skipped so the per-principal rules remain authoritative.
+func (a *sqliteAdapter) loadGroupingPolicies(m model.Model) {
+	now := formatTime(time.Now())
+
+	memberQuery := `
+		SELECT m.member_type, m.member_id, g.group_name
+		FROM acl_group_members m
+		JOIN acl_groups g ON g.group_id = m.group_id
+		WHERE m.expires_at IS NULL OR m.expires_at > ?
+	`
+	if rows, err := a.db.Query(memberQuery, now); err != nil {
+		logging.Logger.Warn().Err(err).Msg("acl sqlite: failed to load group memberships; group-derived access disabled until next reload")
+	} else {
+		for rows.Next() {
+			var memberType, memberID, groupName string
+			if err := rows.Scan(&memberType, &memberID, &groupName); err != nil {
+				logging.Logger.Warn().Err(err).Msg("acl sqlite: failed to scan group membership row")
+				continue
+			}
+			_ = persist.LoadPolicyArray([]string{"g", memberType + ":" + memberID, acl.GroupSubjectPrefix + groupName}, m)
+		}
+		rows.Close()
+	}
+
+	assignQuery := `
+		SELECT a.assignee_type, a.assignee_id, r.role_name
+		FROM acl_role_assignments a
+		JOIN acl_roles r ON r.role_id = a.role_id
+		WHERE a.expires_at IS NULL OR a.expires_at > ?
+	`
+	if rows, err := a.db.Query(assignQuery, now); err != nil {
+		logging.Logger.Warn().Err(err).Msg("acl sqlite: failed to load role assignments; role-derived access disabled until next reload")
+	} else {
+		for rows.Next() {
+			var assigneeType, assigneeID, roleName string
+			if err := rows.Scan(&assigneeType, &assigneeID, &roleName); err != nil {
+				logging.Logger.Warn().Err(err).Msg("acl sqlite: failed to scan role assignment row")
+				continue
+			}
+			_ = persist.LoadPolicyArray([]string{"g", assigneeType + ":" + assigneeID, acl.RoleSubjectPrefix + roleName}, m)
+		}
+		rows.Close()
+	}
 }
 
 func (a *sqliteAdapter) SavePolicy(m model.Model) error                            { return nil }

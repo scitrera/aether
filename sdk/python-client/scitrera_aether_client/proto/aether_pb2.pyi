@@ -1733,7 +1733,7 @@ class AgentResponse(_message.Message):
     def __init__(self, success: bool = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., agent: _Optional[_Union[AgentRegistrationInfo, _Mapping]] = ..., agents: _Optional[_Iterable[_Union[AgentRegistrationInfo, _Mapping]]] = ..., total_count: _Optional[int] = ..., orchestrators: _Optional[_Iterable[_Union[OrchestratorInfo, _Mapping]]] = ..., launch_result: _Optional[_Union[AgentLaunchResult, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class ACLOperation(_message.Message):
-    __slots__ = ("op", "rule_id", "rule_category", "retention_days", "rule_filter", "audit_filter", "grant_request", "fallback_request", "request_id")
+    __slots__ = ("op", "rule_id", "rule_category", "retention_days", "rule_filter", "audit_filter", "grant_request", "fallback_request", "request_id", "name", "principal", "group_request", "role_request", "member_request", "assignment_request", "resource_type", "resource_id", "required_level")
     class OpType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         LIST_RULES: _ClassVar[ACLOperation.OpType]
@@ -1745,6 +1745,23 @@ class ACLOperation(_message.Message):
         SET_FALLBACK_POLICY: _ClassVar[ACLOperation.OpType]
         CLEANUP_EXPIRED: _ClassVar[ACLOperation.OpType]
         CLEANUP_AUDIT_LOGS: _ClassVar[ACLOperation.OpType]
+        CREATE_GROUP: _ClassVar[ACLOperation.OpType]
+        DELETE_GROUP: _ClassVar[ACLOperation.OpType]
+        GET_GROUP: _ClassVar[ACLOperation.OpType]
+        LIST_GROUPS: _ClassVar[ACLOperation.OpType]
+        ADD_GROUP_MEMBER: _ClassVar[ACLOperation.OpType]
+        REMOVE_GROUP_MEMBER: _ClassVar[ACLOperation.OpType]
+        LIST_GROUP_MEMBERS: _ClassVar[ACLOperation.OpType]
+        CREATE_ROLE: _ClassVar[ACLOperation.OpType]
+        DELETE_ROLE: _ClassVar[ACLOperation.OpType]
+        GET_ROLE: _ClassVar[ACLOperation.OpType]
+        LIST_ROLES: _ClassVar[ACLOperation.OpType]
+        ASSIGN_ROLE: _ClassVar[ACLOperation.OpType]
+        UNASSIGN_ROLE: _ClassVar[ACLOperation.OpType]
+        LIST_ROLE_ASSIGNMENTS: _ClassVar[ACLOperation.OpType]
+        LIST_PRINCIPAL_GROUPS: _ClassVar[ACLOperation.OpType]
+        LIST_PRINCIPAL_ROLES: _ClassVar[ACLOperation.OpType]
+        EXPLAIN_ACCESS: _ClassVar[ACLOperation.OpType]
     LIST_RULES: ACLOperation.OpType
     GET_RULE: ACLOperation.OpType
     GRANT: ACLOperation.OpType
@@ -1754,6 +1771,23 @@ class ACLOperation(_message.Message):
     SET_FALLBACK_POLICY: ACLOperation.OpType
     CLEANUP_EXPIRED: ACLOperation.OpType
     CLEANUP_AUDIT_LOGS: ACLOperation.OpType
+    CREATE_GROUP: ACLOperation.OpType
+    DELETE_GROUP: ACLOperation.OpType
+    GET_GROUP: ACLOperation.OpType
+    LIST_GROUPS: ACLOperation.OpType
+    ADD_GROUP_MEMBER: ACLOperation.OpType
+    REMOVE_GROUP_MEMBER: ACLOperation.OpType
+    LIST_GROUP_MEMBERS: ACLOperation.OpType
+    CREATE_ROLE: ACLOperation.OpType
+    DELETE_ROLE: ACLOperation.OpType
+    GET_ROLE: ACLOperation.OpType
+    LIST_ROLES: ACLOperation.OpType
+    ASSIGN_ROLE: ACLOperation.OpType
+    UNASSIGN_ROLE: ACLOperation.OpType
+    LIST_ROLE_ASSIGNMENTS: ACLOperation.OpType
+    LIST_PRINCIPAL_GROUPS: ACLOperation.OpType
+    LIST_PRINCIPAL_ROLES: ACLOperation.OpType
+    EXPLAIN_ACCESS: ACLOperation.OpType
     OP_FIELD_NUMBER: _ClassVar[int]
     RULE_ID_FIELD_NUMBER: _ClassVar[int]
     RULE_CATEGORY_FIELD_NUMBER: _ClassVar[int]
@@ -1763,6 +1797,15 @@ class ACLOperation(_message.Message):
     GRANT_REQUEST_FIELD_NUMBER: _ClassVar[int]
     FALLBACK_REQUEST_FIELD_NUMBER: _ClassVar[int]
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    PRINCIPAL_FIELD_NUMBER: _ClassVar[int]
+    GROUP_REQUEST_FIELD_NUMBER: _ClassVar[int]
+    ROLE_REQUEST_FIELD_NUMBER: _ClassVar[int]
+    MEMBER_REQUEST_FIELD_NUMBER: _ClassVar[int]
+    ASSIGNMENT_REQUEST_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_TYPE_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_ID_FIELD_NUMBER: _ClassVar[int]
+    REQUIRED_LEVEL_FIELD_NUMBER: _ClassVar[int]
     op: ACLOperation.OpType
     rule_id: str
     rule_category: str
@@ -1772,7 +1815,16 @@ class ACLOperation(_message.Message):
     grant_request: ACLGrantRequest
     fallback_request: ACLSetFallbackRequest
     request_id: str
-    def __init__(self, op: _Optional[_Union[ACLOperation.OpType, str]] = ..., rule_id: _Optional[str] = ..., rule_category: _Optional[str] = ..., retention_days: _Optional[int] = ..., rule_filter: _Optional[_Union[ACLRuleFilter, _Mapping]] = ..., audit_filter: _Optional[_Union[ACLAuditFilter, _Mapping]] = ..., grant_request: _Optional[_Union[ACLGrantRequest, _Mapping]] = ..., fallback_request: _Optional[_Union[ACLSetFallbackRequest, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
+    name: str
+    principal: PrincipalRef
+    group_request: ACLGroupRequest
+    role_request: ACLRoleRequest
+    member_request: ACLGroupMemberRequest
+    assignment_request: ACLRoleAssignmentRequest
+    resource_type: str
+    resource_id: str
+    required_level: int
+    def __init__(self, op: _Optional[_Union[ACLOperation.OpType, str]] = ..., rule_id: _Optional[str] = ..., rule_category: _Optional[str] = ..., retention_days: _Optional[int] = ..., rule_filter: _Optional[_Union[ACLRuleFilter, _Mapping]] = ..., audit_filter: _Optional[_Union[ACLAuditFilter, _Mapping]] = ..., grant_request: _Optional[_Union[ACLGrantRequest, _Mapping]] = ..., fallback_request: _Optional[_Union[ACLSetFallbackRequest, _Mapping]] = ..., request_id: _Optional[str] = ..., name: _Optional[str] = ..., principal: _Optional[_Union[PrincipalRef, _Mapping]] = ..., group_request: _Optional[_Union[ACLGroupRequest, _Mapping]] = ..., role_request: _Optional[_Union[ACLRoleRequest, _Mapping]] = ..., member_request: _Optional[_Union[ACLGroupMemberRequest, _Mapping]] = ..., assignment_request: _Optional[_Union[ACLRoleAssignmentRequest, _Mapping]] = ..., resource_type: _Optional[str] = ..., resource_id: _Optional[str] = ..., required_level: _Optional[int] = ...) -> None: ...
 
 class ACLRuleFilter(_message.Message):
     __slots__ = ("principal_type", "principal_id", "resource_type", "resource_id", "limit", "offset")
@@ -2089,8 +2141,182 @@ class ACLCleanupResult(_message.Message):
     message: str
     def __init__(self, deleted_count: _Optional[int] = ..., message: _Optional[str] = ...) -> None: ...
 
+class ACLGroupRequest(_message.Message):
+    __slots__ = ("name", "description", "created_by", "metadata")
+    class MetadataEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    CREATED_BY_FIELD_NUMBER: _ClassVar[int]
+    METADATA_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    description: str
+    created_by: str
+    metadata: _containers.ScalarMap[str, str]
+    def __init__(self, name: _Optional[str] = ..., description: _Optional[str] = ..., created_by: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class ACLRoleRequest(_message.Message):
+    __slots__ = ("name", "description", "created_by", "metadata")
+    class MetadataEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    CREATED_BY_FIELD_NUMBER: _ClassVar[int]
+    METADATA_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    description: str
+    created_by: str
+    metadata: _containers.ScalarMap[str, str]
+    def __init__(self, name: _Optional[str] = ..., description: _Optional[str] = ..., created_by: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class ACLGroupMemberRequest(_message.Message):
+    __slots__ = ("member_type", "member_id", "granted_by", "expires_at")
+    MEMBER_TYPE_FIELD_NUMBER: _ClassVar[int]
+    MEMBER_ID_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_BY_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    member_type: str
+    member_id: str
+    granted_by: str
+    expires_at: int
+    def __init__(self, member_type: _Optional[str] = ..., member_id: _Optional[str] = ..., granted_by: _Optional[str] = ..., expires_at: _Optional[int] = ...) -> None: ...
+
+class ACLRoleAssignmentRequest(_message.Message):
+    __slots__ = ("assignee_type", "assignee_id", "granted_by", "expires_at")
+    ASSIGNEE_TYPE_FIELD_NUMBER: _ClassVar[int]
+    ASSIGNEE_ID_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_BY_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    assignee_type: str
+    assignee_id: str
+    granted_by: str
+    expires_at: int
+    def __init__(self, assignee_type: _Optional[str] = ..., assignee_id: _Optional[str] = ..., granted_by: _Optional[str] = ..., expires_at: _Optional[int] = ...) -> None: ...
+
+class ACLGroupInfo(_message.Message):
+    __slots__ = ("group_id", "group_name", "description", "created_by", "created_at", "metadata")
+    class MetadataEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    GROUP_ID_FIELD_NUMBER: _ClassVar[int]
+    GROUP_NAME_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    CREATED_BY_FIELD_NUMBER: _ClassVar[int]
+    CREATED_AT_FIELD_NUMBER: _ClassVar[int]
+    METADATA_FIELD_NUMBER: _ClassVar[int]
+    group_id: str
+    group_name: str
+    description: str
+    created_by: str
+    created_at: int
+    metadata: _containers.ScalarMap[str, str]
+    def __init__(self, group_id: _Optional[str] = ..., group_name: _Optional[str] = ..., description: _Optional[str] = ..., created_by: _Optional[str] = ..., created_at: _Optional[int] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class ACLRoleInfo(_message.Message):
+    __slots__ = ("role_id", "role_name", "description", "created_by", "created_at", "metadata")
+    class MetadataEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    ROLE_ID_FIELD_NUMBER: _ClassVar[int]
+    ROLE_NAME_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    CREATED_BY_FIELD_NUMBER: _ClassVar[int]
+    CREATED_AT_FIELD_NUMBER: _ClassVar[int]
+    METADATA_FIELD_NUMBER: _ClassVar[int]
+    role_id: str
+    role_name: str
+    description: str
+    created_by: str
+    created_at: int
+    metadata: _containers.ScalarMap[str, str]
+    def __init__(self, role_id: _Optional[str] = ..., role_name: _Optional[str] = ..., description: _Optional[str] = ..., created_by: _Optional[str] = ..., created_at: _Optional[int] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class ACLGroupMemberInfo(_message.Message):
+    __slots__ = ("group_name", "member_type", "member_id", "granted_by", "granted_at", "expires_at")
+    GROUP_NAME_FIELD_NUMBER: _ClassVar[int]
+    MEMBER_TYPE_FIELD_NUMBER: _ClassVar[int]
+    MEMBER_ID_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_BY_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_AT_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    group_name: str
+    member_type: str
+    member_id: str
+    granted_by: str
+    granted_at: int
+    expires_at: int
+    def __init__(self, group_name: _Optional[str] = ..., member_type: _Optional[str] = ..., member_id: _Optional[str] = ..., granted_by: _Optional[str] = ..., granted_at: _Optional[int] = ..., expires_at: _Optional[int] = ...) -> None: ...
+
+class ACLRoleAssignmentInfo(_message.Message):
+    __slots__ = ("role_name", "assignee_type", "assignee_id", "granted_by", "granted_at", "expires_at")
+    ROLE_NAME_FIELD_NUMBER: _ClassVar[int]
+    ASSIGNEE_TYPE_FIELD_NUMBER: _ClassVar[int]
+    ASSIGNEE_ID_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_BY_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_AT_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    role_name: str
+    assignee_type: str
+    assignee_id: str
+    granted_by: str
+    granted_at: int
+    expires_at: int
+    def __init__(self, role_name: _Optional[str] = ..., assignee_type: _Optional[str] = ..., assignee_id: _Optional[str] = ..., granted_by: _Optional[str] = ..., granted_at: _Optional[int] = ..., expires_at: _Optional[int] = ...) -> None: ...
+
+class ACLAccessContributionInfo(_message.Message):
+    __slots__ = ("subject", "rule_id", "access_level", "resource", "expired")
+    SUBJECT_FIELD_NUMBER: _ClassVar[int]
+    RULE_ID_FIELD_NUMBER: _ClassVar[int]
+    ACCESS_LEVEL_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_FIELD_NUMBER: _ClassVar[int]
+    EXPIRED_FIELD_NUMBER: _ClassVar[int]
+    subject: str
+    rule_id: str
+    access_level: int
+    resource: str
+    expired: bool
+    def __init__(self, subject: _Optional[str] = ..., rule_id: _Optional[str] = ..., access_level: _Optional[int] = ..., resource: _Optional[str] = ..., expired: bool = ...) -> None: ...
+
+class ACLAccessExplanationInfo(_message.Message):
+    __slots__ = ("principal", "subjects", "contributions", "allowed", "decision", "effective_access_level", "fallback_applied", "reason")
+    PRINCIPAL_FIELD_NUMBER: _ClassVar[int]
+    SUBJECTS_FIELD_NUMBER: _ClassVar[int]
+    CONTRIBUTIONS_FIELD_NUMBER: _ClassVar[int]
+    ALLOWED_FIELD_NUMBER: _ClassVar[int]
+    DECISION_FIELD_NUMBER: _ClassVar[int]
+    EFFECTIVE_ACCESS_LEVEL_FIELD_NUMBER: _ClassVar[int]
+    FALLBACK_APPLIED_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    principal: str
+    subjects: _containers.RepeatedScalarFieldContainer[str]
+    contributions: _containers.RepeatedCompositeFieldContainer[ACLAccessContributionInfo]
+    allowed: bool
+    decision: str
+    effective_access_level: int
+    fallback_applied: bool
+    reason: str
+    def __init__(self, principal: _Optional[str] = ..., subjects: _Optional[_Iterable[str]] = ..., contributions: _Optional[_Iterable[_Union[ACLAccessContributionInfo, _Mapping]]] = ..., allowed: bool = ..., decision: _Optional[str] = ..., effective_access_level: _Optional[int] = ..., fallback_applied: bool = ..., reason: _Optional[str] = ...) -> None: ...
+
 class ACLResponse(_message.Message):
-    __slots__ = ("success", "error", "message", "rule", "rules", "total_rules", "fallback_policy", "audit_entries", "total_audit_entries", "cleanup_result", "authority_grant", "authority_grants", "total_authority_grants", "request_id")
+    __slots__ = ("success", "error", "message", "rule", "rules", "total_rules", "fallback_policy", "audit_entries", "total_audit_entries", "cleanup_result", "authority_grant", "authority_grants", "total_authority_grants", "request_id", "group", "groups", "role", "roles", "group_members", "role_assignments", "explanation")
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
@@ -2105,6 +2331,13 @@ class ACLResponse(_message.Message):
     AUTHORITY_GRANTS_FIELD_NUMBER: _ClassVar[int]
     TOTAL_AUTHORITY_GRANTS_FIELD_NUMBER: _ClassVar[int]
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    GROUP_FIELD_NUMBER: _ClassVar[int]
+    GROUPS_FIELD_NUMBER: _ClassVar[int]
+    ROLE_FIELD_NUMBER: _ClassVar[int]
+    ROLES_FIELD_NUMBER: _ClassVar[int]
+    GROUP_MEMBERS_FIELD_NUMBER: _ClassVar[int]
+    ROLE_ASSIGNMENTS_FIELD_NUMBER: _ClassVar[int]
+    EXPLANATION_FIELD_NUMBER: _ClassVar[int]
     success: bool
     error: str
     message: str
@@ -2119,7 +2352,14 @@ class ACLResponse(_message.Message):
     authority_grants: _containers.RepeatedCompositeFieldContainer[ACLAuthorityGrantInfo]
     total_authority_grants: int
     request_id: str
-    def __init__(self, success: bool = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., rule: _Optional[_Union[ACLRuleInfo, _Mapping]] = ..., rules: _Optional[_Iterable[_Union[ACLRuleInfo, _Mapping]]] = ..., total_rules: _Optional[int] = ..., fallback_policy: _Optional[_Union[ACLFallbackPolicyInfo, _Mapping]] = ..., audit_entries: _Optional[_Iterable[_Union[ACLAuditEntryInfo, _Mapping]]] = ..., total_audit_entries: _Optional[int] = ..., cleanup_result: _Optional[_Union[ACLCleanupResult, _Mapping]] = ..., authority_grant: _Optional[_Union[ACLAuthorityGrantInfo, _Mapping]] = ..., authority_grants: _Optional[_Iterable[_Union[ACLAuthorityGrantInfo, _Mapping]]] = ..., total_authority_grants: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
+    group: ACLGroupInfo
+    groups: _containers.RepeatedCompositeFieldContainer[ACLGroupInfo]
+    role: ACLRoleInfo
+    roles: _containers.RepeatedCompositeFieldContainer[ACLRoleInfo]
+    group_members: _containers.RepeatedCompositeFieldContainer[ACLGroupMemberInfo]
+    role_assignments: _containers.RepeatedCompositeFieldContainer[ACLRoleAssignmentInfo]
+    explanation: ACLAccessExplanationInfo
+    def __init__(self, success: bool = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., rule: _Optional[_Union[ACLRuleInfo, _Mapping]] = ..., rules: _Optional[_Iterable[_Union[ACLRuleInfo, _Mapping]]] = ..., total_rules: _Optional[int] = ..., fallback_policy: _Optional[_Union[ACLFallbackPolicyInfo, _Mapping]] = ..., audit_entries: _Optional[_Iterable[_Union[ACLAuditEntryInfo, _Mapping]]] = ..., total_audit_entries: _Optional[int] = ..., cleanup_result: _Optional[_Union[ACLCleanupResult, _Mapping]] = ..., authority_grant: _Optional[_Union[ACLAuthorityGrantInfo, _Mapping]] = ..., authority_grants: _Optional[_Iterable[_Union[ACLAuthorityGrantInfo, _Mapping]]] = ..., total_authority_grants: _Optional[int] = ..., request_id: _Optional[str] = ..., group: _Optional[_Union[ACLGroupInfo, _Mapping]] = ..., groups: _Optional[_Iterable[_Union[ACLGroupInfo, _Mapping]]] = ..., role: _Optional[_Union[ACLRoleInfo, _Mapping]] = ..., roles: _Optional[_Iterable[_Union[ACLRoleInfo, _Mapping]]] = ..., group_members: _Optional[_Iterable[_Union[ACLGroupMemberInfo, _Mapping]]] = ..., role_assignments: _Optional[_Iterable[_Union[ACLRoleAssignmentInfo, _Mapping]]] = ..., explanation: _Optional[_Union[ACLAccessExplanationInfo, _Mapping]] = ...) -> None: ...
 
 class AuthorityGrantOperation(_message.Message):
     __slots__ = ("op", "grant_id", "exchange_request", "derive_request", "renew_request", "request_id", "list_request", "batch_exchange_request", "derive_for_target_request")

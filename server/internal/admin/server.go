@@ -297,6 +297,29 @@ func (s *Server) registerAPIRoutes(r *mux.Router) {
 	r.HandleFunc("/acl/cleanup/expired-rules", s.handleCleanupExpiredACLRules).Methods("POST")
 	r.HandleFunc("/acl/cleanup/audit-logs", s.handleCleanupOldACLAuditLogs).Methods("POST")
 
+	// ACL Groups
+	r.HandleFunc("/acl/groups", s.handleListACLGroups).Methods("GET")
+	r.HandleFunc("/acl/groups", s.handleCreateACLGroup).Methods("POST")
+	r.HandleFunc("/acl/groups/{name}", s.handleGetACLGroup).Methods("GET")
+	r.HandleFunc("/acl/groups/{name}", s.handleDeleteACLGroup).Methods("DELETE")
+	r.HandleFunc("/acl/groups/{name}/members", s.handleListACLGroupMembers).Methods("GET")
+	r.HandleFunc("/acl/groups/{name}/members", s.handleAddACLGroupMember).Methods("POST")
+	r.HandleFunc("/acl/groups/{name}/members", s.handleRemoveACLGroupMember).Methods("DELETE")
+
+	// ACL Roles
+	r.HandleFunc("/acl/roles", s.handleListACLRoles).Methods("GET")
+	r.HandleFunc("/acl/roles", s.handleCreateACLRole).Methods("POST")
+	r.HandleFunc("/acl/roles/{name}", s.handleGetACLRole).Methods("GET")
+	r.HandleFunc("/acl/roles/{name}", s.handleDeleteACLRole).Methods("DELETE")
+	r.HandleFunc("/acl/roles/{name}/assignments", s.handleListACLRoleAssignments).Methods("GET")
+	r.HandleFunc("/acl/roles/{name}/assignments", s.handleAssignACLRole).Methods("POST")
+	r.HandleFunc("/acl/roles/{name}/assignments", s.handleUnassignACLRole).Methods("DELETE")
+
+	// ACL Principals
+	r.HandleFunc("/acl/principals/{type}/{id}/groups", s.handleListACLPrincipalGroups).Methods("GET")
+	r.HandleFunc("/acl/principals/{type}/{id}/roles", s.handleListACLPrincipalRoles).Methods("GET")
+	r.HandleFunc("/acl/principals/{type}/{id}/effective", s.handleExplainACLAccess).Methods("GET")
+
 	// API Tokens
 	r.HandleFunc("/tokens", s.handleListTokens).Methods("GET")
 	r.HandleFunc("/tokens", s.handleCreateToken).Methods("POST")

@@ -10,6 +10,8 @@ type SubtypeConstructor<Constructor extends new (...args: any) => any, Subtype> 
 export interface ProtoGrpcType {
   aether: {
     v1: {
+      ACLAccessContributionInfo: MessageTypeDefinition
+      ACLAccessExplanationInfo: MessageTypeDefinition
       ACLAuditEntryInfo: MessageTypeDefinition
       ACLAuditFilter: MessageTypeDefinition
       ACLAuthorityGrantFilter: MessageTypeDefinition
@@ -19,9 +21,17 @@ export interface ProtoGrpcType {
       ACLCleanupResult: MessageTypeDefinition
       ACLFallbackPolicyInfo: MessageTypeDefinition
       ACLGrantRequest: MessageTypeDefinition
+      ACLGroupInfo: MessageTypeDefinition
+      ACLGroupMemberInfo: MessageTypeDefinition
+      ACLGroupMemberRequest: MessageTypeDefinition
+      ACLGroupRequest: MessageTypeDefinition
       ACLOperation: MessageTypeDefinition
       ACLRenewAuthorityGrantRequest: MessageTypeDefinition
       ACLResponse: MessageTypeDefinition
+      ACLRoleAssignmentInfo: MessageTypeDefinition
+      ACLRoleAssignmentRequest: MessageTypeDefinition
+      ACLRoleInfo: MessageTypeDefinition
+      ACLRoleRequest: MessageTypeDefinition
       ACLRuleFilter: MessageTypeDefinition
       ACLRuleInfo: MessageTypeDefinition
       ACLSetFallbackRequest: MessageTypeDefinition

@@ -425,6 +425,78 @@ type ACLResponse struct {
 	AuditEntries      []*ACLAuditEntryInfo
 	TotalAuditEntries int32
 	CleanupResult     *ACLCleanupResult
+
+	// Role/group results.
+	Group           *ACLGroupInfo             // GET_GROUP / CREATE_GROUP
+	Groups          []*ACLGroupInfo           // LIST_GROUPS
+	Role            *ACLRoleInfo              // GET_ROLE / CREATE_ROLE
+	Roles           []*ACLRoleInfo            // LIST_ROLES
+	GroupMembers    []*ACLGroupMemberInfo     // LIST_GROUP_MEMBERS / LIST_PRINCIPAL_GROUPS / ADD_GROUP_MEMBER
+	RoleAssignments []*ACLRoleAssignmentInfo  // LIST_ROLE_ASSIGNMENTS / LIST_PRINCIPAL_ROLES / ASSIGN_ROLE
+	Explanation     *ACLAccessExplanationInfo // EXPLAIN_ACCESS
+}
+
+// ACLAccessContributionInfo is one rule that matched a principal or one of its
+// groups/roles for an explained resource.
+type ACLAccessContributionInfo struct {
+	Subject     string
+	RuleID      string
+	AccessLevel int32
+	Resource    string
+	Expired     bool
+}
+
+// ACLAccessExplanationInfo explains how a principal's effective access to a
+// resource is decided: resolved subjects, matching rules, and the decision.
+type ACLAccessExplanationInfo struct {
+	Principal       string
+	Subjects        []string
+	Contributions   []*ACLAccessContributionInfo
+	Allowed         bool
+	Decision        string
+	EffectiveLevel  int32
+	FallbackApplied bool
+	Reason          string
+}
+
+// ACLGroupInfo describes a group definition.
+type ACLGroupInfo struct {
+	GroupID     string
+	GroupName   string
+	Description string
+	CreatedBy   string
+	CreatedAt   int64
+	Metadata    map[string]string
+}
+
+// ACLRoleInfo describes a role definition.
+type ACLRoleInfo struct {
+	RoleID      string
+	RoleName    string
+	Description string
+	CreatedBy   string
+	CreatedAt   int64
+	Metadata    map[string]string
+}
+
+// ACLGroupMemberInfo describes a single group-membership edge.
+type ACLGroupMemberInfo struct {
+	GroupName  string
+	MemberType string
+	MemberID   string
+	GrantedBy  string
+	GrantedAt  int64
+	ExpiresAt  int64
+}
+
+// ACLRoleAssignmentInfo describes a single role-assignment edge.
+type ACLRoleAssignmentInfo struct {
+	RoleName     string
+	AssigneeType string
+	AssigneeID   string
+	GrantedBy    string
+	GrantedAt    int64
+	ExpiresAt    int64
 }
 
 // TokenInfo represents an API token.

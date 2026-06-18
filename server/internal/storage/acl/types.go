@@ -31,6 +31,18 @@ type (
 	ResolvedAuthority = legacy.ResolvedAuthority
 	// RuleFilter is the query-side filter for ListRules.
 	RuleFilter = legacy.RuleFilter
+	// Group is a named collection of principals (role/group authorization).
+	Group = legacy.Group
+	// Role is a named bundle of permissions assignable to principals/groups.
+	Role = legacy.Role
+	// GroupMember is a single group-membership edge.
+	GroupMember = legacy.GroupMember
+	// RoleAssignment is a single role-assignment edge.
+	RoleAssignment = legacy.RoleAssignment
+	// AccessExplanation describes the resolved subject set + winning decision.
+	AccessExplanation = legacy.AccessExplanation
+	// AccessContribution is one rule that matched a principal or its groups/roles.
+	AccessContribution = legacy.AccessContribution
 	// AuthorityGrantFilter is the query-side filter for
 	// ListAuthorityGrants.
 	AuthorityGrantFilter = legacy.AuthorityGrantFilter
@@ -131,6 +143,14 @@ const (
 	PrincipalTypeBridge         = legacy.PrincipalTypeBridge
 	PrincipalTypeService        = legacy.PrincipalTypeService
 	PrincipalTypeWildcard       = legacy.PrincipalTypeWildcard
+	PrincipalTypeGroup          = legacy.PrincipalTypeGroup
+	PrincipalTypeRole           = legacy.PrincipalTypeRole
+)
+
+// Subject prefixes for synthetic group/role subjects ("group:" / "role:").
+const (
+	GroupSubjectPrefix = legacy.GroupSubjectPrefix
+	RoleSubjectPrefix  = legacy.RoleSubjectPrefix
 )
 
 // Reserved identifiers — wildcard subjects, system principal, global
@@ -193,6 +213,13 @@ var (
 	ErrInvalidAccessLevel             = legacy.ErrInvalidAccessLevel
 	ErrRuleNotFound                   = legacy.ErrRuleNotFound
 	ErrFallbackPolicyNotFound         = legacy.ErrFallbackPolicyNotFound
+	ErrGroupNotFound                  = legacy.ErrGroupNotFound
+	ErrRoleNotFound                   = legacy.ErrRoleNotFound
+	ErrGroupExists                    = legacy.ErrGroupExists
+	ErrRoleExists                     = legacy.ErrRoleExists
+	ErrMembershipNotFound             = legacy.ErrMembershipNotFound
+	ErrAssignmentNotFound             = legacy.ErrAssignmentNotFound
+	ErrMembershipCycle                = legacy.ErrMembershipCycle
 	ErrAuthorityGrantNotFound         = legacy.ErrAuthorityGrantNotFound
 	ErrAuthorityGrantExpired          = legacy.ErrAuthorityGrantExpired
 	ErrAuthorityGrantRevoked          = legacy.ErrAuthorityGrantRevoked

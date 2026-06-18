@@ -1437,6 +1437,25 @@ const (
 	ACLOperation_SET_FALLBACK_POLICY ACLOperation_OpType = 9  // PUT /api/acl/fallback-policy - Set/update a fallback policy
 	ACLOperation_CLEANUP_EXPIRED     ACLOperation_OpType = 10 // POST /api/acl/cleanup/expired-rules - Remove expired ACL rules
 	ACLOperation_CLEANUP_AUDIT_LOGS  ACLOperation_OpType = 11 // POST /api/acl/cleanup/audit-logs - Remove old audit log entries
+	// Role/group authorization. REST equivalents under /api/acl/groups,
+	// /api/acl/roles, and /api/acl/principals/{type}/{id}/{groups,roles}.
+	ACLOperation_CREATE_GROUP          ACLOperation_OpType = 17 // Create a group (group_request)
+	ACLOperation_DELETE_GROUP          ACLOperation_OpType = 18 // Delete a group (name)
+	ACLOperation_GET_GROUP             ACLOperation_OpType = 19 // Get a group (name)
+	ACLOperation_LIST_GROUPS           ACLOperation_OpType = 20 // List all groups
+	ACLOperation_ADD_GROUP_MEMBER      ACLOperation_OpType = 21 // Add a member to a group (name + member_request)
+	ACLOperation_REMOVE_GROUP_MEMBER   ACLOperation_OpType = 22 // Remove a member from a group (name + principal)
+	ACLOperation_LIST_GROUP_MEMBERS    ACLOperation_OpType = 23 // List members of a group (name)
+	ACLOperation_CREATE_ROLE           ACLOperation_OpType = 24 // Create a role (role_request)
+	ACLOperation_DELETE_ROLE           ACLOperation_OpType = 25 // Delete a role (name)
+	ACLOperation_GET_ROLE              ACLOperation_OpType = 26 // Get a role (name)
+	ACLOperation_LIST_ROLES            ACLOperation_OpType = 27 // List all roles
+	ACLOperation_ASSIGN_ROLE           ACLOperation_OpType = 28 // Assign a role (name + assignment_request)
+	ACLOperation_UNASSIGN_ROLE         ACLOperation_OpType = 29 // Unassign a role (name + principal)
+	ACLOperation_LIST_ROLE_ASSIGNMENTS ACLOperation_OpType = 30 // List assignees of a role (name)
+	ACLOperation_LIST_PRINCIPAL_GROUPS ACLOperation_OpType = 31 // List groups a principal belongs to (principal)
+	ACLOperation_LIST_PRINCIPAL_ROLES  ACLOperation_OpType = 32 // List roles assigned to a principal (principal)
+	ACLOperation_EXPLAIN_ACCESS        ACLOperation_OpType = 33 // Explain effective access (principal + resource_type + resource_id [+ required_level])
 )
 
 // Enum value maps for ACLOperation_OpType.
@@ -1451,17 +1470,51 @@ var (
 		9:  "SET_FALLBACK_POLICY",
 		10: "CLEANUP_EXPIRED",
 		11: "CLEANUP_AUDIT_LOGS",
+		17: "CREATE_GROUP",
+		18: "DELETE_GROUP",
+		19: "GET_GROUP",
+		20: "LIST_GROUPS",
+		21: "ADD_GROUP_MEMBER",
+		22: "REMOVE_GROUP_MEMBER",
+		23: "LIST_GROUP_MEMBERS",
+		24: "CREATE_ROLE",
+		25: "DELETE_ROLE",
+		26: "GET_ROLE",
+		27: "LIST_ROLES",
+		28: "ASSIGN_ROLE",
+		29: "UNASSIGN_ROLE",
+		30: "LIST_ROLE_ASSIGNMENTS",
+		31: "LIST_PRINCIPAL_GROUPS",
+		32: "LIST_PRINCIPAL_ROLES",
+		33: "EXPLAIN_ACCESS",
 	}
 	ACLOperation_OpType_value = map[string]int32{
-		"LIST_RULES":          0,
-		"GET_RULE":            1,
-		"GRANT":               2,
-		"REVOKE":              3,
-		"QUERY_AUDIT":         4,
-		"GET_FALLBACK_POLICY": 8,
-		"SET_FALLBACK_POLICY": 9,
-		"CLEANUP_EXPIRED":     10,
-		"CLEANUP_AUDIT_LOGS":  11,
+		"LIST_RULES":            0,
+		"GET_RULE":              1,
+		"GRANT":                 2,
+		"REVOKE":                3,
+		"QUERY_AUDIT":           4,
+		"GET_FALLBACK_POLICY":   8,
+		"SET_FALLBACK_POLICY":   9,
+		"CLEANUP_EXPIRED":       10,
+		"CLEANUP_AUDIT_LOGS":    11,
+		"CREATE_GROUP":          17,
+		"DELETE_GROUP":          18,
+		"GET_GROUP":             19,
+		"LIST_GROUPS":           20,
+		"ADD_GROUP_MEMBER":      21,
+		"REMOVE_GROUP_MEMBER":   22,
+		"LIST_GROUP_MEMBERS":    23,
+		"CREATE_ROLE":           24,
+		"DELETE_ROLE":           25,
+		"GET_ROLE":              26,
+		"LIST_ROLES":            27,
+		"ASSIGN_ROLE":           28,
+		"UNASSIGN_ROLE":         29,
+		"LIST_ROLE_ASSIGNMENTS": 30,
+		"LIST_PRINCIPAL_GROUPS": 31,
+		"LIST_PRINCIPAL_ROLES":  32,
+		"EXPLAIN_ACCESS":        33,
 	}
 )
 
@@ -1556,7 +1609,7 @@ func (x AuthorityGrantOperation_OpType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AuthorityGrantOperation_OpType.Descriptor instead.
 func (AuthorityGrantOperation_OpType) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{84, 0}
+	return file_aether_proto_rawDescGZIP(), []int{94, 0}
 }
 
 type ResolveAuthorityRequestPayload_Decision int32
@@ -1605,7 +1658,7 @@ func (x ResolveAuthorityRequestPayload_Decision) Number() protoreflect.EnumNumbe
 
 // Deprecated: Use ResolveAuthorityRequestPayload_Decision.Descriptor instead.
 func (ResolveAuthorityRequestPayload_Decision) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{98, 0}
+	return file_aether_proto_rawDescGZIP(), []int{108, 0}
 }
 
 type AuthorityRequestOperation_OpType int32
@@ -1663,7 +1716,7 @@ func (x AuthorityRequestOperation_OpType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AuthorityRequestOperation_OpType.Descriptor instead.
 func (AuthorityRequestOperation_OpType) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{100, 0}
+	return file_aether_proto_rawDescGZIP(), []int{110, 0}
 }
 
 type AuthorityRequestEvent_EventType int32
@@ -1721,7 +1774,7 @@ func (x AuthorityRequestEvent_EventType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AuthorityRequestEvent_EventType.Descriptor instead.
 func (AuthorityRequestEvent_EventType) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{102, 0}
+	return file_aether_proto_rawDescGZIP(), []int{112, 0}
 }
 
 type TokenOperation_OpType int32
@@ -1776,7 +1829,7 @@ func (x TokenOperation_OpType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TokenOperation_OpType.Descriptor instead.
 func (TokenOperation_OpType) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{103, 0}
+	return file_aether_proto_rawDescGZIP(), []int{113, 0}
 }
 
 type WorkflowOperation_OpType int32
@@ -1905,7 +1958,7 @@ func (x WorkflowOperation_OpType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use WorkflowOperation_OpType.Descriptor instead.
 func (WorkflowOperation_OpType) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{111, 0}
+	return file_aether_proto_rawDescGZIP(), []int{121, 0}
 }
 
 type ProxyError_Kind int32
@@ -1969,7 +2022,7 @@ func (x ProxyError_Kind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ProxyError_Kind.Descriptor instead.
 func (ProxyError_Kind) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{122, 0}
+	return file_aether_proto_rawDescGZIP(), []int{132, 0}
 }
 
 type TunnelOpen_Protocol int32
@@ -2018,7 +2071,7 @@ func (x TunnelOpen_Protocol) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TunnelOpen_Protocol.Descriptor instead.
 func (TunnelOpen_Protocol) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{123, 0}
+	return file_aether_proto_rawDescGZIP(), []int{133, 0}
 }
 
 type TunnelClose_Reason int32
@@ -2073,7 +2126,7 @@ func (x TunnelClose_Reason) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TunnelClose_Reason.Descriptor instead.
 func (TunnelClose_Reason) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{125, 0}
+	return file_aether_proto_rawDescGZIP(), []int{135, 0}
 }
 
 type TaskSubscriptionOperation_OpType int32
@@ -2122,7 +2175,7 @@ func (x TaskSubscriptionOperation_OpType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TaskSubscriptionOperation_OpType.Descriptor instead.
 func (TaskSubscriptionOperation_OpType) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{133, 0}
+	return file_aether_proto_rawDescGZIP(), []int{143, 0}
 }
 
 type UpstreamMessage struct {
@@ -9853,7 +9906,22 @@ type ACLOperation struct {
 	// For SET_FALLBACK_POLICY: fallback policy update data (added in subtask-6-2)
 	FallbackRequest *ACLSetFallbackRequest `protobuf:"bytes,14,opt,name=fallback_request,json=fallbackRequest,proto3" json:"fallback_request,omitempty"`
 	// Client-generated correlation ID for matching responses to requests
-	RequestId     string `protobuf:"bytes,19,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	RequestId string `protobuf:"bytes,19,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// Role/group fields.
+	// name: group/role name for GET/DELETE/LIST_*_MEMBERS/ASSIGNMENTS/ADD/ASSIGN.
+	Name string `protobuf:"bytes,20,opt,name=name,proto3" json:"name,omitempty"`
+	// principal: member/assignee for REMOVE_GROUP_MEMBER, UNASSIGN_ROLE, and
+	// the subject for LIST_PRINCIPAL_GROUPS / LIST_PRINCIPAL_ROLES.
+	Principal         *PrincipalRef             `protobuf:"bytes,21,opt,name=principal,proto3" json:"principal,omitempty"`
+	GroupRequest      *ACLGroupRequest          `protobuf:"bytes,22,opt,name=group_request,json=groupRequest,proto3" json:"group_request,omitempty"`                // CREATE_GROUP
+	RoleRequest       *ACLRoleRequest           `protobuf:"bytes,23,opt,name=role_request,json=roleRequest,proto3" json:"role_request,omitempty"`                   // CREATE_ROLE
+	MemberRequest     *ACLGroupMemberRequest    `protobuf:"bytes,24,opt,name=member_request,json=memberRequest,proto3" json:"member_request,omitempty"`             // ADD_GROUP_MEMBER
+	AssignmentRequest *ACLRoleAssignmentRequest `protobuf:"bytes,25,opt,name=assignment_request,json=assignmentRequest,proto3" json:"assignment_request,omitempty"` // ASSIGN_ROLE
+	// EXPLAIN_ACCESS: the resource to explain against (principal carries the
+	// subject; required_level is the threshold the decision is compared to).
+	ResourceType  string `protobuf:"bytes,26,opt,name=resource_type,json=resourceType,proto3" json:"resource_type,omitempty"`
+	ResourceId    string `protobuf:"bytes,27,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	RequiredLevel int32  `protobuf:"varint,28,opt,name=required_level,json=requiredLevel,proto3" json:"required_level,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -9949,6 +10017,69 @@ func (x *ACLOperation) GetRequestId() string {
 		return x.RequestId
 	}
 	return ""
+}
+
+func (x *ACLOperation) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ACLOperation) GetPrincipal() *PrincipalRef {
+	if x != nil {
+		return x.Principal
+	}
+	return nil
+}
+
+func (x *ACLOperation) GetGroupRequest() *ACLGroupRequest {
+	if x != nil {
+		return x.GroupRequest
+	}
+	return nil
+}
+
+func (x *ACLOperation) GetRoleRequest() *ACLRoleRequest {
+	if x != nil {
+		return x.RoleRequest
+	}
+	return nil
+}
+
+func (x *ACLOperation) GetMemberRequest() *ACLGroupMemberRequest {
+	if x != nil {
+		return x.MemberRequest
+	}
+	return nil
+}
+
+func (x *ACLOperation) GetAssignmentRequest() *ACLRoleAssignmentRequest {
+	if x != nil {
+		return x.AssignmentRequest
+	}
+	return nil
+}
+
+func (x *ACLOperation) GetResourceType() string {
+	if x != nil {
+		return x.ResourceType
+	}
+	return ""
+}
+
+func (x *ACLOperation) GetResourceId() string {
+	if x != nil {
+		return x.ResourceId
+	}
+	return ""
+}
+
+func (x *ACLOperation) GetRequiredLevel() int32 {
+	if x != nil {
+		return x.RequiredLevel
+	}
+	return 0
 }
 
 // ACLRuleFilter specifies filtering parameters for listing ACL rules.
@@ -11408,6 +11539,803 @@ func (x *ACLCleanupResult) GetMessage() string {
 	return ""
 }
 
+// ACLGroupRequest contains data for creating a group.
+type ACLGroupRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	CreatedBy     string                 `protobuf:"bytes,3,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ACLGroupRequest) Reset() {
+	*x = ACLGroupRequest{}
+	mi := &file_aether_proto_msgTypes[83]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ACLGroupRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ACLGroupRequest) ProtoMessage() {}
+
+func (x *ACLGroupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_aether_proto_msgTypes[83]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ACLGroupRequest.ProtoReflect.Descriptor instead.
+func (*ACLGroupRequest) Descriptor() ([]byte, []int) {
+	return file_aether_proto_rawDescGZIP(), []int{83}
+}
+
+func (x *ACLGroupRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ACLGroupRequest) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *ACLGroupRequest) GetCreatedBy() string {
+	if x != nil {
+		return x.CreatedBy
+	}
+	return ""
+}
+
+func (x *ACLGroupRequest) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+// ACLRoleRequest contains data for creating a role.
+type ACLRoleRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	CreatedBy     string                 `protobuf:"bytes,3,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ACLRoleRequest) Reset() {
+	*x = ACLRoleRequest{}
+	mi := &file_aether_proto_msgTypes[84]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ACLRoleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ACLRoleRequest) ProtoMessage() {}
+
+func (x *ACLRoleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_aether_proto_msgTypes[84]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ACLRoleRequest.ProtoReflect.Descriptor instead.
+func (*ACLRoleRequest) Descriptor() ([]byte, []int) {
+	return file_aether_proto_rawDescGZIP(), []int{84}
+}
+
+func (x *ACLRoleRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ACLRoleRequest) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *ACLRoleRequest) GetCreatedBy() string {
+	if x != nil {
+		return x.CreatedBy
+	}
+	return ""
+}
+
+func (x *ACLRoleRequest) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+// ACLGroupMemberRequest contains data for adding a member to a group.
+type ACLGroupMemberRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MemberType    string                 `protobuf:"bytes,1,opt,name=member_type,json=memberType,proto3" json:"member_type,omitempty"` // principal type or "group" (nesting)
+	MemberId      string                 `protobuf:"bytes,2,opt,name=member_id,json=memberId,proto3" json:"member_id,omitempty"`
+	GrantedBy     string                 `protobuf:"bytes,3,opt,name=granted_by,json=grantedBy,proto3" json:"granted_by,omitempty"`
+	ExpiresAt     int64                  `protobuf:"varint,4,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"` // Unix timestamp, 0 = no expiration
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ACLGroupMemberRequest) Reset() {
+	*x = ACLGroupMemberRequest{}
+	mi := &file_aether_proto_msgTypes[85]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ACLGroupMemberRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ACLGroupMemberRequest) ProtoMessage() {}
+
+func (x *ACLGroupMemberRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_aether_proto_msgTypes[85]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ACLGroupMemberRequest.ProtoReflect.Descriptor instead.
+func (*ACLGroupMemberRequest) Descriptor() ([]byte, []int) {
+	return file_aether_proto_rawDescGZIP(), []int{85}
+}
+
+func (x *ACLGroupMemberRequest) GetMemberType() string {
+	if x != nil {
+		return x.MemberType
+	}
+	return ""
+}
+
+func (x *ACLGroupMemberRequest) GetMemberId() string {
+	if x != nil {
+		return x.MemberId
+	}
+	return ""
+}
+
+func (x *ACLGroupMemberRequest) GetGrantedBy() string {
+	if x != nil {
+		return x.GrantedBy
+	}
+	return ""
+}
+
+func (x *ACLGroupMemberRequest) GetExpiresAt() int64 {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return 0
+}
+
+// ACLRoleAssignmentRequest contains data for assigning a role.
+type ACLRoleAssignmentRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AssigneeType  string                 `protobuf:"bytes,1,opt,name=assignee_type,json=assigneeType,proto3" json:"assignee_type,omitempty"` // principal type or "group"
+	AssigneeId    string                 `protobuf:"bytes,2,opt,name=assignee_id,json=assigneeId,proto3" json:"assignee_id,omitempty"`
+	GrantedBy     string                 `protobuf:"bytes,3,opt,name=granted_by,json=grantedBy,proto3" json:"granted_by,omitempty"`
+	ExpiresAt     int64                  `protobuf:"varint,4,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"` // Unix timestamp, 0 = no expiration
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ACLRoleAssignmentRequest) Reset() {
+	*x = ACLRoleAssignmentRequest{}
+	mi := &file_aether_proto_msgTypes[86]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ACLRoleAssignmentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ACLRoleAssignmentRequest) ProtoMessage() {}
+
+func (x *ACLRoleAssignmentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_aether_proto_msgTypes[86]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ACLRoleAssignmentRequest.ProtoReflect.Descriptor instead.
+func (*ACLRoleAssignmentRequest) Descriptor() ([]byte, []int) {
+	return file_aether_proto_rawDescGZIP(), []int{86}
+}
+
+func (x *ACLRoleAssignmentRequest) GetAssigneeType() string {
+	if x != nil {
+		return x.AssigneeType
+	}
+	return ""
+}
+
+func (x *ACLRoleAssignmentRequest) GetAssigneeId() string {
+	if x != nil {
+		return x.AssigneeId
+	}
+	return ""
+}
+
+func (x *ACLRoleAssignmentRequest) GetGrantedBy() string {
+	if x != nil {
+		return x.GrantedBy
+	}
+	return ""
+}
+
+func (x *ACLRoleAssignmentRequest) GetExpiresAt() int64 {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return 0
+}
+
+// ACLGroupInfo represents a group definition.
+type ACLGroupInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GroupId       string                 `protobuf:"bytes,1,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
+	GroupName     string                 `protobuf:"bytes,2,opt,name=group_name,json=groupName,proto3" json:"group_name,omitempty"`
+	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	CreatedBy     string                 `protobuf:"bytes,4,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
+	CreatedAt     int64                  `protobuf:"varint,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,6,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ACLGroupInfo) Reset() {
+	*x = ACLGroupInfo{}
+	mi := &file_aether_proto_msgTypes[87]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ACLGroupInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ACLGroupInfo) ProtoMessage() {}
+
+func (x *ACLGroupInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_aether_proto_msgTypes[87]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ACLGroupInfo.ProtoReflect.Descriptor instead.
+func (*ACLGroupInfo) Descriptor() ([]byte, []int) {
+	return file_aether_proto_rawDescGZIP(), []int{87}
+}
+
+func (x *ACLGroupInfo) GetGroupId() string {
+	if x != nil {
+		return x.GroupId
+	}
+	return ""
+}
+
+func (x *ACLGroupInfo) GetGroupName() string {
+	if x != nil {
+		return x.GroupName
+	}
+	return ""
+}
+
+func (x *ACLGroupInfo) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *ACLGroupInfo) GetCreatedBy() string {
+	if x != nil {
+		return x.CreatedBy
+	}
+	return ""
+}
+
+func (x *ACLGroupInfo) GetCreatedAt() int64 {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return 0
+}
+
+func (x *ACLGroupInfo) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+// ACLRoleInfo represents a role definition.
+type ACLRoleInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RoleId        string                 `protobuf:"bytes,1,opt,name=role_id,json=roleId,proto3" json:"role_id,omitempty"`
+	RoleName      string                 `protobuf:"bytes,2,opt,name=role_name,json=roleName,proto3" json:"role_name,omitempty"`
+	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	CreatedBy     string                 `protobuf:"bytes,4,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
+	CreatedAt     int64                  `protobuf:"varint,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,6,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ACLRoleInfo) Reset() {
+	*x = ACLRoleInfo{}
+	mi := &file_aether_proto_msgTypes[88]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ACLRoleInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ACLRoleInfo) ProtoMessage() {}
+
+func (x *ACLRoleInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_aether_proto_msgTypes[88]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ACLRoleInfo.ProtoReflect.Descriptor instead.
+func (*ACLRoleInfo) Descriptor() ([]byte, []int) {
+	return file_aether_proto_rawDescGZIP(), []int{88}
+}
+
+func (x *ACLRoleInfo) GetRoleId() string {
+	if x != nil {
+		return x.RoleId
+	}
+	return ""
+}
+
+func (x *ACLRoleInfo) GetRoleName() string {
+	if x != nil {
+		return x.RoleName
+	}
+	return ""
+}
+
+func (x *ACLRoleInfo) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *ACLRoleInfo) GetCreatedBy() string {
+	if x != nil {
+		return x.CreatedBy
+	}
+	return ""
+}
+
+func (x *ACLRoleInfo) GetCreatedAt() int64 {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return 0
+}
+
+func (x *ACLRoleInfo) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+// ACLGroupMemberInfo represents a single group-membership edge.
+type ACLGroupMemberInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GroupName     string                 `protobuf:"bytes,1,opt,name=group_name,json=groupName,proto3" json:"group_name,omitempty"`
+	MemberType    string                 `protobuf:"bytes,2,opt,name=member_type,json=memberType,proto3" json:"member_type,omitempty"`
+	MemberId      string                 `protobuf:"bytes,3,opt,name=member_id,json=memberId,proto3" json:"member_id,omitempty"`
+	GrantedBy     string                 `protobuf:"bytes,4,opt,name=granted_by,json=grantedBy,proto3" json:"granted_by,omitempty"`
+	GrantedAt     int64                  `protobuf:"varint,5,opt,name=granted_at,json=grantedAt,proto3" json:"granted_at,omitempty"`
+	ExpiresAt     int64                  `protobuf:"varint,6,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ACLGroupMemberInfo) Reset() {
+	*x = ACLGroupMemberInfo{}
+	mi := &file_aether_proto_msgTypes[89]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ACLGroupMemberInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ACLGroupMemberInfo) ProtoMessage() {}
+
+func (x *ACLGroupMemberInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_aether_proto_msgTypes[89]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ACLGroupMemberInfo.ProtoReflect.Descriptor instead.
+func (*ACLGroupMemberInfo) Descriptor() ([]byte, []int) {
+	return file_aether_proto_rawDescGZIP(), []int{89}
+}
+
+func (x *ACLGroupMemberInfo) GetGroupName() string {
+	if x != nil {
+		return x.GroupName
+	}
+	return ""
+}
+
+func (x *ACLGroupMemberInfo) GetMemberType() string {
+	if x != nil {
+		return x.MemberType
+	}
+	return ""
+}
+
+func (x *ACLGroupMemberInfo) GetMemberId() string {
+	if x != nil {
+		return x.MemberId
+	}
+	return ""
+}
+
+func (x *ACLGroupMemberInfo) GetGrantedBy() string {
+	if x != nil {
+		return x.GrantedBy
+	}
+	return ""
+}
+
+func (x *ACLGroupMemberInfo) GetGrantedAt() int64 {
+	if x != nil {
+		return x.GrantedAt
+	}
+	return 0
+}
+
+func (x *ACLGroupMemberInfo) GetExpiresAt() int64 {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return 0
+}
+
+// ACLRoleAssignmentInfo represents a single role-assignment edge.
+type ACLRoleAssignmentInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RoleName      string                 `protobuf:"bytes,1,opt,name=role_name,json=roleName,proto3" json:"role_name,omitempty"`
+	AssigneeType  string                 `protobuf:"bytes,2,opt,name=assignee_type,json=assigneeType,proto3" json:"assignee_type,omitempty"`
+	AssigneeId    string                 `protobuf:"bytes,3,opt,name=assignee_id,json=assigneeId,proto3" json:"assignee_id,omitempty"`
+	GrantedBy     string                 `protobuf:"bytes,4,opt,name=granted_by,json=grantedBy,proto3" json:"granted_by,omitempty"`
+	GrantedAt     int64                  `protobuf:"varint,5,opt,name=granted_at,json=grantedAt,proto3" json:"granted_at,omitempty"`
+	ExpiresAt     int64                  `protobuf:"varint,6,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ACLRoleAssignmentInfo) Reset() {
+	*x = ACLRoleAssignmentInfo{}
+	mi := &file_aether_proto_msgTypes[90]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ACLRoleAssignmentInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ACLRoleAssignmentInfo) ProtoMessage() {}
+
+func (x *ACLRoleAssignmentInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_aether_proto_msgTypes[90]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ACLRoleAssignmentInfo.ProtoReflect.Descriptor instead.
+func (*ACLRoleAssignmentInfo) Descriptor() ([]byte, []int) {
+	return file_aether_proto_rawDescGZIP(), []int{90}
+}
+
+func (x *ACLRoleAssignmentInfo) GetRoleName() string {
+	if x != nil {
+		return x.RoleName
+	}
+	return ""
+}
+
+func (x *ACLRoleAssignmentInfo) GetAssigneeType() string {
+	if x != nil {
+		return x.AssigneeType
+	}
+	return ""
+}
+
+func (x *ACLRoleAssignmentInfo) GetAssigneeId() string {
+	if x != nil {
+		return x.AssigneeId
+	}
+	return ""
+}
+
+func (x *ACLRoleAssignmentInfo) GetGrantedBy() string {
+	if x != nil {
+		return x.GrantedBy
+	}
+	return ""
+}
+
+func (x *ACLRoleAssignmentInfo) GetGrantedAt() int64 {
+	if x != nil {
+		return x.GrantedAt
+	}
+	return 0
+}
+
+func (x *ACLRoleAssignmentInfo) GetExpiresAt() int64 {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return 0
+}
+
+// ACLAccessContributionInfo is one rule that matched a principal or one of its
+// groups/roles for an explained resource.
+type ACLAccessContributionInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Subject       string                 `protobuf:"bytes,1,opt,name=subject,proto3" json:"subject,omitempty"` // granting subject, e.g. "role:wsadmin"
+	RuleId        string                 `protobuf:"bytes,2,opt,name=rule_id,json=ruleId,proto3" json:"rule_id,omitempty"`
+	AccessLevel   int32                  `protobuf:"varint,3,opt,name=access_level,json=accessLevel,proto3" json:"access_level,omitempty"`
+	Resource      string                 `protobuf:"bytes,4,opt,name=resource,proto3" json:"resource,omitempty"` // matched object pattern, e.g. "workspace:prod" or "workspace:*"
+	Expired       bool                   `protobuf:"varint,5,opt,name=expired,proto3" json:"expired,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ACLAccessContributionInfo) Reset() {
+	*x = ACLAccessContributionInfo{}
+	mi := &file_aether_proto_msgTypes[91]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ACLAccessContributionInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ACLAccessContributionInfo) ProtoMessage() {}
+
+func (x *ACLAccessContributionInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_aether_proto_msgTypes[91]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ACLAccessContributionInfo.ProtoReflect.Descriptor instead.
+func (*ACLAccessContributionInfo) Descriptor() ([]byte, []int) {
+	return file_aether_proto_rawDescGZIP(), []int{91}
+}
+
+func (x *ACLAccessContributionInfo) GetSubject() string {
+	if x != nil {
+		return x.Subject
+	}
+	return ""
+}
+
+func (x *ACLAccessContributionInfo) GetRuleId() string {
+	if x != nil {
+		return x.RuleId
+	}
+	return ""
+}
+
+func (x *ACLAccessContributionInfo) GetAccessLevel() int32 {
+	if x != nil {
+		return x.AccessLevel
+	}
+	return 0
+}
+
+func (x *ACLAccessContributionInfo) GetResource() string {
+	if x != nil {
+		return x.Resource
+	}
+	return ""
+}
+
+func (x *ACLAccessContributionInfo) GetExpired() bool {
+	if x != nil {
+		return x.Expired
+	}
+	return false
+}
+
+// ACLAccessExplanationInfo explains how a principal's effective access to a
+// resource is decided (EXPLAIN_ACCESS). The gateway records an "explain_access"
+// audit event attributing the call to the connected principal.
+type ACLAccessExplanationInfo struct {
+	state                protoimpl.MessageState       `protogen:"open.v1"`
+	Principal            string                       `protobuf:"bytes,1,opt,name=principal,proto3" json:"principal,omitempty"` // self subject "type:id"
+	Subjects             []string                     `protobuf:"bytes,2,rep,name=subjects,proto3" json:"subjects,omitempty"`   // self + transitive groups/roles
+	Contributions        []*ACLAccessContributionInfo `protobuf:"bytes,3,rep,name=contributions,proto3" json:"contributions,omitempty"`
+	Allowed              bool                         `protobuf:"varint,4,opt,name=allowed,proto3" json:"allowed,omitempty"`
+	Decision             string                       `protobuf:"bytes,5,opt,name=decision,proto3" json:"decision,omitempty"` // "ALLOW" / "DENY"
+	EffectiveAccessLevel int32                        `protobuf:"varint,6,opt,name=effective_access_level,json=effectiveAccessLevel,proto3" json:"effective_access_level,omitempty"`
+	FallbackApplied      bool                         `protobuf:"varint,7,opt,name=fallback_applied,json=fallbackApplied,proto3" json:"fallback_applied,omitempty"`
+	Reason               string                       `protobuf:"bytes,8,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *ACLAccessExplanationInfo) Reset() {
+	*x = ACLAccessExplanationInfo{}
+	mi := &file_aether_proto_msgTypes[92]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ACLAccessExplanationInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ACLAccessExplanationInfo) ProtoMessage() {}
+
+func (x *ACLAccessExplanationInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_aether_proto_msgTypes[92]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ACLAccessExplanationInfo.ProtoReflect.Descriptor instead.
+func (*ACLAccessExplanationInfo) Descriptor() ([]byte, []int) {
+	return file_aether_proto_rawDescGZIP(), []int{92}
+}
+
+func (x *ACLAccessExplanationInfo) GetPrincipal() string {
+	if x != nil {
+		return x.Principal
+	}
+	return ""
+}
+
+func (x *ACLAccessExplanationInfo) GetSubjects() []string {
+	if x != nil {
+		return x.Subjects
+	}
+	return nil
+}
+
+func (x *ACLAccessExplanationInfo) GetContributions() []*ACLAccessContributionInfo {
+	if x != nil {
+		return x.Contributions
+	}
+	return nil
+}
+
+func (x *ACLAccessExplanationInfo) GetAllowed() bool {
+	if x != nil {
+		return x.Allowed
+	}
+	return false
+}
+
+func (x *ACLAccessExplanationInfo) GetDecision() string {
+	if x != nil {
+		return x.Decision
+	}
+	return ""
+}
+
+func (x *ACLAccessExplanationInfo) GetEffectiveAccessLevel() int32 {
+	if x != nil {
+		return x.EffectiveAccessLevel
+	}
+	return 0
+}
+
+func (x *ACLAccessExplanationInfo) GetFallbackApplied() bool {
+	if x != nil {
+		return x.FallbackApplied
+	}
+	return false
+}
+
+func (x *ACLAccessExplanationInfo) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 // ACLResponse is sent in response to ACLOperation.
 // Contains data based on the operation type that was requested.
 type ACLResponse struct {
@@ -11437,14 +12365,22 @@ type ACLResponse struct {
 	AuthorityGrants      []*ACLAuthorityGrantInfo `protobuf:"bytes,14,rep,name=authority_grants,json=authorityGrants,proto3" json:"authority_grants,omitempty"`
 	TotalAuthorityGrants int32                    `protobuf:"varint,15,opt,name=total_authority_grants,json=totalAuthorityGrants,proto3" json:"total_authority_grants,omitempty"`
 	// Echoed from the originating ACLOperation for correlation
-	RequestId     string `protobuf:"bytes,12,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	RequestId string `protobuf:"bytes,12,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// Role/group results.
+	Group           *ACLGroupInfo             `protobuf:"bytes,16,opt,name=group,proto3" json:"group,omitempty"`                                            // GET_GROUP / CREATE_GROUP
+	Groups          []*ACLGroupInfo           `protobuf:"bytes,17,rep,name=groups,proto3" json:"groups,omitempty"`                                          // LIST_GROUPS
+	Role            *ACLRoleInfo              `protobuf:"bytes,18,opt,name=role,proto3" json:"role,omitempty"`                                              // GET_ROLE / CREATE_ROLE
+	Roles           []*ACLRoleInfo            `protobuf:"bytes,19,rep,name=roles,proto3" json:"roles,omitempty"`                                            // LIST_ROLES
+	GroupMembers    []*ACLGroupMemberInfo     `protobuf:"bytes,20,rep,name=group_members,json=groupMembers,proto3" json:"group_members,omitempty"`          // LIST_GROUP_MEMBERS / LIST_PRINCIPAL_GROUPS
+	RoleAssignments []*ACLRoleAssignmentInfo  `protobuf:"bytes,21,rep,name=role_assignments,json=roleAssignments,proto3" json:"role_assignments,omitempty"` // LIST_ROLE_ASSIGNMENTS / LIST_PRINCIPAL_ROLES
+	Explanation     *ACLAccessExplanationInfo `protobuf:"bytes,22,opt,name=explanation,proto3" json:"explanation,omitempty"`                                // EXPLAIN_ACCESS
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ACLResponse) Reset() {
 	*x = ACLResponse{}
-	mi := &file_aether_proto_msgTypes[83]
+	mi := &file_aether_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11456,7 +12392,7 @@ func (x *ACLResponse) String() string {
 func (*ACLResponse) ProtoMessage() {}
 
 func (x *ACLResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[83]
+	mi := &file_aether_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11469,7 +12405,7 @@ func (x *ACLResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ACLResponse.ProtoReflect.Descriptor instead.
 func (*ACLResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{83}
+	return file_aether_proto_rawDescGZIP(), []int{93}
 }
 
 func (x *ACLResponse) GetSuccess() bool {
@@ -11570,6 +12506,55 @@ func (x *ACLResponse) GetRequestId() string {
 	return ""
 }
 
+func (x *ACLResponse) GetGroup() *ACLGroupInfo {
+	if x != nil {
+		return x.Group
+	}
+	return nil
+}
+
+func (x *ACLResponse) GetGroups() []*ACLGroupInfo {
+	if x != nil {
+		return x.Groups
+	}
+	return nil
+}
+
+func (x *ACLResponse) GetRole() *ACLRoleInfo {
+	if x != nil {
+		return x.Role
+	}
+	return nil
+}
+
+func (x *ACLResponse) GetRoles() []*ACLRoleInfo {
+	if x != nil {
+		return x.Roles
+	}
+	return nil
+}
+
+func (x *ACLResponse) GetGroupMembers() []*ACLGroupMemberInfo {
+	if x != nil {
+		return x.GroupMembers
+	}
+	return nil
+}
+
+func (x *ACLResponse) GetRoleAssignments() []*ACLRoleAssignmentInfo {
+	if x != nil {
+		return x.RoleAssignments
+	}
+	return nil
+}
+
+func (x *ACLResponse) GetExplanation() *ACLAccessExplanationInfo {
+	if x != nil {
+		return x.Explanation
+	}
+	return nil
+}
+
 // AuthorityGrantOperation allows ordinary streaming clients to exchange,
 // derive, inspect, renew, and revoke authority grants without going through
 // the admin ACL surface.
@@ -11598,7 +12583,7 @@ type AuthorityGrantOperation struct {
 
 func (x *AuthorityGrantOperation) Reset() {
 	*x = AuthorityGrantOperation{}
-	mi := &file_aether_proto_msgTypes[84]
+	mi := &file_aether_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11610,7 +12595,7 @@ func (x *AuthorityGrantOperation) String() string {
 func (*AuthorityGrantOperation) ProtoMessage() {}
 
 func (x *AuthorityGrantOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[84]
+	mi := &file_aether_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11623,7 +12608,7 @@ func (x *AuthorityGrantOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityGrantOperation.ProtoReflect.Descriptor instead.
 func (*AuthorityGrantOperation) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{84}
+	return file_aether_proto_rawDescGZIP(), []int{94}
 }
 
 func (x *AuthorityGrantOperation) GetOp() AuthorityGrantOperation_OpType {
@@ -11721,7 +12706,7 @@ type AuthorityGrantExchangeRequest struct {
 
 func (x *AuthorityGrantExchangeRequest) Reset() {
 	*x = AuthorityGrantExchangeRequest{}
-	mi := &file_aether_proto_msgTypes[85]
+	mi := &file_aether_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11733,7 +12718,7 @@ func (x *AuthorityGrantExchangeRequest) String() string {
 func (*AuthorityGrantExchangeRequest) ProtoMessage() {}
 
 func (x *AuthorityGrantExchangeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[85]
+	mi := &file_aether_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11746,7 +12731,7 @@ func (x *AuthorityGrantExchangeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityGrantExchangeRequest.ProtoReflect.Descriptor instead.
 func (*AuthorityGrantExchangeRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{85}
+	return file_aether_proto_rawDescGZIP(), []int{95}
 }
 
 func (x *AuthorityGrantExchangeRequest) GetSourceSessionId() string {
@@ -11871,7 +12856,7 @@ type AuthorityGrantDeriveRequest struct {
 
 func (x *AuthorityGrantDeriveRequest) Reset() {
 	*x = AuthorityGrantDeriveRequest{}
-	mi := &file_aether_proto_msgTypes[86]
+	mi := &file_aether_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11883,7 +12868,7 @@ func (x *AuthorityGrantDeriveRequest) String() string {
 func (*AuthorityGrantDeriveRequest) ProtoMessage() {}
 
 func (x *AuthorityGrantDeriveRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[86]
+	mi := &file_aether_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11896,7 +12881,7 @@ func (x *AuthorityGrantDeriveRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityGrantDeriveRequest.ProtoReflect.Descriptor instead.
 func (*AuthorityGrantDeriveRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{86}
+	return file_aether_proto_rawDescGZIP(), []int{96}
 }
 
 func (x *AuthorityGrantDeriveRequest) GetParentGrantId() string {
@@ -12026,7 +13011,7 @@ type AuthorityGrantResponse struct {
 
 func (x *AuthorityGrantResponse) Reset() {
 	*x = AuthorityGrantResponse{}
-	mi := &file_aether_proto_msgTypes[87]
+	mi := &file_aether_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12038,7 +13023,7 @@ func (x *AuthorityGrantResponse) String() string {
 func (*AuthorityGrantResponse) ProtoMessage() {}
 
 func (x *AuthorityGrantResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[87]
+	mi := &file_aether_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12051,7 +13036,7 @@ func (x *AuthorityGrantResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityGrantResponse.ProtoReflect.Descriptor instead.
 func (*AuthorityGrantResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{87}
+	return file_aether_proto_rawDescGZIP(), []int{97}
 }
 
 func (x *AuthorityGrantResponse) GetSuccess() bool {
@@ -12124,7 +13109,7 @@ type AuthorityGrantListRequest struct {
 
 func (x *AuthorityGrantListRequest) Reset() {
 	*x = AuthorityGrantListRequest{}
-	mi := &file_aether_proto_msgTypes[88]
+	mi := &file_aether_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12136,7 +13121,7 @@ func (x *AuthorityGrantListRequest) String() string {
 func (*AuthorityGrantListRequest) ProtoMessage() {}
 
 func (x *AuthorityGrantListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[88]
+	mi := &file_aether_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12149,7 +13134,7 @@ func (x *AuthorityGrantListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityGrantListRequest.ProtoReflect.Descriptor instead.
 func (*AuthorityGrantListRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{88}
+	return file_aether_proto_rawDescGZIP(), []int{98}
 }
 
 func (x *AuthorityGrantListRequest) GetAudienceType() string {
@@ -12200,7 +13185,7 @@ type AuthorityGrantBatchExchangeRequest struct {
 
 func (x *AuthorityGrantBatchExchangeRequest) Reset() {
 	*x = AuthorityGrantBatchExchangeRequest{}
-	mi := &file_aether_proto_msgTypes[89]
+	mi := &file_aether_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12212,7 +13197,7 @@ func (x *AuthorityGrantBatchExchangeRequest) String() string {
 func (*AuthorityGrantBatchExchangeRequest) ProtoMessage() {}
 
 func (x *AuthorityGrantBatchExchangeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[89]
+	mi := &file_aether_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12225,7 +13210,7 @@ func (x *AuthorityGrantBatchExchangeRequest) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use AuthorityGrantBatchExchangeRequest.ProtoReflect.Descriptor instead.
 func (*AuthorityGrantBatchExchangeRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{89}
+	return file_aether_proto_rawDescGZIP(), []int{99}
 }
 
 func (x *AuthorityGrantBatchExchangeRequest) GetRequests() []*AuthorityGrantExchangeRequest {
@@ -12266,7 +13251,7 @@ type AuthorityGrantDeriveForTargetRequest struct {
 
 func (x *AuthorityGrantDeriveForTargetRequest) Reset() {
 	*x = AuthorityGrantDeriveForTargetRequest{}
-	mi := &file_aether_proto_msgTypes[90]
+	mi := &file_aether_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12278,7 +13263,7 @@ func (x *AuthorityGrantDeriveForTargetRequest) String() string {
 func (*AuthorityGrantDeriveForTargetRequest) ProtoMessage() {}
 
 func (x *AuthorityGrantDeriveForTargetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[90]
+	mi := &file_aether_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12291,7 +13276,7 @@ func (x *AuthorityGrantDeriveForTargetRequest) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use AuthorityGrantDeriveForTargetRequest.ProtoReflect.Descriptor instead.
 func (*AuthorityGrantDeriveForTargetRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{90}
+	return file_aether_proto_rawDescGZIP(), []int{100}
 }
 
 func (x *AuthorityGrantDeriveForTargetRequest) GetParentGrantId() string {
@@ -12388,7 +13373,7 @@ type AuthorityIdentity struct {
 
 func (x *AuthorityIdentity) Reset() {
 	*x = AuthorityIdentity{}
-	mi := &file_aether_proto_msgTypes[91]
+	mi := &file_aether_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12400,7 +13385,7 @@ func (x *AuthorityIdentity) String() string {
 func (*AuthorityIdentity) ProtoMessage() {}
 
 func (x *AuthorityIdentity) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[91]
+	mi := &file_aether_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12413,7 +13398,7 @@ func (x *AuthorityIdentity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityIdentity.ProtoReflect.Descriptor instead.
 func (*AuthorityIdentity) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{91}
+	return file_aether_proto_rawDescGZIP(), []int{101}
 }
 
 func (x *AuthorityIdentity) GetSubject() *PrincipalRef {
@@ -12463,7 +13448,7 @@ type AuthoritySpan struct {
 
 func (x *AuthoritySpan) Reset() {
 	*x = AuthoritySpan{}
-	mi := &file_aether_proto_msgTypes[92]
+	mi := &file_aether_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12475,7 +13460,7 @@ func (x *AuthoritySpan) String() string {
 func (*AuthoritySpan) ProtoMessage() {}
 
 func (x *AuthoritySpan) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[92]
+	mi := &file_aether_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12488,7 +13473,7 @@ func (x *AuthoritySpan) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthoritySpan.ProtoReflect.Descriptor instead.
 func (*AuthoritySpan) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{92}
+	return file_aether_proto_rawDescGZIP(), []int{102}
 }
 
 func (x *AuthoritySpan) GetWorkspaceScope() []string {
@@ -12565,7 +13550,7 @@ type AuthorityGrantRevocation struct {
 
 func (x *AuthorityGrantRevocation) Reset() {
 	*x = AuthorityGrantRevocation{}
-	mi := &file_aether_proto_msgTypes[93]
+	mi := &file_aether_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12577,7 +13562,7 @@ func (x *AuthorityGrantRevocation) String() string {
 func (*AuthorityGrantRevocation) ProtoMessage() {}
 
 func (x *AuthorityGrantRevocation) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[93]
+	mi := &file_aether_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12590,7 +13575,7 @@ func (x *AuthorityGrantRevocation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityGrantRevocation.ProtoReflect.Descriptor instead.
 func (*AuthorityGrantRevocation) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{93}
+	return file_aether_proto_rawDescGZIP(), []int{103}
 }
 
 func (x *AuthorityGrantRevocation) GetGrantId() string {
@@ -12644,7 +13629,7 @@ type AuthorityRequestRoutingTarget struct {
 
 func (x *AuthorityRequestRoutingTarget) Reset() {
 	*x = AuthorityRequestRoutingTarget{}
-	mi := &file_aether_proto_msgTypes[94]
+	mi := &file_aether_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12656,7 +13641,7 @@ func (x *AuthorityRequestRoutingTarget) String() string {
 func (*AuthorityRequestRoutingTarget) ProtoMessage() {}
 
 func (x *AuthorityRequestRoutingTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[94]
+	mi := &file_aether_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12669,7 +13654,7 @@ func (x *AuthorityRequestRoutingTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityRequestRoutingTarget.ProtoReflect.Descriptor instead.
 func (*AuthorityRequestRoutingTarget) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{94}
+	return file_aether_proto_rawDescGZIP(), []int{104}
 }
 
 func (x *AuthorityRequestRoutingTarget) GetPrincipal() *PrincipalRef {
@@ -12698,7 +13683,7 @@ type AuthorityRequestResourceScopeEntry struct {
 
 func (x *AuthorityRequestResourceScopeEntry) Reset() {
 	*x = AuthorityRequestResourceScopeEntry{}
-	mi := &file_aether_proto_msgTypes[95]
+	mi := &file_aether_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12710,7 +13695,7 @@ func (x *AuthorityRequestResourceScopeEntry) String() string {
 func (*AuthorityRequestResourceScopeEntry) ProtoMessage() {}
 
 func (x *AuthorityRequestResourceScopeEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[95]
+	mi := &file_aether_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12723,7 +13708,7 @@ func (x *AuthorityRequestResourceScopeEntry) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use AuthorityRequestResourceScopeEntry.ProtoReflect.Descriptor instead.
 func (*AuthorityRequestResourceScopeEntry) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{95}
+	return file_aether_proto_rawDescGZIP(), []int{105}
 }
 
 func (x *AuthorityRequestResourceScopeEntry) GetResourceType() string {
@@ -12781,7 +13766,7 @@ type AuthorityRequest struct {
 
 func (x *AuthorityRequest) Reset() {
 	*x = AuthorityRequest{}
-	mi := &file_aether_proto_msgTypes[96]
+	mi := &file_aether_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12793,7 +13778,7 @@ func (x *AuthorityRequest) String() string {
 func (*AuthorityRequest) ProtoMessage() {}
 
 func (x *AuthorityRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[96]
+	mi := &file_aether_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12806,7 +13791,7 @@ func (x *AuthorityRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityRequest.ProtoReflect.Descriptor instead.
 func (*AuthorityRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{96}
+	return file_aether_proto_rawDescGZIP(), []int{106}
 }
 
 func (x *AuthorityRequest) GetRequestId() string {
@@ -12979,7 +13964,7 @@ type CreateAuthorityRequestPayload struct {
 
 func (x *CreateAuthorityRequestPayload) Reset() {
 	*x = CreateAuthorityRequestPayload{}
-	mi := &file_aether_proto_msgTypes[97]
+	mi := &file_aether_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12991,7 +13976,7 @@ func (x *CreateAuthorityRequestPayload) String() string {
 func (*CreateAuthorityRequestPayload) ProtoMessage() {}
 
 func (x *CreateAuthorityRequestPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[97]
+	mi := &file_aether_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13004,7 +13989,7 @@ func (x *CreateAuthorityRequestPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateAuthorityRequestPayload.ProtoReflect.Descriptor instead.
 func (*CreateAuthorityRequestPayload) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{97}
+	return file_aether_proto_rawDescGZIP(), []int{107}
 }
 
 func (x *CreateAuthorityRequestPayload) GetRequestingActor() *PrincipalRef {
@@ -13121,7 +14106,7 @@ type ResolveAuthorityRequestPayload struct {
 
 func (x *ResolveAuthorityRequestPayload) Reset() {
 	*x = ResolveAuthorityRequestPayload{}
-	mi := &file_aether_proto_msgTypes[98]
+	mi := &file_aether_proto_msgTypes[108]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13133,7 +14118,7 @@ func (x *ResolveAuthorityRequestPayload) String() string {
 func (*ResolveAuthorityRequestPayload) ProtoMessage() {}
 
 func (x *ResolveAuthorityRequestPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[98]
+	mi := &file_aether_proto_msgTypes[108]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13146,7 +14131,7 @@ func (x *ResolveAuthorityRequestPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveAuthorityRequestPayload.ProtoReflect.Descriptor instead.
 func (*ResolveAuthorityRequestPayload) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{98}
+	return file_aether_proto_rawDescGZIP(), []int{108}
 }
 
 func (x *ResolveAuthorityRequestPayload) GetDecision() ResolveAuthorityRequestPayload_Decision {
@@ -13230,7 +14215,7 @@ type AuthorityRequestListFilter struct {
 
 func (x *AuthorityRequestListFilter) Reset() {
 	*x = AuthorityRequestListFilter{}
-	mi := &file_aether_proto_msgTypes[99]
+	mi := &file_aether_proto_msgTypes[109]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13242,7 +14227,7 @@ func (x *AuthorityRequestListFilter) String() string {
 func (*AuthorityRequestListFilter) ProtoMessage() {}
 
 func (x *AuthorityRequestListFilter) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[99]
+	mi := &file_aether_proto_msgTypes[109]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13255,7 +14240,7 @@ func (x *AuthorityRequestListFilter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityRequestListFilter.ProtoReflect.Descriptor instead.
 func (*AuthorityRequestListFilter) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{99}
+	return file_aether_proto_rawDescGZIP(), []int{109}
 }
 
 func (x *AuthorityRequestListFilter) GetStatus() AuthorityRequestStatus {
@@ -13312,7 +14297,7 @@ type AuthorityRequestOperation struct {
 
 func (x *AuthorityRequestOperation) Reset() {
 	*x = AuthorityRequestOperation{}
-	mi := &file_aether_proto_msgTypes[100]
+	mi := &file_aether_proto_msgTypes[110]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13324,7 +14309,7 @@ func (x *AuthorityRequestOperation) String() string {
 func (*AuthorityRequestOperation) ProtoMessage() {}
 
 func (x *AuthorityRequestOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[100]
+	mi := &file_aether_proto_msgTypes[110]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13337,7 +14322,7 @@ func (x *AuthorityRequestOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityRequestOperation.ProtoReflect.Descriptor instead.
 func (*AuthorityRequestOperation) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{100}
+	return file_aether_proto_rawDescGZIP(), []int{110}
 }
 
 func (x *AuthorityRequestOperation) GetOp() AuthorityRequestOperation_OpType {
@@ -13405,7 +14390,7 @@ type AuthorityRequestOperationResponse struct {
 
 func (x *AuthorityRequestOperationResponse) Reset() {
 	*x = AuthorityRequestOperationResponse{}
-	mi := &file_aether_proto_msgTypes[101]
+	mi := &file_aether_proto_msgTypes[111]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13417,7 +14402,7 @@ func (x *AuthorityRequestOperationResponse) String() string {
 func (*AuthorityRequestOperationResponse) ProtoMessage() {}
 
 func (x *AuthorityRequestOperationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[101]
+	mi := &file_aether_proto_msgTypes[111]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13430,7 +14415,7 @@ func (x *AuthorityRequestOperationResponse) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use AuthorityRequestOperationResponse.ProtoReflect.Descriptor instead.
 func (*AuthorityRequestOperationResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{101}
+	return file_aether_proto_rawDescGZIP(), []int{111}
 }
 
 func (x *AuthorityRequestOperationResponse) GetSuccess() bool {
@@ -13488,7 +14473,7 @@ type AuthorityRequestEvent struct {
 
 func (x *AuthorityRequestEvent) Reset() {
 	*x = AuthorityRequestEvent{}
-	mi := &file_aether_proto_msgTypes[102]
+	mi := &file_aether_proto_msgTypes[112]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13500,7 +14485,7 @@ func (x *AuthorityRequestEvent) String() string {
 func (*AuthorityRequestEvent) ProtoMessage() {}
 
 func (x *AuthorityRequestEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[102]
+	mi := &file_aether_proto_msgTypes[112]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13513,7 +14498,7 @@ func (x *AuthorityRequestEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityRequestEvent.ProtoReflect.Descriptor instead.
 func (*AuthorityRequestEvent) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{102}
+	return file_aether_proto_rawDescGZIP(), []int{112}
 }
 
 func (x *AuthorityRequestEvent) GetEventType() AuthorityRequestEvent_EventType {
@@ -13562,7 +14547,7 @@ type TokenOperation struct {
 
 func (x *TokenOperation) Reset() {
 	*x = TokenOperation{}
-	mi := &file_aether_proto_msgTypes[103]
+	mi := &file_aether_proto_msgTypes[113]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13574,7 +14559,7 @@ func (x *TokenOperation) String() string {
 func (*TokenOperation) ProtoMessage() {}
 
 func (x *TokenOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[103]
+	mi := &file_aether_proto_msgTypes[113]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13587,7 +14572,7 @@ func (x *TokenOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenOperation.ProtoReflect.Descriptor instead.
 func (*TokenOperation) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{103}
+	return file_aether_proto_rawDescGZIP(), []int{113}
 }
 
 func (x *TokenOperation) GetOp() TokenOperation_OpType {
@@ -13640,7 +14625,7 @@ type TokenCreateRequest struct {
 
 func (x *TokenCreateRequest) Reset() {
 	*x = TokenCreateRequest{}
-	mi := &file_aether_proto_msgTypes[104]
+	mi := &file_aether_proto_msgTypes[114]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13652,7 +14637,7 @@ func (x *TokenCreateRequest) String() string {
 func (*TokenCreateRequest) ProtoMessage() {}
 
 func (x *TokenCreateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[104]
+	mi := &file_aether_proto_msgTypes[114]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13665,7 +14650,7 @@ func (x *TokenCreateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenCreateRequest.ProtoReflect.Descriptor instead.
 func (*TokenCreateRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{104}
+	return file_aether_proto_rawDescGZIP(), []int{114}
 }
 
 func (x *TokenCreateRequest) GetName() string {
@@ -13722,7 +14707,7 @@ type TokenFilter struct {
 
 func (x *TokenFilter) Reset() {
 	*x = TokenFilter{}
-	mi := &file_aether_proto_msgTypes[105]
+	mi := &file_aether_proto_msgTypes[115]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13734,7 +14719,7 @@ func (x *TokenFilter) String() string {
 func (*TokenFilter) ProtoMessage() {}
 
 func (x *TokenFilter) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[105]
+	mi := &file_aether_proto_msgTypes[115]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13747,7 +14732,7 @@ func (x *TokenFilter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenFilter.ProtoReflect.Descriptor instead.
 func (*TokenFilter) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{105}
+	return file_aether_proto_rawDescGZIP(), []int{115}
 }
 
 func (x *TokenFilter) GetLimit() int32 {
@@ -13792,7 +14777,7 @@ type TokenInfo struct {
 
 func (x *TokenInfo) Reset() {
 	*x = TokenInfo{}
-	mi := &file_aether_proto_msgTypes[106]
+	mi := &file_aether_proto_msgTypes[116]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13804,7 +14789,7 @@ func (x *TokenInfo) String() string {
 func (*TokenInfo) ProtoMessage() {}
 
 func (x *TokenInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[106]
+	mi := &file_aether_proto_msgTypes[116]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13817,7 +14802,7 @@ func (x *TokenInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenInfo.ProtoReflect.Descriptor instead.
 func (*TokenInfo) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{106}
+	return file_aether_proto_rawDescGZIP(), []int{116}
 }
 
 func (x *TokenInfo) GetId() string {
@@ -13930,7 +14915,7 @@ type TokenResponse struct {
 
 func (x *TokenResponse) Reset() {
 	*x = TokenResponse{}
-	mi := &file_aether_proto_msgTypes[107]
+	mi := &file_aether_proto_msgTypes[117]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13942,7 +14927,7 @@ func (x *TokenResponse) String() string {
 func (*TokenResponse) ProtoMessage() {}
 
 func (x *TokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[107]
+	mi := &file_aether_proto_msgTypes[117]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13955,7 +14940,7 @@ func (x *TokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenResponse.ProtoReflect.Descriptor instead.
 func (*TokenResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{107}
+	return file_aether_proto_rawDescGZIP(), []int{117}
 }
 
 func (x *TokenResponse) GetSuccess() bool {
@@ -14066,7 +15051,7 @@ type ProgressReport struct {
 
 func (x *ProgressReport) Reset() {
 	*x = ProgressReport{}
-	mi := &file_aether_proto_msgTypes[108]
+	mi := &file_aether_proto_msgTypes[118]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14078,7 +15063,7 @@ func (x *ProgressReport) String() string {
 func (*ProgressReport) ProtoMessage() {}
 
 func (x *ProgressReport) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[108]
+	mi := &file_aether_proto_msgTypes[118]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14091,7 +15076,7 @@ func (x *ProgressReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProgressReport.ProtoReflect.Descriptor instead.
 func (*ProgressReport) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{108}
+	return file_aether_proto_rawDescGZIP(), []int{118}
 }
 
 func (x *ProgressReport) GetTaskId() string {
@@ -14176,7 +15161,7 @@ type ProgressStep struct {
 
 func (x *ProgressStep) Reset() {
 	*x = ProgressStep{}
-	mi := &file_aether_proto_msgTypes[109]
+	mi := &file_aether_proto_msgTypes[119]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14188,7 +15173,7 @@ func (x *ProgressStep) String() string {
 func (*ProgressStep) ProtoMessage() {}
 
 func (x *ProgressStep) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[109]
+	mi := &file_aether_proto_msgTypes[119]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14201,7 +15186,7 @@ func (x *ProgressStep) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProgressStep.ProtoReflect.Descriptor instead.
 func (*ProgressStep) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{109}
+	return file_aether_proto_rawDescGZIP(), []int{119}
 }
 
 func (x *ProgressStep) GetName() string {
@@ -14278,7 +15263,7 @@ type ProgressUpdate struct {
 
 func (x *ProgressUpdate) Reset() {
 	*x = ProgressUpdate{}
-	mi := &file_aether_proto_msgTypes[110]
+	mi := &file_aether_proto_msgTypes[120]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14290,7 +15275,7 @@ func (x *ProgressUpdate) String() string {
 func (*ProgressUpdate) ProtoMessage() {}
 
 func (x *ProgressUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[110]
+	mi := &file_aether_proto_msgTypes[120]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14303,7 +15288,7 @@ func (x *ProgressUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProgressUpdate.ProtoReflect.Descriptor instead.
 func (*ProgressUpdate) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{110}
+	return file_aether_proto_rawDescGZIP(), []int{120}
 }
 
 func (x *ProgressUpdate) GetSource() string {
@@ -14409,7 +15394,7 @@ type WorkflowOperation struct {
 
 func (x *WorkflowOperation) Reset() {
 	*x = WorkflowOperation{}
-	mi := &file_aether_proto_msgTypes[111]
+	mi := &file_aether_proto_msgTypes[121]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14421,7 +15406,7 @@ func (x *WorkflowOperation) String() string {
 func (*WorkflowOperation) ProtoMessage() {}
 
 func (x *WorkflowOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[111]
+	mi := &file_aether_proto_msgTypes[121]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14434,7 +15419,7 @@ func (x *WorkflowOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkflowOperation.ProtoReflect.Descriptor instead.
 func (*WorkflowOperation) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{111}
+	return file_aether_proto_rawDescGZIP(), []int{121}
 }
 
 func (x *WorkflowOperation) GetOp() WorkflowOperation_OpType {
@@ -14503,7 +15488,7 @@ type WorkflowResponse struct {
 
 func (x *WorkflowResponse) Reset() {
 	*x = WorkflowResponse{}
-	mi := &file_aether_proto_msgTypes[112]
+	mi := &file_aether_proto_msgTypes[122]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14515,7 +15500,7 @@ func (x *WorkflowResponse) String() string {
 func (*WorkflowResponse) ProtoMessage() {}
 
 func (x *WorkflowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[112]
+	mi := &file_aether_proto_msgTypes[122]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14528,7 +15513,7 @@ func (x *WorkflowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkflowResponse.ProtoReflect.Descriptor instead.
 func (*WorkflowResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{112}
+	return file_aether_proto_rawDescGZIP(), []int{122}
 }
 
 func (x *WorkflowResponse) GetSuccess() bool {
@@ -14608,7 +15593,7 @@ type MessageEnvelope struct {
 
 func (x *MessageEnvelope) Reset() {
 	*x = MessageEnvelope{}
-	mi := &file_aether_proto_msgTypes[113]
+	mi := &file_aether_proto_msgTypes[123]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14620,7 +15605,7 @@ func (x *MessageEnvelope) String() string {
 func (*MessageEnvelope) ProtoMessage() {}
 
 func (x *MessageEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[113]
+	mi := &file_aether_proto_msgTypes[123]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14633,7 +15618,7 @@ func (x *MessageEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MessageEnvelope.ProtoReflect.Descriptor instead.
 func (*MessageEnvelope) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{113}
+	return file_aether_proto_rawDescGZIP(), []int{123}
 }
 
 func (x *MessageEnvelope) GetSource() string {
@@ -14710,7 +15695,7 @@ type AuditQuery struct {
 
 func (x *AuditQuery) Reset() {
 	*x = AuditQuery{}
-	mi := &file_aether_proto_msgTypes[114]
+	mi := &file_aether_proto_msgTypes[124]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14722,7 +15707,7 @@ func (x *AuditQuery) String() string {
 func (*AuditQuery) ProtoMessage() {}
 
 func (x *AuditQuery) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[114]
+	mi := &file_aether_proto_msgTypes[124]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14735,7 +15720,7 @@ func (x *AuditQuery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditQuery.ProtoReflect.Descriptor instead.
 func (*AuditQuery) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{114}
+	return file_aether_proto_rawDescGZIP(), []int{124}
 }
 
 func (x *AuditQuery) GetRequestId() string {
@@ -14899,7 +15884,7 @@ type AuditQueryResponse struct {
 
 func (x *AuditQueryResponse) Reset() {
 	*x = AuditQueryResponse{}
-	mi := &file_aether_proto_msgTypes[115]
+	mi := &file_aether_proto_msgTypes[125]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14911,7 +15896,7 @@ func (x *AuditQueryResponse) String() string {
 func (*AuditQueryResponse) ProtoMessage() {}
 
 func (x *AuditQueryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[115]
+	mi := &file_aether_proto_msgTypes[125]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14924,7 +15909,7 @@ func (x *AuditQueryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditQueryResponse.ProtoReflect.Descriptor instead.
 func (*AuditQueryResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{115}
+	return file_aether_proto_rawDescGZIP(), []int{125}
 }
 
 func (x *AuditQueryResponse) GetRequestId() string {
@@ -14994,7 +15979,7 @@ type AuditEntry struct {
 
 func (x *AuditEntry) Reset() {
 	*x = AuditEntry{}
-	mi := &file_aether_proto_msgTypes[116]
+	mi := &file_aether_proto_msgTypes[126]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15006,7 +15991,7 @@ func (x *AuditEntry) String() string {
 func (*AuditEntry) ProtoMessage() {}
 
 func (x *AuditEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[116]
+	mi := &file_aether_proto_msgTypes[126]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15019,7 +16004,7 @@ func (x *AuditEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditEntry.ProtoReflect.Descriptor instead.
 func (*AuditEntry) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{116}
+	return file_aether_proto_rawDescGZIP(), []int{126}
 }
 
 func (x *AuditEntry) GetAuditId() int64 {
@@ -15206,7 +16191,7 @@ type SubmitAuditEventRequest struct {
 
 func (x *SubmitAuditEventRequest) Reset() {
 	*x = SubmitAuditEventRequest{}
-	mi := &file_aether_proto_msgTypes[117]
+	mi := &file_aether_proto_msgTypes[127]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15218,7 +16203,7 @@ func (x *SubmitAuditEventRequest) String() string {
 func (*SubmitAuditEventRequest) ProtoMessage() {}
 
 func (x *SubmitAuditEventRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[117]
+	mi := &file_aether_proto_msgTypes[127]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15231,7 +16216,7 @@ func (x *SubmitAuditEventRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitAuditEventRequest.ProtoReflect.Descriptor instead.
 func (*SubmitAuditEventRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{117}
+	return file_aether_proto_rawDescGZIP(), []int{127}
 }
 
 func (x *SubmitAuditEventRequest) GetEventType() string {
@@ -15312,7 +16297,7 @@ type SubmitAuditEventResponse struct {
 
 func (x *SubmitAuditEventResponse) Reset() {
 	*x = SubmitAuditEventResponse{}
-	mi := &file_aether_proto_msgTypes[118]
+	mi := &file_aether_proto_msgTypes[128]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15324,7 +16309,7 @@ func (x *SubmitAuditEventResponse) String() string {
 func (*SubmitAuditEventResponse) ProtoMessage() {}
 
 func (x *SubmitAuditEventResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[118]
+	mi := &file_aether_proto_msgTypes[128]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15337,7 +16322,7 @@ func (x *SubmitAuditEventResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitAuditEventResponse.ProtoReflect.Descriptor instead.
 func (*SubmitAuditEventResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{118}
+	return file_aether_proto_rawDescGZIP(), []int{128}
 }
 
 func (x *SubmitAuditEventResponse) GetClientRequestId() string {
@@ -15417,7 +16402,7 @@ type ProxyHttpRequest struct {
 
 func (x *ProxyHttpRequest) Reset() {
 	*x = ProxyHttpRequest{}
-	mi := &file_aether_proto_msgTypes[119]
+	mi := &file_aether_proto_msgTypes[129]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15429,7 +16414,7 @@ func (x *ProxyHttpRequest) String() string {
 func (*ProxyHttpRequest) ProtoMessage() {}
 
 func (x *ProxyHttpRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[119]
+	mi := &file_aether_proto_msgTypes[129]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15442,7 +16427,7 @@ func (x *ProxyHttpRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyHttpRequest.ProtoReflect.Descriptor instead.
 func (*ProxyHttpRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{119}
+	return file_aether_proto_rawDescGZIP(), []int{129}
 }
 
 func (x *ProxyHttpRequest) GetRequestId() string {
@@ -15574,7 +16559,7 @@ type ProxyHttpResponse struct {
 
 func (x *ProxyHttpResponse) Reset() {
 	*x = ProxyHttpResponse{}
-	mi := &file_aether_proto_msgTypes[120]
+	mi := &file_aether_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15586,7 +16571,7 @@ func (x *ProxyHttpResponse) String() string {
 func (*ProxyHttpResponse) ProtoMessage() {}
 
 func (x *ProxyHttpResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[120]
+	mi := &file_aether_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15599,7 +16584,7 @@ func (x *ProxyHttpResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyHttpResponse.ProtoReflect.Descriptor instead.
 func (*ProxyHttpResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{120}
+	return file_aether_proto_rawDescGZIP(), []int{130}
 }
 
 func (x *ProxyHttpResponse) GetRequestId() string {
@@ -15659,7 +16644,7 @@ type ProxyHttpBodyChunk struct {
 
 func (x *ProxyHttpBodyChunk) Reset() {
 	*x = ProxyHttpBodyChunk{}
-	mi := &file_aether_proto_msgTypes[121]
+	mi := &file_aether_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15671,7 +16656,7 @@ func (x *ProxyHttpBodyChunk) String() string {
 func (*ProxyHttpBodyChunk) ProtoMessage() {}
 
 func (x *ProxyHttpBodyChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[121]
+	mi := &file_aether_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15684,7 +16669,7 @@ func (x *ProxyHttpBodyChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyHttpBodyChunk.ProtoReflect.Descriptor instead.
 func (*ProxyHttpBodyChunk) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{121}
+	return file_aether_proto_rawDescGZIP(), []int{131}
 }
 
 func (x *ProxyHttpBodyChunk) GetRequestId() string {
@@ -15734,7 +16719,7 @@ type ProxyError struct {
 
 func (x *ProxyError) Reset() {
 	*x = ProxyError{}
-	mi := &file_aether_proto_msgTypes[122]
+	mi := &file_aether_proto_msgTypes[132]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15746,7 +16731,7 @@ func (x *ProxyError) String() string {
 func (*ProxyError) ProtoMessage() {}
 
 func (x *ProxyError) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[122]
+	mi := &file_aether_proto_msgTypes[132]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15759,7 +16744,7 @@ func (x *ProxyError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyError.ProtoReflect.Descriptor instead.
 func (*ProxyError) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{122}
+	return file_aether_proto_rawDescGZIP(), []int{132}
 }
 
 func (x *ProxyError) GetKind() ProxyError_Kind {
@@ -15802,7 +16787,7 @@ type TunnelOpen struct {
 
 func (x *TunnelOpen) Reset() {
 	*x = TunnelOpen{}
-	mi := &file_aether_proto_msgTypes[123]
+	mi := &file_aether_proto_msgTypes[133]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15814,7 +16799,7 @@ func (x *TunnelOpen) String() string {
 func (*TunnelOpen) ProtoMessage() {}
 
 func (x *TunnelOpen) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[123]
+	mi := &file_aether_proto_msgTypes[133]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15827,7 +16812,7 @@ func (x *TunnelOpen) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelOpen.ProtoReflect.Descriptor instead.
 func (*TunnelOpen) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{123}
+	return file_aether_proto_rawDescGZIP(), []int{133}
 }
 
 func (x *TunnelOpen) GetTunnelId() string {
@@ -15919,7 +16904,7 @@ type TunnelData struct {
 
 func (x *TunnelData) Reset() {
 	*x = TunnelData{}
-	mi := &file_aether_proto_msgTypes[124]
+	mi := &file_aether_proto_msgTypes[134]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15931,7 +16916,7 @@ func (x *TunnelData) String() string {
 func (*TunnelData) ProtoMessage() {}
 
 func (x *TunnelData) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[124]
+	mi := &file_aether_proto_msgTypes[134]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15944,7 +16929,7 @@ func (x *TunnelData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelData.ProtoReflect.Descriptor instead.
 func (*TunnelData) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{124}
+	return file_aether_proto_rawDescGZIP(), []int{134}
 }
 
 func (x *TunnelData) GetTunnelId() string {
@@ -15986,7 +16971,7 @@ type TunnelClose struct {
 
 func (x *TunnelClose) Reset() {
 	*x = TunnelClose{}
-	mi := &file_aether_proto_msgTypes[125]
+	mi := &file_aether_proto_msgTypes[135]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15998,7 +16983,7 @@ func (x *TunnelClose) String() string {
 func (*TunnelClose) ProtoMessage() {}
 
 func (x *TunnelClose) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[125]
+	mi := &file_aether_proto_msgTypes[135]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16011,7 +16996,7 @@ func (x *TunnelClose) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelClose.ProtoReflect.Descriptor instead.
 func (*TunnelClose) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{125}
+	return file_aether_proto_rawDescGZIP(), []int{135}
 }
 
 func (x *TunnelClose) GetTunnelId() string {
@@ -16046,7 +17031,7 @@ type TunnelAck struct {
 
 func (x *TunnelAck) Reset() {
 	*x = TunnelAck{}
-	mi := &file_aether_proto_msgTypes[126]
+	mi := &file_aether_proto_msgTypes[136]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16058,7 +17043,7 @@ func (x *TunnelAck) String() string {
 func (*TunnelAck) ProtoMessage() {}
 
 func (x *TunnelAck) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[126]
+	mi := &file_aether_proto_msgTypes[136]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16071,7 +17056,7 @@ func (x *TunnelAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelAck.ProtoReflect.Descriptor instead.
 func (*TunnelAck) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{126}
+	return file_aether_proto_rawDescGZIP(), []int{136}
 }
 
 func (x *TunnelAck) GetTunnelId() string {
@@ -16118,7 +17103,7 @@ type ResolveAuthorityRequest struct {
 
 func (x *ResolveAuthorityRequest) Reset() {
 	*x = ResolveAuthorityRequest{}
-	mi := &file_aether_proto_msgTypes[127]
+	mi := &file_aether_proto_msgTypes[137]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16130,7 +17115,7 @@ func (x *ResolveAuthorityRequest) String() string {
 func (*ResolveAuthorityRequest) ProtoMessage() {}
 
 func (x *ResolveAuthorityRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[127]
+	mi := &file_aether_proto_msgTypes[137]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16143,7 +17128,7 @@ func (x *ResolveAuthorityRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveAuthorityRequest.ProtoReflect.Descriptor instead.
 func (*ResolveAuthorityRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{127}
+	return file_aether_proto_rawDescGZIP(), []int{137}
 }
 
 func (x *ResolveAuthorityRequest) GetRequestId() string {
@@ -16204,7 +17189,7 @@ type ResolveAuthorityResponse struct {
 
 func (x *ResolveAuthorityResponse) Reset() {
 	*x = ResolveAuthorityResponse{}
-	mi := &file_aether_proto_msgTypes[128]
+	mi := &file_aether_proto_msgTypes[138]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16216,7 +17201,7 @@ func (x *ResolveAuthorityResponse) String() string {
 func (*ResolveAuthorityResponse) ProtoMessage() {}
 
 func (x *ResolveAuthorityResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[128]
+	mi := &file_aether_proto_msgTypes[138]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16229,7 +17214,7 @@ func (x *ResolveAuthorityResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveAuthorityResponse.ProtoReflect.Descriptor instead.
 func (*ResolveAuthorityResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{128}
+	return file_aether_proto_rawDescGZIP(), []int{138}
 }
 
 func (x *ResolveAuthorityResponse) GetRequestId() string {
@@ -16276,7 +17261,7 @@ type ResolvedAuthority struct {
 
 func (x *ResolvedAuthority) Reset() {
 	*x = ResolvedAuthority{}
-	mi := &file_aether_proto_msgTypes[129]
+	mi := &file_aether_proto_msgTypes[139]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16288,7 +17273,7 @@ func (x *ResolvedAuthority) String() string {
 func (*ResolvedAuthority) ProtoMessage() {}
 
 func (x *ResolvedAuthority) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[129]
+	mi := &file_aether_proto_msgTypes[139]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16301,7 +17286,7 @@ func (x *ResolvedAuthority) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolvedAuthority.ProtoReflect.Descriptor instead.
 func (*ResolvedAuthority) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{129}
+	return file_aether_proto_rawDescGZIP(), []int{139}
 }
 
 func (x *ResolvedAuthority) GetActor() *PrincipalRef {
@@ -16348,7 +17333,7 @@ type AuthorityGrantInfo struct {
 
 func (x *AuthorityGrantInfo) Reset() {
 	*x = AuthorityGrantInfo{}
-	mi := &file_aether_proto_msgTypes[130]
+	mi := &file_aether_proto_msgTypes[140]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16360,7 +17345,7 @@ func (x *AuthorityGrantInfo) String() string {
 func (*AuthorityGrantInfo) ProtoMessage() {}
 
 func (x *AuthorityGrantInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[130]
+	mi := &file_aether_proto_msgTypes[140]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16373,7 +17358,7 @@ func (x *AuthorityGrantInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityGrantInfo.ProtoReflect.Descriptor instead.
 func (*AuthorityGrantInfo) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{130}
+	return file_aether_proto_rawDescGZIP(), []int{140}
 }
 
 func (x *AuthorityGrantInfo) GetGrantId() string {
@@ -16466,7 +17451,7 @@ type ConnectionStatusRequest struct {
 
 func (x *ConnectionStatusRequest) Reset() {
 	*x = ConnectionStatusRequest{}
-	mi := &file_aether_proto_msgTypes[131]
+	mi := &file_aether_proto_msgTypes[141]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16478,7 +17463,7 @@ func (x *ConnectionStatusRequest) String() string {
 func (*ConnectionStatusRequest) ProtoMessage() {}
 
 func (x *ConnectionStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[131]
+	mi := &file_aether_proto_msgTypes[141]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16491,7 +17476,7 @@ func (x *ConnectionStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectionStatusRequest.ProtoReflect.Descriptor instead.
 func (*ConnectionStatusRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{131}
+	return file_aether_proto_rawDescGZIP(), []int{141}
 }
 
 func (x *ConnectionStatusRequest) GetRequestId() string {
@@ -16524,7 +17509,7 @@ type ConnectionStatusResponse struct {
 
 func (x *ConnectionStatusResponse) Reset() {
 	*x = ConnectionStatusResponse{}
-	mi := &file_aether_proto_msgTypes[132]
+	mi := &file_aether_proto_msgTypes[142]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16536,7 +17521,7 @@ func (x *ConnectionStatusResponse) String() string {
 func (*ConnectionStatusResponse) ProtoMessage() {}
 
 func (x *ConnectionStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[132]
+	mi := &file_aether_proto_msgTypes[142]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16549,7 +17534,7 @@ func (x *ConnectionStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectionStatusResponse.ProtoReflect.Descriptor instead.
 func (*ConnectionStatusResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{132}
+	return file_aether_proto_rawDescGZIP(), []int{142}
 }
 
 func (x *ConnectionStatusResponse) GetRequestId() string {
@@ -16615,7 +17600,7 @@ type TaskSubscriptionOperation struct {
 
 func (x *TaskSubscriptionOperation) Reset() {
 	*x = TaskSubscriptionOperation{}
-	mi := &file_aether_proto_msgTypes[133]
+	mi := &file_aether_proto_msgTypes[143]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16627,7 +17612,7 @@ func (x *TaskSubscriptionOperation) String() string {
 func (*TaskSubscriptionOperation) ProtoMessage() {}
 
 func (x *TaskSubscriptionOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[133]
+	mi := &file_aether_proto_msgTypes[143]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16640,7 +17625,7 @@ func (x *TaskSubscriptionOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskSubscriptionOperation.ProtoReflect.Descriptor instead.
 func (*TaskSubscriptionOperation) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{133}
+	return file_aether_proto_rawDescGZIP(), []int{143}
 }
 
 func (x *TaskSubscriptionOperation) GetOp() TaskSubscriptionOperation_OpType {
@@ -16701,7 +17686,7 @@ type TaskSubscriptionOperationResponse struct {
 
 func (x *TaskSubscriptionOperationResponse) Reset() {
 	*x = TaskSubscriptionOperationResponse{}
-	mi := &file_aether_proto_msgTypes[134]
+	mi := &file_aether_proto_msgTypes[144]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16713,7 +17698,7 @@ func (x *TaskSubscriptionOperationResponse) String() string {
 func (*TaskSubscriptionOperationResponse) ProtoMessage() {}
 
 func (x *TaskSubscriptionOperationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[134]
+	mi := &file_aether_proto_msgTypes[144]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16726,7 +17711,7 @@ func (x *TaskSubscriptionOperationResponse) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use TaskSubscriptionOperationResponse.ProtoReflect.Descriptor instead.
 func (*TaskSubscriptionOperationResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{134}
+	return file_aether_proto_rawDescGZIP(), []int{144}
 }
 
 func (x *TaskSubscriptionOperationResponse) GetSuccess() bool {
@@ -16788,7 +17773,7 @@ type TaskEvent struct {
 
 func (x *TaskEvent) Reset() {
 	*x = TaskEvent{}
-	mi := &file_aether_proto_msgTypes[135]
+	mi := &file_aether_proto_msgTypes[145]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16800,7 +17785,7 @@ func (x *TaskEvent) String() string {
 func (*TaskEvent) ProtoMessage() {}
 
 func (x *TaskEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[135]
+	mi := &file_aether_proto_msgTypes[145]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16813,7 +17798,7 @@ func (x *TaskEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskEvent.ProtoReflect.Descriptor instead.
 func (*TaskEvent) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{135}
+	return file_aether_proto_rawDescGZIP(), []int{145}
 }
 
 func (x *TaskEvent) GetTaskId() string {
@@ -16935,7 +17920,7 @@ type TaskStatusChangedEvent struct {
 
 func (x *TaskStatusChangedEvent) Reset() {
 	*x = TaskStatusChangedEvent{}
-	mi := &file_aether_proto_msgTypes[136]
+	mi := &file_aether_proto_msgTypes[146]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16947,7 +17932,7 @@ func (x *TaskStatusChangedEvent) String() string {
 func (*TaskStatusChangedEvent) ProtoMessage() {}
 
 func (x *TaskStatusChangedEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[136]
+	mi := &file_aether_proto_msgTypes[146]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16960,7 +17945,7 @@ func (x *TaskStatusChangedEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskStatusChangedEvent.ProtoReflect.Descriptor instead.
 func (*TaskStatusChangedEvent) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{136}
+	return file_aether_proto_rawDescGZIP(), []int{146}
 }
 
 func (x *TaskStatusChangedEvent) GetFromStatus() TaskStatus {
@@ -16998,7 +17983,7 @@ type TaskProgressEvent struct {
 
 func (x *TaskProgressEvent) Reset() {
 	*x = TaskProgressEvent{}
-	mi := &file_aether_proto_msgTypes[137]
+	mi := &file_aether_proto_msgTypes[147]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17010,7 +17995,7 @@ func (x *TaskProgressEvent) String() string {
 func (*TaskProgressEvent) ProtoMessage() {}
 
 func (x *TaskProgressEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[137]
+	mi := &file_aether_proto_msgTypes[147]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17023,7 +18008,7 @@ func (x *TaskProgressEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskProgressEvent.ProtoReflect.Descriptor instead.
 func (*TaskProgressEvent) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{137}
+	return file_aether_proto_rawDescGZIP(), []int{147}
 }
 
 func (x *TaskProgressEvent) GetState() string {
@@ -17068,7 +18053,7 @@ type TaskChildLifecycleEvent struct {
 
 func (x *TaskChildLifecycleEvent) Reset() {
 	*x = TaskChildLifecycleEvent{}
-	mi := &file_aether_proto_msgTypes[138]
+	mi := &file_aether_proto_msgTypes[148]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17080,7 +18065,7 @@ func (x *TaskChildLifecycleEvent) String() string {
 func (*TaskChildLifecycleEvent) ProtoMessage() {}
 
 func (x *TaskChildLifecycleEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[138]
+	mi := &file_aether_proto_msgTypes[148]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17093,7 +18078,7 @@ func (x *TaskChildLifecycleEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskChildLifecycleEvent.ProtoReflect.Descriptor instead.
 func (*TaskChildLifecycleEvent) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{138}
+	return file_aether_proto_rawDescGZIP(), []int{148}
 }
 
 func (x *TaskChildLifecycleEvent) GetChildTaskId() string {
@@ -17129,7 +18114,7 @@ type TaskAuthorityRequestEventRelay struct {
 
 func (x *TaskAuthorityRequestEventRelay) Reset() {
 	*x = TaskAuthorityRequestEventRelay{}
-	mi := &file_aether_proto_msgTypes[139]
+	mi := &file_aether_proto_msgTypes[149]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17141,7 +18126,7 @@ func (x *TaskAuthorityRequestEventRelay) String() string {
 func (*TaskAuthorityRequestEventRelay) ProtoMessage() {}
 
 func (x *TaskAuthorityRequestEventRelay) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[139]
+	mi := &file_aether_proto_msgTypes[149]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17154,7 +18139,7 @@ func (x *TaskAuthorityRequestEventRelay) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskAuthorityRequestEventRelay.ProtoReflect.Descriptor instead.
 func (*TaskAuthorityRequestEventRelay) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{139}
+	return file_aether_proto_rawDescGZIP(), []int{149}
 }
 
 func (x *TaskAuthorityRequestEventRelay) GetEvent() *AuthorityRequestEvent {
@@ -18001,7 +18986,7 @@ const file_aether_proto_rawDesc = "" +
 	"\rorchestrators\x18\a \x03(\v2\x1b.aether.v1.OrchestratorInfoR\rorchestrators\x12A\n" +
 	"\rlaunch_result\x18\b \x01(\v2\x1c.aether.v1.AgentLaunchResultR\flaunchResult\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\t \x01(\tR\trequestId\"\xb0\a\n" +
+	"request_id\x18\t \x01(\tR\trequestId\"\xd7\r\n" +
 	"\fACLOperation\x12.\n" +
 	"\x02op\x18\x01 \x01(\x0e2\x1e.aether.v1.ACLOperation.OpTypeR\x02op\x12\x17\n" +
 	"\arule_id\x18\x02 \x01(\tR\x06ruleId\x12#\n" +
@@ -18014,7 +18999,17 @@ const file_aether_proto_rawDesc = "" +
 	"\rgrant_request\x18\f \x01(\v2\x1a.aether.v1.ACLGrantRequestR\fgrantRequest\x12K\n" +
 	"\x10fallback_request\x18\x0e \x01(\v2 .aether.v1.ACLSetFallbackRequestR\x0ffallbackRequest\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\x13 \x01(\tR\trequestId\"\xd0\x02\n" +
+	"request_id\x18\x13 \x01(\tR\trequestId\x12\x12\n" +
+	"\x04name\x18\x14 \x01(\tR\x04name\x125\n" +
+	"\tprincipal\x18\x15 \x01(\v2\x17.aether.v1.PrincipalRefR\tprincipal\x12?\n" +
+	"\rgroup_request\x18\x16 \x01(\v2\x1a.aether.v1.ACLGroupRequestR\fgroupRequest\x12<\n" +
+	"\frole_request\x18\x17 \x01(\v2\x19.aether.v1.ACLRoleRequestR\vroleRequest\x12G\n" +
+	"\x0emember_request\x18\x18 \x01(\v2 .aether.v1.ACLGroupMemberRequestR\rmemberRequest\x12R\n" +
+	"\x12assignment_request\x18\x19 \x01(\v2#.aether.v1.ACLRoleAssignmentRequestR\x11assignmentRequest\x12#\n" +
+	"\rresource_type\x18\x1a \x01(\tR\fresourceType\x12\x1f\n" +
+	"\vresource_id\x18\x1b \x01(\tR\n" +
+	"resourceId\x12%\n" +
+	"\x0erequired_level\x18\x1c \x01(\x05R\rrequiredLevel\"\xa3\x05\n" +
 	"\x06OpType\x12\x0e\n" +
 	"\n" +
 	"LIST_RULES\x10\x00\x12\f\n" +
@@ -18027,7 +19022,25 @@ const file_aether_proto_rawDesc = "" +
 	"\x13SET_FALLBACK_POLICY\x10\t\x12\x13\n" +
 	"\x0fCLEANUP_EXPIRED\x10\n" +
 	"\x12\x16\n" +
-	"\x12CLEANUP_AUDIT_LOGS\x10\v\"\x04\b\x05\x10\x05\"\x04\b\x06\x10\x06\"\x04\b\a\x10\a\"\x04\b\f\x10\f\"\x04\b\r\x10\r\"\x04\b\x0e\x10\x0e\"\x04\b\x0f\x10\x0f\"\x04\b\x10\x10\x10*\x15LIST_AUTHORITY_GRANTS*\x13GET_AUTHORITY_GRANT*\x16CREATE_AUTHORITY_GRANT*\x15RENEW_AUTHORITY_GRANT*\x16REVOKE_AUTHORITY_GRANTJ\x04\b\x03\x10\x04J\x04\b\x06\x10\aJ\x04\b\a\x10\bJ\x04\b\r\x10\x0eJ\x04\b\b\x10\tJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x12authority_grant_idR\x16authority_grant_filterR\x17authority_grant_requestR\x1dauthority_grant_renew_request\"\xcd\x01\n" +
+	"\x12CLEANUP_AUDIT_LOGS\x10\v\x12\x10\n" +
+	"\fCREATE_GROUP\x10\x11\x12\x10\n" +
+	"\fDELETE_GROUP\x10\x12\x12\r\n" +
+	"\tGET_GROUP\x10\x13\x12\x0f\n" +
+	"\vLIST_GROUPS\x10\x14\x12\x14\n" +
+	"\x10ADD_GROUP_MEMBER\x10\x15\x12\x17\n" +
+	"\x13REMOVE_GROUP_MEMBER\x10\x16\x12\x16\n" +
+	"\x12LIST_GROUP_MEMBERS\x10\x17\x12\x0f\n" +
+	"\vCREATE_ROLE\x10\x18\x12\x0f\n" +
+	"\vDELETE_ROLE\x10\x19\x12\f\n" +
+	"\bGET_ROLE\x10\x1a\x12\x0e\n" +
+	"\n" +
+	"LIST_ROLES\x10\x1b\x12\x0f\n" +
+	"\vASSIGN_ROLE\x10\x1c\x12\x11\n" +
+	"\rUNASSIGN_ROLE\x10\x1d\x12\x19\n" +
+	"\x15LIST_ROLE_ASSIGNMENTS\x10\x1e\x12\x19\n" +
+	"\x15LIST_PRINCIPAL_GROUPS\x10\x1f\x12\x18\n" +
+	"\x14LIST_PRINCIPAL_ROLES\x10 \x12\x12\n" +
+	"\x0eEXPLAIN_ACCESS\x10!\"\x04\b\x05\x10\x05\"\x04\b\x06\x10\x06\"\x04\b\a\x10\a\"\x04\b\f\x10\f\"\x04\b\r\x10\r\"\x04\b\x0e\x10\x0e\"\x04\b\x0f\x10\x0f\"\x04\b\x10\x10\x10*\x15LIST_AUTHORITY_GRANTS*\x13GET_AUTHORITY_GRANT*\x16CREATE_AUTHORITY_GRANT*\x15RENEW_AUTHORITY_GRANT*\x16REVOKE_AUTHORITY_GRANTJ\x04\b\x03\x10\x04J\x04\b\x06\x10\aJ\x04\b\a\x10\bJ\x04\b\r\x10\x0eJ\x04\b\b\x10\tJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x12authority_grant_idR\x16authority_grant_filterR\x17authority_grant_requestR\x1dauthority_grant_renew_request\"\xcd\x01\n" +
 	"\rACLRuleFilter\x12%\n" +
 	"\x0eprincipal_type\x18\x01 \x01(\tR\rprincipalType\x12!\n" +
 	"\fprincipal_id\x18\x02 \x01(\tR\vprincipalId\x12#\n" +
@@ -18204,7 +19217,104 @@ const file_aether_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Q\n" +
 	"\x10ACLCleanupResult\x12#\n" +
 	"\rdeleted_count\x18\x01 \x01(\x03R\fdeletedCount\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xc7\x05\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xe9\x01\n" +
+	"\x0fACLGroupRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12\x1d\n" +
+	"\n" +
+	"created_by\x18\x03 \x01(\tR\tcreatedBy\x12D\n" +
+	"\bmetadata\x18\x04 \x03(\v2(.aether.v1.ACLGroupRequest.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe7\x01\n" +
+	"\x0eACLRoleRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12\x1d\n" +
+	"\n" +
+	"created_by\x18\x03 \x01(\tR\tcreatedBy\x12C\n" +
+	"\bmetadata\x18\x04 \x03(\v2'.aether.v1.ACLRoleRequest.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x93\x01\n" +
+	"\x15ACLGroupMemberRequest\x12\x1f\n" +
+	"\vmember_type\x18\x01 \x01(\tR\n" +
+	"memberType\x12\x1b\n" +
+	"\tmember_id\x18\x02 \x01(\tR\bmemberId\x12\x1d\n" +
+	"\n" +
+	"granted_by\x18\x03 \x01(\tR\tgrantedBy\x12\x1d\n" +
+	"\n" +
+	"expires_at\x18\x04 \x01(\x03R\texpiresAt\"\x9e\x01\n" +
+	"\x18ACLRoleAssignmentRequest\x12#\n" +
+	"\rassignee_type\x18\x01 \x01(\tR\fassigneeType\x12\x1f\n" +
+	"\vassignee_id\x18\x02 \x01(\tR\n" +
+	"assigneeId\x12\x1d\n" +
+	"\n" +
+	"granted_by\x18\x03 \x01(\tR\tgrantedBy\x12\x1d\n" +
+	"\n" +
+	"expires_at\x18\x04 \x01(\x03R\texpiresAt\"\xa8\x02\n" +
+	"\fACLGroupInfo\x12\x19\n" +
+	"\bgroup_id\x18\x01 \x01(\tR\agroupId\x12\x1d\n" +
+	"\n" +
+	"group_name\x18\x02 \x01(\tR\tgroupName\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x1d\n" +
+	"\n" +
+	"created_by\x18\x04 \x01(\tR\tcreatedBy\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x05 \x01(\x03R\tcreatedAt\x12A\n" +
+	"\bmetadata\x18\x06 \x03(\v2%.aether.v1.ACLGroupInfo.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa2\x02\n" +
+	"\vACLRoleInfo\x12\x17\n" +
+	"\arole_id\x18\x01 \x01(\tR\x06roleId\x12\x1b\n" +
+	"\trole_name\x18\x02 \x01(\tR\broleName\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x1d\n" +
+	"\n" +
+	"created_by\x18\x04 \x01(\tR\tcreatedBy\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x05 \x01(\x03R\tcreatedAt\x12@\n" +
+	"\bmetadata\x18\x06 \x03(\v2$.aether.v1.ACLRoleInfo.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xce\x01\n" +
+	"\x12ACLGroupMemberInfo\x12\x1d\n" +
+	"\n" +
+	"group_name\x18\x01 \x01(\tR\tgroupName\x12\x1f\n" +
+	"\vmember_type\x18\x02 \x01(\tR\n" +
+	"memberType\x12\x1b\n" +
+	"\tmember_id\x18\x03 \x01(\tR\bmemberId\x12\x1d\n" +
+	"\n" +
+	"granted_by\x18\x04 \x01(\tR\tgrantedBy\x12\x1d\n" +
+	"\n" +
+	"granted_at\x18\x05 \x01(\x03R\tgrantedAt\x12\x1d\n" +
+	"\n" +
+	"expires_at\x18\x06 \x01(\x03R\texpiresAt\"\xd7\x01\n" +
+	"\x15ACLRoleAssignmentInfo\x12\x1b\n" +
+	"\trole_name\x18\x01 \x01(\tR\broleName\x12#\n" +
+	"\rassignee_type\x18\x02 \x01(\tR\fassigneeType\x12\x1f\n" +
+	"\vassignee_id\x18\x03 \x01(\tR\n" +
+	"assigneeId\x12\x1d\n" +
+	"\n" +
+	"granted_by\x18\x04 \x01(\tR\tgrantedBy\x12\x1d\n" +
+	"\n" +
+	"granted_at\x18\x05 \x01(\x03R\tgrantedAt\x12\x1d\n" +
+	"\n" +
+	"expires_at\x18\x06 \x01(\x03R\texpiresAt\"\xa7\x01\n" +
+	"\x19ACLAccessContributionInfo\x12\x18\n" +
+	"\asubject\x18\x01 \x01(\tR\asubject\x12\x17\n" +
+	"\arule_id\x18\x02 \x01(\tR\x06ruleId\x12!\n" +
+	"\faccess_level\x18\x03 \x01(\x05R\vaccessLevel\x12\x1a\n" +
+	"\bresource\x18\x04 \x01(\tR\bresource\x12\x18\n" +
+	"\aexpired\x18\x05 \x01(\bR\aexpired\"\xcf\x02\n" +
+	"\x18ACLAccessExplanationInfo\x12\x1c\n" +
+	"\tprincipal\x18\x01 \x01(\tR\tprincipal\x12\x1a\n" +
+	"\bsubjects\x18\x02 \x03(\tR\bsubjects\x12J\n" +
+	"\rcontributions\x18\x03 \x03(\v2$.aether.v1.ACLAccessContributionInfoR\rcontributions\x12\x18\n" +
+	"\aallowed\x18\x04 \x01(\bR\aallowed\x12\x1a\n" +
+	"\bdecision\x18\x05 \x01(\tR\bdecision\x124\n" +
+	"\x16effective_access_level\x18\x06 \x01(\x05R\x14effectiveAccessLevel\x12)\n" +
+	"\x10fallback_applied\x18\a \x01(\bR\x0ffallbackApplied\x12\x16\n" +
+	"\x06reason\x18\b \x01(\tR\x06reason\"\xd9\b\n" +
 	"\vACLResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12\x18\n" +
@@ -18222,7 +19332,14 @@ const file_aether_proto_rawDesc = "" +
 	"\x10authority_grants\x18\x0e \x03(\v2 .aether.v1.ACLAuthorityGrantInfoR\x0fauthorityGrants\x124\n" +
 	"\x16total_authority_grants\x18\x0f \x01(\x05R\x14totalAuthorityGrants\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\f \x01(\tR\trequestIdJ\x04\b\a\x10\b\"\xb6\x06\n" +
+	"request_id\x18\f \x01(\tR\trequestId\x12-\n" +
+	"\x05group\x18\x10 \x01(\v2\x17.aether.v1.ACLGroupInfoR\x05group\x12/\n" +
+	"\x06groups\x18\x11 \x03(\v2\x17.aether.v1.ACLGroupInfoR\x06groups\x12*\n" +
+	"\x04role\x18\x12 \x01(\v2\x16.aether.v1.ACLRoleInfoR\x04role\x12,\n" +
+	"\x05roles\x18\x13 \x03(\v2\x16.aether.v1.ACLRoleInfoR\x05roles\x12B\n" +
+	"\rgroup_members\x18\x14 \x03(\v2\x1d.aether.v1.ACLGroupMemberInfoR\fgroupMembers\x12K\n" +
+	"\x10role_assignments\x18\x15 \x03(\v2 .aether.v1.ACLRoleAssignmentInfoR\x0froleAssignments\x12E\n" +
+	"\vexplanation\x18\x16 \x01(\v2#.aether.v1.ACLAccessExplanationInfoR\vexplanationJ\x04\b\a\x10\b\"\xb6\x06\n" +
 	"\x17AuthorityGrantOperation\x129\n" +
 	"\x02op\x18\x01 \x01(\x0e2).aether.v1.AuthorityGrantOperation.OpTypeR\x02op\x12\x19\n" +
 	"\bgrant_id\x18\x02 \x01(\tR\agrantId\x12S\n" +
@@ -19023,7 +20140,7 @@ func file_aether_proto_rawDescGZIP() []byte {
 }
 
 var file_aether_proto_enumTypes = make([]protoimpl.EnumInfo, 34)
-var file_aether_proto_msgTypes = make([]protoimpl.MessageInfo, 174)
+var file_aether_proto_msgTypes = make([]protoimpl.MessageInfo, 188)
 var file_aether_proto_goTypes = []any{
 	(MessageType)(0),                             // 0: aether.v1.MessageType
 	(PrincipalType)(0),                           // 1: aether.v1.PrincipalType
@@ -19142,97 +20259,111 @@ var file_aether_proto_goTypes = []any{
 	(*ACLAuditEntryInfo)(nil),                    // 114: aether.v1.ACLAuditEntryInfo
 	(*ACLAuthorityGrantInfo)(nil),                // 115: aether.v1.ACLAuthorityGrantInfo
 	(*ACLCleanupResult)(nil),                     // 116: aether.v1.ACLCleanupResult
-	(*ACLResponse)(nil),                          // 117: aether.v1.ACLResponse
-	(*AuthorityGrantOperation)(nil),              // 118: aether.v1.AuthorityGrantOperation
-	(*AuthorityGrantExchangeRequest)(nil),        // 119: aether.v1.AuthorityGrantExchangeRequest
-	(*AuthorityGrantDeriveRequest)(nil),          // 120: aether.v1.AuthorityGrantDeriveRequest
-	(*AuthorityGrantResponse)(nil),               // 121: aether.v1.AuthorityGrantResponse
-	(*AuthorityGrantListRequest)(nil),            // 122: aether.v1.AuthorityGrantListRequest
-	(*AuthorityGrantBatchExchangeRequest)(nil),   // 123: aether.v1.AuthorityGrantBatchExchangeRequest
-	(*AuthorityGrantDeriveForTargetRequest)(nil), // 124: aether.v1.AuthorityGrantDeriveForTargetRequest
-	(*AuthorityIdentity)(nil),                    // 125: aether.v1.AuthorityIdentity
-	(*AuthoritySpan)(nil),                        // 126: aether.v1.AuthoritySpan
-	(*AuthorityGrantRevocation)(nil),             // 127: aether.v1.AuthorityGrantRevocation
-	(*AuthorityRequestRoutingTarget)(nil),        // 128: aether.v1.AuthorityRequestRoutingTarget
-	(*AuthorityRequestResourceScopeEntry)(nil),   // 129: aether.v1.AuthorityRequestResourceScopeEntry
-	(*AuthorityRequest)(nil),                     // 130: aether.v1.AuthorityRequest
-	(*CreateAuthorityRequestPayload)(nil),        // 131: aether.v1.CreateAuthorityRequestPayload
-	(*ResolveAuthorityRequestPayload)(nil),       // 132: aether.v1.ResolveAuthorityRequestPayload
-	(*AuthorityRequestListFilter)(nil),           // 133: aether.v1.AuthorityRequestListFilter
-	(*AuthorityRequestOperation)(nil),            // 134: aether.v1.AuthorityRequestOperation
-	(*AuthorityRequestOperationResponse)(nil),    // 135: aether.v1.AuthorityRequestOperationResponse
-	(*AuthorityRequestEvent)(nil),                // 136: aether.v1.AuthorityRequestEvent
-	(*TokenOperation)(nil),                       // 137: aether.v1.TokenOperation
-	(*TokenCreateRequest)(nil),                   // 138: aether.v1.TokenCreateRequest
-	(*TokenFilter)(nil),                          // 139: aether.v1.TokenFilter
-	(*TokenInfo)(nil),                            // 140: aether.v1.TokenInfo
-	(*TokenResponse)(nil),                        // 141: aether.v1.TokenResponse
-	(*ProgressReport)(nil),                       // 142: aether.v1.ProgressReport
-	(*ProgressStep)(nil),                         // 143: aether.v1.ProgressStep
-	(*ProgressUpdate)(nil),                       // 144: aether.v1.ProgressUpdate
-	(*WorkflowOperation)(nil),                    // 145: aether.v1.WorkflowOperation
-	(*WorkflowResponse)(nil),                     // 146: aether.v1.WorkflowResponse
-	(*MessageEnvelope)(nil),                      // 147: aether.v1.MessageEnvelope
-	(*AuditQuery)(nil),                           // 148: aether.v1.AuditQuery
-	(*AuditQueryResponse)(nil),                   // 149: aether.v1.AuditQueryResponse
-	(*AuditEntry)(nil),                           // 150: aether.v1.AuditEntry
-	(*SubmitAuditEventRequest)(nil),              // 151: aether.v1.SubmitAuditEventRequest
-	(*SubmitAuditEventResponse)(nil),             // 152: aether.v1.SubmitAuditEventResponse
-	(*ProxyHttpRequest)(nil),                     // 153: aether.v1.ProxyHttpRequest
-	(*ProxyHttpResponse)(nil),                    // 154: aether.v1.ProxyHttpResponse
-	(*ProxyHttpBodyChunk)(nil),                   // 155: aether.v1.ProxyHttpBodyChunk
-	(*ProxyError)(nil),                           // 156: aether.v1.ProxyError
-	(*TunnelOpen)(nil),                           // 157: aether.v1.TunnelOpen
-	(*TunnelData)(nil),                           // 158: aether.v1.TunnelData
-	(*TunnelClose)(nil),                          // 159: aether.v1.TunnelClose
-	(*TunnelAck)(nil),                            // 160: aether.v1.TunnelAck
-	(*ResolveAuthorityRequest)(nil),              // 161: aether.v1.ResolveAuthorityRequest
-	(*ResolveAuthorityResponse)(nil),             // 162: aether.v1.ResolveAuthorityResponse
-	(*ResolvedAuthority)(nil),                    // 163: aether.v1.ResolvedAuthority
-	(*AuthorityGrantInfo)(nil),                   // 164: aether.v1.AuthorityGrantInfo
-	(*ConnectionStatusRequest)(nil),              // 165: aether.v1.ConnectionStatusRequest
-	(*ConnectionStatusResponse)(nil),             // 166: aether.v1.ConnectionStatusResponse
-	(*TaskSubscriptionOperation)(nil),            // 167: aether.v1.TaskSubscriptionOperation
-	(*TaskSubscriptionOperationResponse)(nil),    // 168: aether.v1.TaskSubscriptionOperationResponse
-	(*TaskEvent)(nil),                            // 169: aether.v1.TaskEvent
-	(*TaskStatusChangedEvent)(nil),               // 170: aether.v1.TaskStatusChangedEvent
-	(*TaskProgressEvent)(nil),                    // 171: aether.v1.TaskProgressEvent
-	(*TaskChildLifecycleEvent)(nil),              // 172: aether.v1.TaskChildLifecycleEvent
-	(*TaskAuthorityRequestEventRelay)(nil),       // 173: aether.v1.TaskAuthorityRequestEventRelay
-	nil,                                          // 174: aether.v1.InitConnection.CredentialsEntry
-	nil,                                          // 175: aether.v1.Metric.MetadataEntry
-	nil,                                          // 176: aether.v1.KVResponse.KvMapEntry
-	nil,                                          // 177: aether.v1.ConfigSnapshot.KvEntry
-	nil,                                          // 178: aether.v1.ConfigSnapshot.GlobalKvEntry
-	nil,                                          // 179: aether.v1.ConfigSnapshot.TaskContextEntry
-	nil,                                          // 180: aether.v1.ConfigSnapshot.WorkspaceExclusiveKvEntry
-	nil,                                          // 181: aether.v1.ConfigSnapshot.GlobalExclusiveKvEntry
-	nil,                                          // 182: aether.v1.CreateTaskRequest.LaunchParamOverridesEntry
-	nil,                                          // 183: aether.v1.CreateTaskRequest.MetadataEntry
-	nil,                                          // 184: aether.v1.TaskAssignment.MetadataEntry
-	nil,                                          // 185: aether.v1.TaskAssignment.LaunchParamsEntry
-	nil,                                          // 186: aether.v1.HealthInfo.ChecksEntry
-	nil,                                          // 187: aether.v1.TaskInfo.MetadataEntry
-	nil,                                          // 188: aether.v1.WaitSpec.InputMatchEntry
-	nil,                                          // 189: aether.v1.WorkspaceInfo.MetadataEntry
-	nil,                                          // 190: aether.v1.AgentRegistrationInfo.LaunchParamsEntry
-	nil,                                          // 191: aether.v1.AgentRegistrationInfo.CapabilitiesEntry
-	nil,                                          // 192: aether.v1.AgentLaunchParams.ParamOverridesEntry
-	nil,                                          // 193: aether.v1.ACLAuthorityGrantRequest.MetadataEntry
-	nil,                                          // 194: aether.v1.ACLAuditEntryInfo.MetadataEntry
-	nil,                                          // 195: aether.v1.ACLAuthorityGrantInfo.MetadataEntry
-	nil,                                          // 196: aether.v1.AuthorityGrantExchangeRequest.MetadataEntry
-	nil,                                          // 197: aether.v1.AuthorityGrantDeriveRequest.MetadataEntry
-	nil,                                          // 198: aether.v1.AuthorityRequest.MetadataEntry
-	nil,                                          // 199: aether.v1.CreateAuthorityRequestPayload.MetadataEntry
-	nil,                                          // 200: aether.v1.ProgressReport.MetadataEntry
-	nil,                                          // 201: aether.v1.ProgressUpdate.MetadataEntry
-	nil,                                          // 202: aether.v1.MessageEnvelope.MetadataEntry
-	nil,                                          // 203: aether.v1.SubmitAuditEventRequest.MetadataEntry
-	nil,                                          // 204: aether.v1.ProxyHttpRequest.HeadersEntry
-	nil,                                          // 205: aether.v1.ProxyHttpResponse.HeadersEntry
-	nil,                                          // 206: aether.v1.TunnelOpen.MetadataEntry
-	nil,                                          // 207: aether.v1.TaskProgressEvent.MetadataEntry
+	(*ACLGroupRequest)(nil),                      // 117: aether.v1.ACLGroupRequest
+	(*ACLRoleRequest)(nil),                       // 118: aether.v1.ACLRoleRequest
+	(*ACLGroupMemberRequest)(nil),                // 119: aether.v1.ACLGroupMemberRequest
+	(*ACLRoleAssignmentRequest)(nil),             // 120: aether.v1.ACLRoleAssignmentRequest
+	(*ACLGroupInfo)(nil),                         // 121: aether.v1.ACLGroupInfo
+	(*ACLRoleInfo)(nil),                          // 122: aether.v1.ACLRoleInfo
+	(*ACLGroupMemberInfo)(nil),                   // 123: aether.v1.ACLGroupMemberInfo
+	(*ACLRoleAssignmentInfo)(nil),                // 124: aether.v1.ACLRoleAssignmentInfo
+	(*ACLAccessContributionInfo)(nil),            // 125: aether.v1.ACLAccessContributionInfo
+	(*ACLAccessExplanationInfo)(nil),             // 126: aether.v1.ACLAccessExplanationInfo
+	(*ACLResponse)(nil),                          // 127: aether.v1.ACLResponse
+	(*AuthorityGrantOperation)(nil),              // 128: aether.v1.AuthorityGrantOperation
+	(*AuthorityGrantExchangeRequest)(nil),        // 129: aether.v1.AuthorityGrantExchangeRequest
+	(*AuthorityGrantDeriveRequest)(nil),          // 130: aether.v1.AuthorityGrantDeriveRequest
+	(*AuthorityGrantResponse)(nil),               // 131: aether.v1.AuthorityGrantResponse
+	(*AuthorityGrantListRequest)(nil),            // 132: aether.v1.AuthorityGrantListRequest
+	(*AuthorityGrantBatchExchangeRequest)(nil),   // 133: aether.v1.AuthorityGrantBatchExchangeRequest
+	(*AuthorityGrantDeriveForTargetRequest)(nil), // 134: aether.v1.AuthorityGrantDeriveForTargetRequest
+	(*AuthorityIdentity)(nil),                    // 135: aether.v1.AuthorityIdentity
+	(*AuthoritySpan)(nil),                        // 136: aether.v1.AuthoritySpan
+	(*AuthorityGrantRevocation)(nil),             // 137: aether.v1.AuthorityGrantRevocation
+	(*AuthorityRequestRoutingTarget)(nil),        // 138: aether.v1.AuthorityRequestRoutingTarget
+	(*AuthorityRequestResourceScopeEntry)(nil),   // 139: aether.v1.AuthorityRequestResourceScopeEntry
+	(*AuthorityRequest)(nil),                     // 140: aether.v1.AuthorityRequest
+	(*CreateAuthorityRequestPayload)(nil),        // 141: aether.v1.CreateAuthorityRequestPayload
+	(*ResolveAuthorityRequestPayload)(nil),       // 142: aether.v1.ResolveAuthorityRequestPayload
+	(*AuthorityRequestListFilter)(nil),           // 143: aether.v1.AuthorityRequestListFilter
+	(*AuthorityRequestOperation)(nil),            // 144: aether.v1.AuthorityRequestOperation
+	(*AuthorityRequestOperationResponse)(nil),    // 145: aether.v1.AuthorityRequestOperationResponse
+	(*AuthorityRequestEvent)(nil),                // 146: aether.v1.AuthorityRequestEvent
+	(*TokenOperation)(nil),                       // 147: aether.v1.TokenOperation
+	(*TokenCreateRequest)(nil),                   // 148: aether.v1.TokenCreateRequest
+	(*TokenFilter)(nil),                          // 149: aether.v1.TokenFilter
+	(*TokenInfo)(nil),                            // 150: aether.v1.TokenInfo
+	(*TokenResponse)(nil),                        // 151: aether.v1.TokenResponse
+	(*ProgressReport)(nil),                       // 152: aether.v1.ProgressReport
+	(*ProgressStep)(nil),                         // 153: aether.v1.ProgressStep
+	(*ProgressUpdate)(nil),                       // 154: aether.v1.ProgressUpdate
+	(*WorkflowOperation)(nil),                    // 155: aether.v1.WorkflowOperation
+	(*WorkflowResponse)(nil),                     // 156: aether.v1.WorkflowResponse
+	(*MessageEnvelope)(nil),                      // 157: aether.v1.MessageEnvelope
+	(*AuditQuery)(nil),                           // 158: aether.v1.AuditQuery
+	(*AuditQueryResponse)(nil),                   // 159: aether.v1.AuditQueryResponse
+	(*AuditEntry)(nil),                           // 160: aether.v1.AuditEntry
+	(*SubmitAuditEventRequest)(nil),              // 161: aether.v1.SubmitAuditEventRequest
+	(*SubmitAuditEventResponse)(nil),             // 162: aether.v1.SubmitAuditEventResponse
+	(*ProxyHttpRequest)(nil),                     // 163: aether.v1.ProxyHttpRequest
+	(*ProxyHttpResponse)(nil),                    // 164: aether.v1.ProxyHttpResponse
+	(*ProxyHttpBodyChunk)(nil),                   // 165: aether.v1.ProxyHttpBodyChunk
+	(*ProxyError)(nil),                           // 166: aether.v1.ProxyError
+	(*TunnelOpen)(nil),                           // 167: aether.v1.TunnelOpen
+	(*TunnelData)(nil),                           // 168: aether.v1.TunnelData
+	(*TunnelClose)(nil),                          // 169: aether.v1.TunnelClose
+	(*TunnelAck)(nil),                            // 170: aether.v1.TunnelAck
+	(*ResolveAuthorityRequest)(nil),              // 171: aether.v1.ResolveAuthorityRequest
+	(*ResolveAuthorityResponse)(nil),             // 172: aether.v1.ResolveAuthorityResponse
+	(*ResolvedAuthority)(nil),                    // 173: aether.v1.ResolvedAuthority
+	(*AuthorityGrantInfo)(nil),                   // 174: aether.v1.AuthorityGrantInfo
+	(*ConnectionStatusRequest)(nil),              // 175: aether.v1.ConnectionStatusRequest
+	(*ConnectionStatusResponse)(nil),             // 176: aether.v1.ConnectionStatusResponse
+	(*TaskSubscriptionOperation)(nil),            // 177: aether.v1.TaskSubscriptionOperation
+	(*TaskSubscriptionOperationResponse)(nil),    // 178: aether.v1.TaskSubscriptionOperationResponse
+	(*TaskEvent)(nil),                            // 179: aether.v1.TaskEvent
+	(*TaskStatusChangedEvent)(nil),               // 180: aether.v1.TaskStatusChangedEvent
+	(*TaskProgressEvent)(nil),                    // 181: aether.v1.TaskProgressEvent
+	(*TaskChildLifecycleEvent)(nil),              // 182: aether.v1.TaskChildLifecycleEvent
+	(*TaskAuthorityRequestEventRelay)(nil),       // 183: aether.v1.TaskAuthorityRequestEventRelay
+	nil,                                          // 184: aether.v1.InitConnection.CredentialsEntry
+	nil,                                          // 185: aether.v1.Metric.MetadataEntry
+	nil,                                          // 186: aether.v1.KVResponse.KvMapEntry
+	nil,                                          // 187: aether.v1.ConfigSnapshot.KvEntry
+	nil,                                          // 188: aether.v1.ConfigSnapshot.GlobalKvEntry
+	nil,                                          // 189: aether.v1.ConfigSnapshot.TaskContextEntry
+	nil,                                          // 190: aether.v1.ConfigSnapshot.WorkspaceExclusiveKvEntry
+	nil,                                          // 191: aether.v1.ConfigSnapshot.GlobalExclusiveKvEntry
+	nil,                                          // 192: aether.v1.CreateTaskRequest.LaunchParamOverridesEntry
+	nil,                                          // 193: aether.v1.CreateTaskRequest.MetadataEntry
+	nil,                                          // 194: aether.v1.TaskAssignment.MetadataEntry
+	nil,                                          // 195: aether.v1.TaskAssignment.LaunchParamsEntry
+	nil,                                          // 196: aether.v1.HealthInfo.ChecksEntry
+	nil,                                          // 197: aether.v1.TaskInfo.MetadataEntry
+	nil,                                          // 198: aether.v1.WaitSpec.InputMatchEntry
+	nil,                                          // 199: aether.v1.WorkspaceInfo.MetadataEntry
+	nil,                                          // 200: aether.v1.AgentRegistrationInfo.LaunchParamsEntry
+	nil,                                          // 201: aether.v1.AgentRegistrationInfo.CapabilitiesEntry
+	nil,                                          // 202: aether.v1.AgentLaunchParams.ParamOverridesEntry
+	nil,                                          // 203: aether.v1.ACLAuthorityGrantRequest.MetadataEntry
+	nil,                                          // 204: aether.v1.ACLAuditEntryInfo.MetadataEntry
+	nil,                                          // 205: aether.v1.ACLAuthorityGrantInfo.MetadataEntry
+	nil,                                          // 206: aether.v1.ACLGroupRequest.MetadataEntry
+	nil,                                          // 207: aether.v1.ACLRoleRequest.MetadataEntry
+	nil,                                          // 208: aether.v1.ACLGroupInfo.MetadataEntry
+	nil,                                          // 209: aether.v1.ACLRoleInfo.MetadataEntry
+	nil,                                          // 210: aether.v1.AuthorityGrantExchangeRequest.MetadataEntry
+	nil,                                          // 211: aether.v1.AuthorityGrantDeriveRequest.MetadataEntry
+	nil,                                          // 212: aether.v1.AuthorityRequest.MetadataEntry
+	nil,                                          // 213: aether.v1.CreateAuthorityRequestPayload.MetadataEntry
+	nil,                                          // 214: aether.v1.ProgressReport.MetadataEntry
+	nil,                                          // 215: aether.v1.ProgressUpdate.MetadataEntry
+	nil,                                          // 216: aether.v1.MessageEnvelope.MetadataEntry
+	nil,                                          // 217: aether.v1.SubmitAuditEventRequest.MetadataEntry
+	nil,                                          // 218: aether.v1.ProxyHttpRequest.HeadersEntry
+	nil,                                          // 219: aether.v1.ProxyHttpResponse.HeadersEntry
+	nil,                                          // 220: aether.v1.TunnelOpen.MetadataEntry
+	nil,                                          // 221: aether.v1.TaskProgressEvent.MetadataEntry
 }
 var file_aether_proto_depIdxs = []int32{
 	38,  // 0: aether.v1.UpstreamMessage.init:type_name -> aether.v1.InitConnection
@@ -19248,24 +20379,24 @@ var file_aether_proto_depIdxs = []int32{
 	88,  // 10: aether.v1.UpstreamMessage.workspace_op:type_name -> aether.v1.WorkspaceOperation
 	95,  // 11: aether.v1.UpstreamMessage.agent_op:type_name -> aether.v1.AgentOperation
 	103, // 12: aether.v1.UpstreamMessage.acl_op:type_name -> aether.v1.ACLOperation
-	142, // 13: aether.v1.UpstreamMessage.progress:type_name -> aether.v1.ProgressReport
-	145, // 14: aether.v1.UpstreamMessage.workflow_op:type_name -> aether.v1.WorkflowOperation
-	146, // 15: aether.v1.UpstreamMessage.workflow_response:type_name -> aether.v1.WorkflowResponse
-	137, // 16: aether.v1.UpstreamMessage.token_op:type_name -> aether.v1.TokenOperation
-	148, // 17: aether.v1.UpstreamMessage.audit_query:type_name -> aether.v1.AuditQuery
-	118, // 18: aether.v1.UpstreamMessage.authority_grant_op:type_name -> aether.v1.AuthorityGrantOperation
-	153, // 19: aether.v1.UpstreamMessage.proxy_http_request:type_name -> aether.v1.ProxyHttpRequest
-	155, // 20: aether.v1.UpstreamMessage.proxy_http_body_chunk:type_name -> aether.v1.ProxyHttpBodyChunk
-	157, // 21: aether.v1.UpstreamMessage.tunnel_open:type_name -> aether.v1.TunnelOpen
-	158, // 22: aether.v1.UpstreamMessage.tunnel_data:type_name -> aether.v1.TunnelData
-	159, // 23: aether.v1.UpstreamMessage.tunnel_close:type_name -> aether.v1.TunnelClose
-	154, // 24: aether.v1.UpstreamMessage.proxy_http_response:type_name -> aether.v1.ProxyHttpResponse
-	160, // 25: aether.v1.UpstreamMessage.tunnel_ack:type_name -> aether.v1.TunnelAck
-	161, // 26: aether.v1.UpstreamMessage.resolve_authority_request:type_name -> aether.v1.ResolveAuthorityRequest
-	165, // 27: aether.v1.UpstreamMessage.connection_status_request:type_name -> aether.v1.ConnectionStatusRequest
-	151, // 28: aether.v1.UpstreamMessage.submit_audit_event:type_name -> aether.v1.SubmitAuditEventRequest
-	134, // 29: aether.v1.UpstreamMessage.authority_request_op:type_name -> aether.v1.AuthorityRequestOperation
-	167, // 30: aether.v1.UpstreamMessage.task_subscription_op:type_name -> aether.v1.TaskSubscriptionOperation
+	152, // 13: aether.v1.UpstreamMessage.progress:type_name -> aether.v1.ProgressReport
+	155, // 14: aether.v1.UpstreamMessage.workflow_op:type_name -> aether.v1.WorkflowOperation
+	156, // 15: aether.v1.UpstreamMessage.workflow_response:type_name -> aether.v1.WorkflowResponse
+	147, // 16: aether.v1.UpstreamMessage.token_op:type_name -> aether.v1.TokenOperation
+	158, // 17: aether.v1.UpstreamMessage.audit_query:type_name -> aether.v1.AuditQuery
+	128, // 18: aether.v1.UpstreamMessage.authority_grant_op:type_name -> aether.v1.AuthorityGrantOperation
+	163, // 19: aether.v1.UpstreamMessage.proxy_http_request:type_name -> aether.v1.ProxyHttpRequest
+	165, // 20: aether.v1.UpstreamMessage.proxy_http_body_chunk:type_name -> aether.v1.ProxyHttpBodyChunk
+	167, // 21: aether.v1.UpstreamMessage.tunnel_open:type_name -> aether.v1.TunnelOpen
+	168, // 22: aether.v1.UpstreamMessage.tunnel_data:type_name -> aether.v1.TunnelData
+	169, // 23: aether.v1.UpstreamMessage.tunnel_close:type_name -> aether.v1.TunnelClose
+	164, // 24: aether.v1.UpstreamMessage.proxy_http_response:type_name -> aether.v1.ProxyHttpResponse
+	170, // 25: aether.v1.UpstreamMessage.tunnel_ack:type_name -> aether.v1.TunnelAck
+	171, // 26: aether.v1.UpstreamMessage.resolve_authority_request:type_name -> aether.v1.ResolveAuthorityRequest
+	175, // 27: aether.v1.UpstreamMessage.connection_status_request:type_name -> aether.v1.ConnectionStatusRequest
+	161, // 28: aether.v1.UpstreamMessage.submit_audit_event:type_name -> aether.v1.SubmitAuditEventRequest
+	144, // 29: aether.v1.UpstreamMessage.authority_request_op:type_name -> aether.v1.AuthorityRequestOperation
+	177, // 30: aether.v1.UpstreamMessage.task_subscription_op:type_name -> aether.v1.TaskSubscriptionOperation
 	59,  // 31: aether.v1.DownstreamMessage.msg:type_name -> aether.v1.IncomingMessage
 	60,  // 32: aether.v1.DownstreamMessage.config:type_name -> aether.v1.ConfigSnapshot
 	61,  // 33: aether.v1.DownstreamMessage.signal:type_name -> aether.v1.Signal
@@ -19280,29 +20411,29 @@ var file_aether_proto_depIdxs = []int32{
 	87,  // 42: aether.v1.DownstreamMessage.task_op:type_name -> aether.v1.TaskOperationResponse
 	91,  // 43: aether.v1.DownstreamMessage.workspace:type_name -> aether.v1.WorkspaceResponse
 	102, // 44: aether.v1.DownstreamMessage.agent:type_name -> aether.v1.AgentResponse
-	117, // 45: aether.v1.DownstreamMessage.acl:type_name -> aether.v1.ACLResponse
-	144, // 46: aether.v1.DownstreamMessage.progress_update:type_name -> aether.v1.ProgressUpdate
-	146, // 47: aether.v1.DownstreamMessage.workflow_response:type_name -> aether.v1.WorkflowResponse
-	145, // 48: aether.v1.DownstreamMessage.workflow_op:type_name -> aether.v1.WorkflowOperation
-	141, // 49: aether.v1.DownstreamMessage.token:type_name -> aether.v1.TokenResponse
-	149, // 50: aether.v1.DownstreamMessage.audit_response:type_name -> aether.v1.AuditQueryResponse
-	121, // 51: aether.v1.DownstreamMessage.authority_grant:type_name -> aether.v1.AuthorityGrantResponse
+	127, // 45: aether.v1.DownstreamMessage.acl:type_name -> aether.v1.ACLResponse
+	154, // 46: aether.v1.DownstreamMessage.progress_update:type_name -> aether.v1.ProgressUpdate
+	156, // 47: aether.v1.DownstreamMessage.workflow_response:type_name -> aether.v1.WorkflowResponse
+	155, // 48: aether.v1.DownstreamMessage.workflow_op:type_name -> aether.v1.WorkflowOperation
+	151, // 49: aether.v1.DownstreamMessage.token:type_name -> aether.v1.TokenResponse
+	159, // 50: aether.v1.DownstreamMessage.audit_response:type_name -> aether.v1.AuditQueryResponse
+	131, // 51: aether.v1.DownstreamMessage.authority_grant:type_name -> aether.v1.AuthorityGrantResponse
 	66,  // 52: aether.v1.DownstreamMessage.create_task:type_name -> aether.v1.CreateTaskResponse
-	154, // 53: aether.v1.DownstreamMessage.proxy_http_response:type_name -> aether.v1.ProxyHttpResponse
-	155, // 54: aether.v1.DownstreamMessage.proxy_http_body_chunk:type_name -> aether.v1.ProxyHttpBodyChunk
-	160, // 55: aether.v1.DownstreamMessage.tunnel_ack:type_name -> aether.v1.TunnelAck
-	159, // 56: aether.v1.DownstreamMessage.tunnel_close:type_name -> aether.v1.TunnelClose
-	158, // 57: aether.v1.DownstreamMessage.tunnel_data:type_name -> aether.v1.TunnelData
-	153, // 58: aether.v1.DownstreamMessage.proxy_http_request:type_name -> aether.v1.ProxyHttpRequest
-	162, // 59: aether.v1.DownstreamMessage.resolve_authority_response:type_name -> aether.v1.ResolveAuthorityResponse
-	166, // 60: aether.v1.DownstreamMessage.connection_status_response:type_name -> aether.v1.ConnectionStatusResponse
-	127, // 61: aether.v1.DownstreamMessage.authority_grant_revocation:type_name -> aether.v1.AuthorityGrantRevocation
-	152, // 62: aether.v1.DownstreamMessage.submit_audit_event_response:type_name -> aether.v1.SubmitAuditEventResponse
-	135, // 63: aether.v1.DownstreamMessage.authority_request_response:type_name -> aether.v1.AuthorityRequestOperationResponse
-	136, // 64: aether.v1.DownstreamMessage.authority_request_event:type_name -> aether.v1.AuthorityRequestEvent
+	164, // 53: aether.v1.DownstreamMessage.proxy_http_response:type_name -> aether.v1.ProxyHttpResponse
+	165, // 54: aether.v1.DownstreamMessage.proxy_http_body_chunk:type_name -> aether.v1.ProxyHttpBodyChunk
+	170, // 55: aether.v1.DownstreamMessage.tunnel_ack:type_name -> aether.v1.TunnelAck
+	169, // 56: aether.v1.DownstreamMessage.tunnel_close:type_name -> aether.v1.TunnelClose
+	168, // 57: aether.v1.DownstreamMessage.tunnel_data:type_name -> aether.v1.TunnelData
+	163, // 58: aether.v1.DownstreamMessage.proxy_http_request:type_name -> aether.v1.ProxyHttpRequest
+	172, // 59: aether.v1.DownstreamMessage.resolve_authority_response:type_name -> aether.v1.ResolveAuthorityResponse
+	176, // 60: aether.v1.DownstreamMessage.connection_status_response:type_name -> aether.v1.ConnectionStatusResponse
+	137, // 61: aether.v1.DownstreamMessage.authority_grant_revocation:type_name -> aether.v1.AuthorityGrantRevocation
+	162, // 62: aether.v1.DownstreamMessage.submit_audit_event_response:type_name -> aether.v1.SubmitAuditEventResponse
+	145, // 63: aether.v1.DownstreamMessage.authority_request_response:type_name -> aether.v1.AuthorityRequestOperationResponse
+	146, // 64: aether.v1.DownstreamMessage.authority_request_event:type_name -> aether.v1.AuthorityRequestEvent
 	36,  // 65: aether.v1.DownstreamMessage.task_hibernated:type_name -> aether.v1.TaskHibernated
-	168, // 66: aether.v1.DownstreamMessage.task_subscription_response:type_name -> aether.v1.TaskSubscriptionOperationResponse
-	169, // 67: aether.v1.DownstreamMessage.task_event:type_name -> aether.v1.TaskEvent
+	178, // 66: aether.v1.DownstreamMessage.task_subscription_response:type_name -> aether.v1.TaskSubscriptionOperationResponse
+	179, // 67: aether.v1.DownstreamMessage.task_event:type_name -> aether.v1.TaskEvent
 	86,  // 68: aether.v1.TaskHibernated.descriptor:type_name -> aether.v1.HibernationDescriptor
 	41,  // 69: aether.v1.ConnectionAck.negotiated_extensions:type_name -> aether.v1.NegotiatedExtension
 	39,  // 70: aether.v1.ConnectionAck.server_build_info:type_name -> aether.v1.BuildInfo
@@ -19314,7 +20445,7 @@ var file_aether_proto_depIdxs = []int32{
 	43,  // 76: aether.v1.InitConnection.metrics_bridge:type_name -> aether.v1.MetricsBridgeIdentity
 	45,  // 77: aether.v1.InitConnection.bridge:type_name -> aether.v1.BridgeIdentity
 	46,  // 78: aether.v1.InitConnection.service:type_name -> aether.v1.ServiceIdentity
-	174, // 79: aether.v1.InitConnection.credentials:type_name -> aether.v1.InitConnection.CredentialsEntry
+	184, // 79: aether.v1.InitConnection.credentials:type_name -> aether.v1.InitConnection.CredentialsEntry
 	40,  // 80: aether.v1.InitConnection.extensions:type_name -> aether.v1.ExtensionDeclaration
 	39,  // 81: aether.v1.InitConnection.client_build_info:type_name -> aether.v1.BuildInfo
 	50,  // 82: aether.v1.AuthorizationContext.subject:type_name -> aether.v1.PrincipalRef
@@ -19323,30 +20454,30 @@ var file_aether_proto_depIdxs = []int32{
 	0,   // 85: aether.v1.SendMessage.message_type:type_name -> aether.v1.MessageType
 	51,  // 86: aether.v1.SendMessage.authorization:type_name -> aether.v1.AuthorizationContext
 	55,  // 87: aether.v1.Metric.entries:type_name -> aether.v1.MetricEntry
-	175, // 88: aether.v1.Metric.metadata:type_name -> aether.v1.Metric.MetadataEntry
+	185, // 88: aether.v1.Metric.metadata:type_name -> aether.v1.Metric.MetadataEntry
 	13,  // 89: aether.v1.KVOperation.op:type_name -> aether.v1.KVOperation.OpType
 	14,  // 90: aether.v1.KVOperation.scope:type_name -> aether.v1.KVOperation.Scope
 	51,  // 91: aether.v1.KVOperation.authorization:type_name -> aether.v1.AuthorizationContext
-	176, // 92: aether.v1.KVResponse.kv_map:type_name -> aether.v1.KVResponse.KvMapEntry
+	186, // 92: aether.v1.KVResponse.kv_map:type_name -> aether.v1.KVResponse.KvMapEntry
 	0,   // 93: aether.v1.IncomingMessage.message_type:type_name -> aether.v1.MessageType
-	177, // 94: aether.v1.ConfigSnapshot.kv:type_name -> aether.v1.ConfigSnapshot.KvEntry
-	178, // 95: aether.v1.ConfigSnapshot.global_kv:type_name -> aether.v1.ConfigSnapshot.GlobalKvEntry
-	179, // 96: aether.v1.ConfigSnapshot.task_context:type_name -> aether.v1.ConfigSnapshot.TaskContextEntry
-	180, // 97: aether.v1.ConfigSnapshot.workspace_exclusive_kv:type_name -> aether.v1.ConfigSnapshot.WorkspaceExclusiveKvEntry
-	181, // 98: aether.v1.ConfigSnapshot.global_exclusive_kv:type_name -> aether.v1.ConfigSnapshot.GlobalExclusiveKvEntry
+	187, // 94: aether.v1.ConfigSnapshot.kv:type_name -> aether.v1.ConfigSnapshot.KvEntry
+	188, // 95: aether.v1.ConfigSnapshot.global_kv:type_name -> aether.v1.ConfigSnapshot.GlobalKvEntry
+	189, // 96: aether.v1.ConfigSnapshot.task_context:type_name -> aether.v1.ConfigSnapshot.TaskContextEntry
+	190, // 97: aether.v1.ConfigSnapshot.workspace_exclusive_kv:type_name -> aether.v1.ConfigSnapshot.WorkspaceExclusiveKvEntry
+	191, // 98: aether.v1.ConfigSnapshot.global_exclusive_kv:type_name -> aether.v1.ConfigSnapshot.GlobalExclusiveKvEntry
 	15,  // 99: aether.v1.Signal.type:type_name -> aether.v1.Signal.SignalType
 	9,   // 100: aether.v1.RetryPolicy.backoff:type_name -> aether.v1.BackoffStrategy
 	2,   // 101: aether.v1.TaskCompletionEvent.on_statuses:type_name -> aether.v1.TaskStatus
 	6,   // 102: aether.v1.CreateTaskRequest.assignment_mode:type_name -> aether.v1.TaskAssignmentMode
-	182, // 103: aether.v1.CreateTaskRequest.launch_param_overrides:type_name -> aether.v1.CreateTaskRequest.LaunchParamOverridesEntry
-	183, // 104: aether.v1.CreateTaskRequest.metadata:type_name -> aether.v1.CreateTaskRequest.MetadataEntry
+	192, // 103: aether.v1.CreateTaskRequest.launch_param_overrides:type_name -> aether.v1.CreateTaskRequest.LaunchParamOverridesEntry
+	193, // 104: aether.v1.CreateTaskRequest.metadata:type_name -> aether.v1.CreateTaskRequest.MetadataEntry
 	51,  // 105: aether.v1.CreateTaskRequest.authorization:type_name -> aether.v1.AuthorizationContext
 	7,   // 106: aether.v1.CreateTaskRequest.task_class:type_name -> aether.v1.TaskClass
 	63,  // 107: aether.v1.CreateTaskRequest.retry_policy:type_name -> aether.v1.RetryPolicy
 	8,   // 108: aether.v1.CreateTaskRequest.priority:type_name -> aether.v1.TaskPriority
 	64,  // 109: aether.v1.CreateTaskRequest.completion_event:type_name -> aether.v1.TaskCompletionEvent
-	184, // 110: aether.v1.TaskAssignment.metadata:type_name -> aether.v1.TaskAssignment.MetadataEntry
-	185, // 111: aether.v1.TaskAssignment.launch_params:type_name -> aether.v1.TaskAssignment.LaunchParamsEntry
+	194, // 110: aether.v1.TaskAssignment.metadata:type_name -> aether.v1.TaskAssignment.MetadataEntry
+	195, // 111: aether.v1.TaskAssignment.launch_params:type_name -> aether.v1.TaskAssignment.LaunchParamsEntry
 	7,   // 112: aether.v1.TaskAssignment.task_class:type_name -> aether.v1.TaskClass
 	16,  // 113: aether.v1.CheckpointOperation.op:type_name -> aether.v1.CheckpointOperation.OpType
 	17,  // 114: aether.v1.AdminQuery.op:type_name -> aether.v1.AdminQuery.OpType
@@ -19359,7 +20490,7 @@ var file_aether_proto_depIdxs = []int32{
 	72,  // 121: aether.v1.AdminResponse.connection:type_name -> aether.v1.ConnectionInfo
 	72,  // 122: aether.v1.AdminResponse.connections:type_name -> aether.v1.ConnectionInfo
 	3,   // 123: aether.v1.HealthInfo.status:type_name -> aether.v1.HealthStatus
-	186, // 124: aether.v1.HealthInfo.checks:type_name -> aether.v1.HealthInfo.ChecksEntry
+	196, // 124: aether.v1.HealthInfo.checks:type_name -> aether.v1.HealthInfo.ChecksEntry
 	77,  // 125: aether.v1.HealthInfo.stats:type_name -> aether.v1.GatewayStats
 	4,   // 126: aether.v1.HealthCheck.status:type_name -> aether.v1.HealthCheckStatus
 	18,  // 127: aether.v1.SessionOperation.op:type_name -> aether.v1.SessionOperation.OpType
@@ -19378,7 +20509,7 @@ var file_aether_proto_depIdxs = []int32{
 	8,   // 140: aether.v1.TaskFilter.priority:type_name -> aether.v1.TaskPriority
 	8,   // 141: aether.v1.TaskFilter.min_priority:type_name -> aether.v1.TaskPriority
 	2,   // 142: aether.v1.TaskInfo.status:type_name -> aether.v1.TaskStatus
-	187, // 143: aether.v1.TaskInfo.metadata:type_name -> aether.v1.TaskInfo.MetadataEntry
+	197, // 143: aether.v1.TaskInfo.metadata:type_name -> aether.v1.TaskInfo.MetadataEntry
 	7,   // 144: aether.v1.TaskInfo.task_class:type_name -> aether.v1.TaskClass
 	85,  // 145: aether.v1.TaskInfo.wait_spec:type_name -> aether.v1.WaitSpec
 	8,   // 146: aether.v1.TaskInfo.priority:type_name -> aether.v1.TaskPriority
@@ -19388,13 +20519,13 @@ var file_aether_proto_depIdxs = []int32{
 	20,  // 150: aether.v1.TaskOperation.op:type_name -> aether.v1.TaskOperation.OpType
 	85,  // 151: aether.v1.TaskOperation.wait_spec:type_name -> aether.v1.WaitSpec
 	10,  // 152: aether.v1.WaitSpec.reason:type_name -> aether.v1.WaitReason
-	188, // 153: aether.v1.WaitSpec.input_match:type_name -> aether.v1.WaitSpec.InputMatchEntry
+	198, // 153: aether.v1.WaitSpec.input_match:type_name -> aether.v1.WaitSpec.InputMatchEntry
 	86,  // 154: aether.v1.WaitSpec.hibernation:type_name -> aether.v1.HibernationDescriptor
 	82,  // 155: aether.v1.TaskOperationResponse.task:type_name -> aether.v1.TaskInfo
 	21,  // 156: aether.v1.WorkspaceOperation.op:type_name -> aether.v1.WorkspaceOperation.OpType
 	89,  // 157: aether.v1.WorkspaceOperation.filter:type_name -> aether.v1.WorkspaceFilter
 	90,  // 158: aether.v1.WorkspaceOperation.workspace:type_name -> aether.v1.WorkspaceInfo
-	189, // 159: aether.v1.WorkspaceInfo.metadata:type_name -> aether.v1.WorkspaceInfo.MetadataEntry
+	199, // 159: aether.v1.WorkspaceInfo.metadata:type_name -> aether.v1.WorkspaceInfo.MetadataEntry
 	90,  // 160: aether.v1.WorkspaceResponse.workspace:type_name -> aether.v1.WorkspaceInfo
 	90,  // 161: aether.v1.WorkspaceResponse.workspaces:type_name -> aether.v1.WorkspaceInfo
 	92,  // 162: aether.v1.WorkspaceResponse.message_flow:type_name -> aether.v1.MessageFlowInfo
@@ -19405,10 +20536,10 @@ var file_aether_proto_depIdxs = []int32{
 	96,  // 167: aether.v1.AgentOperation.filter:type_name -> aether.v1.AgentFilter
 	97,  // 168: aether.v1.AgentOperation.agent:type_name -> aether.v1.AgentRegistrationInfo
 	99,  // 169: aether.v1.AgentOperation.launch_params:type_name -> aether.v1.AgentLaunchParams
-	190, // 170: aether.v1.AgentRegistrationInfo.launch_params:type_name -> aether.v1.AgentRegistrationInfo.LaunchParamsEntry
+	200, // 170: aether.v1.AgentRegistrationInfo.launch_params:type_name -> aether.v1.AgentRegistrationInfo.LaunchParamsEntry
 	98,  // 171: aether.v1.AgentRegistrationInfo.resource_schema:type_name -> aether.v1.AgentResourceSchemaEntry
-	191, // 172: aether.v1.AgentRegistrationInfo.capabilities:type_name -> aether.v1.AgentRegistrationInfo.CapabilitiesEntry
-	192, // 173: aether.v1.AgentLaunchParams.param_overrides:type_name -> aether.v1.AgentLaunchParams.ParamOverridesEntry
+	201, // 172: aether.v1.AgentRegistrationInfo.capabilities:type_name -> aether.v1.AgentRegistrationInfo.CapabilitiesEntry
+	202, // 173: aether.v1.AgentLaunchParams.param_overrides:type_name -> aether.v1.AgentLaunchParams.ParamOverridesEntry
 	97,  // 174: aether.v1.AgentResponse.agent:type_name -> aether.v1.AgentRegistrationInfo
 	97,  // 175: aether.v1.AgentResponse.agents:type_name -> aether.v1.AgentRegistrationInfo
 	100, // 176: aether.v1.AgentResponse.orchestrators:type_name -> aether.v1.OrchestratorInfo
@@ -19418,125 +20549,142 @@ var file_aether_proto_depIdxs = []int32{
 	105, // 180: aether.v1.ACLOperation.audit_filter:type_name -> aether.v1.ACLAuditFilter
 	106, // 181: aether.v1.ACLOperation.grant_request:type_name -> aether.v1.ACLGrantRequest
 	107, // 182: aether.v1.ACLOperation.fallback_request:type_name -> aether.v1.ACLSetFallbackRequest
-	50,  // 183: aether.v1.ACLAuthorityGrantRequest.subject:type_name -> aether.v1.PrincipalRef
-	50,  // 184: aether.v1.ACLAuthorityGrantRequest.delegate:type_name -> aether.v1.PrincipalRef
-	50,  // 185: aether.v1.ACLAuthorityGrantRequest.issued_by:type_name -> aether.v1.PrincipalRef
-	50,  // 186: aether.v1.ACLAuthorityGrantRequest.root_subject:type_name -> aether.v1.PrincipalRef
-	109, // 187: aether.v1.ACLAuthorityGrantRequest.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
-	193, // 188: aether.v1.ACLAuthorityGrantRequest.metadata:type_name -> aether.v1.ACLAuthorityGrantRequest.MetadataEntry
-	194, // 189: aether.v1.ACLAuditEntryInfo.metadata:type_name -> aether.v1.ACLAuditEntryInfo.MetadataEntry
-	50,  // 190: aether.v1.ACLAuthorityGrantInfo.subject:type_name -> aether.v1.PrincipalRef
-	50,  // 191: aether.v1.ACLAuthorityGrantInfo.delegate:type_name -> aether.v1.PrincipalRef
-	50,  // 192: aether.v1.ACLAuthorityGrantInfo.issued_by:type_name -> aether.v1.PrincipalRef
-	50,  // 193: aether.v1.ACLAuthorityGrantInfo.root_subject:type_name -> aether.v1.PrincipalRef
-	109, // 194: aether.v1.ACLAuthorityGrantInfo.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
-	195, // 195: aether.v1.ACLAuthorityGrantInfo.metadata:type_name -> aether.v1.ACLAuthorityGrantInfo.MetadataEntry
-	112, // 196: aether.v1.ACLResponse.rule:type_name -> aether.v1.ACLRuleInfo
-	112, // 197: aether.v1.ACLResponse.rules:type_name -> aether.v1.ACLRuleInfo
-	113, // 198: aether.v1.ACLResponse.fallback_policy:type_name -> aether.v1.ACLFallbackPolicyInfo
-	114, // 199: aether.v1.ACLResponse.audit_entries:type_name -> aether.v1.ACLAuditEntryInfo
-	116, // 200: aether.v1.ACLResponse.cleanup_result:type_name -> aether.v1.ACLCleanupResult
-	115, // 201: aether.v1.ACLResponse.authority_grant:type_name -> aether.v1.ACLAuthorityGrantInfo
-	115, // 202: aether.v1.ACLResponse.authority_grants:type_name -> aether.v1.ACLAuthorityGrantInfo
-	24,  // 203: aether.v1.AuthorityGrantOperation.op:type_name -> aether.v1.AuthorityGrantOperation.OpType
-	119, // 204: aether.v1.AuthorityGrantOperation.exchange_request:type_name -> aether.v1.AuthorityGrantExchangeRequest
-	120, // 205: aether.v1.AuthorityGrantOperation.derive_request:type_name -> aether.v1.AuthorityGrantDeriveRequest
-	111, // 206: aether.v1.AuthorityGrantOperation.renew_request:type_name -> aether.v1.ACLRenewAuthorityGrantRequest
-	122, // 207: aether.v1.AuthorityGrantOperation.list_request:type_name -> aether.v1.AuthorityGrantListRequest
-	123, // 208: aether.v1.AuthorityGrantOperation.batch_exchange_request:type_name -> aether.v1.AuthorityGrantBatchExchangeRequest
-	124, // 209: aether.v1.AuthorityGrantOperation.derive_for_target_request:type_name -> aether.v1.AuthorityGrantDeriveForTargetRequest
-	109, // 210: aether.v1.AuthorityGrantExchangeRequest.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
-	196, // 211: aether.v1.AuthorityGrantExchangeRequest.metadata:type_name -> aether.v1.AuthorityGrantExchangeRequest.MetadataEntry
-	50,  // 212: aether.v1.AuthorityGrantDeriveRequest.delegate:type_name -> aether.v1.PrincipalRef
-	109, // 213: aether.v1.AuthorityGrantDeriveRequest.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
-	197, // 214: aether.v1.AuthorityGrantDeriveRequest.metadata:type_name -> aether.v1.AuthorityGrantDeriveRequest.MetadataEntry
-	115, // 215: aether.v1.AuthorityGrantResponse.grant:type_name -> aether.v1.ACLAuthorityGrantInfo
-	115, // 216: aether.v1.AuthorityGrantResponse.grants:type_name -> aether.v1.ACLAuthorityGrantInfo
-	119, // 217: aether.v1.AuthorityGrantBatchExchangeRequest.requests:type_name -> aether.v1.AuthorityGrantExchangeRequest
-	50,  // 218: aether.v1.AuthorityGrantDeriveForTargetRequest.target:type_name -> aether.v1.PrincipalRef
-	50,  // 219: aether.v1.AuthorityIdentity.subject:type_name -> aether.v1.PrincipalRef
-	50,  // 220: aether.v1.AuthorityIdentity.root_subject:type_name -> aether.v1.PrincipalRef
-	50,  // 221: aether.v1.AuthorityIdentity.delegate:type_name -> aether.v1.PrincipalRef
-	50,  // 222: aether.v1.AuthorityIdentity.issued_by:type_name -> aether.v1.PrincipalRef
-	50,  // 223: aether.v1.AuthorityRequestRoutingTarget.principal:type_name -> aether.v1.PrincipalRef
-	11,  // 224: aether.v1.AuthorityRequest.status:type_name -> aether.v1.AuthorityRequestStatus
-	50,  // 225: aether.v1.AuthorityRequest.requesting_actor:type_name -> aether.v1.PrincipalRef
-	50,  // 226: aether.v1.AuthorityRequest.target_subject:type_name -> aether.v1.PrincipalRef
-	129, // 227: aether.v1.AuthorityRequest.desired_resource_scope:type_name -> aether.v1.AuthorityRequestResourceScopeEntry
-	5,   // 228: aether.v1.AuthorityRequest.requested_access_level:type_name -> aether.v1.AccessLevel
-	128, // 229: aether.v1.AuthorityRequest.routing_target:type_name -> aether.v1.AuthorityRequestRoutingTarget
-	198, // 230: aether.v1.AuthorityRequest.metadata:type_name -> aether.v1.AuthorityRequest.MetadataEntry
-	50,  // 231: aether.v1.AuthorityRequest.resolved_by:type_name -> aether.v1.PrincipalRef
-	50,  // 232: aether.v1.CreateAuthorityRequestPayload.requesting_actor:type_name -> aether.v1.PrincipalRef
-	50,  // 233: aether.v1.CreateAuthorityRequestPayload.target_subject:type_name -> aether.v1.PrincipalRef
-	129, // 234: aether.v1.CreateAuthorityRequestPayload.desired_resource_scope:type_name -> aether.v1.AuthorityRequestResourceScopeEntry
-	5,   // 235: aether.v1.CreateAuthorityRequestPayload.requested_access_level:type_name -> aether.v1.AccessLevel
-	128, // 236: aether.v1.CreateAuthorityRequestPayload.routing_target:type_name -> aether.v1.AuthorityRequestRoutingTarget
-	199, // 237: aether.v1.CreateAuthorityRequestPayload.metadata:type_name -> aether.v1.CreateAuthorityRequestPayload.MetadataEntry
-	25,  // 238: aether.v1.ResolveAuthorityRequestPayload.decision:type_name -> aether.v1.ResolveAuthorityRequestPayload.Decision
-	129, // 239: aether.v1.ResolveAuthorityRequestPayload.granted_resource_scope:type_name -> aether.v1.AuthorityRequestResourceScopeEntry
-	5,   // 240: aether.v1.ResolveAuthorityRequestPayload.granted_access_level:type_name -> aether.v1.AccessLevel
-	11,  // 241: aether.v1.AuthorityRequestListFilter.status:type_name -> aether.v1.AuthorityRequestStatus
-	26,  // 242: aether.v1.AuthorityRequestOperation.op:type_name -> aether.v1.AuthorityRequestOperation.OpType
-	131, // 243: aether.v1.AuthorityRequestOperation.create:type_name -> aether.v1.CreateAuthorityRequestPayload
-	132, // 244: aether.v1.AuthorityRequestOperation.resolve:type_name -> aether.v1.ResolveAuthorityRequestPayload
-	133, // 245: aether.v1.AuthorityRequestOperation.list_filter:type_name -> aether.v1.AuthorityRequestListFilter
-	130, // 246: aether.v1.AuthorityRequestOperationResponse.request:type_name -> aether.v1.AuthorityRequest
-	130, // 247: aether.v1.AuthorityRequestOperationResponse.requests:type_name -> aether.v1.AuthorityRequest
-	27,  // 248: aether.v1.AuthorityRequestEvent.event_type:type_name -> aether.v1.AuthorityRequestEvent.EventType
-	130, // 249: aether.v1.AuthorityRequestEvent.request:type_name -> aether.v1.AuthorityRequest
-	28,  // 250: aether.v1.TokenOperation.op:type_name -> aether.v1.TokenOperation.OpType
-	138, // 251: aether.v1.TokenOperation.create_request:type_name -> aether.v1.TokenCreateRequest
-	139, // 252: aether.v1.TokenOperation.filter:type_name -> aether.v1.TokenFilter
-	140, // 253: aether.v1.TokenResponse.token:type_name -> aether.v1.TokenInfo
-	140, // 254: aether.v1.TokenResponse.tokens:type_name -> aether.v1.TokenInfo
-	140, // 255: aether.v1.TokenResponse.created_token:type_name -> aether.v1.TokenInfo
-	143, // 256: aether.v1.ProgressReport.step:type_name -> aether.v1.ProgressStep
-	200, // 257: aether.v1.ProgressReport.metadata:type_name -> aether.v1.ProgressReport.MetadataEntry
-	12,  // 258: aether.v1.ProgressReport.kind:type_name -> aether.v1.ProgressKind
-	143, // 259: aether.v1.ProgressUpdate.step:type_name -> aether.v1.ProgressStep
-	201, // 260: aether.v1.ProgressUpdate.metadata:type_name -> aether.v1.ProgressUpdate.MetadataEntry
-	12,  // 261: aether.v1.ProgressUpdate.kind:type_name -> aether.v1.ProgressKind
-	29,  // 262: aether.v1.WorkflowOperation.op:type_name -> aether.v1.WorkflowOperation.OpType
-	0,   // 263: aether.v1.MessageEnvelope.message_type:type_name -> aether.v1.MessageType
-	202, // 264: aether.v1.MessageEnvelope.metadata:type_name -> aether.v1.MessageEnvelope.MetadataEntry
-	51,  // 265: aether.v1.AuditQuery.authorization:type_name -> aether.v1.AuthorizationContext
-	150, // 266: aether.v1.AuditQueryResponse.entries:type_name -> aether.v1.AuditEntry
-	203, // 267: aether.v1.SubmitAuditEventRequest.metadata:type_name -> aether.v1.SubmitAuditEventRequest.MetadataEntry
-	204, // 268: aether.v1.ProxyHttpRequest.headers:type_name -> aether.v1.ProxyHttpRequest.HeadersEntry
-	51,  // 269: aether.v1.ProxyHttpRequest.authorization:type_name -> aether.v1.AuthorizationContext
-	205, // 270: aether.v1.ProxyHttpResponse.headers:type_name -> aether.v1.ProxyHttpResponse.HeadersEntry
-	156, // 271: aether.v1.ProxyHttpResponse.error:type_name -> aether.v1.ProxyError
-	30,  // 272: aether.v1.ProxyError.kind:type_name -> aether.v1.ProxyError.Kind
-	31,  // 273: aether.v1.TunnelOpen.protocol:type_name -> aether.v1.TunnelOpen.Protocol
-	206, // 274: aether.v1.TunnelOpen.metadata:type_name -> aether.v1.TunnelOpen.MetadataEntry
-	51,  // 275: aether.v1.TunnelOpen.authorization:type_name -> aether.v1.AuthorizationContext
-	32,  // 276: aether.v1.TunnelClose.reason:type_name -> aether.v1.TunnelClose.Reason
-	50,  // 277: aether.v1.ResolveAuthorityRequest.actor:type_name -> aether.v1.PrincipalRef
-	50,  // 278: aether.v1.ResolveAuthorityRequest.subject:type_name -> aether.v1.PrincipalRef
-	163, // 279: aether.v1.ResolveAuthorityResponse.authority:type_name -> aether.v1.ResolvedAuthority
-	50,  // 280: aether.v1.ResolvedAuthority.actor:type_name -> aether.v1.PrincipalRef
-	50,  // 281: aether.v1.ResolvedAuthority.subject:type_name -> aether.v1.PrincipalRef
-	164, // 282: aether.v1.ResolvedAuthority.grant:type_name -> aether.v1.AuthorityGrantInfo
-	50,  // 283: aether.v1.ConnectionStatusRequest.principal:type_name -> aether.v1.PrincipalRef
-	33,  // 284: aether.v1.TaskSubscriptionOperation.op:type_name -> aether.v1.TaskSubscriptionOperation.OpType
-	170, // 285: aether.v1.TaskEvent.status_changed:type_name -> aether.v1.TaskStatusChangedEvent
-	171, // 286: aether.v1.TaskEvent.progress:type_name -> aether.v1.TaskProgressEvent
-	172, // 287: aether.v1.TaskEvent.child_lifecycle:type_name -> aether.v1.TaskChildLifecycleEvent
-	173, // 288: aether.v1.TaskEvent.authority_request:type_name -> aether.v1.TaskAuthorityRequestEventRelay
-	2,   // 289: aether.v1.TaskStatusChangedEvent.from_status:type_name -> aether.v1.TaskStatus
-	2,   // 290: aether.v1.TaskStatusChangedEvent.to_status:type_name -> aether.v1.TaskStatus
-	207, // 291: aether.v1.TaskProgressEvent.metadata:type_name -> aether.v1.TaskProgressEvent.MetadataEntry
-	2,   // 292: aether.v1.TaskChildLifecycleEvent.child_status:type_name -> aether.v1.TaskStatus
-	136, // 293: aether.v1.TaskAuthorityRequestEventRelay.event:type_name -> aether.v1.AuthorityRequestEvent
-	75,  // 294: aether.v1.HealthInfo.ChecksEntry.value:type_name -> aether.v1.HealthCheck
-	34,  // 295: aether.v1.AetherGateway.Connect:input_type -> aether.v1.UpstreamMessage
-	35,  // 296: aether.v1.AetherGateway.Connect:output_type -> aether.v1.DownstreamMessage
-	296, // [296:297] is the sub-list for method output_type
-	295, // [295:296] is the sub-list for method input_type
-	295, // [295:295] is the sub-list for extension type_name
-	295, // [295:295] is the sub-list for extension extendee
-	0,   // [0:295] is the sub-list for field type_name
+	50,  // 183: aether.v1.ACLOperation.principal:type_name -> aether.v1.PrincipalRef
+	117, // 184: aether.v1.ACLOperation.group_request:type_name -> aether.v1.ACLGroupRequest
+	118, // 185: aether.v1.ACLOperation.role_request:type_name -> aether.v1.ACLRoleRequest
+	119, // 186: aether.v1.ACLOperation.member_request:type_name -> aether.v1.ACLGroupMemberRequest
+	120, // 187: aether.v1.ACLOperation.assignment_request:type_name -> aether.v1.ACLRoleAssignmentRequest
+	50,  // 188: aether.v1.ACLAuthorityGrantRequest.subject:type_name -> aether.v1.PrincipalRef
+	50,  // 189: aether.v1.ACLAuthorityGrantRequest.delegate:type_name -> aether.v1.PrincipalRef
+	50,  // 190: aether.v1.ACLAuthorityGrantRequest.issued_by:type_name -> aether.v1.PrincipalRef
+	50,  // 191: aether.v1.ACLAuthorityGrantRequest.root_subject:type_name -> aether.v1.PrincipalRef
+	109, // 192: aether.v1.ACLAuthorityGrantRequest.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
+	203, // 193: aether.v1.ACLAuthorityGrantRequest.metadata:type_name -> aether.v1.ACLAuthorityGrantRequest.MetadataEntry
+	204, // 194: aether.v1.ACLAuditEntryInfo.metadata:type_name -> aether.v1.ACLAuditEntryInfo.MetadataEntry
+	50,  // 195: aether.v1.ACLAuthorityGrantInfo.subject:type_name -> aether.v1.PrincipalRef
+	50,  // 196: aether.v1.ACLAuthorityGrantInfo.delegate:type_name -> aether.v1.PrincipalRef
+	50,  // 197: aether.v1.ACLAuthorityGrantInfo.issued_by:type_name -> aether.v1.PrincipalRef
+	50,  // 198: aether.v1.ACLAuthorityGrantInfo.root_subject:type_name -> aether.v1.PrincipalRef
+	109, // 199: aether.v1.ACLAuthorityGrantInfo.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
+	205, // 200: aether.v1.ACLAuthorityGrantInfo.metadata:type_name -> aether.v1.ACLAuthorityGrantInfo.MetadataEntry
+	206, // 201: aether.v1.ACLGroupRequest.metadata:type_name -> aether.v1.ACLGroupRequest.MetadataEntry
+	207, // 202: aether.v1.ACLRoleRequest.metadata:type_name -> aether.v1.ACLRoleRequest.MetadataEntry
+	208, // 203: aether.v1.ACLGroupInfo.metadata:type_name -> aether.v1.ACLGroupInfo.MetadataEntry
+	209, // 204: aether.v1.ACLRoleInfo.metadata:type_name -> aether.v1.ACLRoleInfo.MetadataEntry
+	125, // 205: aether.v1.ACLAccessExplanationInfo.contributions:type_name -> aether.v1.ACLAccessContributionInfo
+	112, // 206: aether.v1.ACLResponse.rule:type_name -> aether.v1.ACLRuleInfo
+	112, // 207: aether.v1.ACLResponse.rules:type_name -> aether.v1.ACLRuleInfo
+	113, // 208: aether.v1.ACLResponse.fallback_policy:type_name -> aether.v1.ACLFallbackPolicyInfo
+	114, // 209: aether.v1.ACLResponse.audit_entries:type_name -> aether.v1.ACLAuditEntryInfo
+	116, // 210: aether.v1.ACLResponse.cleanup_result:type_name -> aether.v1.ACLCleanupResult
+	115, // 211: aether.v1.ACLResponse.authority_grant:type_name -> aether.v1.ACLAuthorityGrantInfo
+	115, // 212: aether.v1.ACLResponse.authority_grants:type_name -> aether.v1.ACLAuthorityGrantInfo
+	121, // 213: aether.v1.ACLResponse.group:type_name -> aether.v1.ACLGroupInfo
+	121, // 214: aether.v1.ACLResponse.groups:type_name -> aether.v1.ACLGroupInfo
+	122, // 215: aether.v1.ACLResponse.role:type_name -> aether.v1.ACLRoleInfo
+	122, // 216: aether.v1.ACLResponse.roles:type_name -> aether.v1.ACLRoleInfo
+	123, // 217: aether.v1.ACLResponse.group_members:type_name -> aether.v1.ACLGroupMemberInfo
+	124, // 218: aether.v1.ACLResponse.role_assignments:type_name -> aether.v1.ACLRoleAssignmentInfo
+	126, // 219: aether.v1.ACLResponse.explanation:type_name -> aether.v1.ACLAccessExplanationInfo
+	24,  // 220: aether.v1.AuthorityGrantOperation.op:type_name -> aether.v1.AuthorityGrantOperation.OpType
+	129, // 221: aether.v1.AuthorityGrantOperation.exchange_request:type_name -> aether.v1.AuthorityGrantExchangeRequest
+	130, // 222: aether.v1.AuthorityGrantOperation.derive_request:type_name -> aether.v1.AuthorityGrantDeriveRequest
+	111, // 223: aether.v1.AuthorityGrantOperation.renew_request:type_name -> aether.v1.ACLRenewAuthorityGrantRequest
+	132, // 224: aether.v1.AuthorityGrantOperation.list_request:type_name -> aether.v1.AuthorityGrantListRequest
+	133, // 225: aether.v1.AuthorityGrantOperation.batch_exchange_request:type_name -> aether.v1.AuthorityGrantBatchExchangeRequest
+	134, // 226: aether.v1.AuthorityGrantOperation.derive_for_target_request:type_name -> aether.v1.AuthorityGrantDeriveForTargetRequest
+	109, // 227: aether.v1.AuthorityGrantExchangeRequest.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
+	210, // 228: aether.v1.AuthorityGrantExchangeRequest.metadata:type_name -> aether.v1.AuthorityGrantExchangeRequest.MetadataEntry
+	50,  // 229: aether.v1.AuthorityGrantDeriveRequest.delegate:type_name -> aether.v1.PrincipalRef
+	109, // 230: aether.v1.AuthorityGrantDeriveRequest.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
+	211, // 231: aether.v1.AuthorityGrantDeriveRequest.metadata:type_name -> aether.v1.AuthorityGrantDeriveRequest.MetadataEntry
+	115, // 232: aether.v1.AuthorityGrantResponse.grant:type_name -> aether.v1.ACLAuthorityGrantInfo
+	115, // 233: aether.v1.AuthorityGrantResponse.grants:type_name -> aether.v1.ACLAuthorityGrantInfo
+	129, // 234: aether.v1.AuthorityGrantBatchExchangeRequest.requests:type_name -> aether.v1.AuthorityGrantExchangeRequest
+	50,  // 235: aether.v1.AuthorityGrantDeriveForTargetRequest.target:type_name -> aether.v1.PrincipalRef
+	50,  // 236: aether.v1.AuthorityIdentity.subject:type_name -> aether.v1.PrincipalRef
+	50,  // 237: aether.v1.AuthorityIdentity.root_subject:type_name -> aether.v1.PrincipalRef
+	50,  // 238: aether.v1.AuthorityIdentity.delegate:type_name -> aether.v1.PrincipalRef
+	50,  // 239: aether.v1.AuthorityIdentity.issued_by:type_name -> aether.v1.PrincipalRef
+	50,  // 240: aether.v1.AuthorityRequestRoutingTarget.principal:type_name -> aether.v1.PrincipalRef
+	11,  // 241: aether.v1.AuthorityRequest.status:type_name -> aether.v1.AuthorityRequestStatus
+	50,  // 242: aether.v1.AuthorityRequest.requesting_actor:type_name -> aether.v1.PrincipalRef
+	50,  // 243: aether.v1.AuthorityRequest.target_subject:type_name -> aether.v1.PrincipalRef
+	139, // 244: aether.v1.AuthorityRequest.desired_resource_scope:type_name -> aether.v1.AuthorityRequestResourceScopeEntry
+	5,   // 245: aether.v1.AuthorityRequest.requested_access_level:type_name -> aether.v1.AccessLevel
+	138, // 246: aether.v1.AuthorityRequest.routing_target:type_name -> aether.v1.AuthorityRequestRoutingTarget
+	212, // 247: aether.v1.AuthorityRequest.metadata:type_name -> aether.v1.AuthorityRequest.MetadataEntry
+	50,  // 248: aether.v1.AuthorityRequest.resolved_by:type_name -> aether.v1.PrincipalRef
+	50,  // 249: aether.v1.CreateAuthorityRequestPayload.requesting_actor:type_name -> aether.v1.PrincipalRef
+	50,  // 250: aether.v1.CreateAuthorityRequestPayload.target_subject:type_name -> aether.v1.PrincipalRef
+	139, // 251: aether.v1.CreateAuthorityRequestPayload.desired_resource_scope:type_name -> aether.v1.AuthorityRequestResourceScopeEntry
+	5,   // 252: aether.v1.CreateAuthorityRequestPayload.requested_access_level:type_name -> aether.v1.AccessLevel
+	138, // 253: aether.v1.CreateAuthorityRequestPayload.routing_target:type_name -> aether.v1.AuthorityRequestRoutingTarget
+	213, // 254: aether.v1.CreateAuthorityRequestPayload.metadata:type_name -> aether.v1.CreateAuthorityRequestPayload.MetadataEntry
+	25,  // 255: aether.v1.ResolveAuthorityRequestPayload.decision:type_name -> aether.v1.ResolveAuthorityRequestPayload.Decision
+	139, // 256: aether.v1.ResolveAuthorityRequestPayload.granted_resource_scope:type_name -> aether.v1.AuthorityRequestResourceScopeEntry
+	5,   // 257: aether.v1.ResolveAuthorityRequestPayload.granted_access_level:type_name -> aether.v1.AccessLevel
+	11,  // 258: aether.v1.AuthorityRequestListFilter.status:type_name -> aether.v1.AuthorityRequestStatus
+	26,  // 259: aether.v1.AuthorityRequestOperation.op:type_name -> aether.v1.AuthorityRequestOperation.OpType
+	141, // 260: aether.v1.AuthorityRequestOperation.create:type_name -> aether.v1.CreateAuthorityRequestPayload
+	142, // 261: aether.v1.AuthorityRequestOperation.resolve:type_name -> aether.v1.ResolveAuthorityRequestPayload
+	143, // 262: aether.v1.AuthorityRequestOperation.list_filter:type_name -> aether.v1.AuthorityRequestListFilter
+	140, // 263: aether.v1.AuthorityRequestOperationResponse.request:type_name -> aether.v1.AuthorityRequest
+	140, // 264: aether.v1.AuthorityRequestOperationResponse.requests:type_name -> aether.v1.AuthorityRequest
+	27,  // 265: aether.v1.AuthorityRequestEvent.event_type:type_name -> aether.v1.AuthorityRequestEvent.EventType
+	140, // 266: aether.v1.AuthorityRequestEvent.request:type_name -> aether.v1.AuthorityRequest
+	28,  // 267: aether.v1.TokenOperation.op:type_name -> aether.v1.TokenOperation.OpType
+	148, // 268: aether.v1.TokenOperation.create_request:type_name -> aether.v1.TokenCreateRequest
+	149, // 269: aether.v1.TokenOperation.filter:type_name -> aether.v1.TokenFilter
+	150, // 270: aether.v1.TokenResponse.token:type_name -> aether.v1.TokenInfo
+	150, // 271: aether.v1.TokenResponse.tokens:type_name -> aether.v1.TokenInfo
+	150, // 272: aether.v1.TokenResponse.created_token:type_name -> aether.v1.TokenInfo
+	153, // 273: aether.v1.ProgressReport.step:type_name -> aether.v1.ProgressStep
+	214, // 274: aether.v1.ProgressReport.metadata:type_name -> aether.v1.ProgressReport.MetadataEntry
+	12,  // 275: aether.v1.ProgressReport.kind:type_name -> aether.v1.ProgressKind
+	153, // 276: aether.v1.ProgressUpdate.step:type_name -> aether.v1.ProgressStep
+	215, // 277: aether.v1.ProgressUpdate.metadata:type_name -> aether.v1.ProgressUpdate.MetadataEntry
+	12,  // 278: aether.v1.ProgressUpdate.kind:type_name -> aether.v1.ProgressKind
+	29,  // 279: aether.v1.WorkflowOperation.op:type_name -> aether.v1.WorkflowOperation.OpType
+	0,   // 280: aether.v1.MessageEnvelope.message_type:type_name -> aether.v1.MessageType
+	216, // 281: aether.v1.MessageEnvelope.metadata:type_name -> aether.v1.MessageEnvelope.MetadataEntry
+	51,  // 282: aether.v1.AuditQuery.authorization:type_name -> aether.v1.AuthorizationContext
+	160, // 283: aether.v1.AuditQueryResponse.entries:type_name -> aether.v1.AuditEntry
+	217, // 284: aether.v1.SubmitAuditEventRequest.metadata:type_name -> aether.v1.SubmitAuditEventRequest.MetadataEntry
+	218, // 285: aether.v1.ProxyHttpRequest.headers:type_name -> aether.v1.ProxyHttpRequest.HeadersEntry
+	51,  // 286: aether.v1.ProxyHttpRequest.authorization:type_name -> aether.v1.AuthorizationContext
+	219, // 287: aether.v1.ProxyHttpResponse.headers:type_name -> aether.v1.ProxyHttpResponse.HeadersEntry
+	166, // 288: aether.v1.ProxyHttpResponse.error:type_name -> aether.v1.ProxyError
+	30,  // 289: aether.v1.ProxyError.kind:type_name -> aether.v1.ProxyError.Kind
+	31,  // 290: aether.v1.TunnelOpen.protocol:type_name -> aether.v1.TunnelOpen.Protocol
+	220, // 291: aether.v1.TunnelOpen.metadata:type_name -> aether.v1.TunnelOpen.MetadataEntry
+	51,  // 292: aether.v1.TunnelOpen.authorization:type_name -> aether.v1.AuthorizationContext
+	32,  // 293: aether.v1.TunnelClose.reason:type_name -> aether.v1.TunnelClose.Reason
+	50,  // 294: aether.v1.ResolveAuthorityRequest.actor:type_name -> aether.v1.PrincipalRef
+	50,  // 295: aether.v1.ResolveAuthorityRequest.subject:type_name -> aether.v1.PrincipalRef
+	173, // 296: aether.v1.ResolveAuthorityResponse.authority:type_name -> aether.v1.ResolvedAuthority
+	50,  // 297: aether.v1.ResolvedAuthority.actor:type_name -> aether.v1.PrincipalRef
+	50,  // 298: aether.v1.ResolvedAuthority.subject:type_name -> aether.v1.PrincipalRef
+	174, // 299: aether.v1.ResolvedAuthority.grant:type_name -> aether.v1.AuthorityGrantInfo
+	50,  // 300: aether.v1.ConnectionStatusRequest.principal:type_name -> aether.v1.PrincipalRef
+	33,  // 301: aether.v1.TaskSubscriptionOperation.op:type_name -> aether.v1.TaskSubscriptionOperation.OpType
+	180, // 302: aether.v1.TaskEvent.status_changed:type_name -> aether.v1.TaskStatusChangedEvent
+	181, // 303: aether.v1.TaskEvent.progress:type_name -> aether.v1.TaskProgressEvent
+	182, // 304: aether.v1.TaskEvent.child_lifecycle:type_name -> aether.v1.TaskChildLifecycleEvent
+	183, // 305: aether.v1.TaskEvent.authority_request:type_name -> aether.v1.TaskAuthorityRequestEventRelay
+	2,   // 306: aether.v1.TaskStatusChangedEvent.from_status:type_name -> aether.v1.TaskStatus
+	2,   // 307: aether.v1.TaskStatusChangedEvent.to_status:type_name -> aether.v1.TaskStatus
+	221, // 308: aether.v1.TaskProgressEvent.metadata:type_name -> aether.v1.TaskProgressEvent.MetadataEntry
+	2,   // 309: aether.v1.TaskChildLifecycleEvent.child_status:type_name -> aether.v1.TaskStatus
+	146, // 310: aether.v1.TaskAuthorityRequestEventRelay.event:type_name -> aether.v1.AuthorityRequestEvent
+	75,  // 311: aether.v1.HealthInfo.ChecksEntry.value:type_name -> aether.v1.HealthCheck
+	34,  // 312: aether.v1.AetherGateway.Connect:input_type -> aether.v1.UpstreamMessage
+	35,  // 313: aether.v1.AetherGateway.Connect:output_type -> aether.v1.DownstreamMessage
+	313, // [313:314] is the sub-list for method output_type
+	312, // [312:313] is the sub-list for method input_type
+	312, // [312:312] is the sub-list for extension type_name
+	312, // [312:312] is the sub-list for extension extendee
+	0,   // [0:312] is the sub-list for field type_name
 }
 
 func init() { file_aether_proto_init() }
@@ -19626,7 +20774,7 @@ func file_aether_proto_init() {
 		(*InitConnection_Bridge)(nil),
 		(*InitConnection_Service)(nil),
 	}
-	file_aether_proto_msgTypes[135].OneofWrappers = []any{
+	file_aether_proto_msgTypes[145].OneofWrappers = []any{
 		(*TaskEvent_StatusChanged)(nil),
 		(*TaskEvent_Progress)(nil),
 		(*TaskEvent_ChildLifecycle)(nil),
@@ -19638,7 +20786,7 @@ func file_aether_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_aether_proto_rawDesc), len(file_aether_proto_rawDesc)),
 			NumEnums:      34,
-			NumMessages:   174,
+			NumMessages:   188,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

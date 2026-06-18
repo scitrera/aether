@@ -54,6 +54,21 @@ const (
 	PrincipalTypeBridge         = "bridge"
 	PrincipalTypeService        = "service"
 	PrincipalTypeWildcard       = "wildcard"
+	// PrincipalTypeGroup and PrincipalTypeRole are synthetic subject types
+	// used for role/group authorization. They are never authenticated
+	// principals; they appear only as the target of Casbin grouping (g) edges
+	// and as the principal_type of acl_rules rows that grant permissions to a
+	// group or role. The "id" of a group/role subject is its (unique) name,
+	// so subjects read "group:<group_name>" / "role:<role_name>".
+	PrincipalTypeGroup = "group"
+	PrincipalTypeRole  = "role"
+)
+
+// Subject prefixes for the synthetic group/role subjects used in Casbin
+// grouping edges and acl_rules. Equal to "<type>:".
+const (
+	GroupSubjectPrefix = PrincipalTypeGroup + ":" // "group:"
+	RoleSubjectPrefix  = PrincipalTypeRole + ":"  // "role:"
 )
 
 // Reserved identifiers for ACL system

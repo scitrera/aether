@@ -219,6 +219,51 @@ func (m *mockStateProvider) CleanupExpiredACLRules(_ context.Context) (int64, er
 func (m *mockStateProvider) CleanupOldACLAuditLogs(_ context.Context, _ int) (int64, error) {
 	return m.cleanupAuditCount, m.cleanupAuditErr
 }
+func (m *mockStateProvider) ListACLGroups(_ context.Context) ([]*ACLGroupInfo, error) {
+	return nil, nil
+}
+func (m *mockStateProvider) CreateACLGroup(_ context.Context, _ *CreateACLGroupRequest) (*ACLGroupInfo, error) {
+	return nil, nil
+}
+func (m *mockStateProvider) GetACLGroup(_ context.Context, _ string) (*ACLGroupInfo, error) {
+	return nil, nil
+}
+func (m *mockStateProvider) DeleteACLGroup(_ context.Context, _ string) error { return nil }
+func (m *mockStateProvider) ListACLGroupMembers(_ context.Context, _ string) ([]*ACLGroupMemberInfo, error) {
+	return nil, nil
+}
+func (m *mockStateProvider) AddACLGroupMember(_ context.Context, _ string, _ *AddACLGroupMemberRequest) (*ACLGroupMemberInfo, error) {
+	return nil, nil
+}
+func (m *mockStateProvider) RemoveACLGroupMember(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (m *mockStateProvider) ListACLRoles(_ context.Context) ([]*ACLRoleInfo, error) {
+	return nil, nil
+}
+func (m *mockStateProvider) CreateACLRole(_ context.Context, _ *CreateACLRoleRequest) (*ACLRoleInfo, error) {
+	return nil, nil
+}
+func (m *mockStateProvider) GetACLRole(_ context.Context, _ string) (*ACLRoleInfo, error) {
+	return nil, nil
+}
+func (m *mockStateProvider) DeleteACLRole(_ context.Context, _ string) error { return nil }
+func (m *mockStateProvider) ListACLRoleAssignments(_ context.Context, _ string) ([]*ACLRoleAssignmentInfo, error) {
+	return nil, nil
+}
+func (m *mockStateProvider) AssignACLRole(_ context.Context, _ string, _ *AssignACLRoleRequest) (*ACLRoleAssignmentInfo, error) {
+	return nil, nil
+}
+func (m *mockStateProvider) UnassignACLRole(_ context.Context, _, _, _ string) error { return nil }
+func (m *mockStateProvider) ListACLPrincipalGroups(_ context.Context, _, _ string) ([]*ACLGroupMemberInfo, error) {
+	return nil, nil
+}
+func (m *mockStateProvider) ListACLPrincipalRoles(_ context.Context, _, _ string) ([]*ACLRoleAssignmentInfo, error) {
+	return nil, nil
+}
+func (m *mockStateProvider) ExplainACLAccess(_ context.Context, _, _, _, _ string, _ int, _, _ string) (*ACLAccessExplanationInfo, error) {
+	return nil, nil
+}
 func (m *mockStateProvider) GetMessageFlow(_ context.Context, _ string) (*MessageFlowInfo, error) {
 	return m.messageFlow, m.messageFlowErr
 }

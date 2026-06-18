@@ -1746,6 +1746,25 @@ message ACLOperation {
     // admin endpoints under /api/acl/authority-grants are unaffected.
     reserved 12, 13, 14, 15, 16;
     reserved "LIST_AUTHORITY_GRANTS", "GET_AUTHORITY_GRANT", "CREATE_AUTHORITY_GRANT", "RENEW_AUTHORITY_GRANT", "REVOKE_AUTHORITY_GRANT";
+    // Role/group authorization. REST equivalents under /api/acl/groups,
+    // /api/acl/roles, and /api/acl/principals/{type}/{id}/{groups,roles}.
+    CREATE_GROUP = 17;             // Create a group (group_request)
+    DELETE_GROUP = 18;             // Delete a group (name)
+    GET_GROUP = 19;                // Get a group (name)
+    LIST_GROUPS = 20;              // List all groups
+    ADD_GROUP_MEMBER = 21;         // Add a member to a group (name + member_request)
+    REMOVE_GROUP_MEMBER = 22;      // Remove a member from a group (name + principal)
+    LIST_GROUP_MEMBERS = 23;       // List members of a group (name)
+    CREATE_ROLE = 24;              // Create a role (role_request)
+    DELETE_ROLE = 25;              // Delete a role (name)
+    GET_ROLE = 26;                 // Get a role (name)
+    LIST_ROLES = 27;               // List all roles
+    ASSIGN_ROLE = 28;              // Assign a role (name + assignment_request)
+    UNASSIGN_ROLE = 29;            // Unassign a role (name + principal)
+    LIST_ROLE_ASSIGNMENTS = 30;    // List assignees of a role (name)
+    LIST_PRINCIPAL_GROUPS = 31;    // List groups a principal belongs to (principal)
+    LIST_PRINCIPAL_ROLES = 32;     // List roles assigned to a principal (principal)
+    EXPLAIN_ACCESS = 33;           // Explain effective access (principal + resource_type + resource_id [+ required_level])
   }
   OpType op = 1;
 
@@ -1784,6 +1803,23 @@ message ACLOperation {
 
   // Client-generated correlation ID for matching responses to requests
   string request_id = 19;
+
+  // Role/group fields.
+  // name: group/role name for GET/DELETE/LIST_*_MEMBERS/ASSIGNMENTS/ADD/ASSIGN.
+  string name = 20;
+  // principal: member/assignee for REMOVE_GROUP_MEMBER, UNASSIGN_ROLE, and
+  // the subject for LIST_PRINCIPAL_GROUPS / LIST_PRINCIPAL_ROLES.
+  PrincipalRef principal = 21;
+  ACLGroupRequest group_request = 22;             // CREATE_GROUP
+  ACLRoleRequest role_request = 23;               // CREATE_ROLE
+  ACLGroupMemberRequest member_request = 24;      // ADD_GROUP_MEMBER
+  ACLRoleAssignmentRequest assignment_request = 25; // ASSIGN_ROLE
+
+  // EXPLAIN_ACCESS: the resource to explain against (principal carries the
+  // subject; required_level is the threshold the decision is compared to).
+  string resource_type = 26;
+  string resource_id = 27;
+  int32 required_level = 28;
 }
 
 // ACLRuleFilter specifies filtering parameters for listing ACL rules.
@@ -1968,6 +2004,102 @@ message ACLCleanupResult {
   string message = 2;                     // Human-readable result message
 }
 
+// ACLGroupRequest contains data for creating a group.
+message ACLGroupRequest {
+  string name = 1;
+  string description = 2;
+  string created_by = 3;
+  map<string, string> metadata = 4;
+}
+
+// ACLRoleRequest contains data for creating a role.
+message ACLRoleRequest {
+  string name = 1;
+  string description = 2;
+  string created_by = 3;
+  map<string, string> metadata = 4;
+}
+
+// ACLGroupMemberRequest contains data for adding a member to a group.
+message ACLGroupMemberRequest {
+  string member_type = 1;   // principal type or "group" (nesting)
+  string member_id = 2;
+  string granted_by = 3;
+  int64 expires_at = 4;     // Unix timestamp, 0 = no expiration
+}
+
+// ACLRoleAssignmentRequest contains data for assigning a role.
+message ACLRoleAssignmentRequest {
+  string assignee_type = 1; // principal type or "group"
+  string assignee_id = 2;
+  string granted_by = 3;
+  int64 expires_at = 4;     // Unix timestamp, 0 = no expiration
+}
+
+// ACLGroupInfo represents a group definition.
+message ACLGroupInfo {
+  string group_id = 1;
+  string group_name = 2;
+  string description = 3;
+  string created_by = 4;
+  int64 created_at = 5;
+  map<string, string> metadata = 6;
+}
+
+// ACLRoleInfo represents a role definition.
+message ACLRoleInfo {
+  string role_id = 1;
+  string role_name = 2;
+  string description = 3;
+  string created_by = 4;
+  int64 created_at = 5;
+  map<string, string> metadata = 6;
+}
+
+// ACLGroupMemberInfo represents a single group-membership edge.
+message ACLGroupMemberInfo {
+  string group_name = 1;
+  string member_type = 2;
+  string member_id = 3;
+  string granted_by = 4;
+  int64 granted_at = 5;
+  int64 expires_at = 6;
+}
+
+// ACLRoleAssignmentInfo represents a single role-assignment edge.
+message ACLRoleAssignmentInfo {
+  string role_name = 1;
+  string assignee_type = 2;
+  string assignee_id = 3;
+  string granted_by = 4;
+  int64 granted_at = 5;
+  int64 expires_at = 6;
+}
+
+// ACLAccessContributionInfo is one rule that matched a principal or one of its
+// groups/roles for an explained resource.
+message ACLAccessContributionInfo {
+  string subject = 1;       // granting subject, e.g. "role:wsadmin"
+  string rule_id = 2;
+  int32 access_level = 3;
+  string resource = 4;      // matched object pattern, e.g. "workspace:prod" or "workspace:*"
+  bool expired = 5;
+}
+
+// ACLAccessExplanationInfo explains how a principal's effective access to a
+// resource is decided (EXPLAIN_ACCESS). The gateway records an "explain_access"
+// audit event attributing the call to the connected principal.
+message ACLAccessExplanationInfo {
+  string principal = 1;                                // self subject "type:id"
+  repeated string subjects = 2;                        // self + transitive groups/roles
+  repeated ACLAccessContributionInfo contributions = 3;
+  bool allowed = 4;
+  string decision = 5;                                 // "ALLOW" / "DENY"
+  int32 effective_access_level = 6;
+  bool fallback_applied = 7;
+  string reason = 8;
+}
+
 // ACLResponse is sent in response to ACLOperation.
 // Contains data based on the operation type that was requested.
 message ACLResponse {
@@ -2015,6 +2147,15 @@ message ACLResponse {
 
   // Echoed from the originating ACLOperation for correlation
   string request_id = 12;
+
+  // Role/group results.
+  ACLGroupInfo group = 16;                          // GET_GROUP / CREATE_GROUP
+  repeated ACLGroupInfo groups = 17;                // LIST_GROUPS
+  ACLRoleInfo role = 18;                            // GET_ROLE / CREATE_ROLE
+  repeated ACLRoleInfo roles = 19;                  // LIST_ROLES
+  repeated ACLGroupMemberInfo group_members = 20;   // LIST_GROUP_MEMBERS / LIST_PRINCIPAL_GROUPS
+  repeated ACLRoleAssignmentInfo role_assignments = 21; // LIST_ROLE_ASSIGNMENTS / LIST_PRINCIPAL_ROLES
+  ACLAccessExplanationInfo explanation = 22;        // EXPLAIN_ACCESS
 }
 
 // ============================================================================

@@ -264,6 +264,79 @@ type Store interface {
 	ListRules(ctx context.Context, filter RuleFilter) ([]*Rule, error)
 
 	// =====================================================================
+	// Roles & groups (role/group authorization)
+	// =====================================================================
+	//
+	// A group is a named collection of principals; a role is a named bundle
+	// of permissions. Permissions granted TO a group/role are ordinary
+	// acl_rules rows (principal_type 'group'/'role'); membership and
+	// assignment are stored separately and loaded into the enforcer as
+	// transitive grouping (g) edges. A principal's effective access is the
+	// additive maximum across its own rules and every group/role it
+	// transitively belongs to. Cycle-forming edges are rejected with
+	// ErrMembershipCycle. Group/role mutation is a privileged operation and
+	// callers must gate it behind the admin/acl capability.
+
+	// CreateGroup creates a named group. Returns ErrGroupExists on a
+	// duplicate name.
+	CreateGroup(ctx context.Context, name, description, createdBy string, metadata map[string]interface{}) (*Group, error)
+	// DeleteGroup removes a group and (via cascade) its memberships, then
+	// refreshes the enforcer. Returns ErrGroupNotFound on miss.
+	DeleteGroup(ctx context.Context, name string) error
+	// GetGroup fetches a group by name (ErrGroupNotFound on miss).
+	GetGroup(ctx context.Context, name string) (*Group, error)
+	// ListGroups returns all groups ordered by name.
+	ListGroups(ctx context.Context) ([]*Group, error)
+
+	// CreateRole creates a named role. Returns ErrRoleExists on a duplicate
+	// name. Role permissions are managed via GrantAccess with
+	// principalType="role", principalID=<role name>.
+	CreateRole(ctx context.Context, name, description, createdBy string, metadata map[string]interface{}) (*Role, error)
+	// DeleteRole removes a role, its permission rules, and (via cascade) its
+	// assignments, then refreshes the enforcer. Returns ErrRoleNotFound.
+	DeleteRole(ctx context.Context, name string) error
+	// GetRole fetches a role by name (ErrRoleNotFound on miss).
+	GetRole(ctx context.Context, name string) (*Role, error)
+	// ListRoles returns all roles ordered by name.
+	ListRoles(ctx context.Context) ([]*Role, error)
+
+	// AddGroupMember adds (or refreshes) a membership edge. memberType is a
+	// principal type or "group" (nesting). Returns ErrGroupNotFound if the
+	// group is absent, ErrMembershipCycle if the edge would create a cycle.
+	AddGroupMember(ctx context.Context, groupName, memberType, memberID, grantedBy string, expiresAt *time.Time) (*GroupMember, error)
+	// RemoveGroupMember removes a membership edge (ErrMembershipNotFound on miss).
+	RemoveGroupMember(ctx context.Context, groupName, memberType, memberID string) error
+	// ListGroupMembers lists the direct members of a group.
+	ListGroupMembers(ctx context.Context, groupName string) ([]*GroupMember, error)
+	// ListPrincipalGroups lists the groups a principal is a direct member of.
+	ListPrincipalGroups(ctx context.Context, memberType, memberID string) ([]*GroupMember, error)
+
+	// AssignRole adds (or refreshes) a role-assignment edge. assigneeType is
+	// a principal type or "group". Returns ErrRoleNotFound if the role is
+	// absent, ErrMembershipCycle if the edge would create a cycle.
+	AssignRole(ctx context.Context, roleName, assigneeType, assigneeID, grantedBy string, expiresAt *time.Time) (*RoleAssignment, error)
+	// UnassignRole removes a role-assignment edge (ErrAssignmentNotFound on miss).
+	UnassignRole(ctx context.Context, roleName, assigneeType, assigneeID string) error
+	// ListRoleAssignments lists the direct assignees of a role.
+	ListRoleAssignments(ctx context.Context, roleName string) ([]*RoleAssignment, error)
+	// ListPrincipalRoles lists the roles directly assigned to a principal.
+	ListPrincipalRoles(ctx context.Context, assigneeType, assigneeID string) ([]*RoleAssignment, error)
+
+	// ExplainAccess returns the resolved subject set (self + transitive
+	// groups/roles), every rule that matched across those subjects, and the
+	// winning decision for a principal (by canonical principal_type/principal_id)
+	// against a resource. It does not gate access, but it DOES emit an
+	// "explain_access" audit event recording who asked (callerType/callerID —
+	// the connected principal on the gRPC path, or "admin_api"/<remote-addr> on
+	// the REST path) about whose access. callerType/callerID may be empty when
+	// the caller is unknown.
+	ExplainAccess(ctx context.Context, principalType, principalID, resourceType, resourceID string, requiredLevel int, callerType, callerID string) (*AccessExplanation, error)
+
+	// CleanupExpiredMemberships deletes expired membership/assignment edges
+	// and reloads the enforcer, returning the count removed.
+	CleanupExpiredMemberships(ctx context.Context) (int64, error)
+
+	// =====================================================================
 	// Fallback policy
 	// =====================================================================
 

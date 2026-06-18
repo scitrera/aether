@@ -2,11 +2,13 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/scitrera/aether/internal/acl"
 	"github.com/scitrera/aether/internal/admin"
+	aclstore "github.com/scitrera/aether/internal/storage/acl"
 	"github.com/scitrera/aether/pkg/models"
 )
 
@@ -421,6 +423,291 @@ func adminPrincipalRefToIdentity(ref *admin.PrincipalRef) (models.Identity, erro
 
 	return identity, nil
 }
+
+// =============================================================================
+// ACL Groups & Roles
+// =============================================================================
+
+func (p *GatewayStateProvider) ListACLGroups(ctx context.Context) ([]*admin.ACLGroupInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+	groups, err := p.aclService.ListGroups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list groups: %w", err)
+	}
+	result := make([]*admin.ACLGroupInfo, 0, len(groups))
+	for _, g := range groups {
+		result = append(result, groupToAdmin(g))
+	}
+	return result, nil
+}
+
+func (p *GatewayStateProvider) CreateACLGroup(ctx context.Context, req *admin.CreateACLGroupRequest) (*admin.ACLGroupInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+	g, err := p.aclService.CreateGroup(ctx, req.Name, req.Description, req.CreatedBy, req.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create group: %w", err)
+	}
+	return groupToAdmin(g), nil
+}
+
+func (p *GatewayStateProvider) GetACLGroup(ctx context.Context, name string) (*admin.ACLGroupInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+	g, err := p.aclService.GetGroup(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group: %w", err)
+	}
+	return groupToAdmin(g), nil
+}
+
+func (p *GatewayStateProvider) DeleteACLGroup(ctx context.Context, name string) error {
+	if p.aclService == nil {
+		return fmt.Errorf("ACL service not available")
+	}
+	return p.aclService.DeleteGroup(ctx, name)
+}
+
+func (p *GatewayStateProvider) ListACLGroupMembers(ctx context.Context, groupName string) ([]*admin.ACLGroupMemberInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+	members, err := p.aclService.ListGroupMembers(ctx, groupName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list group members: %w", err)
+	}
+	result := make([]*admin.ACLGroupMemberInfo, 0, len(members))
+	for _, m := range members {
+		result = append(result, groupMemberToAdmin(m))
+	}
+	return result, nil
+}
+
+func (p *GatewayStateProvider) AddACLGroupMember(ctx context.Context, groupName string, req *admin.AddACLGroupMemberRequest) (*admin.ACLGroupMemberInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+	m, err := p.aclService.AddGroupMember(ctx, groupName, req.MemberType, req.MemberID, req.GrantedBy, req.ExpiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add group member: %w", err)
+	}
+	return groupMemberToAdmin(m), nil
+}
+
+func (p *GatewayStateProvider) RemoveACLGroupMember(ctx context.Context, groupName, memberType, memberID string) error {
+	if p.aclService == nil {
+		return fmt.Errorf("ACL service not available")
+	}
+	return p.aclService.RemoveGroupMember(ctx, groupName, memberType, memberID)
+}
+
+func (p *GatewayStateProvider) ListACLRoles(ctx context.Context) ([]*admin.ACLRoleInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+	roles, err := p.aclService.ListRoles(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list roles: %w", err)
+	}
+	result := make([]*admin.ACLRoleInfo, 0, len(roles))
+	for _, r := range roles {
+		result = append(result, roleToAdmin(r))
+	}
+	return result, nil
+}
+
+func (p *GatewayStateProvider) CreateACLRole(ctx context.Context, req *admin.CreateACLRoleRequest) (*admin.ACLRoleInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+	r, err := p.aclService.CreateRole(ctx, req.Name, req.Description, req.CreatedBy, req.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create role: %w", err)
+	}
+	return roleToAdmin(r), nil
+}
+
+func (p *GatewayStateProvider) GetACLRole(ctx context.Context, name string) (*admin.ACLRoleInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+	r, err := p.aclService.GetRole(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get role: %w", err)
+	}
+	return roleToAdmin(r), nil
+}
+
+func (p *GatewayStateProvider) DeleteACLRole(ctx context.Context, name string) error {
+	if p.aclService == nil {
+		return fmt.Errorf("ACL service not available")
+	}
+	return p.aclService.DeleteRole(ctx, name)
+}
+
+func (p *GatewayStateProvider) ListACLRoleAssignments(ctx context.Context, roleName string) ([]*admin.ACLRoleAssignmentInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+	assignments, err := p.aclService.ListRoleAssignments(ctx, roleName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list role assignments: %w", err)
+	}
+	result := make([]*admin.ACLRoleAssignmentInfo, 0, len(assignments))
+	for _, a := range assignments {
+		result = append(result, roleAssignmentToAdmin(a))
+	}
+	return result, nil
+}
+
+func (p *GatewayStateProvider) AssignACLRole(ctx context.Context, roleName string, req *admin.AssignACLRoleRequest) (*admin.ACLRoleAssignmentInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+	a, err := p.aclService.AssignRole(ctx, roleName, req.AssigneeType, req.AssigneeID, req.GrantedBy, req.ExpiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to assign role: %w", err)
+	}
+	return roleAssignmentToAdmin(a), nil
+}
+
+func (p *GatewayStateProvider) UnassignACLRole(ctx context.Context, roleName, assigneeType, assigneeID string) error {
+	if p.aclService == nil {
+		return fmt.Errorf("ACL service not available")
+	}
+	return p.aclService.UnassignRole(ctx, roleName, assigneeType, assigneeID)
+}
+
+func (p *GatewayStateProvider) ListACLPrincipalGroups(ctx context.Context, memberType, memberID string) ([]*admin.ACLGroupMemberInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+	members, err := p.aclService.ListPrincipalGroups(ctx, memberType, memberID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list principal groups: %w", err)
+	}
+	result := make([]*admin.ACLGroupMemberInfo, 0, len(members))
+	for _, m := range members {
+		result = append(result, groupMemberToAdmin(m))
+	}
+	return result, nil
+}
+
+func (p *GatewayStateProvider) ListACLPrincipalRoles(ctx context.Context, assigneeType, assigneeID string) ([]*admin.ACLRoleAssignmentInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+	assignments, err := p.aclService.ListPrincipalRoles(ctx, assigneeType, assigneeID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list principal roles: %w", err)
+	}
+	result := make([]*admin.ACLRoleAssignmentInfo, 0, len(assignments))
+	for _, a := range assignments {
+		result = append(result, roleAssignmentToAdmin(a))
+	}
+	return result, nil
+}
+
+func (p *GatewayStateProvider) ExplainACLAccess(ctx context.Context, principalType, principalID, resourceType, resourceID string, requiredLevel int, callerType, callerID string) (*admin.ACLAccessExplanationInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+	exp, err := p.aclService.ExplainAccess(ctx, principalType, principalID, resourceType, resourceID, requiredLevel, callerType, callerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to explain access: %w", err)
+	}
+	out := &admin.ACLAccessExplanationInfo{
+		Principal: exp.Principal,
+		Subjects:  exp.Subjects,
+	}
+	for _, c := range exp.Contributions {
+		out.Contributions = append(out.Contributions, &admin.ACLAccessContributionInfo{
+			Subject:     c.Subject,
+			RuleID:      c.RuleID,
+			AccessLevel: c.AccessLevel,
+			Resource:    c.Resource,
+			Expired:     c.Expired,
+		})
+	}
+	if exp.Decision != nil {
+		out.Allowed = exp.Decision.Allowed
+		out.Decision = exp.Decision.Decision
+		out.EffectiveLevel = exp.Decision.EffectiveAccessLevel
+		out.FallbackApplied = exp.Decision.FallbackApplied
+		out.Reason = exp.Decision.Reason
+	}
+	return out, nil
+}
+
+// groupToAdmin converts a store Group to an admin DTO.
+func groupToAdmin(g *aclstore.Group) *admin.ACLGroupInfo {
+	if g == nil {
+		return nil
+	}
+	return &admin.ACLGroupInfo{
+		GroupID:     g.GroupID,
+		GroupName:   g.GroupName,
+		Description: g.Description,
+		CreatedBy:   g.CreatedBy,
+		CreatedAt:   g.CreatedAt,
+		Metadata:    g.Metadata,
+	}
+}
+
+// roleToAdmin converts a store Role to an admin DTO.
+func roleToAdmin(r *aclstore.Role) *admin.ACLRoleInfo {
+	if r == nil {
+		return nil
+	}
+	return &admin.ACLRoleInfo{
+		RoleID:      r.RoleID,
+		RoleName:    r.RoleName,
+		Description: r.Description,
+		CreatedBy:   r.CreatedBy,
+		CreatedAt:   r.CreatedAt,
+		Metadata:    r.Metadata,
+	}
+}
+
+// groupMemberToAdmin converts a store GroupMember to an admin DTO.
+func groupMemberToAdmin(m *aclstore.GroupMember) *admin.ACLGroupMemberInfo {
+	if m == nil {
+		return nil
+	}
+	return &admin.ACLGroupMemberInfo{
+		GroupName:  m.GroupName,
+		MemberType: m.MemberType,
+		MemberID:   m.MemberID,
+		GrantedBy:  m.GrantedBy,
+		GrantedAt:  m.GrantedAt,
+		ExpiresAt:  m.ExpiresAt,
+	}
+}
+
+// roleAssignmentToAdmin converts a store RoleAssignment to an admin DTO.
+func roleAssignmentToAdmin(a *aclstore.RoleAssignment) *admin.ACLRoleAssignmentInfo {
+	if a == nil {
+		return nil
+	}
+	return &admin.ACLRoleAssignmentInfo{
+		RoleName:     a.RoleName,
+		AssigneeType: a.AssigneeType,
+		AssigneeID:   a.AssigneeID,
+		GrantedBy:    a.GrantedBy,
+		GrantedAt:    a.GrantedAt,
+		ExpiresAt:    a.ExpiresAt,
+	}
+}
+
+// isACLGroupNotFound reports whether err wraps aclstore.ErrGroupNotFound.
+func isACLGroupNotFound(err error) bool { return errors.Is(err, aclstore.ErrGroupNotFound) }
+
+// isACLRoleNotFound reports whether err wraps aclstore.ErrRoleNotFound.
+func isACLRoleNotFound(err error) bool { return errors.Is(err, aclstore.ErrRoleNotFound) }
 
 func adminResourceScopeToACL(entries []*admin.ACLAuthorityGrantResourceScope) map[string][]string {
 	if len(entries) == 0 {

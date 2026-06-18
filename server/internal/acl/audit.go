@@ -256,6 +256,69 @@ func (a *AuditLogger) LogAuthorityRequestEvent(
 	a.shared.LogEvent(ctx, event)
 }
 
+// LogExplain records that an ExplainAccess introspection was performed: WHO
+// asked (caller* → the audit actor) and WHICH principal's access to which
+// resource was explained (subject* → the audit subject), plus the evaluated
+// outcome. It is emitted as an authorization event tagged
+// operation="explain_access" (with metadata.explain=true) so it is queryable
+// alongside enforcement decisions yet never mistaken for one — an explain does
+// NOT gate any access, it only reports what access would be.
+//
+// callerType/callerID identify the requester: the connected principal on the
+// gRPC path, or "admin_api"/<remote-addr> on the REST admin path. They may be
+// empty when the caller is unknown. Non-blocking; no-op when the shared writer
+// is nil.
+func (a *AuditLogger) LogExplain(ctx context.Context, callerType, callerID, subjectType, subjectID, resourceType, resourceID string, requiredLevel int, decision *ACLDecision) {
+	if a.shared == nil {
+		return
+	}
+
+	allowed := false
+	accessLevel := AccessNone
+	decisionStr := DecisionDeny
+	fallbackApplied := false
+	metadata := map[string]interface{}{
+		"explain":        true,
+		"required_level": requiredLevel,
+	}
+	if decision != nil {
+		allowed = decision.Allowed
+		accessLevel = decision.EffectiveAccessLevel
+		decisionStr = decision.Decision
+		fallbackApplied = decision.FallbackApplied
+		if decision.RuleApplied != nil {
+			metadata["rule_id"] = decision.RuleApplied.RuleID
+		}
+	}
+	metadata["decision"] = decisionStr
+	metadata["access_level"] = accessLevel
+	metadata["fallback_applied"] = fallbackApplied
+
+	errorMsg := ""
+	if !allowed {
+		errorMsg = "access denied"
+	}
+
+	event := &audit.AuditEvent{
+		Timestamp:     time.Now(),
+		EventType:     audit.EventTypeAuthorization,
+		ActorType:     callerType,
+		ActorID:       callerID,
+		SubjectType:   subjectType,
+		SubjectID:     subjectID,
+		AuthorityMode: audit.AuthorityModeDirect,
+		ResourceType:  resourceType,
+		ResourceID:    resourceID,
+		Operation:     "explain_access",
+		GatewayID:     a.gatewayID,
+		Success:       allowed,
+		ErrorMessage:  errorMsg,
+		Metadata:      metadata,
+		Source:        audit.SourceGateway,
+	}
+	a.shared.LogEvent(ctx, event)
+}
+
 // entryToEvent translates an ACL AuditLogEntry into an audit.AuditEvent
 // suitable for the shared writer. Field shape matches the INSERT that the
 // old acl.aclEntryBatchWriter performed (event_type='authorization',

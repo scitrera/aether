@@ -440,6 +440,58 @@ func (p *registryOnlyProvider) ListWorkspaceRateLimits() (map[string]float64, er
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (p *registryOnlyProvider) ListACLGroups(_ context.Context) ([]*admin.ACLGroupInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) CreateACLGroup(_ context.Context, _ *admin.CreateACLGroupRequest) (*admin.ACLGroupInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) GetACLGroup(_ context.Context, _ string) (*admin.ACLGroupInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) DeleteACLGroup(_ context.Context, _ string) error {
+	return fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) ListACLGroupMembers(_ context.Context, _ string) ([]*admin.ACLGroupMemberInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) AddACLGroupMember(_ context.Context, _ string, _ *admin.AddACLGroupMemberRequest) (*admin.ACLGroupMemberInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) RemoveACLGroupMember(_ context.Context, _, _, _ string) error {
+	return fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) ListACLRoles(_ context.Context) ([]*admin.ACLRoleInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) CreateACLRole(_ context.Context, _ *admin.CreateACLRoleRequest) (*admin.ACLRoleInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) GetACLRole(_ context.Context, _ string) (*admin.ACLRoleInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) DeleteACLRole(_ context.Context, _ string) error {
+	return fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) ListACLRoleAssignments(_ context.Context, _ string) ([]*admin.ACLRoleAssignmentInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) AssignACLRole(_ context.Context, _ string, _ *admin.AssignACLRoleRequest) (*admin.ACLRoleAssignmentInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) UnassignACLRole(_ context.Context, _, _, _ string) error {
+	return fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) ListACLPrincipalGroups(_ context.Context, _, _ string) ([]*admin.ACLGroupMemberInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) ListACLPrincipalRoles(_ context.Context, _, _ string) ([]*admin.ACLRoleAssignmentInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (p *registryOnlyProvider) ExplainACLAccess(_ context.Context, _, _, _, _ string, _ int, _, _ string) (*admin.ACLAccessExplanationInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 // Compile-time check.
 var _ admin.StateProvider = (*registryOnlyProvider)(nil)
 

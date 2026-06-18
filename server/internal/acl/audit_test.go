@@ -458,8 +458,83 @@ func TestACLAuditLogger_NilSharedWriterIsNoop(t *testing.T) {
 		models.Identity{Type: models.PrincipalUser, ID: "alice"},
 		ResourceTypeWorkspace, "prod", "connect", "prod", uuid.New(),
 	)
+	// LogExplain must also be a safe no-op with a nil shared writer.
+	logger.LogExplain(context.Background(), "user", "bob", "user", "alice",
+		ResourceTypeWorkspace, "prod", AccessManage, &ACLDecision{Decision: DecisionAllow})
 	if err := logger.Close(); err != nil {
 		t.Errorf("Close() = %v, want nil", err)
+	}
+}
+
+// TestLogExplain_RoutesToSharedWriter verifies an ExplainAccess introspection
+// emits an authorization audit event tagged operation="explain_access" that
+// records WHO asked (caller → actor) about WHOSE access (subject), with the
+// outcome in metadata.
+func TestLogExplain_RoutesToSharedWriter(t *testing.T) {
+	db, conn := newACLFakeDB(t)
+	defer db.Close()
+
+	cfg := audit.DefaultConfig()
+	cfg.BatchSize = 1
+	cfg.FlushPeriod = 10 * time.Minute
+	shared := audit.NewAuditLogger(db, "gw-explain", cfg)
+	defer shared.Close()
+
+	logger := NewAuditLogger(shared, nil, "gw-explain")
+
+	decision := &ACLDecision{
+		Decision:             DecisionAllow,
+		Allowed:              true,
+		EffectiveAccessLevel: AccessManage,
+	}
+	// caller = user:admin-bob asking about subject = user:alice on workspace:prod.
+	logger.LogExplain(context.Background(), PrincipalTypeUser, "admin-bob", PrincipalTypeUser, "alice",
+		ResourceTypeWorkspace, "prod", AccessManage, decision)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if conn.execCount() >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := conn.execCount(); got != 1 {
+		t.Fatalf("expected 1 INSERT through shared writer, got %d", got)
+	}
+
+	conn.mu.Lock()
+	args := conn.execs[0]
+	conn.mu.Unlock()
+
+	if et, ok := args[1].(string); !ok || et != "authorization" {
+		t.Errorf("event_type arg = %v, want \"authorization\"", args[1])
+	}
+	// The recorded args must include the operation, the caller (actor), and the
+	// explained subject — assert by presence rather than hardcoding every index.
+	want := map[string]bool{"explain_access": false, "admin-bob": false, "alice": false}
+	for _, a := range args {
+		if s, ok := a.(string); ok {
+			if _, tracked := want[s]; tracked {
+				want[s] = true
+			}
+		}
+	}
+	for v, found := range want {
+		if !found {
+			t.Errorf("expected INSERT args to include %q (caller/subject/operation): %v", v, args)
+		}
+	}
+	// metadata must flag this as an explain (not an enforcement decision).
+	if metaJSON, ok := args[20].([]byte); ok {
+		var m map[string]interface{}
+		if err := json.Unmarshal(metaJSON, &m); err != nil {
+			t.Fatalf("metadata JSON: %v", err)
+		}
+		if m["explain"] != true {
+			t.Errorf("metadata[explain] = %v, want true", m["explain"])
+		}
+	} else {
+		t.Fatalf("metadata arg type = %T, want []byte", args[20])
 	}
 }
 
