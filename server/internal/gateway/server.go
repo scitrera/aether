@@ -42,6 +42,13 @@ type GatewayServer struct {
 	// auditLogger is the audit domain Store (internal/storage/audit).
 	auditLogger auditstore.Store
 	gatewayID   string
+	// tenantID is the tenant this gateway serves (the gateway is per-tenant).
+	// Minted into X-Auth-Tenant-ID on every ProxyHttpRequest so passthrough
+	// terminators (e.g. MemoryLayer's in-process terminator) receive a
+	// non-empty tenant for fail-closed authz. Configured via
+	// WithGatewayTenantID (env AETHER_TENANT_ID); when empty the proxy path
+	// falls back to the sender's workspace as the tenant scope.
+	tenantID string
 	// Map of active streams by session ID
 	activeStreams sync.Map
 	// Secondary index: identity string -> sessionID for O(1) lookup
@@ -177,6 +184,15 @@ func WithCleanupService(cleanupConfig *cleanup.Config) GatewayOption {
 func WithCheckpointDefaultTTL(ttl time.Duration) GatewayOption {
 	return func(s *GatewayServer) {
 		s.checkpointDefaultTTL = ttl
+	}
+}
+
+// WithGatewayTenantID sets the tenant id this gateway serves. It is minted
+// into X-Auth-Tenant-ID on every ProxyHttpRequest. Leave unset to fall back to
+// the sender's workspace as the tenant scope on the proxy path.
+func WithGatewayTenantID(tenantID string) GatewayOption {
+	return func(s *GatewayServer) {
+		s.tenantID = tenantID
 	}
 }
 

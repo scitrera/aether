@@ -120,59 +120,79 @@ func Mint(_ context.Context, tenantID string, ident Identity) http.Header {
 // MintInto writes the canonical X-Auth-* header set onto h. Existing entries
 // for these header names are overwritten.
 func MintInto(h http.Header, tenantID string, ident Identity) {
-	h.Set(HeaderTenantID, tenantID)
-	h.Set(HeaderWorkspaceAccess, strconv.Itoa(ident.WorkspaceAccess))
+	mintWith(h.Set, tenantID, ident)
+}
+
+// MintIntoMap writes the canonical X-Auth-* header set onto m, keyed by the
+// literal header-name constants (e.g. "X-Auth-Tenant-ID"). Unlike http.Header,
+// a bare map performs no canonicalization, so the "-ID" casing is preserved
+// verbatim — required for downstreams (e.g. the in-process ProxyHttpTerminator)
+// that read ProxyHttpRequest.Headers by exact key. Existing entries for these
+// header names are overwritten. Shares mintWith with MintInto so the wire
+// format stays identical across the http.Header and map paths.
+func MintIntoMap(m map[string]string, tenantID string, ident Identity) {
+	mintWith(func(k, v string) { m[k] = v }, tenantID, ident)
+}
+
+// mintWith is the single source of truth for the canonical X-Auth-* header
+// set. It writes each (key, value) pair through the supplied setter so the
+// same minting logic backs both http.Header (MintInto) and the proto
+// map[string]string (MintIntoMap). Header-name constants are passed to set
+// verbatim; the setter decides how to store them.
+func mintWith(set func(key, value string), tenantID string, ident Identity) {
+	set(HeaderTenantID, tenantID)
+	set(HeaderWorkspaceAccess, strconv.Itoa(ident.WorkspaceAccess))
 
 	if ident.Scopes != "" {
-		h.Set(HeaderScopes, ident.Scopes)
+		set(HeaderScopes, ident.Scopes)
 	}
 	if ident.APIKeyID != "" {
-		h.Set(HeaderAPIKeyID, ident.APIKeyID)
+		set(HeaderAPIKeyID, ident.APIKeyID)
 	}
 
 	// Caller headers — stamped when the proxy sidecar or auth-proxy supplies
 	// the originating principal topic. These are always stripped on inbound,
 	// so only trusted minting paths can set them.
 	if ident.CallerTopic != "" {
-		h.Set(HeaderXAetherCallerTopic, ident.CallerTopic)
+		set(HeaderXAetherCallerTopic, ident.CallerTopic)
 	}
 	if ident.CallerSubject != "" {
-		h.Set(HeaderXAetherCallerSubject, ident.CallerSubject)
+		set(HeaderXAetherCallerSubject, ident.CallerSubject)
 	}
 
 	if ident.Authority == nil {
 		// Direct mode: actor == the authenticated principal.
-		h.Set(HeaderUserID, ident.UserID)
-		h.Set(HeaderPrincipalType, ident.PrincipalType)
-		h.Set(HeaderActorType, ident.PrincipalType)
-		h.Set(HeaderActorID, ident.UserID)
-		h.Set(HeaderAuthorityMode, AuthorityModeDirect)
+		set(HeaderUserID, ident.UserID)
+		set(HeaderPrincipalType, ident.PrincipalType)
+		set(HeaderActorType, ident.PrincipalType)
+		set(HeaderActorID, ident.UserID)
+		set(HeaderAuthorityMode, AuthorityModeDirect)
 		return
 	}
 
 	// OBO mode: backward-compat headers carry the subject; actor headers
 	// carry the authenticated service/agent identity.
 	a := ident.Authority
-	h.Set(HeaderUserID, a.SubjectID)
-	h.Set(HeaderPrincipalType, a.SubjectType)
-	h.Set(HeaderActorType, a.ActorType)
-	h.Set(HeaderActorID, a.ActorID)
-	h.Set(HeaderAuthorityMode, AuthorityModeOnBehalfOf)
+	set(HeaderUserID, a.SubjectID)
+	set(HeaderPrincipalType, a.SubjectType)
+	set(HeaderActorType, a.ActorType)
+	set(HeaderActorID, a.ActorID)
+	set(HeaderAuthorityMode, AuthorityModeOnBehalfOf)
 
-	h.Set(HeaderGrantID, a.GrantID)
-	h.Set(HeaderSubjectType, a.SubjectType)
-	h.Set(HeaderSubjectID, a.SubjectID)
+	set(HeaderGrantID, a.GrantID)
+	set(HeaderSubjectType, a.SubjectType)
+	set(HeaderSubjectID, a.SubjectID)
 	if a.RootSubjectType != "" {
-		h.Set(HeaderRootSubjectType, a.RootSubjectType)
+		set(HeaderRootSubjectType, a.RootSubjectType)
 	}
 	if a.RootSubjectID != "" {
-		h.Set(HeaderRootSubjectID, a.RootSubjectID)
+		set(HeaderRootSubjectID, a.RootSubjectID)
 	}
-	h.Set(HeaderAudienceType, a.AudienceType)
-	h.Set(HeaderAudienceID, a.AudienceID)
-	h.Set(HeaderMaxAccessLevel, strconv.Itoa(a.MaxAccessLevel))
+	set(HeaderAudienceType, a.AudienceType)
+	set(HeaderAudienceID, a.AudienceID)
+	set(HeaderMaxAccessLevel, strconv.Itoa(a.MaxAccessLevel))
 	if len(a.WorkspaceScope) > 0 {
-		h.Set(HeaderWorkspaceScope, strings.Join(a.WorkspaceScope, ","))
+		set(HeaderWorkspaceScope, strings.Join(a.WorkspaceScope, ","))
 	}
 }
 
@@ -287,6 +307,20 @@ func StripInbound(h http.Header) {
 		lower := strings.ToLower(key)
 		if strings.HasPrefix(lower, "x-auth-") || strings.HasPrefix(lower, "x-aether-") {
 			h.Del(key)
+		}
+	}
+}
+
+// StripInboundMap mirrors StripInbound for a proto map[string]string (e.g.
+// ProxyHttpRequest.Headers): it removes every x-auth-* / x-aether-* entry
+// (case-insensitive) so a client cannot smuggle a spoofed identity header
+// through the gateway before the gateway re-mints the trusted set. Any
+// x-aether-* hint headers the gateway honours must be read before this runs.
+func StripInboundMap(m map[string]string) {
+	for key := range m {
+		lower := strings.ToLower(key)
+		if strings.HasPrefix(lower, "x-auth-") || strings.HasPrefix(lower, "x-aether-") {
+			delete(m, key)
 		}
 	}
 }

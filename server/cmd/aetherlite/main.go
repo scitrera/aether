@@ -519,6 +519,13 @@ func main() {
 	gatewayOpts = append(gatewayOpts, gateway.WithQuotaManager(quotaManager))
 	gatewayOpts = append(gatewayOpts, gateway.WithOrchestrationServices(orchServices))
 	gatewayOpts = append(gatewayOpts, gateway.WithCheckpointDefaultTTL(cfg.Checkpoint.GetDefaultTTL()))
+	// Gateway tenant id, minted into X-Auth-Tenant-ID on proxied requests.
+	// The gateway is per-tenant; AETHER_TENANT_ID names it (matching the
+	// proxy-sidecar env convention). When unset, the proxy path falls back to
+	// the sender's workspace as the tenant scope.
+	if tenantID := os.Getenv("AETHER_TENANT_ID"); tenantID != "" {
+		gatewayOpts = append(gatewayOpts, gateway.WithGatewayTenantID(tenantID))
+	}
 
 	// Workspace rate limiter.
 	workspaceRL := quota.NewWorkspaceRateLimiter(cfg.Gateway.MessageRateLimit)
@@ -613,12 +620,13 @@ func main() {
 	// config supplies an explicit mTLS block we honour it. Mode controls how
 	// strictly identity assertions are bound to the presented cert (strict /
 	// relaxed); matches the full gateway's semantics.
+	mtlsMode, mtlsModeErr := gateway.ParseMTLSMode(cfg.Auth.MTLS.Mode)
+	if mtlsModeErr != nil {
+		logging.Logger.Fatal().Err(mtlsModeErr).Str("mtls_mode", cfg.Auth.MTLS.Mode).Msg("invalid mTLS mode in configuration")
+	}
 	mtlsConfig := gateway.MTLSConfig{
 		Required: cfg.Auth.MTLS.Required,
-		Mode:     gateway.MTLSMode(cfg.Auth.MTLS.Mode),
-	}
-	if mtlsConfig.Mode == "" {
-		mtlsConfig.Mode = gateway.MTLSModeStrict
+		Mode:     mtlsMode,
 	}
 
 	// Create gateway server. ACL is supplied via WithACLService above.

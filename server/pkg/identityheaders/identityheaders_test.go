@@ -124,6 +124,119 @@ func TestStripInbound(t *testing.T) {
 	}
 }
 
+func TestMintIntoMap_DirectMode(t *testing.T) {
+	m := map[string]string{}
+	MintIntoMap(m, "tenant-1", Identity{
+		UserID:          "alice",
+		PrincipalType:   "User",
+		WorkspaceAccess: 20,
+		Scopes:          "read,write",
+		APIKeyID:        "key-123",
+		CallerTopic:     "uw::alice::ws1",
+	})
+
+	checks := map[string]string{
+		// Literal constant keys must survive verbatim — a bare map performs no
+		// canonicalization, so "-ID" is NOT folded to "-Id".
+		HeaderTenantID:           "tenant-1",
+		HeaderWorkspaceAccess:    "20",
+		HeaderUserID:             "alice",
+		HeaderPrincipalType:      "User",
+		HeaderActorType:          "User",
+		HeaderActorID:            "alice",
+		HeaderAuthorityMode:      AuthorityModeDirect,
+		HeaderScopes:             "read,write",
+		HeaderAPIKeyID:           "key-123",
+		HeaderXAetherCallerTopic: "uw::alice::ws1",
+	}
+	for key, want := range checks {
+		if got := m[key]; got != want {
+			t.Errorf("%s: want %q, got %q", key, want, got)
+		}
+	}
+
+	// Guard against http.Header-style canonicalization sneaking back in.
+	if _, ok := m["X-Auth-Tenant-Id"]; ok {
+		t.Error("MintIntoMap must not canonicalize -ID to -Id (found X-Auth-Tenant-Id)")
+	}
+
+	for _, key := range []string{HeaderGrantID, HeaderSubjectID, HeaderWorkspaceScope, HeaderMaxAccessLevel} {
+		if _, ok := m[key]; ok {
+			t.Errorf("%s should be absent in direct mode", key)
+		}
+	}
+}
+
+func TestMintIntoMap_OBOMode(t *testing.T) {
+	m := map[string]string{}
+	MintIntoMap(m, "tenant-1", Identity{
+		UserID:          "sv::foo::bar",
+		PrincipalType:   "Service",
+		WorkspaceAccess: 20,
+		Authority: &AuthenticatedAuthority{
+			ActorType:       "Service",
+			ActorID:         "sv::foo::bar",
+			GrantID:         "g1",
+			SubjectType:     "User",
+			SubjectID:       "alice",
+			RootSubjectType: "User",
+			RootSubjectID:   "alice",
+			AudienceType:    "service",
+			AudienceID:      "sv::foo::bar",
+			MaxAccessLevel:  20,
+			WorkspaceScope:  []string{"ws1", "ws2"},
+		},
+	})
+
+	checks := map[string]string{
+		HeaderTenantID:        "tenant-1",
+		HeaderWorkspaceAccess: "20",
+		HeaderUserID:          "alice",
+		HeaderPrincipalType:   "User",
+		HeaderActorType:       "Service",
+		HeaderActorID:         "sv::foo::bar",
+		HeaderAuthorityMode:   AuthorityModeOnBehalfOf,
+		HeaderGrantID:         "g1",
+		HeaderSubjectType:     "User",
+		HeaderSubjectID:       "alice",
+		HeaderRootSubjectType: "User",
+		HeaderRootSubjectID:   "alice",
+		HeaderAudienceType:    "service",
+		HeaderAudienceID:      "sv::foo::bar",
+		HeaderMaxAccessLevel:  "20",
+		HeaderWorkspaceScope:  "ws1,ws2",
+	}
+	for key, want := range checks {
+		if got := m[key]; got != want {
+			t.Errorf("%s: want %q, got %q", key, want, got)
+		}
+	}
+}
+
+func TestStripInboundMap(t *testing.T) {
+	m := map[string]string{
+		"X-Auth-User-ID":    "spoofed",
+		"x-auth-tenant-id":  "spoofed-lower",
+		"X-Aether-Grant-ID": "spoofed-grant",
+		"Content-Type":      "application/json",
+	}
+
+	StripInboundMap(m)
+
+	if _, ok := m["X-Auth-User-ID"]; ok {
+		t.Error("X-Auth-User-ID should have been stripped")
+	}
+	if _, ok := m["x-auth-tenant-id"]; ok {
+		t.Error("x-auth-tenant-id should have been stripped (case-insensitive)")
+	}
+	if _, ok := m["X-Aether-Grant-ID"]; ok {
+		t.Error("X-Aether-Grant-ID should have been stripped")
+	}
+	if m["Content-Type"] != "application/json" {
+		t.Error("Content-Type should be preserved")
+	}
+}
+
 // stubResolver lets us drive ResolveAndMint without standing up an ACL service.
 type stubResolver struct {
 	resolved *acl.ResolvedAuthority

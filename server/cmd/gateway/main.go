@@ -394,9 +394,9 @@ func main() {
 		mtlsRequired = true // -tls flag forces mTLS to be required
 	}
 
-	mtlsMode := gateway.MTLSModeStrict
-	if cfg.Auth.MTLS.Mode == "relaxed" {
-		mtlsMode = gateway.MTLSModeRelaxed
+	mtlsMode, mtlsModeErr := gateway.ParseMTLSMode(cfg.Auth.MTLS.Mode)
+	if mtlsModeErr != nil {
+		logging.Logger.Fatal().Err(mtlsModeErr).Str("mtls_mode", cfg.Auth.MTLS.Mode).Msg("invalid mTLS mode in configuration")
 	}
 
 	mtlsConfig := gateway.MTLSConfig{
@@ -408,6 +408,15 @@ func main() {
 	auditConfig := buildAuditConfig(cfg)
 	auditLogger := audit.NewAuditLogger(db, cfg.Gateway.GatewayID, auditConfig)
 	defer auditLogger.Close()
+
+	// Gateway tenant id, minted into X-Auth-Tenant-ID on proxied requests.
+	// The gateway is per-tenant; AETHER_TENANT_ID names it (matching the
+	// proxy-sidecar env convention). When unset, the proxy path falls back to
+	// the sender's workspace as the tenant scope.
+	if tenantID := os.Getenv("AETHER_TENANT_ID"); tenantID != "" {
+		gatewayOpts = append(gatewayOpts, gateway.WithGatewayTenantID(tenantID))
+		logging.Logger.Debug().Str("tenant_id", tenantID).Msg("gateway tenant id configured for X-Auth-Tenant-ID minting")
+	}
 
 	// Checkpoint default TTL
 	checkpointDefaultTTL := cfg.Checkpoint.GetDefaultTTL()

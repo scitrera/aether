@@ -338,11 +338,13 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 		Str("associated_task_id", associatedTaskID).
 		Msg("message send authority resolution outcome")
 
-	// 0b. ACL Check - verify message send permission
+	// 0b. ACL Check - verify message send permission. The effective access
+	// level is consumed only on the proxy path (header minting); plain
+	// SendMessage routing ignores it here.
 	if resolvedAuthority != nil {
-		err = s.checkMessageSendWithAuthority(ctx, sender, msg.TargetTopic, sessionUUID, resolvedAuthority)
+		_, err = s.checkMessageSendWithAuthority(ctx, sender, msg.TargetTopic, sessionUUID, resolvedAuthority)
 	} else {
-		err = s.checkMessageSend(ctx, sender, msg.TargetTopic)
+		_, err = s.checkMessageSend(ctx, sender, msg.TargetTopic)
 	}
 	if err != nil {
 		logging.Logger.Warn().Str("from", sender.ToTopic()).Str("to", msg.TargetTopic).Err(err).Msg("message denied by ACL")
@@ -533,9 +535,14 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 // service. It preserves the workspace-derivation logic: bridges/services with no home workspace
 // check ACL against the target workspace; workspace-scoped senders check against the target
 // workspace when it differs from their own (cross-workspace), or their own workspace otherwise.
-func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Identity, targetTopic string) error {
+// checkMessageSend returns the effective access level granted by the ACL
+// decision alongside the error. The level is the EffectiveAccessLevel the
+// gateway mints into X-Auth-Workspace-Access; callers that only care about
+// the allow/deny outcome may ignore it. When ACL is disabled or no workspace
+// check applies, the level is acl.AccessNone (0).
+func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Identity, targetTopic string) (int, error) {
 	if s.acl == nil {
-		return nil // ACL not enabled
+		return acl.AccessNone, nil // ACL not enabled
 	}
 
 	// System principals with no workspace (bridges/services) check ACL against the target workspace.
@@ -544,7 +551,7 @@ func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Iden
 		if targetWorkspace != "" {
 			decision, err := s.acl.CanSendMessage(ctx, sender, acl.ResourceTypeWorkspace, targetWorkspace, targetWorkspace, uuid.Nil)
 			if err != nil {
-				return fmt.Errorf("ACL check failed: %w", err)
+				return acl.AccessNone, fmt.Errorf("ACL check failed: %w", err)
 			}
 			if decision.Denied() {
 				logging.Logger.Info().
@@ -553,10 +560,11 @@ func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Iden
 					Str("workspace_checked", targetWorkspace).
 					Str("reason", decision.Reason).
 					Msg("checkMessageSend denial")
-				return fmt.Errorf("access denied: %s", decision.Reason)
+				return acl.AccessNone, fmt.Errorf("access denied: %s", decision.Reason)
 			}
+			return decision.EffectiveAccessLevel, nil
 		}
-		return nil
+		return acl.AccessNone, nil
 	}
 
 	// Workspace-scoped senders: gate on TARGET workspace when it differs
@@ -569,7 +577,7 @@ func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Iden
 
 	decision, err := s.acl.CanSendMessage(ctx, sender, acl.ResourceTypeWorkspace, checkWorkspace, checkWorkspace, uuid.Nil)
 	if err != nil {
-		return fmt.Errorf("ACL check failed: %w", err)
+		return acl.AccessNone, fmt.Errorf("ACL check failed: %w", err)
 	}
 	if decision.Denied() {
 		logging.Logger.Info().
@@ -578,9 +586,9 @@ func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Iden
 			Str("workspace_checked", checkWorkspace).
 			Str("reason", decision.Reason).
 			Msg("checkMessageSend denial")
-		return fmt.Errorf("access denied: %s", decision.Reason)
+		return acl.AccessNone, fmt.Errorf("access denied: %s", decision.Reason)
 	}
-	return nil
+	return decision.EffectiveAccessLevel, nil
 }
 
 // checkCrossWorkspaceBroadcast enforces the cross-workspace capability gate
