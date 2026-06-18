@@ -76,6 +76,88 @@ ConnectCallback = Union[Callable[[], None], Callable[[], Awaitable[None]]]
 DisconnectCallback = Union[Callable[[str], None], Callable[[str], Awaitable[None]]]
 
 
+# ---------------------------------------------------------------------------
+# gRPC keepalive (silent-drop detection)
+# ---------------------------------------------------------------------------
+# Without keepalive, a SILENT TCP drop (e.g. a hard gateway pod kill that never
+# sends RST/FIN, or a stateful firewall/LB that forgets the connection) is never
+# observed by the client: the bidi receive loop blocks forever on a half-open
+# socket and ``auto_reconnect`` never fires because no error is ever raised.
+# HTTP/2 PING keepalive forces the transport to probe the peer on an interval;
+# if no PING ACK arrives within the timeout, grpc fails the call with
+# UNAVAILABLE, which surfaces as a recoverable error and lets the reconnect
+# loop re-establish the stream.
+#
+# Server policy (gateway/aetherlite KeepaliveEnforcementPolicy): MinTime=10s,
+# PermitWithoutStream=false. We MUST NOT ping faster than the server's MinTime
+# or it will GOAWAY us with "too_many_pings". The defaults below match the
+# server's own ServerParameters cadence (Time=30s / Timeout=10s) with a 30s
+# minimum ping floor, leaving comfortable headroom above the 10s MinTime.
+#
+# All values are env-overridable so they can be tuned per-deployment without a
+# code change (e.g. tighten for flaky networks). Env vars take precedence over
+# the constructor default only when the constructor kwarg is left at its
+# sentinel; see ``_resolve_keepalive_options``.
+_DEFAULT_KEEPALIVE_TIME_MS = 30000
+_DEFAULT_KEEPALIVE_TIMEOUT_MS = 10000
+_DEFAULT_KEEPALIVE_PERMIT_WITHOUT_CALLS = 1
+_DEFAULT_HTTP2_MAX_PINGS_WITHOUT_DATA = 0  # 0 = unlimited (long-lived idle stream)
+_DEFAULT_HTTP2_MIN_PING_INTERVAL_WITHOUT_DATA_MS = 30000
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an int from the environment, falling back to ``default``."""
+    import os
+
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid int for %s=%r; using default %d", name, raw, default)
+        return default
+
+
+def _resolve_keepalive_options(
+        keepalive_time_ms: Optional[int] = None,
+        keepalive_timeout_ms: Optional[int] = None,
+        keepalive_permit_without_calls: Optional[int] = None,
+        http2_max_pings_without_data: Optional[int] = None,
+        http2_min_ping_interval_without_data_ms: Optional[int] = None,
+) -> list:
+    """Build the gRPC channel ``options`` list for keepalive.
+
+    Resolution order per option: explicit constructor arg (non-None) >
+    environment variable (``AETHER_GRPC_KEEPALIVE_*``) > module default.
+
+    Returns a list of (key, value) tuples suitable for ``options=`` on both
+    ``grpc.aio.secure_channel`` and ``grpc.aio.insecure_channel``.
+    """
+    time_ms = keepalive_time_ms if keepalive_time_ms is not None else _env_int(
+        "AETHER_GRPC_KEEPALIVE_TIME_MS", _DEFAULT_KEEPALIVE_TIME_MS)
+    timeout_ms = keepalive_timeout_ms if keepalive_timeout_ms is not None else _env_int(
+        "AETHER_GRPC_KEEPALIVE_TIMEOUT_MS", _DEFAULT_KEEPALIVE_TIMEOUT_MS)
+    permit = keepalive_permit_without_calls if keepalive_permit_without_calls is not None else _env_int(
+        "AETHER_GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS", _DEFAULT_KEEPALIVE_PERMIT_WITHOUT_CALLS)
+    max_pings = http2_max_pings_without_data if http2_max_pings_without_data is not None else _env_int(
+        "AETHER_GRPC_HTTP2_MAX_PINGS_WITHOUT_DATA", _DEFAULT_HTTP2_MAX_PINGS_WITHOUT_DATA)
+    min_ping_ms = (http2_min_ping_interval_without_data_ms
+                   if http2_min_ping_interval_without_data_ms is not None
+                   else _env_int("AETHER_GRPC_HTTP2_MIN_PING_INTERVAL_WITHOUT_DATA_MS",
+                                 _DEFAULT_HTTP2_MIN_PING_INTERVAL_WITHOUT_DATA_MS))
+    return [
+        ("grpc.keepalive_time_ms", time_ms),
+        ("grpc.keepalive_timeout_ms", timeout_ms),
+        ("grpc.keepalive_permit_without_calls", permit),
+        ("grpc.http2.max_pings_without_data", max_pings),
+        # Client-side floor between pings when the stream has no in-flight data.
+        # Kept >= the server's MinTime (10s) so we never trip "too_many_pings".
+        ("grpc.http2.min_time_between_pings_ms", min_ping_ms),
+        ("grpc.http2.min_ping_interval_without_data_ms", min_ping_ms),
+    ]
+
+
 def _principal_ref(principal_type: str, principal_id: str) -> aether_pb2.PrincipalRef:
     return aether_pb2.PrincipalRef(
         principal_type=principal_type,
@@ -175,7 +257,12 @@ class BaseAsyncAetherClient:
                  tls_client_cert: Optional[bytes] = None,
                  tls_client_cert_path: Optional[str] = None,
                  tls_client_key: Optional[bytes] = None,
-                 tls_client_key_path: Optional[str] = None):
+                 tls_client_key_path: Optional[str] = None,
+                 keepalive_time_ms: Optional[int] = None,
+                 keepalive_timeout_ms: Optional[int] = None,
+                 keepalive_permit_without_calls: Optional[int] = None,
+                 http2_max_pings_without_data: Optional[int] = None,
+                 http2_min_ping_interval_without_data_ms: Optional[int] = None):
         """
         Initialize the base async client.
 
@@ -192,6 +279,17 @@ class BaseAsyncAetherClient:
             tls_client_cert_path: Path to client certificate file (alternative to tls_client_cert)
             tls_client_key: Client private key bytes for mTLS (optional)
             tls_client_key_path: Path to client private key file (alternative to tls_client_key)
+            keepalive_time_ms: HTTP/2 PING interval in ms (default env/30000). Drives
+                silent-drop detection — see ``_resolve_keepalive_options``.
+            keepalive_timeout_ms: Time to wait for a PING ACK before failing the
+                connection (default env/10000).
+            keepalive_permit_without_calls: 1 to keep pinging when no RPC is in
+                flight, 0 to only ping during active calls (default env/1).
+            http2_max_pings_without_data: Max pings allowed without sending data;
+                0 = unlimited (default env/0).
+            http2_min_ping_interval_without_data_ms: Client-side floor between
+                pings when no data is in flight; kept >= the gateway's 10s MinTime
+                to avoid "too_many_pings" GOAWAY (default env/30000).
         """
         self.target: Optional[str] = None
         self.channel: Optional[grpc_aio.Channel] = None
@@ -222,6 +320,17 @@ class BaseAsyncAetherClient:
         self.max_backoff = max_backoff
         self.backoff_multiplier = backoff_multiplier
         self.auto_reconnect = auto_reconnect
+
+        # gRPC keepalive options (silent-drop detection). Resolved once here so
+        # every (re)connect — secure or insecure — uses the same channel
+        # options. See _resolve_keepalive_options for the resolution order.
+        self._channel_options = _resolve_keepalive_options(
+            keepalive_time_ms=keepalive_time_ms,
+            keepalive_timeout_ms=keepalive_timeout_ms,
+            keepalive_permit_without_calls=keepalive_permit_without_calls,
+            http2_max_pings_without_data=http2_max_pings_without_data,
+            http2_min_ping_interval_without_data_ms=http2_min_ping_interval_without_data_ms,
+        )
 
         # Message callbacks (can be sync or async functions)
         self.on_message: Optional[MessageCallback] = None
@@ -925,11 +1034,14 @@ class BaseAsyncAetherClient:
 
     async def _do_connect(self, init_msg: aether_pb2.InitConnection, target: str):
         """Internal method to establish connection (no retry logic)."""
+        # Pass keepalive options to BOTH channel builders so silent TCP drops
+        # are detected regardless of TLS. self._channel_options is resolved in
+        # __init__ (env-overridable).
         if self.tls_enabled:
             credentials = self._build_tls_credentials()
-            self.channel = grpc_aio.secure_channel(target, credentials)
+            self.channel = grpc_aio.secure_channel(target, credentials, options=self._channel_options)
         else:
-            self.channel = grpc_aio.insecure_channel(target)
+            self.channel = grpc_aio.insecure_channel(target, options=self._channel_options)
         self.stub = aether_pb2_grpc.AetherGatewayStub(self.channel)
 
         # Fresh event for this connection's request generator. Must be

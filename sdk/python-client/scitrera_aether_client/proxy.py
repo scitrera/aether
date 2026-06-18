@@ -415,11 +415,16 @@ def _install_sync_hook(base_sync: type) -> None:
         from .proto import aether_pb2_grpc as _grpc_mod
         import grpc
 
+        # Preserve gRPC keepalive options (silent-drop detection) when the
+        # proxy hook takes over channel creation. _channel_options is set in
+        # the client __init__; getattr keeps this safe for any base that
+        # predates the keepalive support.
+        _opts = getattr(self, "_channel_options", None)
         if self.tls_enabled:
             credentials = self._build_tls_credentials()
-            self.channel = grpc.secure_channel(target, credentials)
+            self.channel = grpc.secure_channel(target, credentials, options=_opts)
         else:
-            self.channel = grpc.insecure_channel(target)
+            self.channel = grpc.insecure_channel(target, options=_opts)
         self.stub = _grpc_mod.AetherGatewayStub(self.channel)
 
         if self._session_id:
@@ -452,11 +457,16 @@ def _install_async_hook(base_async: type) -> None:
         from .proto import aether_pb2_grpc as _grpc_mod
         import grpc.aio as _grpc_aio  # type: ignore
 
+        # Preserve gRPC keepalive options (silent-drop detection) when the
+        # proxy hook takes over channel creation — without this, proxied
+        # connections would silently lose the keepalive that the unpatched
+        # _do_connect installs. _channel_options is set in the client __init__.
+        _opts = getattr(self, "_channel_options", None)
         if self.tls_enabled:
             credentials = self._build_tls_credentials()
-            self.channel = _grpc_aio.secure_channel(target, credentials)
+            self.channel = _grpc_aio.secure_channel(target, credentials, options=_opts)
         else:
-            self.channel = _grpc_aio.insecure_channel(target)
+            self.channel = _grpc_aio.insecure_channel(target, options=_opts)
         self.stub = _grpc_mod.AetherGatewayStub(self.channel)
 
         raw_stream = self.stub.Connect(self._request_generator())
