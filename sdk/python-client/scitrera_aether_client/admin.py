@@ -230,6 +230,269 @@ class AdminClient:
         return self._client.acl_op(op, timeout=timeout)
 
     # ------------------------------------------------------------------
+    # Role / Group Operations
+    # ------------------------------------------------------------------
+    #
+    # A group is a named collection of principals; a role is a named
+    # permission bundle (its permissions are granted with
+    # :meth:`create_acl_rule` using ``principal_type="role"``,
+    # ``principal_id=<role name>``). Membership/assignment edges are resolved
+    # transitively and combined additively at evaluation time. These mirror
+    # the Go SDK helpers in ``sdk/go/aether/admin_roles.go``.
+
+    def create_role(self,
+                    name: str,
+                    description: str = "",
+                    created_by: str = "",
+                    metadata: Optional[Dict[str, str]] = None,
+                    timeout: float = 10.0):
+        """Create a named role.
+
+        Grant its permissions with :meth:`create_acl_rule` using
+        ``principal_type="role"``, ``principal_id=<role name>``.
+
+        Note:
+            Creating a role that already exists returns a response with
+            ``success=False`` and an ``error`` like ``ErrRoleExists`` rather
+            than raising; callers decide how to treat that.
+        """
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.CREATE_ROLE,
+            role_request=aether_pb2.ACLRoleRequest(
+                name=name,
+                description=description,
+                created_by=created_by,
+                metadata=metadata or {},
+            ),
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def delete_role(self, name: str, timeout: float = 10.0):
+        """Delete a role (and its permission rules) by name."""
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.DELETE_ROLE,
+            name=name,
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def get_role(self, name: str, timeout: float = 10.0):
+        """Fetch a role by name."""
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.GET_ROLE,
+            name=name,
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def list_roles(self, timeout: float = 10.0):
+        """List all roles."""
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.LIST_ROLES,
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def assign_role(self,
+                    name: str,
+                    assignee_type: str,
+                    assignee_id: str,
+                    granted_by: str = "",
+                    expires_at: int = 0,
+                    timeout: float = 10.0):
+        """Assign (or refresh) a role to a principal or group.
+
+        ``assignee_type`` is a principal type or ``"group"``. ``expires_at``
+        is Unix seconds; ``0`` means no expiry.
+        """
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.ASSIGN_ROLE,
+            name=name,
+            assignment_request=aether_pb2.ACLRoleAssignmentRequest(
+                assignee_type=assignee_type,
+                assignee_id=assignee_id,
+                granted_by=granted_by,
+                expires_at=expires_at,
+            ),
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def unassign_role(self,
+                      name: str,
+                      assignee_type: str,
+                      assignee_id: str,
+                      timeout: float = 10.0):
+        """Remove a role assignment from a principal or group."""
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.UNASSIGN_ROLE,
+            name=name,
+            principal=aether_pb2.PrincipalRef(
+                principal_type=assignee_type,
+                principal_id=assignee_id,
+            ),
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def list_role_assignments(self, name: str, timeout: float = 10.0):
+        """List the direct assignees of a role."""
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.LIST_ROLE_ASSIGNMENTS,
+            name=name,
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def list_principal_roles(self,
+                             principal_type: str,
+                             principal_id: str,
+                             timeout: float = 10.0):
+        """List the roles directly assigned to a principal."""
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.LIST_PRINCIPAL_ROLES,
+            principal=aether_pb2.PrincipalRef(
+                principal_type=principal_type,
+                principal_id=principal_id,
+            ),
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def create_group(self,
+                     name: str,
+                     description: str = "",
+                     created_by: str = "",
+                     metadata: Optional[Dict[str, str]] = None,
+                     timeout: float = 10.0):
+        """Create a named group.
+
+        Note:
+            Creating a group that already exists returns a response with
+            ``success=False`` and an ``error`` rather than raising; callers
+            decide how to treat that.
+        """
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.CREATE_GROUP,
+            group_request=aether_pb2.ACLGroupRequest(
+                name=name,
+                description=description,
+                created_by=created_by,
+                metadata=metadata or {},
+            ),
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def delete_group(self, name: str, timeout: float = 10.0):
+        """Delete a group by name."""
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.DELETE_GROUP,
+            name=name,
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def get_group(self, name: str, timeout: float = 10.0):
+        """Fetch a group by name."""
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.GET_GROUP,
+            name=name,
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def list_groups(self, timeout: float = 10.0):
+        """List all groups."""
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.LIST_GROUPS,
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def add_group_member(self,
+                         name: str,
+                         member_type: str,
+                         member_id: str,
+                         granted_by: str = "",
+                         expires_at: int = 0,
+                         timeout: float = 10.0):
+        """Add (or refresh) a member of a group.
+
+        ``member_type`` is a principal type or ``"group"`` (for nesting).
+        ``expires_at`` is Unix seconds; ``0`` means no expiry.
+        """
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.ADD_GROUP_MEMBER,
+            name=name,
+            member_request=aether_pb2.ACLGroupMemberRequest(
+                member_type=member_type,
+                member_id=member_id,
+                granted_by=granted_by,
+                expires_at=expires_at,
+            ),
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def remove_group_member(self,
+                            name: str,
+                            member_type: str,
+                            member_id: str,
+                            timeout: float = 10.0):
+        """Remove a member from a group."""
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.REMOVE_GROUP_MEMBER,
+            name=name,
+            principal=aether_pb2.PrincipalRef(
+                principal_type=member_type,
+                principal_id=member_id,
+            ),
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def list_group_members(self, name: str, timeout: float = 10.0):
+        """List the direct members of a group."""
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.LIST_GROUP_MEMBERS,
+            name=name,
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def list_principal_groups(self,
+                              principal_type: str,
+                              principal_id: str,
+                              timeout: float = 10.0):
+        """List the groups a principal is a direct member of."""
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.LIST_PRINCIPAL_GROUPS,
+            principal=aether_pb2.PrincipalRef(
+                principal_type=principal_type,
+                principal_id=principal_id,
+            ),
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def explain_access(self,
+                       principal_type: str,
+                       principal_id: str,
+                       resource_type: str,
+                       resource_id: str,
+                       required_level: int = 0,
+                       timeout: float = 10.0):
+        """Explain how a principal's effective access to a resource is decided.
+
+        Resolves the subject set (self + transitive groups/roles), every rule
+        that matched, and the resulting decision. This does not gate access,
+        but the gateway records an ``explain_access`` audit event attributing
+        the call to the connected principal. ``required_level`` is the
+        threshold the decision is compared against (``0`` = NONE).
+
+        Read the result from the response's ``explanation`` field
+        (:class:`~aether_pb2.ACLAccessExplanationInfo`), whose ``allowed`` and
+        ``effective_access_level`` fields carry the resolved decision.
+        """
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.EXPLAIN_ACCESS,
+            principal=aether_pb2.PrincipalRef(
+                principal_type=principal_type,
+                principal_id=principal_id,
+            ),
+            resource_type=resource_type,
+            resource_id=resource_id,
+            required_level=required_level,
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    # ------------------------------------------------------------------
     # Workspace Operations
     # ------------------------------------------------------------------
 
