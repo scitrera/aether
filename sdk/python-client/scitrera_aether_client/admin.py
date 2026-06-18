@@ -169,10 +169,39 @@ class AdminClient:
         return self._client.acl_op(op, timeout=timeout)
 
     def delete_acl_rule(self, rule_id: str, timeout: float = 10.0):
-        """Delete (revoke) an ACL rule by ID."""
+        """Delete (revoke) an ACL rule by its UUID rule_id.
+
+        The gateway resolves the rule's principal+resource from the UUID and
+        then deletes by composite key. Returns an error if the rule_id is not
+        found.
+        """
         op = aether_pb2.ACLOperation(
             op=aether_pb2.ACLOperation.REVOKE,
             rule_id=rule_id,
+        )
+        return self._client.acl_op(op, timeout=timeout)
+
+    def revoke_acl_rule(self,
+                        principal_type: str,
+                        principal_id: str,
+                        resource_type: str,
+                        resource_id: str,
+                        timeout: float = 10.0):
+        """Revoke an ACL rule by its composite (principal + resource) key.
+
+        This is the direct revoke path: it sends ``ACLOperation(op=REVOKE,
+        rule_filter=ACLRuleFilter(...))`` which the gateway maps to a delete
+        by composite key without any UUID lookup. Prefer this method when you
+        already have the principal and resource identifiers.
+        """
+        op = aether_pb2.ACLOperation(
+            op=aether_pb2.ACLOperation.REVOKE,
+            rule_filter=aether_pb2.ACLRuleFilter(
+                principal_type=principal_type,
+                principal_id=principal_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+            ),
         )
         return self._client.acl_op(op, timeout=timeout)
 

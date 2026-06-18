@@ -373,6 +373,9 @@ func (p *registryOnlyProvider) ListACLRules(_ context.Context, _ *admin.ACLRuleF
 func (p *registryOnlyProvider) GetACLRule(_ context.Context, _, _, _, _ string) (*admin.ACLRuleInfo, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+func (p *registryOnlyProvider) GetACLRuleByID(_ context.Context, _ string) (*admin.ACLRuleInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
 func (p *registryOnlyProvider) GrantACLAccess(_ context.Context, _ *admin.GrantACLAccessRequest) (*admin.ACLRuleInfo, error) {
 	return nil, fmt.Errorf("not implemented")
 }

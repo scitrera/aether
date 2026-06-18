@@ -363,6 +363,11 @@ func (f *fakeInnerStore) GetRule(ctx context.Context, principalType, principalID
 	}, nil
 }
 
+func (f *fakeInnerStore) GetRuleByID(ctx context.Context, ruleID string) (*aclstore.Rule, error) {
+	f.getRuleCalls++
+	return &aclstore.Rule{RuleID: ruleID}, nil
+}
+
 func (f *fakeInnerStore) ListRules(ctx context.Context, filter aclstore.RuleFilter) ([]*aclstore.Rule, error) {
 	return nil, nil
 }

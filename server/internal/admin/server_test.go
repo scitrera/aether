@@ -183,6 +183,9 @@ func (m *mockStateProvider) ListACLRules(_ context.Context, _ *ACLRuleFilter) ([
 func (m *mockStateProvider) GetACLRule(_ context.Context, _, _, _, _ string) (*ACLRuleInfo, error) {
 	return m.aclRule, m.aclRuleErr
 }
+func (m *mockStateProvider) GetACLRuleByID(_ context.Context, _ string) (*ACLRuleInfo, error) {
+	return m.aclRule, m.aclRuleErr
+}
 func (m *mockStateProvider) GrantACLAccess(_ context.Context, _ *GrantACLAccessRequest) (*ACLRuleInfo, error) {
 	return m.grantACLRule, m.grantACLErr
 }

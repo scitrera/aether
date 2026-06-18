@@ -363,3 +363,101 @@ class TestAsyncAdminClientHappyPath:
         assert msg.acl_op.principal.principal_type == "user"
         assert msg.acl_op.principal.principal_id == "alice"
         assert msg.acl_op.required_level == 40
+
+    @pytest.mark.asyncio
+    async def test_revoke_acl_rule_queues_upstream(self, async_agent_client: AsyncAgentClient):
+        """revoke_acl_rule sends REVOKE with rule_filter (composite-key path)."""
+        await async_agent_client._acl_response_queue.put(object())
+
+        admin = AsyncAdminClient(async_agent_client)
+        await admin.revoke_acl_rule(
+            principal_type="user",
+            principal_id="alice",
+            resource_type="workspace",
+            resource_id="ws-1",
+            timeout=1.0,
+        )
+
+        msg = async_agent_client._request_queue.get_nowait()
+        assert msg.HasField("acl_op")
+        assert msg.acl_op.op == aether_pb2.ACLOperation.REVOKE
+        rf = msg.acl_op.rule_filter
+        assert rf.principal_type == "user"
+        assert rf.principal_id == "alice"
+        assert rf.resource_type == "workspace"
+        assert rf.resource_id == "ws-1"
+        # rule_id must be empty — this path does NOT send a UUID
+        assert msg.acl_op.rule_id == ""
+
+    @pytest.mark.asyncio
+    async def test_delete_acl_rule_queues_upstream(self, async_agent_client: AsyncAgentClient):
+        """delete_acl_rule sends REVOKE with rule_id (UUID path, gateway resolves to composite key)."""
+        await async_agent_client._acl_response_queue.put(object())
+
+        admin = AsyncAdminClient(async_agent_client)
+        await admin.delete_acl_rule(
+            rule_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            timeout=1.0,
+        )
+
+        msg = async_agent_client._request_queue.get_nowait()
+        assert msg.HasField("acl_op")
+        assert msg.acl_op.op == aether_pb2.ACLOperation.REVOKE
+        assert msg.acl_op.rule_id == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        # rule_filter must be empty — this path sends only the UUID
+        assert msg.acl_op.rule_filter is None or (
+            msg.acl_op.rule_filter.principal_type == ""
+            and msg.acl_op.rule_filter.resource_type == ""
+        )
+
+
+# =============================================================================
+# Sync: revoke_acl_rule and delete_acl_rule
+# =============================================================================
+
+class TestSyncAdminClientRevokeACLRule:
+    """Verify the sync revoke_acl_rule and delete_acl_rule wire the correct proto fields."""
+
+    def test_revoke_acl_rule_queues_upstream(self, agent_client: AgentClient):
+        """revoke_acl_rule sends REVOKE with rule_filter (composite-key path)."""
+        agent_client.request_queue = _queue.Queue()
+        agent_client._acl_response_queue.put(object())
+
+        admin = AdminClient(agent_client)
+        admin.revoke_acl_rule(
+            principal_type="agent",
+            principal_id="ag.my-agent",
+            resource_type="workspace",
+            resource_id="ws-42",
+            timeout=1.0,
+        )
+
+        msg = agent_client.request_queue.get_nowait()
+        assert msg.HasField("acl_op")
+        assert msg.acl_op.op == aether_pb2.ACLOperation.REVOKE
+        rf = msg.acl_op.rule_filter
+        assert rf.principal_type == "agent"
+        assert rf.principal_id == "ag.my-agent"
+        assert rf.resource_type == "workspace"
+        assert rf.resource_id == "ws-42"
+        assert msg.acl_op.rule_id == ""
+
+    def test_delete_acl_rule_queues_upstream(self, agent_client: AgentClient):
+        """delete_acl_rule sends REVOKE with rule_id (UUID path, gateway resolves to composite key)."""
+        agent_client.request_queue = _queue.Queue()
+        agent_client._acl_response_queue.put(object())
+
+        admin = AdminClient(agent_client)
+        admin.delete_acl_rule(
+            rule_id="12345678-1234-1234-1234-123456789abc",
+            timeout=1.0,
+        )
+
+        msg = agent_client.request_queue.get_nowait()
+        assert msg.HasField("acl_op")
+        assert msg.acl_op.op == aether_pb2.ACLOperation.REVOKE
+        assert msg.acl_op.rule_id == "12345678-1234-1234-1234-123456789abc"
+        assert msg.acl_op.rule_filter is None or (
+            msg.acl_op.rule_filter.principal_type == ""
+            and msg.acl_op.rule_filter.resource_type == ""
+        )

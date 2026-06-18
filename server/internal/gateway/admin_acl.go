@@ -81,6 +81,31 @@ func (p *GatewayStateProvider) GetACLRule(ctx context.Context, principalType, pr
 	}, nil
 }
 
+func (p *GatewayStateProvider) GetACLRuleByID(ctx context.Context, ruleID string) (*admin.ACLRuleInfo, error) {
+	if p.aclService == nil {
+		return nil, fmt.Errorf("ACL service not available")
+	}
+
+	rule, err := p.aclService.GetRuleByID(ctx, ruleID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ACL rule by id: %w", err)
+	}
+
+	return &admin.ACLRuleInfo{
+		RuleID:          rule.RuleID,
+		PrincipalType:   rule.PrincipalType,
+		PrincipalID:     rule.PrincipalID,
+		ResourceType:    rule.ResourceType,
+		ResourceID:      rule.ResourceID,
+		AccessLevel:     rule.AccessLevel,
+		AccessLevelName: acl.AccessLevelName(rule.AccessLevel),
+		GrantedBy:       rule.GrantedBy,
+		GrantedAt:       rule.GrantedAt,
+		ExpiresAt:       rule.ExpiresAt,
+		Reason:          rule.Reason,
+	}, nil
+}
+
 func (p *GatewayStateProvider) GrantACLAccess(ctx context.Context, req *admin.GrantACLAccessRequest) (*admin.ACLRuleInfo, error) {
 	if p.aclService == nil {
 		return nil, fmt.Errorf("ACL service not available")

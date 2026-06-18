@@ -464,6 +464,28 @@ func (s *Service) GetRule(ctx context.Context, principalType, principalID, resou
 	return rule, nil
 }
 
+// GetRuleByID retrieves a specific ACL rule by its rule_id (UUID).
+func (s *Service) GetRuleByID(ctx context.Context, ruleID string) (*ACLRule, error) {
+	query := `
+		SELECT rule_id, principal_type, principal_id, resource_type, resource_id,
+		       access_level, granted_by, granted_at, expires_at, reason
+		FROM acl_rules
+		WHERE rule_id = $1
+	`
+
+	rule, err := scanACLRule(s.db.QueryRowContext(ctx, query, ruleID))
+
+	if err == sql.ErrNoRows {
+		return nil, ErrRuleNotFound
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ACL rule by id: %w", err)
+	}
+
+	return rule, nil
+}
+
 // ListRules retrieves all ACL rules matching the filter
 func (s *Service) ListRules(ctx context.Context, filter RuleFilter) ([]*ACLRule, error) {
 	query := `

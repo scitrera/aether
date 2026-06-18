@@ -1028,6 +1028,24 @@ func (s *Store) GetRule(ctx context.Context, principalType, principalID, resourc
 	return rule, nil
 }
 
+func (s *Store) GetRuleByID(ctx context.Context, ruleID string) (*aclstore.Rule, error) {
+	query := `
+		SELECT rule_id, principal_type, principal_id, resource_type, resource_id,
+		       access_level, granted_by, granted_at, expires_at, reason
+		FROM acl_rules
+		WHERE rule_id = ?
+	`
+
+	rule, err := scanACLRule(s.db.QueryRowContext(ctx, query, ruleID))
+	if err == sql.ErrNoRows {
+		return nil, aclstore.ErrRuleNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ACL rule by id: %w", err)
+	}
+	return rule, nil
+}
+
 func (s *Store) ListRules(ctx context.Context, filter aclstore.RuleFilter) ([]*aclstore.Rule, error) {
 	query := `
 		SELECT rule_id, principal_type, principal_id, resource_type, resource_id,

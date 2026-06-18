@@ -59,6 +59,7 @@ type StateProvider interface {
 	// ACL Management
 	ListACLRules(ctx context.Context, filter *ACLRuleFilter) ([]*ACLRuleInfo, error)
 	GetACLRule(ctx context.Context, principalType, principalID, resourceType, resourceID string) (*ACLRuleInfo, error)
+	GetACLRuleByID(ctx context.Context, ruleID string) (*ACLRuleInfo, error)
 	GrantACLAccess(ctx context.Context, req *GrantACLAccessRequest) (*ACLRuleInfo, error)
 	RevokeACLAccess(ctx context.Context, principalType, principalID, resourceType, resourceID string) error
 	ListACLAuthorityGrants(ctx context.Context, filter *ACLAuthorityGrantFilter) ([]*ACLAuthorityGrantInfo, error)

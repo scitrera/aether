@@ -102,6 +102,23 @@ func (s *GatewayServer) handleACLOp(ctx context.Context, client *ClientSession, 
 			resourceType = op.RuleFilter.ResourceType
 			resourceID = op.RuleFilter.ResourceId
 		}
+		// RevokeACLAccess deletes by composite (principal+resource) key, but
+		// clients may target a rule by its rule_id (UUID) instead. When a
+		// rule_id is supplied and the RuleFilter is empty, resolve the rule's
+		// composite key from the store first; an explicit, fully-specified
+		// RuleFilter always wins (so callers can override resolution).
+		if op.RuleId != "" && principalType == "" && principalID == "" && resourceType == "" && resourceID == "" {
+			rule, err := s.adminProvider.GetACLRuleByID(ctx, op.RuleId)
+			if err != nil {
+				logging.Logger.Error().Err(err).Str("rule_id", op.RuleId).Msg("handleACLOp: revoke by rule_id lookup failed")
+				sendACLError(client, fmt.Sprintf("ACL rule not found for rule_id %q: %v", op.RuleId, err))
+				return
+			}
+			principalType = rule.PrincipalType
+			principalID = rule.PrincipalID
+			resourceType = rule.ResourceType
+			resourceID = rule.ResourceID
+		}
 		if err := s.adminProvider.RevokeACLAccess(ctx, principalType, principalID, resourceType, resourceID); err != nil {
 			logging.Logger.Error().Err(err).Str("rule_id", op.RuleId).Msg("handleACLOp: revoke access failed")
 			sendACLError(client, err.Error())

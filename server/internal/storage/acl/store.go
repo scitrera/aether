@@ -259,6 +259,12 @@ type Store interface {
 	// ErrRuleNotFound on miss.
 	GetRule(ctx context.Context, principalType, principalID, resourceType, resourceID string) (*Rule, error)
 
+	// GetRuleByID fetches a single rule by its rule_id (UUID). Returns
+	// ErrRuleNotFound on miss. Used by the gateway REVOKE handler to resolve
+	// a rule's composite (principal+resource) key from the rule_id the SDK's
+	// delete-by-id surface sends, since RevokeAccess deletes by composite key.
+	GetRuleByID(ctx context.Context, ruleID string) (*Rule, error)
+
 	// ListRules returns rules matching the filter, ordered by granted_at
 	// DESC.
 	ListRules(ctx context.Context, filter RuleFilter) ([]*Rule, error)
