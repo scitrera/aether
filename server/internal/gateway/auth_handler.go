@@ -201,21 +201,33 @@ func (h *AuthHandler) authenticateMTLS(ctx context.Context) (identity models.Ide
 		return identity, certPrincipalType, true, true, nil
 	}
 
-	if h.mtlsMode == MTLSModeStrict {
-		// Strict mode: Extract full identity from certificate
+	if h.mtlsMode == MTLSModeStrict || h.mtlsMode == MTLSModeSemiStrict {
+		// Strict and semi-strict modes: extract the FULL identity from the
+		// certificate. resolveConnectionIdentity consumes certIdentity wholesale
+		// in strict mode, and uses the cert's workspace+implementation+type (with
+		// the InitConnection-supplied specifier) in semi-strict mode. The cert
+		// identity MUST be populated for the semi-strict validation block to have
+		// real values to compare against.
 		certIdentity, extractErr := ExtractIdentityFromCertificate(ctx)
 		if extractErr != nil {
 			logging.Logger.Error().Err(extractErr).Msg("mTLS certificate identity extraction failed")
 			h.auditLog(ctx, audit.NewAuthEvent("unknown", "unknown", audit.OpAuthMTLSFailure, "", uuid.New(), false, extractErr.Error(), map[string]interface{}{
-				"mtls_mode": "strict",
+				"mtls_mode": string(h.mtlsMode),
 			}))
 			return identity, certPrincipalType, true, false, status.Error(codes.Unauthenticated, "invalid client certificate")
 		}
 		identity = certIdentity
-		logging.Logger.Info().Str("identity", identity.String()).Msg("mTLS authenticated identity (strict mode)")
-		h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identity.String(), audit.OpAuthMTLSSuccess, identity.Workspace, uuid.New(), true, "", map[string]interface{}{
-			"mtls_mode": "strict",
-		}))
+		if h.mtlsMode == MTLSModeSemiStrict {
+			logging.Logger.Info().Str("identity", identity.String()).Msg("mTLS authenticated identity (semi-strict mode)")
+			h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identity.String(), audit.OpAuthMTLSSuccess, identity.Workspace, uuid.New(), true, "", map[string]interface{}{
+				"mtls_mode": "semi-strict",
+			}))
+		} else {
+			logging.Logger.Info().Str("identity", identity.String()).Msg("mTLS authenticated identity (strict mode)")
+			h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identity.String(), audit.OpAuthMTLSSuccess, identity.Workspace, uuid.New(), true, "", map[string]interface{}{
+				"mtls_mode": "strict",
+			}))
+		}
 	} else {
 		// Relaxed mode: Extract only principal type from certificate
 		principalType, extractErr := ExtractPrincipalTypeFromCertificate(ctx)
