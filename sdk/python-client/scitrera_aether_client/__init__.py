@@ -41,6 +41,9 @@ from ._common import (
     KV_SCOPE_USER_SHARED,
     KV_SCOPE_USER_WORKSPACE_SHARED,
 
+    # Canonical principal-type strings (mirror server models.PrincipalType)
+    PrincipalType,
+
     # Auth credentials builder
     Credentials,
 

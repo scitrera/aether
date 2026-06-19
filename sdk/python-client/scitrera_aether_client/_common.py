@@ -350,6 +350,26 @@ KV_SCOPE_WORKSPACE_EXCLUSIVE = "workspace-exclusive"
 KV_SCOPE_USER_SHARED = "user-shared"
 KV_SCOPE_USER_WORKSPACE_SHARED = "user-workspace-shared"
 
+
+class PrincipalType:
+    """Canonical Aether principal-type strings.
+
+    These MUST match the server's ``models.PrincipalType`` constants verbatim
+    (server/pkg/models/identity.go) — the gateway compares them exactly (e.g.
+    api-key ``parsePrincipalType``), so a case/spelling mismatch like ``"user"``
+    vs ``"User"`` is rejected. Always reference these constants instead of
+    hardcoding the string when minting tokens / asserting an identity type.
+    """
+
+    AGENT = "Agent"
+    TASK = "Task"
+    USER = "User"
+    SERVICE = "Service"
+    WORKFLOW_ENGINE = "WorkflowEngine"
+    METRICS_BRIDGE = "MetricsBridge"
+    ORCHESTRATOR = "Orchestrator"
+    BRIDGE = "Bridge"
+
 _SCOPE_MAP = {
     "global": aether_pb2.KVOperation.GLOBAL,
     "workspace": aether_pb2.KVOperation.WORKSPACE,
