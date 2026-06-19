@@ -116,8 +116,14 @@ class AsyncAdminClient:
                               granted_by: str = "",
                               reason: str = "",
                               expires_at: int = 0,
+                              authorization: Optional[aether_pb2.AuthorizationContext] = None,
                               timeout: float = 10.0):
-        """Create an ACL rule granting access. See :meth:`AdminClient.create_acl_rule`."""
+        """Create an ACL rule granting access. See :meth:`AdminClient.create_acl_rule`.
+
+        ``authorization`` is an optional on-behalf-of authority context. When
+        set, the gateway runs the admin ACL check against the subject (the
+        user) rather than the actor (the platform-server).
+        """
         op = aether_pb2.ACLOperation(
             op=aether_pb2.ACLOperation.GRANT,
             grant_request=aether_pb2.ACLGrantRequest(
@@ -130,19 +136,26 @@ class AsyncAdminClient:
                 reason=reason,
                 expires_at=expires_at,
             ),
+            authorization=authorization,
         )
         return await self._client.acl_op(op, timeout=timeout)
 
-    async def delete_acl_rule(self, rule_id: str, timeout: float = 10.0):
+    async def delete_acl_rule(self, rule_id: str,
+                              authorization: Optional[aether_pb2.AuthorizationContext] = None,
+                              timeout: float = 10.0):
         """Delete (revoke) an ACL rule by its UUID rule_id.
 
         The gateway resolves the rule's principal+resource from the UUID and
         then deletes by composite key. Returns an error if the rule_id is not
         found.
+
+        ``authorization`` is an optional on-behalf-of authority context (see
+        :meth:`create_acl_rule`).
         """
         op = aether_pb2.ACLOperation(
             op=aether_pb2.ACLOperation.REVOKE,
             rule_id=rule_id,
+            authorization=authorization,
         )
         return await self._client.acl_op(op, timeout=timeout)
 
@@ -151,6 +164,7 @@ class AsyncAdminClient:
                               principal_id: str,
                               resource_type: str,
                               resource_id: str,
+                              authorization: Optional[aether_pb2.AuthorizationContext] = None,
                               timeout: float = 10.0):
         """Revoke an ACL rule by its composite (principal + resource) key.
 
@@ -158,6 +172,9 @@ class AsyncAdminClient:
         rule_filter=ACLRuleFilter(...))`` which the gateway maps to a delete
         by composite key without any UUID lookup. Prefer this method when you
         already have the principal and resource identifiers.
+
+        ``authorization`` is an optional on-behalf-of authority context (see
+        :meth:`create_acl_rule`).
         """
         op = aether_pb2.ACLOperation(
             op=aether_pb2.ACLOperation.REVOKE,
@@ -167,6 +184,7 @@ class AsyncAdminClient:
                 resource_type=resource_type,
                 resource_id=resource_id,
             ),
+            authorization=authorization,
         )
         return await self._client.acl_op(op, timeout=timeout)
 
@@ -177,8 +195,13 @@ class AsyncAdminClient:
                              resource_id: str = "",
                              limit: int = 0,
                              offset: int = 0,
+                             authorization: Optional[aether_pb2.AuthorizationContext] = None,
                              timeout: float = 10.0):
-        """List ACL rules with optional filters."""
+        """List ACL rules with optional filters.
+
+        ``authorization`` is an optional on-behalf-of authority context (see
+        :meth:`create_acl_rule`).
+        """
         op = aether_pb2.ACLOperation(
             op=aether_pb2.ACLOperation.LIST_RULES,
             rule_filter=aether_pb2.ACLRuleFilter(
@@ -189,6 +212,7 @@ class AsyncAdminClient:
                 limit=limit,
                 offset=offset,
             ),
+            authorization=authorization,
         )
         return await self._client.acl_op(op, timeout=timeout)
 

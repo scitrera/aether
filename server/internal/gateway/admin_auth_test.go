@@ -10,6 +10,7 @@ package gateway
 //   - Workspace-scoped ACL enforcement for isAllowedACLOp
 
 import (
+	"context"
 	"testing"
 
 	pb "github.com/scitrera/aether/api/proto"
@@ -212,7 +213,7 @@ func TestIsAllowedACLOp_WorkflowEngine_ReturnsTrue(t *testing.T) {
 	client := newAdminTestClient(stream, models.PrincipalWorkflowEngine)
 
 	aclOp := &pb.ACLOperation{Op: pb.ACLOperation_LIST_RULES}
-	if !s.isAllowedACLOp(client, client.Identity, aclOp) {
+	if !s.isAllowedACLOp(context.Background(), client, client.Identity, aclOp) {
 		t.Error("expected isAllowedACLOp to return true for WorkflowEngine")
 	}
 }
@@ -223,7 +224,7 @@ func TestIsAllowedACLOp_Orchestrator_ReturnsTrue(t *testing.T) {
 	client := newAdminTestClient(stream, models.PrincipalOrchestrator)
 
 	aclOp := &pb.ACLOperation{Op: pb.ACLOperation_GRANT}
-	if !s.isAllowedACLOp(client, client.Identity, aclOp) {
+	if !s.isAllowedACLOp(context.Background(), client, client.Identity, aclOp) {
 		t.Error("expected isAllowedACLOp to return true for Orchestrator")
 	}
 }
@@ -245,7 +246,7 @@ func TestIsAllowedACLOp_Agent_NoACL_NonWorkspaceResource_ReturnsFalse(t *testing
 			ResourceId:   "admin/*",
 		},
 	}
-	if s.isAllowedACLOp(client, client.Identity, aclOp) {
+	if s.isAllowedACLOp(context.Background(), client, client.Identity, aclOp) {
 		t.Error("expected isAllowedACLOp to return false for Agent on non-workspace resource")
 	}
 }
@@ -257,7 +258,7 @@ func TestIsAllowedACLOp_Agent_NoACL_NoFilter_ReturnsFalse(t *testing.T) {
 
 	// ACL op with no filter → no workspace derivable → requires global admin
 	aclOp := &pb.ACLOperation{Op: pb.ACLOperation_LIST_RULES}
-	if s.isAllowedACLOp(client, client.Identity, aclOp) {
+	if s.isAllowedACLOp(context.Background(), client, client.Identity, aclOp) {
 		t.Error("expected isAllowedACLOp to return false for Agent with no filter")
 	}
 }
@@ -275,7 +276,7 @@ func TestIsAllowedACLOp_Agent_NoACL_WorkspaceResource_ReturnsFalse(t *testing.T)
 			ResourceId:   "my-workspace",
 		},
 	}
-	if s.isAllowedACLOp(client, client.Identity, aclOp) {
+	if s.isAllowedACLOp(context.Background(), client, client.Identity, aclOp) {
 		t.Error("expected isAllowedACLOp to return false for Agent with no ACL service")
 	}
 }
@@ -299,7 +300,7 @@ func TestIsAllowedACLOp_Agent_NoACL_GrantWorkspace_ReturnsFalse(t *testing.T) {
 			AccessLevel:   10, // Read
 		},
 	}
-	if s.isAllowedACLOp(client, client.Identity, aclOp) {
+	if s.isAllowedACLOp(context.Background(), client, client.Identity, aclOp) {
 		t.Error("expected isAllowedACLOp to return false for Agent GRANT with no ACL service")
 	}
 }
@@ -321,7 +322,7 @@ func TestIsAllowedACLOp_NonWorkspaceResource_SendsACLError(t *testing.T) {
 			AccessLevel:  40,
 		},
 	}
-	result := s.isAllowedACLOp(client, client.Identity, aclOp)
+	result := s.isAllowedACLOp(context.Background(), client, client.Identity, aclOp)
 	if result {
 		t.Error("expected isAllowedACLOp to return false for non-workspace resource")
 	}

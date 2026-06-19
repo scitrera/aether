@@ -1733,7 +1733,7 @@ class AgentResponse(_message.Message):
     def __init__(self, success: bool = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., agent: _Optional[_Union[AgentRegistrationInfo, _Mapping]] = ..., agents: _Optional[_Iterable[_Union[AgentRegistrationInfo, _Mapping]]] = ..., total_count: _Optional[int] = ..., orchestrators: _Optional[_Iterable[_Union[OrchestratorInfo, _Mapping]]] = ..., launch_result: _Optional[_Union[AgentLaunchResult, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class ACLOperation(_message.Message):
-    __slots__ = ("op", "rule_id", "rule_category", "retention_days", "rule_filter", "audit_filter", "grant_request", "fallback_request", "request_id", "name", "principal", "group_request", "role_request", "member_request", "assignment_request", "resource_type", "resource_id", "required_level")
+    __slots__ = ("op", "rule_id", "rule_category", "retention_days", "rule_filter", "audit_filter", "grant_request", "fallback_request", "request_id", "name", "principal", "group_request", "role_request", "member_request", "assignment_request", "resource_type", "resource_id", "required_level", "authorization")
     class OpType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         LIST_RULES: _ClassVar[ACLOperation.OpType]
@@ -1806,6 +1806,7 @@ class ACLOperation(_message.Message):
     RESOURCE_TYPE_FIELD_NUMBER: _ClassVar[int]
     RESOURCE_ID_FIELD_NUMBER: _ClassVar[int]
     REQUIRED_LEVEL_FIELD_NUMBER: _ClassVar[int]
+    AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
     op: ACLOperation.OpType
     rule_id: str
     rule_category: str
@@ -1824,7 +1825,8 @@ class ACLOperation(_message.Message):
     resource_type: str
     resource_id: str
     required_level: int
-    def __init__(self, op: _Optional[_Union[ACLOperation.OpType, str]] = ..., rule_id: _Optional[str] = ..., rule_category: _Optional[str] = ..., retention_days: _Optional[int] = ..., rule_filter: _Optional[_Union[ACLRuleFilter, _Mapping]] = ..., audit_filter: _Optional[_Union[ACLAuditFilter, _Mapping]] = ..., grant_request: _Optional[_Union[ACLGrantRequest, _Mapping]] = ..., fallback_request: _Optional[_Union[ACLSetFallbackRequest, _Mapping]] = ..., request_id: _Optional[str] = ..., name: _Optional[str] = ..., principal: _Optional[_Union[PrincipalRef, _Mapping]] = ..., group_request: _Optional[_Union[ACLGroupRequest, _Mapping]] = ..., role_request: _Optional[_Union[ACLRoleRequest, _Mapping]] = ..., member_request: _Optional[_Union[ACLGroupMemberRequest, _Mapping]] = ..., assignment_request: _Optional[_Union[ACLRoleAssignmentRequest, _Mapping]] = ..., resource_type: _Optional[str] = ..., resource_id: _Optional[str] = ..., required_level: _Optional[int] = ...) -> None: ...
+    authorization: AuthorizationContext
+    def __init__(self, op: _Optional[_Union[ACLOperation.OpType, str]] = ..., rule_id: _Optional[str] = ..., rule_category: _Optional[str] = ..., retention_days: _Optional[int] = ..., rule_filter: _Optional[_Union[ACLRuleFilter, _Mapping]] = ..., audit_filter: _Optional[_Union[ACLAuditFilter, _Mapping]] = ..., grant_request: _Optional[_Union[ACLGrantRequest, _Mapping]] = ..., fallback_request: _Optional[_Union[ACLSetFallbackRequest, _Mapping]] = ..., request_id: _Optional[str] = ..., name: _Optional[str] = ..., principal: _Optional[_Union[PrincipalRef, _Mapping]] = ..., group_request: _Optional[_Union[ACLGroupRequest, _Mapping]] = ..., role_request: _Optional[_Union[ACLRoleRequest, _Mapping]] = ..., member_request: _Optional[_Union[ACLGroupMemberRequest, _Mapping]] = ..., assignment_request: _Optional[_Union[ACLRoleAssignmentRequest, _Mapping]] = ..., resource_type: _Optional[str] = ..., resource_id: _Optional[str] = ..., required_level: _Optional[int] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ...) -> None: ...
 
 class ACLRuleFilter(_message.Message):
     __slots__ = ("principal_type", "principal_id", "resource_type", "resource_id", "limit", "offset")

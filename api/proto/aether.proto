@@ -1820,6 +1820,12 @@ message ACLOperation {
   string resource_type = 26;
   string resource_id = 27;
   int32 required_level = 28;
+
+  // Optional on-behalf-of authority context. When set, the gateway runs the
+  // admin ACL check against the subject (the user) rather than the actor
+  // (the platform-server). Mirrors SessionOperation.authorization (field 6)
+  // and AuditQuery.authorization (field 18).
+  AuthorizationContext authorization = 29;
 }
 
 // ACLRuleFilter specifies filtering parameters for listing ACL rules.

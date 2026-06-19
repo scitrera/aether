@@ -445,7 +445,7 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 			}
 			s.handleAgentOp(sessionCtx, client, p.AgentOp)
 		case *pb.UpstreamMessage_AclOp:
-			if !s.isAllowedACLOp(client, identity, p.AclOp) {
+			if !s.isAllowedACLOp(sessionCtx, client, identity, p.AclOp) {
 				continue
 			}
 			s.handleACLOp(sessionCtx, client, p.AclOp)
@@ -597,16 +597,43 @@ func (s *GatewayServer) isAllowedAdminOp(client *ClientSession, identity models.
 //	REVOKE (rule level ≤ RW):           AccessManage  (30) — can remove grants ≤ own level
 //	REVOKE (rule level > RW):           AccessAdmin   (40)
 //	Non-workspace resources:            global admin only
-func (s *GatewayServer) isAllowedACLOp(client *ClientSession, identity models.Identity, aclOp *pb.ACLOperation) bool {
-	// System principals are implicitly allowed for all ACL operations.
-	switch identity.Type {
-	case models.PrincipalWorkflowEngine, models.PrincipalOrchestrator:
-		return true
+//
+// When aclOp.Authorization is set (on-behalf-of), every access check runs
+// against the resolved OBO subject (the user) via CheckAccessWithAuthority
+// rather than the connection's actor identity (the platform-server). This
+// mirrors isAllowedSessionOp. When no authorization is present, behavior is
+// unchanged: the connection identity is authorized as before (backward
+// compatible).
+func (s *GatewayServer) isAllowedACLOp(ctx context.Context, client *ClientSession, identity models.Identity, aclOp *pb.ACLOperation) bool {
+	resolvedAuthority, err := s.resolveAuthorizationContext(ctx, client, identity, aclOp.GetAuthorization())
+	if err != nil {
+		sendACLError(client, "invalid authorization context: "+err.Error())
+		return false
+	}
+
+	// System principals are implicitly allowed for direct (non-OBO) calls.
+	// For OBO calls the subject — not the system actor — must hold the grant.
+	if resolvedAuthority == nil {
+		switch identity.Type {
+		case models.PrincipalWorkflowEngine, models.PrincipalOrchestrator:
+			return true
+		}
 	}
 
 	if s.acl == nil {
 		sendACLError(client, "ACL operations require admin privileges or workspace-level access")
 		return false
+	}
+
+	// checkAccess routes through the OBO subject when an authority context was
+	// resolved, otherwise authorizes the connection identity (legacy path).
+	checkAccess := func(resourceType, resourceID, operation, workspace string, requiredLevel int) (*acl.ACLDecision, error) {
+		if resolvedAuthority != nil {
+			return s.acl.CheckAccessWithAuthority(ctx, identity, resolvedAuthority,
+				resourceType, resourceID, operation, workspace, client.SessionUUID, requiredLevel)
+		}
+		return s.acl.CheckAccess(ctx, identity,
+			resourceType, resourceID, operation, workspace, client.SessionUUID, requiredLevel)
 	}
 
 	// Determine the required permission level based on operation type.
@@ -620,20 +647,18 @@ func (s *GatewayServer) isAllowedACLOp(client *ClientSession, identity models.Id
 	}
 
 	// Check global admin permission (admin/* at required level)
-	decision, err := s.acl.CheckAccess(
-		context.Background(), identity,
+	decision, err := checkAccess(
 		acl.ResourceTypeAdmin, acl.PermissionAdminOperations,
-		"admin_op", identity.Workspace, client.SessionUUID, permLevel,
+		"admin_op", identity.Workspace, permLevel,
 	)
 	if err == nil && decision != nil && decision.Allowed {
 		return true
 	}
 
 	// Check category-specific permission (admin/acl at required level)
-	decision, err = s.acl.CheckAccess(
-		context.Background(), identity,
+	decision, err = checkAccess(
 		acl.ResourceTypeAdmin, acl.PermissionAdminACL,
-		"admin_op_acl", identity.Workspace, client.SessionUUID, permLevel,
+		"admin_op_acl", identity.Workspace, permLevel,
 	)
 	if err == nil && decision != nil && decision.Allowed {
 		return true
@@ -673,7 +698,7 @@ func (s *GatewayServer) isAllowedACLOp(client *ClientSession, identity models.Id
 			targetWorkspace = f.ResourceId
 			// Look up the existing rule to check its access level
 			if f.PrincipalType != "" && f.PrincipalId != "" {
-				rule, err := s.acl.GetRule(context.Background(),
+				rule, err := s.acl.GetRule(ctx,
 					f.PrincipalType, f.PrincipalId, f.ResourceType, f.ResourceId)
 				if err == nil && rule != nil && rule.AccessLevel <= acl.AccessReadWrite {
 					requiredLevel = acl.AccessManage // can revoke grants ≤ RW
@@ -701,10 +726,9 @@ func (s *GatewayServer) isAllowedACLOp(client *ClientSession, identity models.Id
 	}
 
 	// Check caller's access level on the target workspace
-	decision, err = s.acl.CheckAccess(
-		context.Background(), identity,
+	decision, err = checkAccess(
 		acl.ResourceTypeWorkspace, targetWorkspace,
-		"acl_manage", identity.Workspace, client.SessionUUID, requiredLevel,
+		"acl_manage", identity.Workspace, requiredLevel,
 	)
 	if err == nil && decision != nil && decision.Allowed {
 		return true

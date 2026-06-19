@@ -9,6 +9,7 @@ import type { ACLGroupRequest as _aether_v1_ACLGroupRequest, ACLGroupRequest__Ou
 import type { ACLRoleRequest as _aether_v1_ACLRoleRequest, ACLRoleRequest__Output as _aether_v1_ACLRoleRequest__Output } from '../../aether/v1/ACLRoleRequest';
 import type { ACLGroupMemberRequest as _aether_v1_ACLGroupMemberRequest, ACLGroupMemberRequest__Output as _aether_v1_ACLGroupMemberRequest__Output } from '../../aether/v1/ACLGroupMemberRequest';
 import type { ACLRoleAssignmentRequest as _aether_v1_ACLRoleAssignmentRequest, ACLRoleAssignmentRequest__Output as _aether_v1_ACLRoleAssignmentRequest__Output } from '../../aether/v1/ACLRoleAssignmentRequest';
+import type { AuthorizationContext as _aether_v1_AuthorizationContext, AuthorizationContext__Output as _aether_v1_AuthorizationContext__Output } from '../../aether/v1/AuthorizationContext';
 
 // Original file: aether.proto
 
@@ -342,6 +343,13 @@ export interface ACLOperation {
   'resourceType'?: (string);
   'resourceId'?: (string);
   'requiredLevel'?: (number);
+  /**
+   * Optional on-behalf-of authority context. When set, the gateway runs the
+   * admin ACL check against the subject (the user) rather than the actor
+   * (the platform-server). Mirrors SessionOperation.authorization (field 6)
+   * and AuditQuery.authorization (field 18).
+   */
+  'authorization'?: (_aether_v1_AuthorizationContext | null);
 }
 
 /**
@@ -431,4 +439,11 @@ export interface ACLOperation__Output {
   'resourceType': (string);
   'resourceId': (string);
   'requiredLevel': (number);
+  /**
+   * Optional on-behalf-of authority context. When set, the gateway runs the
+   * admin ACL check against the subject (the user) rather than the actor
+   * (the platform-server). Mirrors SessionOperation.authorization (field 6)
+   * and AuditQuery.authorization (field 18).
+   */
+  'authorization': (_aether_v1_AuthorizationContext__Output | null);
 }
