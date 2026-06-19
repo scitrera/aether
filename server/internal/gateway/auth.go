@@ -18,6 +18,6 @@ func (s *GatewayServer) resolveConnectionIdentity(ctx context.Context, init *pb.
 }
 
 // authenticateCredentials delegates to the AuthHandler.
-func (s *GatewayServer) authenticateCredentials(ctx context.Context, init *pb.InitConnection, identity models.Identity, hasCertificate bool) (string, models.Identity, error) {
-	return s.authHandler.authenticateCredentials(ctx, init, identity, hasCertificate)
+func (s *GatewayServer) authenticateCredentials(ctx context.Context, init *pb.InitConnection, identity models.Identity, hasCertificate bool, isAnonymous bool) (string, models.Identity, error) {
+	return s.authHandler.authenticateCredentials(ctx, init, identity, hasCertificate, isAnonymous)
 }

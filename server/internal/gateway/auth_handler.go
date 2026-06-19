@@ -423,33 +423,46 @@ func (h *AuthHandler) resolveConnectionIdentity(ctx context.Context, init *pb.In
 	return identity, nil
 }
 
+// isImpersonablePrincipal reports whether a principal type requires an explicit
+// credential on the anonymous-cert / no-cert path. System principals
+// (WorkflowEngine, Orchestrator, MetricsBridge) connect without per-user
+// credentials by design; they present named mTLS certs in production and are
+// granted in-process trust in lite. Every other type (User, Agent, Service,
+// Task, Bridge) is "impersonable" — a caller on an unauthenticated transport
+// MUST prove they hold the claimed identity via a matching credential.
+func isImpersonablePrincipal(t models.PrincipalType) bool {
+	switch t {
+	case models.PrincipalWorkflowEngine, models.PrincipalOrchestrator, models.PrincipalMetricsBridge:
+		return false
+	default:
+		// User, Agent, Service, Task, Bridge — all require a credential on
+		// the anonymous/no-cert path.
+		return t != ""
+	}
+}
+
 // authenticateCredentials validates task tokens and API key/OAuth credentials.
 // Returns the associated task ID (if any) and potentially updated identity.
-func (h *AuthHandler) authenticateCredentials(ctx context.Context, init *pb.InitConnection, identity models.Identity, hasCertificate bool) (string, models.Identity, error) {
+//
+// isAnonymous indicates the transport presented an ANONYMOUS mTLS certificate
+// (CN="_anonymous", or an in-process bufconn). The anonymous cert provides
+// transport security but carries NO auth identity, so — exactly like the
+// no-certificate path — the api_key/oauth principal block must run to bind the
+// authenticated principal. The strict/semi-strict cert paths (non-anonymous
+// cert: isAnonymous=false, hasCertificate=true) deliberately skip that block:
+// their identity is already authoritatively bound by the certificate.
+//
+// SECURITY: on the external anonymous-cert path, impersonable principal types
+// MUST present a matching credential. Returning success with an unauthenticated
+// identity would leave authorization entirely to the downstream ACL fallback,
+// which may be permissive in development/lite deployments.
+func (h *AuthHandler) authenticateCredentials(ctx context.Context, init *pb.InitConnection, identity models.Identity, hasCertificate bool, isAnonymous bool) (string, models.Identity, error) {
 	ctx, span := tracing.Tracer.Start(ctx, "gateway.AuthenticateCredentials")
 	defer span.End()
-	span.SetAttributes(attribute.Bool("has_certificate", hasCertificate))
-
-	// DIAG: surface exactly what the gateway sees for credentials so we can
-	// trace where auth takes each path.
-	if init != nil {
-		credKeys := make([]string, 0, len(init.Credentials))
-		for k := range init.Credentials {
-			credKeys = append(credKeys, k)
-		}
-		tokenLen := 0
-		if t, ok := init.Credentials["token"]; ok {
-			tokenLen = len(t)
-		}
-		logging.Logger.Debug().
-			Str("identity", identity.String()).
-			Str("identity_type", string(identity.Type)).
-			Interface("cred_keys", credKeys).
-			Int("token_len", tokenLen).
-			Bool("has_certificate", hasCertificate).
-			Bool("token_store_configured", h.tokenStore != nil).
-			Msg("[DIAG] authenticateCredentials entry")
-	}
+	span.SetAttributes(
+		attribute.Bool("has_certificate", hasCertificate),
+		attribute.Bool("is_anonymous_cert", isAnonymous),
+	)
 
 	// 2.5 Token validation for orchestrated workers
 	//
@@ -526,25 +539,123 @@ func (h *AuthHandler) authenticateCredentials(ctx context.Context, init *pb.Init
 	}
 
 	// 2.6 API key / OAuth authentication via composite authenticator
+	//
+	// The credential-requirement gate (Fix #1) and the composite call share
+	// the same per-identity throttle as the task-token path so that a flood
+	// of failed bind attempts from attacker-controlled anonymous connections
+	// does not drive unbounded log/audit writes.
 	if h.authenticator != nil && init != nil && associatedTaskID == "" {
+		identityKey := identity.String()
+
+		// Check throttle before calling the authenticator, just as the
+		// task-token path does. A connection presenting a bad api_key in a
+		// tight loop must not drive unbounded authenticator calls.
+		if h.throttled(identityKey, time.Now()) {
+			logging.Logger.Debug().Str("identity", identityKey).Msg("auth throttled: skipping composite auth during cooldown")
+			return "", identity, status.Errorf(codes.Unauthenticated, "auth temporarily throttled after repeated failures")
+		}
+
 		authResult, authErr := h.authenticator.Authenticate(ctx, init.Credentials)
 		if authErr != nil {
-			logging.Logger.Warn().Err(authErr).Str("identity", identity.String()).Msg("credential authentication failed")
-			h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identity.String(), audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), false, authErr.Error(), map[string]interface{}{
-				"reason": "credential_auth_failed",
-				"method": "composite",
+			engaged := h.recordAuthFailure(identityKey, time.Now())
+			logging.Logger.Warn().Err(authErr).Str("identity", identityKey).Msg("credential authentication failed")
+			h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identityKey, audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), false, authErr.Error(), map[string]interface{}{
+				"reason":          "credential_auth_failed",
+				"method":          "composite",
+				"throttle_new":    engaged,
 			}))
 			return "", identity, status.Errorf(codes.Unauthenticated, "credential authentication failed: %v", authErr)
 		}
 		if authResult != nil && authResult.Authenticated {
-			if !hasCertificate {
+			// The principal-binding block runs when the transport carries no
+			// auth identity: either no certificate at all, or an ANONYMOUS
+			// certificate (transport-only). On the strict/semi-strict cert
+			// path (non-anonymous cert) the identity is already authoritatively
+			// bound by the certificate, so we deliberately skip rebinding here.
+			// The no-cert and anonymous-cert paths share the SAME enforcement
+			// below — there is no security divergence between them.
+			if !hasCertificate || isAnonymous {
 				if authResult.Method == "oauth" {
 					identity = authResult.Identity
 				}
 				if authResult.Method == "api_key" {
-					if identity.Type != authResult.Identity.Type && authResult.Identity.Type != "" {
-						logging.Logger.Warn().Str("api_key_type", string(authResult.Identity.Type)).Str("init_type", string(identity.Type)).Msg("API key principal type doesn't match InitConnection type")
+					// SECURITY: the API key authenticates a concrete principal
+					// (Type, ID) = (token.PrincipalType, token.CreatedBy). The
+					// InitConnection carries only a CLAIM. If the claim names a
+					// principal Type/ID, it MUST equal the key's — otherwise a
+					// caller could present user:alice's key while claiming to be
+					// user:drew. A mismatch is a HARD FAIL (PermissionDenied).
+					//
+					// The binding is ALWAYS from the key — never from the claim.
+					// Even when keyID is empty (a key with no created_by), we set
+					// identity.ID = keyID so the claim can never silently supply
+					// an ID the key does not authenticate. Such keys should be
+					// rejected at mint time (see token_handler.go), but the
+					// binding enforces it defensively here too.
+					keyType := authResult.Identity.Type
+					keyID := authResult.Identity.ID
+					tokenID, _ := authResult.Metadata["token_id"].(string)
+
+					if identity.Type != "" && keyType != "" && identity.Type != keyType {
+						engaged := h.recordAuthFailure(identityKey, time.Now())
+						logging.Logger.Warn().
+							Str("key_type", string(keyType)).
+							Str("key_id", keyID).
+							Str("token_id", tokenID).
+							Str("claimed_type", string(identity.Type)).
+							Str("claimed_identity", identity.String()).
+							Bool("throttle_new", engaged).
+							Msg("API key principal type does not match InitConnection claim")
+						h.auditLog(ctx, audit.NewAuthEvent(string(keyType), keyID, audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), false, "api key principal type mismatch", map[string]interface{}{
+							"reason":           "api_key_principal_type_mismatch",
+							"key_type":         string(keyType),
+							"key_id":           keyID,
+							"token_id":         tokenID,
+							"claimed_type":     string(identity.Type),
+							"claimed_identity": identity.String(),
+						}))
+						return "", identity, status.Errorf(codes.PermissionDenied,
+							"API key principal type mismatch: key=%s, claimed=%s", keyType, identity.Type)
 					}
+					// keyID != claim check: no guard on keyID == "" so a key
+					// with empty created_by can never be bypassed by an empty claim.
+					if identity.ID != "" && identity.ID != keyID {
+						engaged := h.recordAuthFailure(identityKey, time.Now())
+						logging.Logger.Warn().
+							Str("key_type", string(keyType)).
+							Str("key_id", keyID).
+							Str("token_id", tokenID).
+							Str("claimed_id", identity.ID).
+							Str("claimed_identity", identity.String()).
+							Bool("throttle_new", engaged).
+							Msg("API key principal id does not match InitConnection claim")
+						h.auditLog(ctx, audit.NewAuthEvent(string(keyType), keyID, audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), false, "api key principal id mismatch", map[string]interface{}{
+							"reason":           "api_key_principal_id_mismatch",
+							"key_type":         string(keyType),
+							"key_id":           keyID,
+							"token_id":         tokenID,
+							"claimed_id":       identity.ID,
+							"claimed_identity": identity.String(),
+						}))
+						return "", identity, status.Errorf(codes.PermissionDenied,
+							"API key principal id mismatch: key=%s, claimed=%s", keyID, identity.ID)
+					}
+
+					// Claim accepted: bind the AUTHENTICATED principal from the
+					// key. Type + ID always come from the key (authenticated
+					// facts); Specifier/window + Workspace are preserved from
+					// the claim (the key does not carry those).
+					if keyType != "" {
+						identity.Type = keyType
+					}
+					// Always adopt keyID — even when empty — so the claim can
+					// never supply an ID that the key doesn't authenticate.
+					identity.ID = keyID
+
+					// On a successful bind, clear any prior throttle state so a
+					// legitimate reconnect is not penalized.
+					h.clearAuthFailure(identityKey)
+
 					if wsPatterns, ok := authResult.Metadata["workspace_patterns"].([]string); ok {
 						if identity.Workspace != "" {
 							matched := false
@@ -563,6 +674,14 @@ func (h *AuthHandler) authenticateCredentials(ctx context.Context, init *pb.Init
 									"API key not authorized for workspace %s", identity.Workspace)
 							}
 						}
+						// NOTE(security): user identities carry an empty
+						// Workspace at connect time (the workspace is selected
+						// later via SwitchWorkspace), so this workspace_patterns
+						// check is a no-op for user connections. The key's
+						// workspace_patterns are NOT yet enforced at the point a
+						// user connection binds a workspace. See the TODO at
+						// handleSwitchWorkspace / checkConnection for the
+						// deferred enforcement point.
 					}
 				}
 			}
@@ -571,7 +690,63 @@ func (h *AuthHandler) authenticateCredentials(ctx context.Context, init *pb.Init
 				"auth_method": authResult.Method,
 				"metadata":    authResult.Metadata,
 			}))
+		} else if authResult == nil {
+			// Composite returned (nil, nil): no authenticator recognised the
+			// credentials. On the external anonymous-cert / no-cert path, an
+			// impersonable principal that presented NO recognised credential is
+			// unauthenticated. Fail closed.
+			//
+			// Exemptions (must NOT fail here):
+			//   (a) associatedTaskID != "" — already handled by task-token path above.
+			//   (b) IsInProcessConn — in-process bufconn connections are trusted
+			//       at the transport layer; they do not carry api-key credentials.
+			//   (c) Non-anonymous cert path — cert is the authority, no api-key needed.
+			//   (d) Non-impersonable principals (WorkflowEngine, Orchestrator,
+			//       MetricsBridge) — system principals connect without per-user keys.
+			needsCredential := (!hasCertificate || isAnonymous) &&
+				!IsInProcessConn(ctx) &&
+				isImpersonablePrincipal(identity.Type)
+			if needsCredential {
+				engaged := h.recordAuthFailure(identityKey, time.Now())
+				logging.Logger.Warn().
+					Str("identity", identityKey).
+					Bool("throttle_new", engaged).
+					Msg("anonymous/no-cert connection: impersonable principal presented no valid credential")
+				h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identityKey, audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), false, "no credential presented for impersonable principal", map[string]interface{}{
+					"reason":         "no_credential_for_impersonable",
+					"claimed_type":   string(identity.Type),
+					"is_anonymous":   isAnonymous,
+					"has_cert":       hasCertificate,
+					"throttle_new":   engaged,
+				}))
+				return "", identity, status.Errorf(codes.Unauthenticated,
+					"anonymous connection as %s requires a matching API key credential", identity.Type)
+			}
 		}
+	}
+
+	// SECURITY: credential-required gate for the case where there is NO
+	// composite authenticator configured at all (h.authenticator == nil).
+	// Without this, an external anonymous-cert connection claiming an
+	// impersonable principal would succeed with no auth check at all.
+	// In-process (bufconn) connections and task-token-authenticated workers
+	// are exempt — see the analogous exemptions in the authResult==nil block
+	// above.
+	if h.authenticator == nil && associatedTaskID == "" &&
+		(!hasCertificate || isAnonymous) &&
+		!IsInProcessConn(ctx) &&
+		isImpersonablePrincipal(identity.Type) {
+		logging.Logger.Warn().
+			Str("identity", identity.String()).
+			Msg("anonymous/no-cert connection: impersonable principal with no authenticator configured")
+		h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identity.String(), audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), false, "no authenticator configured for impersonable principal on anonymous path", map[string]interface{}{
+			"reason":       "no_authenticator_for_impersonable",
+			"claimed_type": string(identity.Type),
+			"is_anonymous": isAnonymous,
+			"has_cert":     hasCertificate,
+		}))
+		return "", identity, status.Errorf(codes.Unauthenticated,
+			"anonymous connection as %s requires API key auth but no authenticator is configured", identity.Type)
 	}
 
 	return associatedTaskID, identity, nil

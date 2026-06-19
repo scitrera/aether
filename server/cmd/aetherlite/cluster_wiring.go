@@ -21,6 +21,7 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/scitrera/aether/internal/acl"
+	"github.com/scitrera/aether/internal/auth"
 	"github.com/scitrera/aether/internal/cluster/backup"
 	clusternats "github.com/scitrera/aether/internal/cluster/nats"
 	"github.com/scitrera/aether/internal/config"
@@ -396,6 +397,28 @@ func startClusterACLRuleWatch(ctx context.Context, kv jetstream.KeyValue, aclSvc
 // InvalidateFallbackCache.
 type aclRuleCacheInvalidator interface {
 	InvalidateFallbackCache()
+}
+
+// activateClusterTokenStore wraps the inner API token store with the
+// JetStreamAPITokenStore decorator so token mutations (create / revoke /
+// delete) propagate to peer gateways via the aether_api_tokens KV bucket.
+// Validation stays on the inner canonical store, so revocation + expiry
+// semantics are unchanged. Returns the decorated store to install in place of
+// the plain SQLite store via WithAuthenticator + the state provider.
+//
+// On error the caller should treat the failure as fatal — cluster mode without
+// token cross-gateway propagation lets a token revoked on one peer stay valid
+// on another for an unbounded window.
+func activateClusterTokenStore(ctx context.Context, inner auth.APITokenStore, js jetstream.JetStream, replicas int) (*auth.JetStreamAPITokenStore, error) {
+	wrapped, err := auth.NewJetStreamAPITokenStore(ctx, inner, js, replicas, zerologClusterLogger{})
+	if err != nil {
+		return nil, err
+	}
+	logging.Logger.Info().
+		Str("bucket", auth.APITokensKVBucket).
+		Int("replicas", replicas).
+		Msg("API token JetStream KV decorator installed (cluster mode)")
+	return wrapped, nil
 }
 
 // activateClusterAuditEmitter wraps the inner audit Store with the

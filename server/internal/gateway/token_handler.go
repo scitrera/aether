@@ -2,14 +2,23 @@ package gateway
 
 import (
 	"context"
+	"strings"
 
 	pb "github.com/scitrera/aether/api/proto"
+	"github.com/scitrera/aether/internal/acl"
 	"github.com/scitrera/aether/internal/admin"
 	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/pkg/models"
 )
 
 // handleTokenOp processes a TokenOperation from a connected client.
-func (s *GatewayServer) handleTokenOp(ctx context.Context, client *ClientSession, op *pb.TokenOperation) {
+//
+// caller is the connection's authenticated identity. The umbrella
+// admin/tokens (or admin/*) gate is already enforced by isAllowedAdminOp at
+// the connect.go dispatch site for ALL token operations. For CREATE of a
+// principal_type=user token, a SECOND, stricter gate applies here: see the
+// CREATE branch.
+func (s *GatewayServer) handleTokenOp(ctx context.Context, client *ClientSession, caller models.Identity, op *pb.TokenOperation) {
 	if s.adminProvider == nil {
 		sendTokenError(client, op.GetRequestId(), "admin provider not configured")
 		return
@@ -78,13 +87,65 @@ func (s *GatewayServer) handleTokenOp(ctx context.Context, client *ClientSession
 			return
 		}
 
+		// SECURITY: minting a principal_type=user token issues a credential
+		// that authenticates AS a real user (see authenticateCredentials'
+		// claim↔key binding). The umbrella admin/tokens gate that admitted us
+		// here is sufficient for agent/service/task tokens, but user tokens
+		// require a SECOND, narrower gate so that holding admin/tokens does not
+		// implicitly grant the ability to impersonate arbitrary users. The
+		// caller must hold capability/mint_user_tokens OR the global admin
+		// umbrella admin/*. We also stop trusting req.CreatedBy blindly: for a
+		// user token, created_by IS the impersonated user id, so an unset value
+		// is rejected (it would otherwise silently default to "admin" — an
+		// invalid user identity) and the value is recorded server-side via the
+		// validated request below.
+		createdBy := req.CreatedBy
+		// created_by enforcement scope: user-only (intentional).
+		//
+		// For principal_type=user, created_by IS the impersonated user id and an
+		// empty value is dangerous (it would authenticate as a principal with no ID,
+		// effectively bypassing identity binding). We enforce non-empty here.
+		//
+		// For agent/service/task tokens, created_by has historically been an optional
+		// audit annotation ("who minted this") rather than an authenticating field.
+		// Enforcing non-empty would break all pre-existing non-user mint flows. The
+		// connect-path binding in authenticateCredentials already handles the
+		// empty-keyID case safely: identity.ID = keyID is always adopted from the key
+		// (even when empty), so the claim can never supply an ID the key doesn't
+		// authenticate. The empty-keyID case for service/agent keys is therefore
+		// defense-in-depth at the connect path, not a mint-time gap.
+		if models.PrincipalType(req.PrincipalType) == models.PrincipalUser {
+			holdsCapability := s.callerHoldsCapability(ctx, client, caller, acl.PermissionMintUserTokens, "mint_user_tokens")
+			holdsGlobalAdmin := s.isAllowedAdminOpQuiet(client, caller, "*")
+			if !holdsCapability && !holdsGlobalAdmin {
+				logging.Logger.Warn().
+					Str("caller", caller.String()).
+					Str("requested_user", createdBy).
+					Msg("handleTokenOp: user-token mint denied (missing capability/mint_user_tokens and admin/*)")
+				sendTokenError(client, op.GetRequestId(),
+					"minting user tokens requires capability/mint_user_tokens or global admin (admin/*)")
+				return
+			}
+			if strings.TrimSpace(createdBy) == "" {
+				sendTokenError(client, op.GetRequestId(),
+					"created_by (the target user id) is required for user tokens")
+				return
+			}
+			logging.Logger.Info().
+				Str("caller", caller.String()).
+				Str("target_user", createdBy).
+				Bool("via_capability", holdsCapability).
+				Bool("via_global_admin", holdsGlobalAdmin).
+				Msg("handleTokenOp: user-token mint authorized")
+		}
+
 		result, err := s.adminProvider.CreateToken(ctx, &admin.CreateTokenRequest{
 			Name:              req.Name,
 			PrincipalType:     req.PrincipalType,
 			WorkspacePatterns: req.WorkspacePatterns,
 			Scopes:            req.Scopes,
 			ExpiresInHours:    int(req.ExpiresInHours),
-			CreatedBy:         req.CreatedBy,
+			CreatedBy:         createdBy,
 		})
 		if err != nil {
 			logging.Logger.Error().Err(err).Msg("handleTokenOp: create token failed")

@@ -100,7 +100,7 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 
 	// 4. Authenticate credentials (task tokens + API key/OAuth)
 	var associatedTaskID string
-	associatedTaskID, identity, err = s.authenticateCredentials(ctx, init, identity, hasCertificate)
+	associatedTaskID, identity, err = s.authenticateCredentials(ctx, init, identity, hasCertificate, isAnonymous)
 	if err != nil {
 		return err
 	}
@@ -453,7 +453,7 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 			if !s.isAllowedAdminOp(client, identity, "tokens") {
 				continue
 			}
-			s.handleTokenOp(sessionCtx, client, p.TokenOp)
+			s.handleTokenOp(sessionCtx, client, identity, p.TokenOp)
 		case *pb.UpstreamMessage_AuditQuery:
 			client.identityMu.RLock()
 			currentIdentity := client.Identity

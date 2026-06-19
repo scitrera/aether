@@ -86,7 +86,7 @@ func TestAuthThrottle_EngagesAfterThresholdFailures(t *testing.T) {
 
 	// First authFailThreshold attempts each call ValidateToken and fail.
 	for i := 0; i < authFailThreshold; i++ {
-		_, _, err := h.authenticateCredentials(ctx, init, identity, false)
+		_, _, err := h.authenticateCredentials(ctx, init, identity, false, false)
 		if err == nil {
 			t.Fatalf("attempt %d: expected error from failed validation, got nil", i+1)
 		}
@@ -96,7 +96,7 @@ func TestAuthThrottle_EngagesAfterThresholdFailures(t *testing.T) {
 	}
 
 	// The next attempt must be throttled: no additional ValidateToken call.
-	_, _, err := h.authenticateCredentials(ctx, init, identity, false)
+	_, _, err := h.authenticateCredentials(ctx, init, identity, false, false)
 	if err == nil {
 		t.Fatal("expected throttled attempt to return an error")
 	}
@@ -120,7 +120,7 @@ func TestAuthThrottle_SuccessBeforeThresholdResetsCounter(t *testing.T) {
 	// A few failures, but fewer than the threshold.
 	failsBeforeSuccess := authFailThreshold - 2
 	for i := 0; i < failsBeforeSuccess; i++ {
-		if _, _, err := h.authenticateCredentials(ctx, init, identity, false); err == nil {
+		if _, _, err := h.authenticateCredentials(ctx, init, identity, false, false); err == nil {
 			t.Fatalf("pre-success attempt %d: expected failure", i+1)
 		}
 	}
@@ -129,7 +129,7 @@ func TestAuthThrottle_SuccessBeforeThresholdResetsCounter(t *testing.T) {
 	mock.validateFunc = func() (*state.TaskAuthToken, error) {
 		return &state.TaskAuthToken{TaskID: "task-1", TargetIdentity: identity.String()}, nil
 	}
-	if _, _, err := h.authenticateCredentials(ctx, init, identity, false); err != nil {
+	if _, _, err := h.authenticateCredentials(ctx, init, identity, false, false); err != nil {
 		t.Fatalf("expected successful validation, got %v", err)
 	}
 
@@ -147,7 +147,7 @@ func TestAuthThrottle_SuccessBeforeThresholdResetsCounter(t *testing.T) {
 	mock.validateFunc = nil // back to always-fail
 	callsBefore := mock.validateCalls
 	for i := 0; i < authFailThreshold-1; i++ {
-		if _, _, err := h.authenticateCredentials(ctx, init, identity, false); err == nil {
+		if _, _, err := h.authenticateCredentials(ctx, init, identity, false, false); err == nil {
 			t.Fatalf("post-reset attempt %d: expected failure", i+1)
 		}
 	}
@@ -169,7 +169,7 @@ func TestAuthThrottle_CooldownExpiryAllowsRevalidation(t *testing.T) {
 
 	// Drive past the threshold to engage cooldown.
 	for i := 0; i < authFailThreshold; i++ {
-		if _, _, err := h.authenticateCredentials(ctx, init, identity, false); err == nil {
+		if _, _, err := h.authenticateCredentials(ctx, init, identity, false, false); err == nil {
 			t.Fatalf("attempt %d: expected failure", i+1)
 		}
 	}
@@ -178,7 +178,7 @@ func TestAuthThrottle_CooldownExpiryAllowsRevalidation(t *testing.T) {
 	}
 
 	// Confirm currently throttled (no new validation).
-	if _, _, err := h.authenticateCredentials(ctx, init, identity, false); err == nil {
+	if _, _, err := h.authenticateCredentials(ctx, init, identity, false, false); err == nil {
 		t.Fatal("expected throttled attempt to error")
 	}
 	if mock.validateCalls != authFailThreshold {
@@ -192,7 +192,7 @@ func TestAuthThrottle_CooldownExpiryAllowsRevalidation(t *testing.T) {
 	h.authFailMu.Unlock()
 
 	// Re-validation should now occur (the throttle released).
-	if _, _, err := h.authenticateCredentials(ctx, init, identity, false); err == nil {
+	if _, _, err := h.authenticateCredentials(ctx, init, identity, false, false); err == nil {
 		t.Fatal("expected validation error after cooldown expiry")
 	}
 	if mock.validateCalls != authFailThreshold+1 {

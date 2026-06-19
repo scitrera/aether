@@ -27,6 +27,7 @@ var legacyPermMap = map[string]struct {
 	"_perm:metric_credit":             {ResourceTypeCapability, "capability/metric_credit"},
 	"_perm:resolve_authority":         {ResourceTypeCapability, "capability/resolve_authority"},
 	"_perm:query_connections":         {ResourceTypeCapability, "capability/query_connections"},
+	"_perm:mint_user_tokens":          {ResourceTypeCapability, "capability/mint_user_tokens"},
 }
 
 // legacyPermLogOnce ensures we log a single notice per process whenever a

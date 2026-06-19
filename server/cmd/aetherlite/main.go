@@ -20,6 +20,7 @@ import (
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/internal/admin"
 	"github.com/scitrera/aether/internal/audit"
+	"github.com/scitrera/aether/internal/auth"
 	authsqlite "github.com/scitrera/aether/internal/auth/sqlite"
 	"github.com/scitrera/aether/internal/checkpoint"
 	"github.com/scitrera/aether/internal/cleanup"
@@ -616,6 +617,72 @@ func main() {
 	}
 	gatewayOpts = append(gatewayOpts, gateway.WithCleanupService(cleanupConfig))
 
+	// API token store + connection-time API-key authenticator.
+	//
+	// tokens.db holds the api_tokens table. The native sqlite impl uses the
+	// bare "sqlite" driver and runs its own per-domain migration set on
+	// construction. This gives lite mode full token CRUD parity with the
+	// PostgreSQL-backed full gateway. The SAME store instance is reused below
+	// by the admin state provider (token CRUD) — we never open a second store.
+	//
+	// Constructed here (before NewGatewayServer) so the composite authenticator
+	// can be attached via WithAuthenticator, mirroring cmd/gateway/main.go.
+	tokensSQLitePath := filepath.Join(*dataDir, "tokens.db")
+	tokensDB, err := openSQLiteNative(ctx, tokensSQLitePath)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Str("path", tokensSQLitePath).Msg("failed to open tokens SQLite database")
+	}
+	defer tokensDB.Close()
+
+	var apiTokenStore auth.APITokenStore
+	plainAPITokenStore, err := authsqlite.New(tokensDB)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite token store")
+	}
+	apiTokenStore = plainAPITokenStore
+
+	// In cluster mode, decorate the token store with the JetStream-KV mirror so
+	// token mutations (create / revoke / delete) propagate to peer gateways and
+	// each peer serves token validation from its watch-maintained local view.
+	// Single-node lite keeps the plain SQLite store. The decorator preserves the
+	// full APITokenStore contract (revocation + expiry semantics intact).
+	if cenv.Enabled && natsServer != nil {
+		js := natsServer.JetStream()
+		replicas := natsServer.ReplicasForHA()
+		decorated, werr := activateClusterTokenStore(ctx, plainAPITokenStore, js, replicas)
+		if werr != nil {
+			logging.Logger.Fatal().Err(werr).Msg("failed to activate cluster API token store")
+		}
+		apiTokenStore = decorated
+	}
+
+	// Wire the connection-time API-key authenticator.
+	//
+	// The user-session path (per-user anonymous-cert + scoped API key) requires
+	// api-key auth. Enable it only when the operator explicitly lists "api_key"
+	// in auth.modes. Defaulting to on when modes is unset was removed because it
+	// created an inconsistency: IsAuthModeEnabled("api_key") returned false, yet
+	// api-key auth was silently active, making the config semantics opaque.
+	//
+	// SECURITY NOTE: when api_key auth is disabled AND the gateway accepts
+	// anonymous mTLS certificates, impersonable principals (User, Agent, Service,
+	// Task, Bridge) on the anonymous-cert / no-cert path are unconditionally
+	// rejected by authenticateCredentials' credential-required gate. Disabling
+	// api_key auth therefore means no external connections can authenticate via
+	// credential on that path — ensure your deployment either (a) enables api_key
+	// auth, or (b) disables anonymous cert acceptance, or (c) uses strict mTLS
+	// so every connection presents a named cert.
+	enableAPIKeyAuth := cfg.Auth.IsAuthModeEnabled("api_key")
+	if enableAPIKeyAuth {
+		compositeAuth := auth.NewCompositeAuthenticator(auth.NewAPIKeyAuthenticator(apiTokenStore))
+		gatewayOpts = append(gatewayOpts, gateway.WithAuthenticator(compositeAuth))
+		logging.Logger.Info().Msg("API key authentication enabled (connection-time)")
+	} else {
+		logging.Logger.Warn().
+			Strs("configured_modes", cfg.Auth.Modes).
+			Msg("API key authentication NOT enabled: anonymous-cert connections claiming impersonable principals will be rejected; add 'api_key' to auth.modes to allow them")
+	}
+
 	// mTLS config — Required defaults to false in lite mode, but when the
 	// config supplies an explicit mTLS block we honour it. Mode controls how
 	// strictly identity assertions are bound to the presented cert (strict /
@@ -758,22 +825,9 @@ func main() {
 	// State provider for admin. Registry already constructed above for the
 	// orchestration wiring; reuse it here for both agentRegistry+profileMgr
 	// slots (the bundled internal/storage/registry.Store covers both).
-	// Open dedicated tokens SQLite handle for API token management.
-	// tokens.db holds the api_tokens table. The native sqlite impl uses the
-	// bare "sqlite" driver and runs its own per-domain migration set on
-	// construction. This gives lite mode full token CRUD parity with the
-	// PostgreSQL-backed full gateway.
-	tokensSQLitePath := filepath.Join(*dataDir, "tokens.db")
-	tokensDB, err := openSQLiteNative(ctx, tokensSQLitePath)
-	if err != nil {
-		logging.Logger.Fatal().Err(err).Str("path", tokensSQLitePath).Msg("failed to open tokens SQLite database")
-	}
-	defer tokensDB.Close()
-
-	apiTokenStore, err := authsqlite.New(tokensDB)
-	if err != nil {
-		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite token store")
-	}
+	// apiTokenStore was constructed earlier (before the gateway server) so the
+	// connection-time API-key authenticator and the admin-side token CRUD path
+	// share the single store; here we just reuse it for the state provider.
 
 	stateProvider := gateway.NewGatewayStateProvider(
 		cfg.Gateway.GatewayID,

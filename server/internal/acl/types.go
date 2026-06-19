@@ -111,6 +111,7 @@ const (
 	WorkspaceScopeSubjectInherited = "_subject_workspaces"
 	PermissionQueryConnections     = "capability/query_connections" // capability gate — query the live-connection status of principals other than self
 	PermissionKVPurgeIdentity      = "capability/kv_purge_identity" // capability gate — REMOVAL-ONLY purge of another principal's KV namespace (lifecycle managers reaping ephemeral principals); never reads/returns values
+	PermissionMintUserTokens       = "capability/mint_user_tokens"  // capability gate — mint API tokens with principal_type=user (per-user session keys minted by the platform-server on a user's behalf)
 )
 
 // Decision constants
