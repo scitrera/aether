@@ -444,3 +444,33 @@ func TestResolveAndMint_OBOMode_RejectsMissingGrantID(t *testing.T) {
 		t.Fatal("expected error for missing grant_id")
 	}
 }
+
+// TestExpandSubjectInheritedScope verifies the magic acl.WorkspaceScopeSubjectInherited
+// value ("_subject_workspaces") is expanded to "*" for the minted
+// X-Auth-Workspace-Scope header (terminators don't understand the magic value;
+// minting it raw rejected every workspace). Concrete workspaces pass through.
+func TestExpandSubjectInheritedScope(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"subject-inherited -> star", []string{"_subject_workspaces"}, []string{"*"}},
+		{"concrete passthrough", []string{"ws1", "ws2"}, []string{"ws1", "ws2"}},
+		{"mixed dedups star", []string{"ws1", "_subject_workspaces", "ws2"}, []string{"ws1", "*", "ws2"}},
+		{"empty", nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := expandSubjectInheritedScope(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("len(got)=%d want %d (got=%v)", len(got), len(tc.want), got)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("got[%d]=%q want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}

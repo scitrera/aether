@@ -294,9 +294,39 @@ func AuthorityFromResolved(resolved *acl.ResolvedAuthority) *AuthenticatedAuthor
 		AudienceType:    g.AudienceType,
 		AudienceID:      g.AudienceID,
 		MaxAccessLevel:  g.MaxAccessLevel,
-		WorkspaceScope:  g.WorkspaceScope,
+		WorkspaceScope:  expandSubjectInheritedScope(g.WorkspaceScope),
 		ResourceScope:   g.ResourceScope,
 	}
+}
+
+// expandSubjectInheritedScope replaces the acl.WorkspaceScopeSubjectInherited
+// magic value ("_subject_workspaces") with "*" when projecting a grant's
+// workspace scope into the minted X-Auth-Workspace-Scope header. Terminators
+// (memorylayer, etc.) match the requested workspace against the header's literal
+// values and do NOT understand the magic value, so minting it raw rejects EVERY
+// workspace ("workspace '<ws>' is not in grant scope"). This mirrors the
+// gateway's expandWorkspaceScopeForWire (internal/gateway/connect_authority.go)
+// used on the ResolveAuthority proto path — kept local here so pkg/identityheaders
+// need not import internal/gateway. (The X-Auth header minting added in
+// a7b9dae missed this expansion, breaking all OBO MemoryLayer calls whose
+// session grant uses _subject_workspaces.)
+func expandSubjectInheritedScope(scope []string) []string {
+	if len(scope) == 0 {
+		return scope
+	}
+	out := make([]string, 0, len(scope))
+	expanded := false
+	for _, s := range scope {
+		if s == acl.WorkspaceScopeSubjectInherited {
+			if !expanded {
+				out = append(out, "*")
+				expanded = true
+			}
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // StripInbound removes all X-Auth-* and X-Aether-* headers from h to prevent
