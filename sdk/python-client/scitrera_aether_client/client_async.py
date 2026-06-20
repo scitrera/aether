@@ -5,7 +5,9 @@ This module provides async versions of all client types for use in asyncio appli
 """
 import asyncio
 import logging
+import os
 import random
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Callable, Optional, Dict, List, Awaitable, Union
@@ -316,6 +318,20 @@ class BaseAsyncAetherClient:
 
         # Retry configuration
         self.max_retries = max_retries
+        # AETHER_MAX_RECONNECT_ATTEMPTS overrides the reconnect cap fleet-wide via
+        # env (gitops-friendly, no per-call-site change): 0 = retry forever so a
+        # long-lived service survives an Aether-gateway roll without a manual
+        # rollout-restart. Capped exponential backoff (max_backoff) still applies,
+        # and the initial connect() is unaffected (it fails fast at startup).
+        _env_max_retries = os.environ.get("AETHER_MAX_RECONNECT_ATTEMPTS")
+        if _env_max_retries:
+            try:
+                self.max_retries = int(_env_max_retries)
+            except ValueError:
+                logger.warning(
+                    "ignoring non-integer AETHER_MAX_RECONNECT_ATTEMPTS=%r",
+                    _env_max_retries,
+                )
         self.initial_backoff = initial_backoff
         self.max_backoff = max_backoff
         self.backoff_multiplier = backoff_multiplier
@@ -368,6 +384,10 @@ class BaseAsyncAetherClient:
         self._reconnecting = False
         self._reconnect_attempt = 0
         self._connection_confirmed = False
+        # Monotonic timestamp of the last CONFIRMED connect (set on every
+        # (re)connect). Powers connection_healthy() for a lenient, connection-
+        # gated liveness probe: live now, or down-but-recently-up within grace.
+        self._last_connected_at: Optional[float] = None
         self._connection_generation: int = 0
         self._session_id: Optional[str] = None
         self._init_msg: Optional[aether_pb2.InitConnection] = None
@@ -421,6 +441,29 @@ class BaseAsyncAetherClient:
     @property
     def is_running(self) -> bool:
         return not self._stop_event.is_set() or self._reconnecting
+
+    @property
+    def is_connected(self) -> bool:
+        """True while a CONFIRMED gateway stream is live (False during the gap
+        between a drop and a successful reconnect, and after close())."""
+        return self._connection_confirmed
+
+    def connection_healthy(self, grace_seconds: float = 90.0) -> bool:
+        """Lenient, connection-gated health signal for a k8s liveness probe.
+
+        Returns True when the gateway stream is live now, OR when it dropped but
+        was confirmed-up within ``grace_seconds`` (a reconnect is in flight —
+        max_retries=0 retries forever with capped backoff, so a normal gateway
+        roll heals well inside the grace and never trips the probe). Returns
+        False only when the connection has been down longer than the grace
+        (a genuinely stuck/unreachable gateway), so the probe restarts the pod.
+        Before the first successful connect it returns True (startup grace; the
+        initial connect()'s own failure path governs boot)."""
+        if self._connection_confirmed:
+            return True
+        if self._last_connected_at is None:
+            return True
+        return (time.monotonic() - self._last_connected_at) < grace_seconds
 
     def negotiated_extensions(self) -> List[str]:
         """
@@ -594,6 +637,7 @@ class BaseAsyncAetherClient:
                 # Connection confirmed when we receive first response from server
                 if not self._connection_confirmed:
                     self._connection_confirmed = True
+                    self._last_connected_at = time.monotonic()
                     if self._reconnecting:
                         logger.info("Reconnected to %s", self.target)
                     else:
