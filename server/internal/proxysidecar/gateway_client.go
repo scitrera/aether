@@ -225,10 +225,28 @@ func (r *gatewayRuntime) runConnectionLoop(ctx context.Context) (err error) {
 			return nil
 		}
 
+		// Log EVERY connect attempt (not just successes) so a connection that
+		// keeps dropping — e.g. a gateway GOAWAY "too_many_pings", an auth/ACL
+		// reject, or a network blip — is visible per-attempt instead of only via
+		// raw gRPC transport errors. Pairs with the cycleErr disconnect-reason
+		// logs below and the "connected ... entering run loop" success log.
+		log.Info().
+			Int("terminal_failures", terminalFailures).
+			Dur("backoff", backoff).
+			Msg("gateway runtime: connect attempt — dialing gateway")
 		cycleStart := time.Now()
 		cycleErr := conn.Connect(ctx)
 		if cycleErr == nil {
+			log.Info().
+				Dur("connect_duration", time.Since(cycleStart)).
+				Msg("gateway runtime: connected to gateway; entering run loop")
 			cycleErr = conn.Run(ctx)
+			if cycleErr != nil {
+				log.Warn().
+					Err(cycleErr).
+					Dur("session_duration", time.Since(cycleStart)).
+					Msg("gateway runtime: connection dropped (run loop ended)")
+			}
 		}
 		if ctx.Err() != nil {
 			// Clean shutdown — the cancellation came from us. Demote any

@@ -138,6 +138,21 @@ func (r *Relay) Run(ctx context.Context) error {
 			Time:    30 * time.Second,
 			Timeout: 15 * time.Second,
 		}),
+		// The sandbox-side aether SDK dials this relay with keepalive
+		// ClientParameters{Time: KeepAliveInterval (default 30s),
+		// PermitWithoutStream: true} — it pings to detect a dead relay even on an
+		// idle (no-active-stream) connection. WITHOUT an explicit
+		// EnforcementPolicy the relay server falls back to gRPC's default
+		// {MinTime: 5min, PermitWithoutStream: false}, which counts those idle 30s
+		// pings as abusive and sends GOAWAY ENHANCE_YOUR_CALM "too_many_pings",
+		// tearing the sandbox<->sidecar connection down (relay sessions churn,
+		// the agent loses its tunnel, and the provider's liveness eventually reaps
+		// the sandbox). Permit the SDK's keepalive: allow streamless pings and set
+		// MinTime <= the SDK's 30s interval.
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             10 * time.Second,
+			PermitWithoutStream: true,
+		}),
 		grpc.ConnectionTimeout(10*time.Second),
 		grpc.MaxRecvMsgSize(10*1024*1024),
 		grpc.MaxSendMsgSize(10*1024*1024),

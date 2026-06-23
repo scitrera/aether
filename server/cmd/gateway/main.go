@@ -629,8 +629,14 @@ func main() {
 			Timeout:               10 * time.Second,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             10 * time.Second,
-			PermitWithoutStream: false,
+			MinTime: 10 * time.Second,
+			// SDK clients dial with PermitWithoutStream: true and keepalive-ping
+			// idle connections (default every 30s) to detect a dead gateway. With
+			// PermitWithoutStream: false here the gateway counts those idle pings
+			// as abusive and sends GOAWAY "too_many_pings", churning the client's
+			// connection (e.g. sandbox sidecars → reaped). Permit streamless
+			// keepalive; MinTime (10s) still throttles a genuinely chatty client.
+			PermitWithoutStream: true,
 		}),
 	}
 
