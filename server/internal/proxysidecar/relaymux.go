@@ -109,7 +109,6 @@ import (
 // outbound envelopes through the terminator's shared gateway queue.
 type muxSharedSendFn func(ctx context.Context, prio backpressure.Priority, msg *pb.UpstreamMessage) error
 
-
 // RelayMux runs the sidecar in shared-upstream relay mode. It owns a local
 // gRPC server (on UDS or TCP) and exactly ONE upstream gateway connection
 // shared across all accepted sub-client streams.
@@ -248,19 +247,23 @@ func (m *RelayMux) SetSharedUpstream(sendFn muxSharedSendFn) {
 }
 
 // RouteDownstream is called by the rawDownstreamTap for correlated-response
-// downstream frames in composite mode. It claims a frame only when the mux's
-// pending table recognises it as a relay-owned correlated reply (rmx-* mux
-// id) or a relay-owned tunnel frame — and delivers it directly to the right
-// sub-client.
+// downstream frames in composite mode. It claims a frame only when the mux
+// recognises it as relay-owned: a correlated reply (rmx-* mux id in the pending
+// table), a relay-owned tunnel frame, or a PROXY response/chunk whose
+// request_id decodes (via the stateless per-sub proxy-id prefix) to a live
+// sub-client — and delivers it directly to the right sub-client.
 //
-// Broadcast/push frames (TaskAssignment, Signal, Config, ProxyHttpResponse,
-// ProxyHttpBodyChunk, IncomingMessage, ...) are NOT claimed here. They travel
-// through the normal SDK typed-dispatch path so that OnProxyHttpResponse and
-// OnTunnelDataIn etc. still fire for the terminator surface, and those SDK
-// callbacks call routeToRelay to fan the frame to relay sub-clients.
-// Claiming broadcasts in the tap would swallow terminator wakeups (e.g. the
-// "your caller went away" ProxyHttpResponse error that cancels an active
-// terminator dispatch).
+// Broadcast/push frames (TaskAssignment, Signal, Config, IncomingMessage, ...)
+// are NOT claimed here. They travel through the normal SDK typed-dispatch path
+// so that OnTunnelDataIn etc. still fire for the terminator surface, and those
+// SDK callbacks call routeToRelay to fan the frame to relay sub-clients.
+// Claiming broadcasts in the tap would swallow terminator wakeups.
+//
+// A PROXY response whose request_id is NOT relay-encoded (the terminator's own
+// "req-N" proxy response) decodes to ok=false and falls through to broadcast →
+// returns false so the SDK's OnProxyHttpResponse terminator dispatch still
+// fires (e.g. the "your caller went away" ProxyHttpResponse error that cancels
+// an active terminator dispatch).
 //
 // Returns true only when the frame was consumed (correlated demux delivered,
 // or tunnel routed). Returns false for broadcasts, unknown ids, and frames
@@ -300,6 +303,22 @@ func (m *RelayMux) RouteDownstream(msg *pb.DownstreamMessage) bool {
 		if dec.route == routeCorrelated {
 			restoreDownstreamRequestID(msg, dec.origReqID)
 		}
+		target.deliver(msg)
+		return true
+
+	case routeProxyToSub:
+		// Stateless proxy response/chunk routed to its owning sub-client only.
+		// No pending entry to delete; just restore the proxy request_id and
+		// deliver. Claiming it (return true) prevents the SDK's terminator
+		// OnProxyHttpResponse dispatch from also seeing a relay-owned response.
+		target := m.subs[dec.subID]
+		m.mu.Unlock()
+		if target == nil {
+			// Sub departed between classify and here: fall through so the SDK
+			// can handle/drop it (it won't match any terminator dispatch).
+			return false
+		}
+		restoreDownstreamProxyReqID(msg, dec.origReqID)
 		target.deliver(msg)
 		return true
 
@@ -723,6 +742,12 @@ const (
 	// routeDropUnknownCorrelated: a correlated/tunnel frame whose id is not in
 	// the routing tables — stale/unknown; log + drop (do NOT broadcast).
 	routeDropUnknownCorrelated
+	// routeProxyToSub: a proxy RESPONSE/CHUNK frame whose request_id decoded to a
+	// LIVE sub-client (the stateless per-sub proxy-id prefix scheme; see
+	// relaymux_reqid.go). Deliver to that sub-client only, after restoring the
+	// original proxy request_id. Unlike routeCorrelated there is NO pending entry
+	// (proxy is stateless), so no table delete.
+	routeProxyToSub
 )
 
 // downstreamDecision is the pure routing classification of a downstream frame
@@ -771,7 +796,23 @@ func (m *RelayMux) classifyDownstream(msg *pb.DownstreamMessage) downstreamDecis
 		return downstreamDecision{route: routeDropUnknownCorrelated, tunnelID: tunID}
 	}
 
-	// 4. Everything else is a PUSH → broadcast.
+	// 4. Proxy RESPONSE/CHUNK frame: decode the stateless per-sub proxy id
+	//    prefix. If it decodes to a LIVE sub-client, route to it ONLY (restoring
+	//    the original proxy request_id). A non-decodable id is the terminator's
+	//    own proxy response → fall through to broadcast so the SDK's typed
+	//    OnProxyHttpResponse dispatch still handles it. A decodable id whose sub
+	//    has departed also falls through to broadcast (harmless; the SDK drops it
+	//    since no terminator dispatch is waiting on a relay-encoded id).
+	if subID, origID, ok := decodeDownstreamProxyReqID(msg); ok {
+		if sid, err := strconv.ParseUint(subID, 10, 64); err == nil {
+			if _, live := m.subs[sid]; live {
+				return downstreamDecision{route: routeProxyToSub, subID: sid, origReqID: origID}
+			}
+		}
+		return downstreamDecision{route: routeBroadcast}
+	}
+
+	// 5. Everything else is a PUSH → broadcast.
 	return downstreamDecision{route: routeBroadcast}
 }
 
@@ -788,6 +829,9 @@ func (m *RelayMux) dispatchDownstream(msg *pb.DownstreamMessage) {
 		if dec.tunnelDone {
 			delete(m.tunnels, dec.tunnelID)
 		}
+	case routeProxyToSub:
+		// Stateless: no pending entry to delete.
+		target = m.subs[dec.subID]
 	case routeBroadcast:
 		broadcast = make([]*muxSubClient, 0, len(m.subs))
 		for _, s := range m.subs {
@@ -803,6 +847,13 @@ func (m *RelayMux) dispatchDownstream(msg *pb.DownstreamMessage) {
 			return
 		}
 		restoreDownstreamRequestID(msg, dec.origReqID)
+		target.deliver(msg)
+	case routeProxyToSub:
+		if target == nil {
+			log.Info().Uint64("mux_sub", dec.subID).Msg("relaymux: proxy reply for departed sub-client; dropping")
+			return
+		}
+		restoreDownstreamProxyReqID(msg, dec.origReqID)
 		target.deliver(msg)
 	case routeTunnel:
 		if target == nil {
@@ -883,6 +934,21 @@ func (m *RelayMux) pumpSubUpstream(ctx context.Context, sub *muxSubClient) error
 				m.tunnels[tunID] = sub.id
 				m.mu.Unlock()
 			}
+		}
+
+		// Proxy frames (ProxyHttpRequest / ProxyHttpBodyChunk) are STATELESS:
+		// they get a deterministic per-sub-client request_id prefix instead of a
+		// per-frame muxSeq id + pending entry. Deterministic so every frame of a
+		// chunked request (which shares an orig request_id) rewrites identically,
+		// preserving sandbox<->service correlation. The matching downstream
+		// response/chunk decodes the prefix back to this sub-client (see
+		// classifyDownstream step 4 / routeProxyToSub). Send + continue, skipping
+		// the muxSeq/pending path entirely.
+		if rewriteUpstreamProxyReqID(msg, strconv.FormatUint(sub.id, 10)) {
+			if err := m.sendUpstream(msg); err != nil {
+				return err
+			}
+			continue
 		}
 
 		// Rewrite correlated request ids to a globally-unique mux id and record

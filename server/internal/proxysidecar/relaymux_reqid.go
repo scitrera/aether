@@ -1,6 +1,9 @@
 package proxysidecar
 
 import (
+	"strconv"
+	"strings"
+
 	pb "github.com/scitrera/aether/api/proto"
 )
 
@@ -51,11 +54,28 @@ import (
 //	  proxy_http_request / proxy_http_body_chunk / proxy_http_response: these
 //	    correlate by request_id between the SANDBOX and a downstream service,
 //	    NOT between the sub-client and the gateway in a request/response sense.
-//	    The gateway routes proxy frames by topic, and the downstream
-//	    ProxyHttpResponse / ProxyHttpRequest / ProxyHttpBodyChunk frames are
-//	    delivered to the owning identity's session and BROADCAST to sub-clients
-//	    (the sandbox picks up its own by request_id). They are deliberately NOT
-//	    in the correlated map.
+//	    Proxy ops are NOT in the correlated (pending-table) map above because
+//	    they can be MULTI-FRAME: a chunked ProxyHttpRequest (BodyChunked=true)
+//	    is followed by ProxyHttpBodyChunk frames that SHARE one request_id, and a
+//	    chunked response is a ProxyHttpResponse header followed by
+//	    ProxyHttpBodyChunk frames (Fin on the last) that also share it. A
+//	    per-frame muxSeq counter would assign different ids to frames of the same
+//	    logical request and break that correlation.
+//
+//	    Instead, proxy frames use a STATELESS deterministic per-sub-client
+//	    request_id PREFIX (see encodeProxyReqID / decodeProxyReqID below):
+//	      - Upstream: an outbound proxy frame's request_id is rewritten from
+//	        <orig> to encodeProxyReqID(subID, <orig>). Deterministic ⇒ every
+//	        frame of one chunked request rewrites identically; no pending entry.
+//	      - Downstream: a proxy response/chunk frame's request_id decodes back to
+//	        (subID, origID). If subID is a live sub-client, the original id is
+//	        restored on the frame and it is delivered to THAT sub-client only. If
+//	        it does NOT decode (e.g. the terminator's own "req-N" proxy response),
+//	        the frame falls through to broadcast so the SDK's terminator typed
+//	        dispatch (OnProxyHttpResponse) still handles it.
+//	    This replaces the never-wired "broadcast to sub-clients; the sandbox
+//	    picks up its own by request_id" scheme that previously dropped a relay
+//	    sub-client's proxy responses.
 //	  tunnel_open / tunnel_data / tunnel_close / tunnel_ack: routed by
 //	    tunnel_id, handled separately (see RelayMux tunnel routing), not here.
 //
@@ -219,6 +239,98 @@ func downstreamErrorRequestID(msg *pb.DownstreamMessage) (id string, isError boo
 		return p.Error.GetRequestId(), true
 	}
 	return "", false
+}
+
+// proxyReqIDSentinel marks a request_id that was rewritten by the relay mux for
+// a proxy frame. It is chosen so it cannot be confused with a normal
+// "req-N" / "rpc-<hex>" / "rmx-N" id: it contains a '~' (never produced by the
+// SDK's counter-based or hex ids, nor by the "rmx-" mux prefix).
+const proxyReqIDSentinel = "rmxp~"
+
+// encodeProxyReqID builds a deterministic, reversible per-sub-client prefix for
+// a proxy frame's request_id. The format is:
+//
+//	"rmxp~" + len(subID) + "~" + subID + origID
+//
+// The length prefix makes the split unambiguous for ANY subID/origID content
+// (origID may itself contain '~'). encode/decode round-trip exactly.
+func encodeProxyReqID(subID, origID string) string {
+	return proxyReqIDSentinel + strconv.Itoa(len(subID)) + "~" + subID + origID
+}
+
+// decodeProxyReqID reverses encodeProxyReqID. It returns ok=false for any id
+// that was not produced by encodeProxyReqID (e.g. the terminator's own "req-N"
+// proxy response ids), in which case subID/origID are empty.
+func decodeProxyReqID(s string) (subID, origID string, ok bool) {
+	if !strings.HasPrefix(s, proxyReqIDSentinel) {
+		return "", "", false
+	}
+	rest := s[len(proxyReqIDSentinel):]
+	sep := strings.IndexByte(rest, '~')
+	if sep < 0 {
+		return "", "", false
+	}
+	n, err := strconv.Atoi(rest[:sep])
+	if err != nil || n < 0 {
+		return "", "", false
+	}
+	body := rest[sep+1:]
+	if len(body) < n {
+		return "", "", false
+	}
+	return body[:n], body[n:], true
+}
+
+// rewriteUpstreamProxyReqID rewrites the request_id on an outbound proxy frame
+// (ProxyHttpRequest / ProxyHttpBodyChunk) to encodeProxyReqID(subID, <orig>),
+// returning true. For non-proxy payloads it returns false and leaves msg
+// unchanged. Deterministic: every frame of one chunked request (which shares an
+// orig request_id) rewrites to the same encoded id, preserving correlation.
+func rewriteUpstreamProxyReqID(msg *pb.UpstreamMessage, subID string) bool {
+	if msg == nil {
+		return false
+	}
+	switch p := msg.Payload.(type) {
+	case *pb.UpstreamMessage_ProxyHttpRequest:
+		p.ProxyHttpRequest.RequestId = encodeProxyReqID(subID, p.ProxyHttpRequest.GetRequestId())
+		return true
+	case *pb.UpstreamMessage_ProxyHttpBodyChunk:
+		p.ProxyHttpBodyChunk.RequestId = encodeProxyReqID(subID, p.ProxyHttpBodyChunk.GetRequestId())
+		return true
+	}
+	return false
+}
+
+// decodeDownstreamProxyReqID decodes the request_id on an inbound proxy
+// response frame (ProxyHttpResponse / ProxyHttpBodyChunk) back to its owning
+// (subID, origID). It returns ok=false for non-proxy frames and for proxy
+// frames whose request_id was not relay-encoded (the terminator's own).
+func decodeDownstreamProxyReqID(msg *pb.DownstreamMessage) (subID, origID string, ok bool) {
+	if msg == nil {
+		return "", "", false
+	}
+	switch p := msg.Payload.(type) {
+	case *pb.DownstreamMessage_ProxyHttpResponse:
+		return decodeProxyReqID(p.ProxyHttpResponse.GetRequestId())
+	case *pb.DownstreamMessage_ProxyHttpBodyChunk:
+		return decodeProxyReqID(p.ProxyHttpBodyChunk.GetRequestId())
+	}
+	return "", "", false
+}
+
+// restoreDownstreamProxyReqID writes orig back onto a proxy downstream frame's
+// request_id (the inverse of the rewriteUpstreamProxyReqID encode, applied to
+// the matching response/chunk types) so the owning sub-client sees its own id.
+func restoreDownstreamProxyReqID(msg *pb.DownstreamMessage, orig string) {
+	if msg == nil {
+		return
+	}
+	switch p := msg.Payload.(type) {
+	case *pb.DownstreamMessage_ProxyHttpResponse:
+		p.ProxyHttpResponse.RequestId = orig
+	case *pb.DownstreamMessage_ProxyHttpBodyChunk:
+		p.ProxyHttpBodyChunk.RequestId = orig
+	}
 }
 
 // downstreamTunnelID returns the tunnel id (and true) for tunnel downstream

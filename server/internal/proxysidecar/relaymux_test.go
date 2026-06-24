@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -134,6 +135,150 @@ func TestRelayMux_ClassifyDownstream(t *testing.T) {
 				t.Fatalf("tunnelID = %q; want %q", dec.tunnelID, tc.wantTun)
 			}
 		})
+	}
+}
+
+// =============================================================================
+// Stateless proxy request_id prefix scheme (encode/decode + routing).
+// =============================================================================
+
+func TestProxyReqIDRoundTrip(t *testing.T) {
+	cases := []struct{ subID, origID string }{
+		{"7", "req-3"},
+		{"42", "rpc-deadbeef"},
+		{"1", ""},                       // empty origID
+		{"123", "weird~id~with~tildes"}, // origID containing the sentinel char
+		{"0", "rmxp~not-really"},        // origID that looks like an encoded id
+	}
+	for _, tc := range cases {
+		enc := encodeProxyReqID(tc.subID, tc.origID)
+		gotSub, gotOrig, ok := decodeProxyReqID(enc)
+		if !ok {
+			t.Fatalf("decodeProxyReqID(%q) ok=false; want true", enc)
+		}
+		if gotSub != tc.subID || gotOrig != tc.origID {
+			t.Fatalf("round-trip(%q,%q) = (%q,%q)", tc.subID, tc.origID, gotSub, gotOrig)
+		}
+	}
+
+	// Non-encoded ids must NOT decode (these are terminator-owned proxy ids).
+	for _, s := range []string{"req-5", "rpc-abc123", "rmx-9", "", "rmxp~", "rmxp~x~y"} {
+		if _, _, ok := decodeProxyReqID(s); ok {
+			t.Fatalf("decodeProxyReqID(%q) ok=true; want false", s)
+		}
+	}
+}
+
+// TestRelayMux_ClassifyProxyResponse covers the new proxy routing:
+//   - a relay-encoded ProxyHttpResponse (and a chunked ProxyHttpBodyChunk with
+//     Fin) routes to the owning live sub-client with origID restorable;
+//   - a non-decodable (terminator-owned) proxy response falls through to
+//     broadcast so the SDK's typed dispatch still handles it;
+//   - a relay-encoded response for a DEPARTED sub falls through to broadcast.
+func TestRelayMux_ClassifyProxyResponse(t *testing.T) {
+	m := newTestMux()
+	m.subs[3] = &muxSubClient{id: 3}
+
+	encResp := func(subID uint64, orig string) *pb.DownstreamMessage {
+		return &pb.DownstreamMessage{Payload: &pb.DownstreamMessage_ProxyHttpResponse{
+			ProxyHttpResponse: &pb.ProxyHttpResponse{RequestId: encodeProxyReqID(strconv.FormatUint(subID, 10), orig)}}}
+	}
+	encChunk := func(subID uint64, orig string, fin bool) *pb.DownstreamMessage {
+		return &pb.DownstreamMessage{Payload: &pb.DownstreamMessage_ProxyHttpBodyChunk{
+			ProxyHttpBodyChunk: &pb.ProxyHttpBodyChunk{RequestId: encodeProxyReqID(strconv.FormatUint(subID, 10), orig), Fin: fin}}}
+	}
+
+	cases := []struct {
+		name      string
+		msg       *pb.DownstreamMessage
+		wantRoute muxRoute
+		wantSub   uint64
+		wantOrig  string
+	}{
+		{
+			name:      "proxy response routes to owning sub with orig restored",
+			msg:       encResp(3, "req-9"),
+			wantRoute: routeProxyToSub,
+			wantSub:   3,
+			wantOrig:  "req-9",
+		},
+		{
+			name:      "proxy chunk (Fin) routes to same owning sub",
+			msg:       encChunk(3, "req-9", true),
+			wantRoute: routeProxyToSub,
+			wantSub:   3,
+			wantOrig:  "req-9",
+		},
+		{
+			name: "terminator-owned proxy response falls through to broadcast",
+			msg: &pb.DownstreamMessage{Payload: &pb.DownstreamMessage_ProxyHttpResponse{
+				ProxyHttpResponse: &pb.ProxyHttpResponse{RequestId: "req-7"}}},
+			wantRoute: routeBroadcast,
+		},
+		{
+			name:      "proxy response for departed sub falls through to broadcast",
+			msg:       encResp(999, "req-1"),
+			wantRoute: routeBroadcast,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m.mu.Lock()
+			dec := m.classifyDownstream(tc.msg)
+			m.mu.Unlock()
+			if dec.route != tc.wantRoute {
+				t.Fatalf("route = %v; want %v", dec.route, tc.wantRoute)
+			}
+			if tc.wantSub != 0 && dec.subID != tc.wantSub {
+				t.Fatalf("subID = %d; want %d", dec.subID, tc.wantSub)
+			}
+			if tc.wantRoute == routeProxyToSub {
+				if dec.origReqID != tc.wantOrig {
+					t.Fatalf("origReqID = %q; want %q", dec.origReqID, tc.wantOrig)
+				}
+				// Restore must put the original id back on the proxy frame.
+				restoreDownstreamProxyReqID(tc.msg, dec.origReqID)
+				if gotID, _, _ := decodeDownstreamProxyReqID(tc.msg); gotID != "" {
+					t.Fatalf("after restore, request_id still decodes as relay-encoded")
+				}
+			}
+		})
+	}
+}
+
+// TestRewriteUpstreamProxyReqID verifies the upstream rewrite is applied to
+// both proxy frame types (so chunked requests share an encoded id) and to
+// nothing else.
+func TestRewriteUpstreamProxyReqID(t *testing.T) {
+	subID := "5"
+	reqMsg := &pb.UpstreamMessage{Payload: &pb.UpstreamMessage_ProxyHttpRequest{
+		ProxyHttpRequest: &pb.ProxyHttpRequest{RequestId: "r-1", BodyChunked: true}}}
+	chunkMsg := &pb.UpstreamMessage{Payload: &pb.UpstreamMessage_ProxyHttpBodyChunk{
+		ProxyHttpBodyChunk: &pb.ProxyHttpBodyChunk{RequestId: "r-1"}}}
+
+	if !rewriteUpstreamProxyReqID(reqMsg, subID) {
+		t.Fatal("rewriteUpstreamProxyReqID(request) = false; want true")
+	}
+	if !rewriteUpstreamProxyReqID(chunkMsg, subID) {
+		t.Fatal("rewriteUpstreamProxyReqID(chunk) = false; want true")
+	}
+	gotReq := reqMsg.GetProxyHttpRequest().GetRequestId()
+	gotChunk := chunkMsg.GetProxyHttpBodyChunk().GetRequestId()
+	if gotReq != gotChunk {
+		t.Fatalf("chunked request frames got different encoded ids: %q vs %q", gotReq, gotChunk)
+	}
+	if gotReq != encodeProxyReqID(subID, "r-1") {
+		t.Fatalf("encoded id = %q; want %q", gotReq, encodeProxyReqID(subID, "r-1"))
+	}
+
+	// A non-proxy upstream frame must be left untouched.
+	kvMsg := &pb.UpstreamMessage{Payload: &pb.UpstreamMessage_KvOp{KvOp: &pb.KVOperation{RequestId: "k-1"}}}
+	if rewriteUpstreamProxyReqID(kvMsg, subID) {
+		t.Fatal("rewriteUpstreamProxyReqID(kv) = true; want false")
+	}
+	if kvMsg.GetKvOp().GetRequestId() != "k-1" {
+		t.Fatal("kv request_id was mutated by proxy rewrite")
 	}
 }
 
