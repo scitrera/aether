@@ -316,13 +316,20 @@ func (m *RelayMux) RouteDownstream(msg *pb.DownstreamMessage) bool {
 		//   Signal             — SDK mutates forceDisconnect/connected atomics
 		//   Config             — bootstraps SDK KV state
 		//   Error              — handled by SDK, re-checked by relay tap for correlated
-		//   Msg (IncomingMessage) — already forwarded via OnMessage callback
 		//
-		// Safe to claim (relay-only pushes, no SDK state effects):
-		//   TaskAssignment, ProgressUpdate
+		// Safe to claim (relay-bound pushes the sub-clients need, no terminator/
+		// SDK state effects): TaskAssignment, ProgressUpdate, and Msg.
+		//   Msg (IncomingMessage) is the workclaw/sahara chat envelope the
+		//   in-sandbox harness consumes via its OnMessage→TaskSource path. It MUST
+		//   be claimed here: the installOn OnMessage callback re-forwards Msg via
+		//   routeToRelay, which re-enters this RouteDownstream — so leaving Msg in
+		//   the default branch dropped it (the harness never saw the chat task and
+		//   stayed idle). Claiming it broadcasts to the sub-clients; the SDK then
+		//   skips its OnMessage dispatch (tap consumed it), so no double delivery.
 		switch msg.GetPayload().(type) {
 		case *pb.DownstreamMessage_TaskAssignment,
-			*pb.DownstreamMessage_ProgressUpdate:
+			*pb.DownstreamMessage_ProgressUpdate,
+			*pb.DownstreamMessage_Msg:
 		default:
 			// All other broadcast types: let SDK typed dispatch handle them.
 			// OnProxyHttpResponse, OnMessage etc. call routeToRelay afterward.
