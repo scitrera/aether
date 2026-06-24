@@ -241,6 +241,18 @@ func (s *GatewayServer) checkMessageSendWithAuthority(ctx context.Context, sende
 		return acl.AccessNone, fmt.Errorf("ACL service not available")
 	}
 
+	// Additive task-party grant: a task's own party (assignee/creator/OBO
+	// subject) may send to the task's msg lane even without a workspace send
+	// grant. Non-parties / non-task-msg topics fall through unchanged to the
+	// workspace/OBO logic below.
+	if ok, isTaskMsg := s.taskMsgSenderIsTaskParty(ctx, sender, targetTopic); isTaskMsg && ok {
+		logging.Logger.Info().
+			Str("from", sender.ToTopic()).
+			Str("target", targetTopic).
+			Msg("task-msg send authorized via task-party match")
+		return acl.AccessReadWrite, nil
+	}
+
 	// Workspace-less senders (bridges, services, users) check against the
 	// target workspace — they have no "home" to fall back on. Topics
 	// without a workspace component (us::, br::) skip the check entirely.

@@ -57,6 +57,36 @@ func newKVHandlerFromService(store KVReadWriter, auditLogger auditstore.Store, a
 	return NewKVHandler(store, auditLogger, checker)
 }
 
+// emitKVDenial logs a KV denial at Info level (for operator visibility) and,
+// when h.auditLogger is configured, records a success=false audit event. key
+// may be empty for scope-only operations (e.g. LIST). scope is always included
+// in the audit metadata; reason is the human-readable denial explanation.
+func (h *KVHandler) emitKVDenial(ctx context.Context, identity models.Identity, scope kv.KVScope, key, operation, workspace, reason string, sessionID uuid.UUID) {
+	logging.Logger.Info().
+		Str("identity", identity.String()).
+		Str("key", key).
+		Str("scope", string(scope)).
+		Str("op", operation).
+		Str("reason", reason).
+		Msg("KV access denied")
+	if h.auditLogger == nil {
+		return
+	}
+	metadata := map[string]interface{}{"scope": string(scope)}
+	event := audit.NewKVEvent(
+		string(identity.Type),
+		identity.String(),
+		operation,
+		key,
+		workspace,
+		sessionID,
+		false,  // success
+		reason, // errorMsg
+		metadata,
+	)
+	h.auditLogger.LogEvent(ctx, event)
+}
+
 // checkKeyPermission checks key-level then scope-level ACL for the given operation.
 // Key-level rules (kv_key/<key>) take precedence; if no explicit key rule exists
 // (FallbackApplied), falls through to scope-level check (kv_scope/<scope>).
@@ -91,11 +121,13 @@ func (h *KVHandler) checkKeyPermission(ctx context.Context, identity models.Iden
 	decision, err := h.aclService.CheckAccessWithAuthority(ctx, identity, authority, acl.ResourceTypeKVKey, key, operation, workspace, sessionID, requiredLevel)
 	if err != nil {
 		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("key", key).Msg("ACL check failed for KV key, denying")
+		h.emitKVDenial(ctx, identity, scope, key, operation, workspace, "ACL check failed: "+err.Error(), sessionID)
 		return status.Errorf(codes.Internal, "ACL check failed: %v", err)
 	}
 	if !decision.FallbackApplied {
 		// Explicit rule exists for this key — use it
 		if decision.Denied() {
+			h.emitKVDenial(ctx, identity, scope, key, operation, workspace, decision.Reason, sessionID)
 			return status.Errorf(codes.PermissionDenied, "KV access denied for key %s: %s", key, decision.Reason)
 		}
 		return nil
@@ -105,9 +137,11 @@ func (h *KVHandler) checkKeyPermission(ctx context.Context, identity models.Iden
 	decision, err = h.aclService.CheckAccessWithAuthority(ctx, identity, authority, acl.ResourceTypeKVScope, string(scope), operation, workspace, sessionID, requiredLevel)
 	if err != nil {
 		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Msg("ACL check failed for KV scope, denying")
+		h.emitKVDenial(ctx, identity, scope, key, operation, workspace, "ACL check failed: "+err.Error(), sessionID)
 		return status.Errorf(codes.Internal, "ACL check failed: %v", err)
 	}
 	if decision.Denied() {
+		h.emitKVDenial(ctx, identity, scope, key, operation, workspace, decision.Reason, sessionID)
 		return status.Errorf(codes.PermissionDenied, "KV access denied for scope %s: %s", scope, decision.Reason)
 	}
 	return nil
@@ -139,9 +173,11 @@ func (h *KVHandler) checkScopeReadPermission(ctx context.Context, identity model
 	decision, err := h.aclService.CheckAccessWithAuthority(ctx, identity, authority, acl.ResourceTypeKVScope, string(scope), operation, workspace, sessionID, acl.AccessRead)
 	if err != nil {
 		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Msg("ACL check failed for KV scope read, denying")
+		h.emitKVDenial(ctx, identity, scope, "", operation, workspace, "ACL check failed: "+err.Error(), sessionID)
 		return status.Errorf(codes.Internal, "ACL check failed: %v", err)
 	}
 	if decision.Denied() {
+		h.emitKVDenial(ctx, identity, scope, "", operation, workspace, decision.Reason, sessionID)
 		return status.Errorf(codes.PermissionDenied, "KV read denied for scope %s: %s", scope, decision.Reason)
 	}
 	return nil

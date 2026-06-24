@@ -531,6 +531,91 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 	}
 }
 
+// parseTaskMsgTopic reports whether topic is a task message-lane topic of the
+// exact shape tk::{workspace}::{task_id}::msg and, if so, returns the workspace
+// and task_id. The trailing segment must be EXACTLY "msg" — the task events
+// lane (tk::{ws}::{task}::events) and any other shape return isTaskMsg=false so
+// the caller falls through to the ordinary workspace-ACL path. This is a pure
+// function (no store access) so the parse + shape rules are unit-testable.
+func parseTaskMsgTopic(topic string) (workspace, taskID string, isTaskMsg bool) {
+	parts := strings.Split(topic, models.IdentitySep)
+	if len(parts) != 4 || parts[0] != "tk" || parts[3] != "msg" {
+		return "", "", false
+	}
+	if parts[1] == "" || parts[2] == "" {
+		return "", "", false
+	}
+	return parts[1], parts[2], true
+}
+
+// taskPartyAuthorized mirrors authorizeTaskOp's party predicate (creator,
+// assignee, OBO subject) over a sender Identity rather than a *ClientSession,
+// plus the same workspace tenancy guard. It is pure (no store/ACL access) so it
+// can be unit-tested directly. Workspace-less senders (services) skip the
+// tenancy guard exactly as authorizeTaskOp treats the empty-workspace caller.
+func taskPartyAuthorized(sender models.Identity, task *tasks.Task) bool {
+	if task == nil {
+		return false
+	}
+	callerTopic := sender.ToTopic()
+	// Tenancy guard: never cross the workspace boundary via this path.
+	if sender.Workspace != "" && task.Workspace != sender.Workspace {
+		return false
+	}
+	// Creator-match (task.ParentAgentID backs the proto creator_actor_id).
+	if task.ParentAgentID != "" && task.ParentAgentID == callerTopic {
+		return true
+	}
+	// Assignee-match: the worker assigned to the task.
+	if task.AssignedTo != "" && task.AssignedTo == callerTopic {
+		return true
+	}
+	// OBO subject-match: the end user the task acts on behalf of (match by
+	// ID+type since a connected user topic carries a window specifier the
+	// stored subject id does not).
+	if sender.Type == models.PrincipalUser &&
+		task.Authority.SubjectType == string(models.PrincipalUser) &&
+		sender.ID != "" &&
+		sender.ID == task.Authority.SubjectID {
+		return true
+	}
+	return false
+}
+
+// taskMsgSenderIsTaskParty authorizes sends to a task's own message lane
+// (tk::{workspace}::{task_id}::msg) when the sender is a party to that task —
+// the SAME predicate as authorizeTaskOp (assignee, creator, or OBO subject).
+// This is purely additive: it grants a task party (notably a workspace-less
+// Service principal that is the task's AssignedTo) the ability to send to the
+// task's msg lane, which the plain workspace-ACL check denies via the
+// read-only service fallback. It never newly denies — non-parties fall through
+// to the existing workspace-ACL logic unchanged.
+//
+// Returns (authorized, isTaskMsg). isTaskMsg is true whenever the topic has the
+// task-msg shape, even when not authorizable here (no store, missing task,
+// cross-workspace), so the caller can decide to fall through. The grant fires
+// only when both are true. Fail-closed: a missing taskStore, a load error, or
+// an absent task yields (false, true) — the caller falls through to the
+// existing ACL path rather than granting blindly.
+func (s *GatewayServer) taskMsgSenderIsTaskParty(ctx context.Context, sender models.Identity, targetTopic string) (authorized bool, isTaskMsg bool) {
+	workspace, taskID, ok := parseTaskMsgTopic(targetTopic)
+	if !ok {
+		return false, false
+	}
+	_ = workspace // workspace is re-derived from the loaded task for the tenancy guard
+	if s.taskStore == nil {
+		return false, true
+	}
+	task, err := s.taskStore.GetTask(ctx, taskID)
+	if err != nil || task == nil {
+		return false, true
+	}
+	if taskPartyAuthorized(sender, task) {
+		return true, true
+	}
+	return false, true
+}
+
 // checkMessageSend checks whether a sender is allowed to publish to a target topic via the ACL
 // service. It preserves the workspace-derivation logic: bridges/services with no home workspace
 // check ACL against the target workspace; workspace-scoped senders check against the target
@@ -543,6 +628,17 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Identity, targetTopic string) (int, error) {
 	if s.acl == nil {
 		return acl.AccessNone, nil // ACL not enabled
+	}
+
+	// Additive task-party grant: a task's own party (assignee/creator/OBO
+	// subject) may send to the task's msg lane even without a workspace send
+	// grant. Non-parties / non-task-msg topics fall through unchanged.
+	if ok, isTaskMsg := s.taskMsgSenderIsTaskParty(ctx, sender, targetTopic); isTaskMsg && ok {
+		logging.Logger.Info().
+			Str("from", sender.ToTopic()).
+			Str("target", targetTopic).
+			Msg("task-msg send authorized via task-party match")
+		return acl.AccessReadWrite, nil
 	}
 
 	// System principals with no workspace (bridges/services) check ACL against the target workspace.
@@ -1535,6 +1631,22 @@ func (s *GatewayServer) authorizeTaskOp(ctx context.Context, client *ClientSessi
 	// match across workspaces should not be honored, since workspace is
 	// the strong tenancy boundary.
 	if callerWorkspace != "" && task.Workspace != callerWorkspace {
+		logging.Logger.Info().
+			Str("identity", callerIdentity.String()).
+			Str("task_id", task.TaskID).
+			Str("reason", "workspace mismatch").
+			Msg("task op authorization denied")
+		s.auditLog(ctx, audit.NewTaskEvent(
+			string(callerIdentity.Type),
+			callerIdentity.String(),
+			audit.OpTaskAuthzDenied,
+			task.TaskID,
+			task.Workspace,
+			sessionUUID,
+			false,
+			"workspace mismatch",
+			nil,
+		))
 		return false
 	}
 
@@ -1570,7 +1682,41 @@ func (s *GatewayServer) authorizeTaskOp(ctx context.Context, client *ClientSessi
 	}
 	decision, err := s.acl.CanManageWorkspace(ctx, callerIdentity, task.Workspace, sessionUUID)
 	if err != nil || decision == nil {
+		logging.Logger.Info().
+			Str("identity", callerIdentity.String()).
+			Str("task_id", task.TaskID).
+			Str("reason", "not creator/assignee/subject and workspace-admin check failed").
+			Msg("task op authorization denied")
+		s.auditLog(ctx, audit.NewTaskEvent(
+			string(callerIdentity.Type),
+			callerIdentity.String(),
+			audit.OpTaskAuthzDenied,
+			task.TaskID,
+			task.Workspace,
+			sessionUUID,
+			false,
+			"not creator/assignee/subject and workspace-admin check failed",
+			nil,
+		))
 		return false
+	}
+	if !decision.Allowed {
+		logging.Logger.Info().
+			Str("identity", callerIdentity.String()).
+			Str("task_id", task.TaskID).
+			Str("reason", decision.Reason).
+			Msg("task op authorization denied")
+		s.auditLog(ctx, audit.NewTaskEvent(
+			string(callerIdentity.Type),
+			callerIdentity.String(),
+			audit.OpTaskAuthzDenied,
+			task.TaskID,
+			task.Workspace,
+			sessionUUID,
+			false,
+			decision.Reason,
+			nil,
+		))
 	}
 	return decision.Allowed
 }

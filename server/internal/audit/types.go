@@ -91,6 +91,11 @@ const (
 	// Task operations
 	OpTaskCreate     = "task_create"
 	OpTaskTokenIssue = "task_token_issue" // mint of a per-task auth token; checked separately from task_create because it's an authority-elevation primitive (lets the caller spawn a worker that authenticates as a declared identity)
+	// OpTaskAuthzDenied is emitted when authorizeTaskOp rejects a caller.
+	// The specific task operation (claim/complete/fail/etc.) is not threaded
+	// through authorizeTaskOp — the taskID, identity, and denial reason are
+	// the load-bearing diagnostic fields.
+	OpTaskAuthzDenied = "task_authz_denied"
 
 	// Authority-grant lifecycle operations
 	OpAuthorityGrantExchange = "authority_grant_exchange"
