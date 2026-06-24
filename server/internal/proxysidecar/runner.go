@@ -74,9 +74,23 @@ type Runner struct {
 	runtime *gatewayRuntime
 	router  *downstreamRouter
 
-	term  *Terminator
+	term *Terminator
+	// relay is the legacy per-sub-client Relay. Non-nil only when
+	// cfg.Relay.Mux is false (opted-out of mux). Parked for safety.
+	// Mutually exclusive with relayMux.
 	relay *Relay
-	init  *Initiator
+	// relayMux is the shared-upstream RelayMux. Active for BOTH standalone
+	// (no terminator) and composite (terminator+relay) paths when
+	// cfg.Relay.Mux is true (the default). In composite mode it rides the
+	// shared gatewayRuntime; in standalone mode it dials its own upstream.
+	relayMux *RelayMux
+	init     *Initiator
+}
+
+// relaySurface is the subset of Relay / RelayMux the Runner drives. Both
+// implementations serve the local AetherGateway listener until ctx is done.
+type relaySurface interface {
+	Run(ctx context.Context) error
 }
 
 // NewRunner builds a Runner from cfg. cfg.Validate() is invoked here so the
@@ -100,18 +114,54 @@ func NewRunner(cfg *Config, cfgPath string) (*Runner, error) {
 	}
 
 	if cfg.Relay.Enabled {
-		relay, err := NewRelay(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("relay: %w", err)
-		}
-		r.relay = relay
-		// When the shared runtime is available, route the relay's upstream
-		// envelopes through it so both surfaces ride one gateway lock.
-		// Otherwise the relay keeps its default per-session dialer.
-		if r.runtime != nil {
-			sink := newSharedRelaySink(r.runtime, cfg.Relay.MaxSessions)
-			r.router.relay = sink
-			relay.SetUpstreamDialer(sink.dial)
+		if cfg.Relay.MuxEnabled() {
+			// RelayMux is the default for BOTH standalone and composite modes.
+			//
+			// STANDALONE (no shared runtime): RelayMux dials its own upstream
+			// and pumps it in Run. No further wiring needed.
+			//
+			// COMPOSITE (shared runtime): RelayMux rides the shared
+			// gatewayRuntime via SetSharedUpstream — outbound frames go through
+			// runtime.Client().SendWithPriority; downstream frames arrive on
+			// the inbox channel fed by downstreamRouter.RouteToRelayMux.
+			// The relay's gRPC listener is registered on the shared server in
+			// Run() (installRelayMuxOnServer).
+			mux, err := NewRelayMux(cfg)
+			if err != nil {
+				return nil, fmt.Errorf("relaymux: %w", err)
+			}
+			r.relayMux = mux
+			if r.runtime != nil {
+				// Wire composite mode: outbound through shared runtime queue.
+				// Capture runtime (not runtime.Client()) because Client()
+				// returns nil until gatewayRuntime.init() runs inside Run()
+				// — capturing the method value here would dereference a nil
+				// pointer. The closure defers the dereference to send time.
+				//
+				// Inbound (gateway → sub-client): the rawDownstreamTap installed
+				// by installOn calls relayMux.RouteDownstream inline for
+				// correlated/tunnel frames and safe broadcast push types
+				// (TaskAssignment, ProgressUpdate). RouteDownstream enqueues into
+				// each sub-client's bounded inbox via deliver() — no separate
+				// inbox channel is needed here.
+				rt := r.runtime
+				mux.SetSharedUpstream(func(ctx context.Context, prio backpressure.Priority, msg *pb.UpstreamMessage) error {
+					return rt.Client().SendWithPriority(ctx, prio, msg)
+				})
+				r.router.relayMux = mux
+			}
+		} else {
+			// Mux=false: fall back to legacy per-sub-client Relay (parked).
+			relay, err := NewRelay(cfg)
+			if err != nil {
+				return nil, fmt.Errorf("relay: %w", err)
+			}
+			r.relay = relay
+			if r.runtime != nil {
+				sink := newSharedRelaySink(r.runtime, cfg.Relay.MaxSessions)
+				r.router.relay = sink
+				relay.SetUpstreamDialer(sink.dial)
+			}
 		}
 	}
 
@@ -123,7 +173,7 @@ func NewRunner(cfg *Config, cfgPath string) (*Runner, error) {
 		r.init = ini
 	}
 
-	if r.term == nil && r.relay == nil && r.init == nil {
+	if r.term == nil && r.relay == nil && r.relayMux == nil && r.init == nil {
 		// Validate() guards against this, but keep a defensive error so a
 		// future caller that bypasses Validate gets a clear message.
 		return nil, fmt.Errorf("runner: no surfaces enabled")
@@ -131,12 +181,29 @@ func NewRunner(cfg *Config, cfgPath string) (*Runner, error) {
 	return r, nil
 }
 
+// relaySurfaceOrNil returns whichever relay implementation is active (Relay or
+// RelayMux), or nil when relay is disabled.
+func (r *Runner) relaySurfaceOrNil() relaySurface {
+	if r.relayMux != nil {
+		return r.relayMux
+	}
+	if r.relay != nil {
+		return r.relay
+	}
+	return nil
+}
+
 // Terminator exposes the runner's terminator (or nil when disabled). Tests
 // reach for this when they need to drive HandleProxyRequest directly.
 func (r *Runner) Terminator() *Terminator { return r.term }
 
-// Relay exposes the runner's relay (or nil when disabled).
+// Relay exposes the runner's legacy Relay (or nil when relay is disabled or
+// running in mux mode).
 func (r *Runner) Relay() *Relay { return r.relay }
+
+// RelayMux exposes the runner's RelayMux (or nil when relay is disabled or
+// running in legacy mode).
+func (r *Runner) RelayMux() *RelayMux { return r.relayMux }
 
 // Initiator exposes the runner's initiator (or nil when disabled).
 func (r *Runner) Initiator() *Initiator { return r.init }
@@ -181,9 +248,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		})
 	}
 
-	if r.relay != nil {
+	if rs := r.relaySurfaceOrNil(); rs != nil {
 		g.Go(func() error {
-			if err := r.relay.Run(gctx); err != nil {
+			if err := rs.Run(gctx); err != nil {
 				return fmt.Errorf("relay: %w", err)
 			}
 			return nil
@@ -225,13 +292,37 @@ func (r *Runner) Reload() {
 
 // downstreamRouter is wired into the shared runtime's ServiceClient so that
 // envelopes the gateway publishes to our sv:: topic land in whichever surface
-// owns them. When relay is nil this collapses to standalone-terminator
-// semantics; when both are present the router preserves the composite-mode
-// semantics from the previous design (terminator owns its registered
-// tunnels, the rest fall through to the active relay session).
+// owns them. When relayMux (and relay) are nil this collapses to standalone-
+// terminator semantics; when both terminator and relay are present, the router
+// splits: terminator owns its registered tunnels and outbound ProxyHttp,
+// relayMux gets everything else via RouteDownstream (which classifies and
+// dispatches to sub-clients). The legacy relay field is kept for the Mux=false
+// fallback path only.
 type downstreamRouter struct {
-	term  *Terminator
-	relay *sharedRelaySink
+	term     *Terminator
+	relayMux *RelayMux
+	relay    *sharedRelaySink // legacy Mux=false path only
+}
+
+// routeToRelay delivers msg to whichever relay surface is active. In the
+// RelayMux path it calls RouteDownstream which classifies the frame and
+// enqueues it into the appropriate sub-client inbox(es) via deliver().
+// In the legacy sharedRelaySink path it calls routeMessage. Returns true if
+// the relay surface handled the message.
+func (r *downstreamRouter) routeToRelay(msg *pb.DownstreamMessage) bool {
+	if r.relayMux != nil {
+		return r.relayMux.RouteDownstream(msg)
+	}
+	if r.relay != nil {
+		r.relay.routeMessage(msg)
+		return true
+	}
+	return false
+}
+
+// hasRelay reports whether a relay surface is wired.
+func (r *downstreamRouter) hasRelay() bool {
+	return r.relayMux != nil || r.relay != nil
 }
 
 // installOn wires the dispatcher hooks on client. The supplied transport
@@ -258,10 +349,7 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 			Str("source", msg.SourceTopic).
 			Int("payload_bytes", len(msg.Payload)).
 			Msg("runner: received message via OnMessage path")
-		if r.relay == nil {
-			return nil
-		}
-		r.relay.routeMessage(&pb.DownstreamMessage{
+		r.routeToRelay(&pb.DownstreamMessage{
 			Payload: &pb.DownstreamMessage_Msg{
 				Msg: &pb.IncomingMessage{
 					SourceTopic: msg.SourceTopic,
@@ -272,6 +360,7 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 		})
 		return nil
 	})
+
 
 	// Inbound HTTP request: terminator handles. Relay never receives this
 	// (the gateway never publishes ProxyHttpRequest as a *response* to an
@@ -318,8 +407,8 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 	// in-flight dispatch (H3 wakeup). Try the terminator's active
 	// dispatch table first: an error envelope keyed by a known dispatch
 	// requestID is a "your caller went away" wakeup and should cancel
-	// the dispatch immediately. Otherwise route to the relay sink so
-	// the originating sandbox session sees it on its inbox.
+	// the dispatch immediately. Otherwise route to the relay so the
+	// originating sandbox session sees it on its inbox.
 	client.OnProxyHttpResponse(func(_ context.Context, resp *pb.ProxyHttpResponse) error {
 		if resp != nil && resp.GetError() != nil && r.term != nil {
 			if v, ok := r.term.activeDispatches.LoadAndDelete(resp.GetRequestId()); ok {
@@ -329,11 +418,9 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 				return nil
 			}
 		}
-		if r.relay != nil {
-			r.relay.routeMessage(&pb.DownstreamMessage{
-				Payload: &pb.DownstreamMessage_ProxyHttpResponse{ProxyHttpResponse: resp},
-			})
-		}
+		r.routeToRelay(&pb.DownstreamMessage{
+			Payload: &pb.DownstreamMessage_ProxyHttpResponse{ProxyHttpResponse: resp},
+		})
 		return nil
 	})
 
@@ -354,11 +441,9 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 		if chunk.GetIsRequest() {
 			return r.term.handleChunkedRequestFrame(chunkCtx, chunk, transport)
 		}
-		if r.relay != nil {
-			r.relay.routeMessage(&pb.DownstreamMessage{
-				Payload: &pb.DownstreamMessage_ProxyHttpBodyChunk{ProxyHttpBodyChunk: chunk},
-			})
-		}
+		r.routeToRelay(&pb.DownstreamMessage{
+			Payload: &pb.DownstreamMessage_ProxyHttpBodyChunk{ProxyHttpBodyChunk: chunk},
+		})
 		return nil
 	})
 
@@ -405,10 +490,9 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 			r.term.HandleTunnelData(frame, transport)
 			return nil
 		}
-		if r.relay != nil {
-			r.relay.routeMessage(&pb.DownstreamMessage{
-				Payload: &pb.DownstreamMessage_TunnelData{TunnelData: frame},
-			})
+		if r.routeToRelay(&pb.DownstreamMessage{
+			Payload: &pb.DownstreamMessage_TunnelData{TunnelData: frame},
+		}) {
 			return nil
 		}
 		// Standalone terminator: emit PEER_RESET for unknown tunnel.
@@ -421,12 +505,9 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 			r.term.HandleTunnelAck(ack)
 			return nil
 		}
-		if r.relay != nil {
-			r.relay.routeMessage(&pb.DownstreamMessage{
-				Payload: &pb.DownstreamMessage_TunnelAck{TunnelAck: ack},
-			})
-			return nil
-		}
+		r.routeToRelay(&pb.DownstreamMessage{
+			Payload: &pb.DownstreamMessage_TunnelAck{TunnelAck: ack},
+		})
 		// Standalone: HandleTunnelAck silently no-ops on unknown tunnels.
 		return nil
 	})
@@ -436,33 +517,42 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 			r.term.HandleTunnelClose(cm)
 			return nil
 		}
-		if r.relay != nil {
-			r.relay.routeMessage(&pb.DownstreamMessage{
-				Payload: &pb.DownstreamMessage_TunnelClose{TunnelClose: cm},
-			})
-			return nil
-		}
+		r.routeToRelay(&pb.DownstreamMessage{
+			Payload: &pb.DownstreamMessage_TunnelClose{TunnelClose: cm},
+		})
 		// Standalone: HandleTunnelClose silently no-ops on unknown tunnels.
 		return nil
 	})
 
-	// Raw downstream tap: route correlated responses for relay-issued KV /
-	// task / workspace / checkpoint ops back to the originating session. The
-	// shared runtime forwards these upstream verbatim (sharedRuntimeSession.
-	// Send), so the gateway's response lands here with no pending correlation
-	// in this Go client — without the tap it would be dropped and the
-	// in-sandbox caller would stall until its client-side timeout (the 5s
-	// per-turn lag the workclaw bridge saw on kv_put). Errors that correlate
-	// to a relay request (DownstreamMessage_Error with a request_id) route
-	// the same way so a failed op surfaces promptly instead of timing out.
-	if r.relay != nil {
-		relay := r.relay
+	// Raw downstream tap: intercepts correlated response-class downstream
+	// messages before the SDK drops them (it has no pending call matching
+	// the relay-issued request_id). In RelayMux composite mode, RouteDownstream
+	// classifies by the mux's pending table (rmx-* ids) and delivers to the
+	// right sub-client. In legacy relay mode, routeResponseToOwner uses the
+	// sharedRelaySink's flat map. Either way, returning true consumes the
+	// message so the SDK doesn't drop it.
+	//
+	// For the RelayMux path this handles KV/Task/Checkpoint/Workspace/Session/
+	// Agent/Acl/Token/Admin/Audit/Authority/Workflow responses and Error frames
+	// that carry an rmx-* request_id. The full correlated set is enumerated in
+	// relaymux_reqid.go (19 pairs). Frames that are NOT relay-owned (e.g. a
+	// terminator-issued KV op using a "req-N" id) return false so the SDK
+	// handles them normally.
+	if r.hasRelay() {
+		router := r
 		client.SetRawDownstreamTap(func(msg *pb.DownstreamMessage) bool {
+			if router.relayMux != nil {
+				// RelayMux: RouteDownstream classifies by pending table.
+				// It returns true only for rmx-* correlated ids, relay
+				// tunnels, and push broadcasts — never for terminator ids.
+				return router.relayMux.RouteDownstream(msg)
+			}
+			// Legacy sharedRelaySink: flat request_id map.
 			rid := downstreamResponseRequestID(msg)
 			if rid == "" {
 				return false
 			}
-			return relay.routeResponseToOwner(rid, msg)
+			return router.relay.routeResponseToOwner(rid, msg)
 		})
 	}
 }

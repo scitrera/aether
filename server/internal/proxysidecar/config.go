@@ -167,6 +167,30 @@ type RelayConfig struct {
 	// memory and tracking-table size; storms above the cap surface as
 	// session-attach rejections rather than per-stream creation churn.
 	MaxSessions int `yaml:"max_sessions"`
+
+	// Mux selects the relay implementation. When true (the default — the
+	// zero value is overridden in validateRelay), the runner builds a
+	// RelayMux: ONE shared upstream gateway connection demultiplexed across
+	// many sub-client streams by request_id, with pushes broadcast and
+	// tunnel frames routed by tunnel id. This is required whenever more than
+	// one sub-client shares the relay socket: the legacy per-sub-client
+	// Relay opens a fresh upstream stream per Connect and rewrites every
+	// sub-client to the SAME service identity, so N sub-clients collide on
+	// one per-identity gateway session lock and request/response replies
+	// (KV, TaskOp, TaskQuery) fail to route back. Set false to fall back to
+	// the legacy per-session Relay (still used by its existing callers/tests
+	// and for the shared-runtime composite path).
+	Mux *bool `yaml:"mux"`
+}
+
+// MuxEnabled reports whether the relay should run in RelayMux (shared-upstream
+// demux) mode. Defaults to true when unset; validateRelay() normalises the
+// pointer so this only has to cover the defensive nil case.
+func (c RelayConfig) MuxEnabled() bool {
+	if c.Mux == nil {
+		return true
+	}
+	return *c.Mux
 }
 
 // AllowedOpsConfig is a YAML union: either a profile name or a literal
@@ -472,6 +496,11 @@ func (c *Config) validateRelay() []string {
 	}
 	if c.Relay.MaxSessions <= 0 {
 		c.Relay.MaxSessions = 8
+	}
+	if c.Relay.Mux == nil {
+		// Default to RelayMux (shared-upstream demux). See RelayConfig.Mux.
+		def := true
+		c.Relay.Mux = &def
 	}
 	return errs
 }
