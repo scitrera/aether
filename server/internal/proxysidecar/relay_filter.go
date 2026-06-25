@@ -38,8 +38,15 @@ const (
 // allowedOpsSet is an O(1)-membership view of the relay's permitted upstream
 // op set. InitConnection is always allowed because the sandbox must complete
 // the handshake before any other op is dispatched.
+//
+// When bypass is set (the service-passthrough profile) the op allow-list is
+// skipped entirely and every op is permitted. The trust boundary in that mode
+// is the provider→aggregator mTLS hop (peer-cert CN), not per-op filtering —
+// so ops absent from upstreamOpName (CreateTask, SessionOperation, ACLOperation,
+// ...) are forwarded verbatim instead of being silently dropped.
 type allowedOpsSet struct {
-	ops map[string]struct{}
+	ops    map[string]struct{}
+	bypass bool
 }
 
 // resolveAllowedOps returns a set built from cfg. Profile names take
@@ -49,6 +56,16 @@ type allowedOpsSet struct {
 func resolveAllowedOps(cfg AllowedOpsConfig) (*allowedOpsSet, error) {
 	set := &allowedOpsSet{ops: map[string]struct{}{}}
 	set.ops[OpInitConnection] = struct{}{}
+
+	// service-passthrough is a bypass profile: the resolved set allows every
+	// op (see allowedOpsSet.bypass). Used by the tenant-relay surface, whose
+	// trust boundary is the provider→aggregator mTLS hop rather than per-op
+	// filtering. Handled before profileOps so the literal op table doesn't
+	// have to enumerate provider-only ops.
+	if cfg.Profile == FilterProfileServicePassthrough {
+		set.bypass = true
+		return set, nil
+	}
 
 	if cfg.Profile != "" {
 		ops, err := profileOps(cfg.Profile)
@@ -155,18 +172,26 @@ func knownRelayOp(name string) bool {
 	return false
 }
 
-// allows reports whether op is permitted.
+// allows reports whether op is permitted. A bypass set (service-passthrough)
+// allows every op unconditionally.
 func (s *allowedOpsSet) allows(op string) bool {
 	if s == nil {
 		return false
+	}
+	if s.bypass {
+		return true
 	}
 	_, ok := s.ops[op]
 	return ok
 }
 
 // list returns the sorted list of allowed ops. Used in logs and ErrorResponse
-// detail so operators can see the resolved set without consulting config.
+// detail so operators can see the resolved set without consulting config. A
+// bypass set reports a single sentinel so logs make the passthrough explicit.
 func (s *allowedOpsSet) list() []string {
+	if s != nil && s.bypass {
+		return []string{"<all (service-passthrough)>"}
+	}
 	out := make([]string, 0, len(s.ops))
 	for op := range s.ops {
 		out = append(out, op)

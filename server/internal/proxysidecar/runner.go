@@ -85,6 +85,13 @@ type Runner struct {
 	// shared gatewayRuntime; in standalone mode it dials its own upstream.
 	relayMux *RelayMux
 	init     *Initiator
+
+	// tenantRelay and aggregator are the two halves of the per-tenant relay
+	// topology. They are mutually exclusive (enforced in Config.Validate) and
+	// each runs in its own g.Go block in Run — they are NOT folded into
+	// relaySurfaceOrNil precedence. Non-nil only when their section is enabled.
+	tenantRelay *TenantRelay
+	aggregator  *Aggregator
 }
 
 // relaySurface is the subset of Relay / RelayMux the Runner drives. Both
@@ -173,7 +180,24 @@ func NewRunner(cfg *Config, cfgPath string) (*Runner, error) {
 		r.init = ini
 	}
 
-	if r.term == nil && r.relay == nil && r.relayMux == nil && r.init == nil {
+	if cfg.TenantRelay.Enabled {
+		tr, err := NewTenantRelay(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("tenant_relay: %w", err)
+		}
+		r.tenantRelay = tr
+	}
+
+	if cfg.Aggregator.Enabled {
+		agg, err := NewAggregator(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("aggregator: %w", err)
+		}
+		r.aggregator = agg
+	}
+
+	if r.term == nil && r.relay == nil && r.relayMux == nil && r.init == nil &&
+		r.tenantRelay == nil && r.aggregator == nil {
 		// Validate() guards against this, but keep a defensive error so a
 		// future caller that bypasses Validate gets a clear message.
 		return nil, fmt.Errorf("runner: no surfaces enabled")
@@ -261,6 +285,26 @@ func (r *Runner) Run(ctx context.Context) error {
 		g.Go(func() error {
 			if err := r.init.Run(gctx); err != nil {
 				return fmt.Errorf("initiator: %w", err)
+			}
+			return nil
+		})
+	}
+
+	// tenant-relay and aggregator each run in their own block (mutually
+	// exclusive per process; not folded into relaySurfaceOrNil precedence).
+	if r.tenantRelay != nil {
+		g.Go(func() error {
+			if err := r.tenantRelay.Run(gctx); err != nil {
+				return fmt.Errorf("tenant_relay: %w", err)
+			}
+			return nil
+		})
+	}
+
+	if r.aggregator != nil {
+		g.Go(func() error {
+			if err := r.aggregator.Run(gctx); err != nil {
+				return fmt.Errorf("aggregator: %w", err)
 			}
 			return nil
 		})

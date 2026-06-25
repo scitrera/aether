@@ -77,6 +77,14 @@ const (
 	// init handshake. Useful for sandboxes that act purely as inbound
 	// responders (tool stubs that only receive ProxyHttpRequest).
 	AllowedOpsProfileToolStubOnly = "tool-stub-only"
+
+	// FilterProfileServicePassthrough disables the upstream op allow-list
+	// entirely: every op a trusted provider emits (CreateTask,
+	// SessionOperation, etc.) is forwarded verbatim. It is the default for
+	// the tenant-relay surface, where the trust boundary is the
+	// provider→aggregator mTLS hop rather than per-op filtering. See
+	// resolveAllowedOps in relay_filter.go for the bypass implementation.
+	FilterProfileServicePassthrough = "service-passthrough"
 )
 
 const (
@@ -119,6 +127,14 @@ type Config struct {
 	Terminator TerminatorConfig `yaml:"terminator"`
 	Initiator  InitiatorConfig  `yaml:"initiator"`
 	Relay      RelayConfig      `yaml:"relay"`
+
+	// TenantRelay and Aggregator are the two halves of the per-tenant relay
+	// topology. A tenant-relay sidecar runs alongside a tenant's gateway and
+	// dials an aggregator's tunnel surface; the aggregator runs centrally and
+	// pairs providers (by tenant) with their relays. The two are mutually
+	// exclusive per process (a config error if both are enabled).
+	TenantRelay TenantRelayConfig `yaml:"tenant_relay"`
+	Aggregator  AggregatorConfig  `yaml:"aggregator"`
 }
 
 // TerminatorConfig configures the terminator surface (gateway → local
@@ -191,6 +207,93 @@ func (c RelayConfig) MuxEnabled() bool {
 		return true
 	}
 	return *c.Mux
+}
+
+// TenantRelayConfig configures the tenant-relay surface (relay mode → central
+// aggregator). Disabled by default. The relay dials the local tenant gateway
+// (reusing the top-level Gateway section, whose TLS is the tenant cert under
+// semi-strict mTLS) and the aggregator's tunnel surface (Aggregator section),
+// then splices a provider's gateway session through itself verbatim.
+type TenantRelayConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// Tenant is the tenant identity this relay serves. Defaults to the
+	// top-level TenantID when unset. Announced to the aggregator in
+	// TunnelHello and validated there against the relay's peer-cert CN.
+	Tenant string `yaml:"tenant"`
+
+	// Aggregator describes how to dial the central aggregator's tunnel
+	// surface (SandboxRelayTunnel).
+	Aggregator AggregatorDialConfig `yaml:"aggregator"`
+
+	// FilterProfile selects the upstream op filter applied to provider→gateway
+	// traffic. Defaults to "service-passthrough" (bypass — see
+	// FilterProfileServicePassthrough); the provider→aggregator mTLS hop is the
+	// trust boundary, not per-op filtering.
+	FilterProfile string `yaml:"filter_profile"`
+}
+
+// AggregatorDialConfig describes how a tenant-relay dials the aggregator's
+// tunnel surface.
+type AggregatorDialConfig struct {
+	Address  string    `yaml:"address"`
+	Insecure bool      `yaml:"insecure"`
+	TLS      TLSConfig `yaml:"tls"`
+}
+
+// AggregatorConfig configures the aggregator surface (central pairing of
+// providers and tenant-relays). Disabled by default. It owns two gRPC server
+// surfaces: ProviderListen (AetherGateway.Connect, dialled by providers with an
+// x-aether-tenant hint) and TunnelListen (SandboxRelayTunnel, dialled by
+// tenant-relays). The aggregator opens no upstream gateway connection of its
+// own, so it does not require a Service identity.
+type AggregatorConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// ProviderListen is the bind address for the AetherGateway.Connect surface
+	// that providers dial. TunnelListen is the bind address for the
+	// SandboxRelayTunnel surface that tenant-relays dial. Both accept the same
+	// listener spec forms as relay.listen (unix:///path or tcp://host:port).
+	ProviderListen string `yaml:"provider_listen"`
+	TunnelListen   string `yaml:"tunnel_listen"`
+
+	// ProviderTLS / TunnelTLS configure server-side mTLS on each surface. The
+	// sandboxes-CA peer-cert CN is the tenant identity authority.
+	ProviderTLS ServerTLSConfig `yaml:"provider_tls"`
+	TunnelTLS   ServerTLSConfig `yaml:"tunnel_tls"`
+
+	// RequireTenantMetadata, when true (the default), rejects a provider
+	// Connect that omits the x-aether-tenant metadata header. A *bool so the
+	// zero value (nil) can be distinguished from an explicit false and
+	// normalised in validateAggregator.
+	RequireTenantMetadata *bool `yaml:"require_tenant_metadata"`
+
+	// PairWaitTimeoutMs bounds how long a registered provider or relay waits
+	// for its counterpart to arrive before the pairing is abandoned. Defaults
+	// to 30000 (30s).
+	PairWaitTimeoutMs int64 `yaml:"pair_wait_timeout_ms"`
+}
+
+// RequireTenantMetadataEnabled reports whether a provider Connect must carry
+// the x-aether-tenant metadata header. Defaults to true when unset;
+// validateAggregator normalises the pointer so this only covers the defensive
+// nil case.
+func (c AggregatorConfig) RequireTenantMetadataEnabled() bool {
+	if c.RequireTenantMetadata == nil {
+		return true
+	}
+	return *c.RequireTenantMetadata
+}
+
+// ServerTLSConfig holds server-side TLS certificate paths for an aggregator
+// listener. When Insecure is true, TLS is disabled and the listener accepts
+// plaintext (test/dev only); otherwise Cert/Key/ClientCA are all required so
+// the surface enforces mTLS.
+type ServerTLSConfig struct {
+	CertFile     string `yaml:"cert_file"`
+	KeyFile      string `yaml:"key_file"`
+	ClientCAFile string `yaml:"client_ca_file"`
+	Insecure     bool   `yaml:"insecure"`
 }
 
 // AllowedOpsConfig is a YAML union: either a profile name or a literal
@@ -365,6 +468,15 @@ func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("PROXY_SIDECAR_RELAY_LISTEN"); v != "" {
 		c.Relay.Listen = v
 	}
+	if v := os.Getenv("PROXY_SIDECAR_AGGREGATOR_ADDRESS"); v != "" {
+		c.TenantRelay.Aggregator.Address = v
+	}
+	if v := os.Getenv("PROXY_SIDECAR_AGGREGATOR_PROVIDER_LISTEN"); v != "" {
+		c.Aggregator.ProviderListen = v
+	}
+	if v := os.Getenv("PROXY_SIDECAR_AGGREGATOR_TUNNEL_LISTEN"); v != "" {
+		c.Aggregator.TunnelListen = v
+	}
 	if v := os.Getenv("AETHER_LOG_LEVEL"); v != "" {
 		c.Logging.Level = v
 	}
@@ -384,6 +496,12 @@ func (c *Config) EnabledSurfaces() []string {
 	if c.Relay.Enabled {
 		out = append(out, "relay")
 	}
+	if c.TenantRelay.Enabled {
+		out = append(out, "tenant_relay")
+	}
+	if c.Aggregator.Enabled {
+		out = append(out, "aggregator")
+	}
 	return out
 }
 
@@ -394,23 +512,35 @@ func (c *Config) Validate() error {
 
 	enabled := c.EnabledSurfaces()
 	if len(enabled) == 0 {
-		errs = append(errs, "at least one surface must be enabled (set terminator.enabled, initiator.enabled, or relay.enabled to true)")
+		errs = append(errs, "at least one surface must be enabled (set terminator.enabled, initiator.enabled, relay.enabled, tenant_relay.enabled, or aggregator.enabled to true)")
 	}
 
-	if c.Gateway.Address == "" {
+	// The aggregator opens no upstream gateway connection of its own (it
+	// pairs provider streams with relay tunnels), so it does not require the
+	// top-level gateway.address. Every other surface that talks to a gateway
+	// does. Skip the requirement only when the aggregator is the sole surface.
+	if c.Gateway.Address == "" && !(c.Aggregator.Enabled && !c.Terminator.Enabled && !c.Relay.Enabled && !c.TenantRelay.Enabled) {
 		errs = append(errs, "gateway.address is required")
+	}
+
+	// tenant-relay and aggregator are mutually exclusive per process: the
+	// relay dials the aggregator, so co-hosting them in one sidecar is a
+	// configuration mistake.
+	if c.TenantRelay.Enabled && c.Aggregator.Enabled {
+		errs = append(errs, "tenant_relay.enabled and aggregator.enabled are mutually exclusive (run them in separate sidecars)")
 	}
 
 	// Service identity is required whenever a surface that authenticates
 	// to the gateway is on. The initiator does not (yet) own a connection,
-	// so it does not contribute to this requirement.
-	needsService := c.Terminator.Enabled || c.Relay.Enabled
+	// so it does not contribute to this requirement. The aggregator owns no
+	// upstream identity (it splices provider sessions verbatim).
+	needsService := c.Terminator.Enabled || c.Relay.Enabled || c.TenantRelay.Enabled
 	if needsService {
 		if c.Service.Implementation == "" {
-			errs = append(errs, "service.implementation is required when terminator or relay is enabled")
+			errs = append(errs, "service.implementation is required when terminator, relay, or tenant_relay is enabled")
 		}
 		if c.Service.Specifier == "" {
-			errs = append(errs, "service.specifier is required when terminator or relay is enabled")
+			errs = append(errs, "service.specifier is required when terminator, relay, or tenant_relay is enabled")
 		}
 	}
 
@@ -422,6 +552,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Relay.Enabled {
 		errs = append(errs, c.validateRelay()...)
+	}
+	if c.TenantRelay.Enabled {
+		errs = append(errs, c.validateTenantRelay()...)
+	}
+	if c.Aggregator.Enabled {
+		errs = append(errs, c.validateAggregator()...)
 	}
 
 	if len(errs) == 0 {
@@ -501,6 +637,93 @@ func (c *Config) validateRelay() []string {
 		// Default to RelayMux (shared-upstream demux). See RelayConfig.Mux.
 		def := true
 		c.Relay.Mux = &def
+	}
+	return errs
+}
+
+// validateTenantRelay applies defaults and validates the tenant-relay surface.
+// Mirrors validateRelay's style (mutate-and-collect). The local tenant gateway
+// is reached via the top-level Gateway section, so Gateway.Address is required;
+// the aggregator is reached via TenantRelay.Aggregator.Address.
+func (c *Config) validateTenantRelay() []string {
+	var errs []string
+	if c.Gateway.Address == "" {
+		errs = append(errs, "gateway.address is required when tenant_relay is enabled (the local tenant gateway to dial)")
+	}
+	if c.TenantRelay.Tenant == "" {
+		// Default the served tenant to the top-level TenantID; error when
+		// neither is set since the aggregator pairs strictly by tenant.
+		c.TenantRelay.Tenant = c.TenantID
+	}
+	if c.TenantRelay.Tenant == "" {
+		errs = append(errs, "tenant_relay.tenant is required when tenant_relay is enabled (set tenant_relay.tenant or tenant_id)")
+	}
+	if c.TenantRelay.Aggregator.Address == "" {
+		errs = append(errs, "tenant_relay.aggregator.address is required when tenant_relay is enabled")
+	}
+	if c.TenantRelay.FilterProfile == "" {
+		c.TenantRelay.FilterProfile = FilterProfileServicePassthrough
+	}
+	switch c.TenantRelay.FilterProfile {
+	case FilterProfileServicePassthrough,
+		AllowedOpsProfileSandboxDefault,
+		AllowedOpsProfileSandboxTunnels,
+		AllowedOpsProfileSidecarOwn,
+		AllowedOpsProfileToolStubOnly:
+	default:
+		errs = append(errs, fmt.Sprintf("tenant_relay.filter_profile=%q: must be one of %q, %q, %q, %q, %q",
+			c.TenantRelay.FilterProfile,
+			FilterProfileServicePassthrough,
+			AllowedOpsProfileSandboxDefault,
+			AllowedOpsProfileSandboxTunnels,
+			AllowedOpsProfileSidecarOwn,
+			AllowedOpsProfileToolStubOnly))
+	}
+	return errs
+}
+
+// validateAggregator applies defaults and validates the aggregator surface.
+// Both listeners are required; each TLS block must carry a full mTLS triple
+// (cert/key/client-CA) unless explicitly marked insecure.
+func (c *Config) validateAggregator() []string {
+	var errs []string
+	if c.Aggregator.ProviderListen == "" {
+		errs = append(errs, "aggregator.provider_listen is required when aggregator is enabled (use unix:///path or tcp://host:port)")
+	}
+	if c.Aggregator.TunnelListen == "" {
+		errs = append(errs, "aggregator.tunnel_listen is required when aggregator is enabled (use unix:///path or tcp://host:port)")
+	}
+	errs = append(errs, c.Aggregator.ProviderTLS.validate("aggregator.provider_tls")...)
+	errs = append(errs, c.Aggregator.TunnelTLS.validate("aggregator.tunnel_tls")...)
+	if c.Aggregator.PairWaitTimeoutMs <= 0 {
+		c.Aggregator.PairWaitTimeoutMs = 30_000
+	}
+	if c.Aggregator.RequireTenantMetadata == nil {
+		// Default to requiring the x-aether-tenant hint; the CN still wins on
+		// mismatch but the metadata makes provider intent explicit.
+		def := true
+		c.Aggregator.RequireTenantMetadata = &def
+	}
+	return errs
+}
+
+// validate checks an aggregator listener's TLS block. Unless Insecure is set,
+// mTLS requires the full cert/key/client-CA triple so the surface can both
+// present a server cert and verify the peer's client cert (the tenant-identity
+// authority).
+func (t *ServerTLSConfig) validate(prefix string) []string {
+	if t.Insecure {
+		return nil
+	}
+	var errs []string
+	if t.CertFile == "" {
+		errs = append(errs, fmt.Sprintf("%s.cert_file is required (or set %s.insecure: true)", prefix, prefix))
+	}
+	if t.KeyFile == "" {
+		errs = append(errs, fmt.Sprintf("%s.key_file is required (or set %s.insecure: true)", prefix, prefix))
+	}
+	if t.ClientCAFile == "" {
+		errs = append(errs, fmt.Sprintf("%s.client_ca_file is required for mTLS (or set %s.insecure: true)", prefix, prefix))
 	}
 	return errs
 }

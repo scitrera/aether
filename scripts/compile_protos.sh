@@ -45,7 +45,7 @@ cd "$PROTO_DIR"
 protoc \
     --go_out=. --go_opt=paths=source_relative \
     --go-grpc_out=. --go-grpc_opt=paths=source_relative \
-    aether.proto
+    aether.proto sandbox_relay_tunnel.proto
 
 if [ $? -eq 0 ]; then
     echo "✓ Go code generated successfully"
@@ -76,7 +76,7 @@ else
             --python_out="$OUTPUT_PYTHON" \
             --pyi_out="$OUTPUT_PYTHON" \
             --grpc_python_out="$OUTPUT_PYTHON" \
-            aether.proto
+            aether.proto sandbox_relay_tunnel.proto
 
         if [ $? -eq 0 ]; then
             echo "✓ Python code generated successfully"
@@ -85,6 +85,16 @@ else
             if [ -f "$OUTPUT_PYTHON/aether_pb2_grpc.py" ]; then
                 sed -i 's/^import aether_pb2 as aether__pb2$/from . import aether_pb2 as aether__pb2/' "$OUTPUT_PYTHON/aether_pb2_grpc.py"
                 echo "✓ Fixed relative imports in gRPC file"
+            fi
+            # The sandbox_relay_tunnel proto imports aether.proto and has its own
+            # grpc stub; both generated modules reference sibling pb2 modules by
+            # bare import, which breaks under the package's relative layout.
+            if [ -f "$OUTPUT_PYTHON/sandbox_relay_tunnel_pb2.py" ]; then
+                sed -i 's/^import aether_pb2 as aether__pb2$/from . import aether_pb2 as aether__pb2/' "$OUTPUT_PYTHON/sandbox_relay_tunnel_pb2.py"
+            fi
+            if [ -f "$OUTPUT_PYTHON/sandbox_relay_tunnel_pb2_grpc.py" ]; then
+                sed -i 's/^import sandbox_relay_tunnel_pb2 as sandbox__relay__tunnel__pb2$/from . import sandbox_relay_tunnel_pb2 as sandbox__relay__tunnel__pb2/' "$OUTPUT_PYTHON/sandbox_relay_tunnel_pb2_grpc.py"
+                echo "✓ Fixed relative imports in sandbox_relay_tunnel gRPC file"
             fi
         else
             echo "✗ Python code generation failed"
@@ -114,7 +124,7 @@ if [ -f "$PROTO_LOADER_GEN" ]; then
         --grpcLib=@grpc/grpc-js \
         --outDir="$OUTPUT_TS" \
         --includeComments \
-        aether.proto
+        aether.proto sandbox_relay_tunnel.proto
 
     if [ $? -eq 0 ]; then
         echo "✓ TypeScript types generated successfully (proto-loader-gen-types)"

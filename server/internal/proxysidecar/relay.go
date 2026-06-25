@@ -491,7 +491,16 @@ func (s *relaySession) observedDepth() uint32 {
 // using the sidecar's TLS / API-key configuration. The closer must be
 // invoked when the caller no longer needs the connection.
 func (r *Relay) dialUpstreamGateway(_ context.Context) (pb.AetherGatewayClient, func() error, error) {
-	tlsCfg, err := buildTLSConfig(r.cfg.Gateway)
+	return dialGatewayWithTLS(r.cfg.Gateway)
+}
+
+// dialGatewayWithTLS opens a gRPC AetherGateway connection to g.Address using
+// g's TLS / API-key configuration. Shared by the relay's per-session dial and
+// the tenant-relay surface (which dials its local tenant gateway with the
+// tenant cert under semi-strict mTLS). The closer must be invoked when the
+// caller no longer needs the connection.
+func dialGatewayWithTLS(g GatewayConfig) (pb.AetherGatewayClient, func() error, error) {
+	tlsCfg, err := buildTLSConfig(g)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build tls: %w", err)
 	}
@@ -512,7 +521,7 @@ func (r *Relay) dialUpstreamGateway(_ context.Context) (pb.AetherGatewayClient, 
 		PermitWithoutStream: true,
 	}))
 
-	conn, err := grpc.NewClient(r.cfg.Gateway.Address, dialOpts...)
+	conn, err := grpc.NewClient(g.Address, dialOpts...)
 	if err != nil {
 		return nil, nil, err
 	}
