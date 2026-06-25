@@ -398,6 +398,17 @@ func (a *Aggregator) WatchTenants(_ *pb.WatchTenantsRequest, stream grpc.ServerS
 		}
 	}
 
+	// Emit a terminal snapshot_complete sentinel once the replay burst is done
+	// and before the live-event phase begins. The provider accumulates the
+	// replay online-set until this sentinel arrives, then prunes any tenant it
+	// still holds that is absent from the set — deterministically reaping the
+	// tenants that left during a watch disconnect (the resync-prune fix). Sent
+	// per-(re)subscribe, so every reconnecting watcher gets: replay → sentinel →
+	// live events. Live events keep SnapshotComplete=false (the zero value).
+	if err := stream.Send(&pb.TenantEvent{SnapshotComplete: true}); err != nil {
+		return err
+	}
+
 	for {
 		select {
 		case <-ctx.Done():

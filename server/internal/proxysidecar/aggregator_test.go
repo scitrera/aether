@@ -359,6 +359,127 @@ func TestAggregator_WatchTenantsOnlineOffline(t *testing.T) {
 	}
 }
 
+// TestAggregator_WatchTenantsSnapshotComplete asserts the resync-prune contract:
+// a WatchTenants subscriber receives the currently-online tenants as a replay
+// burst, then EXACTLY ONE terminal TenantEvent with SnapshotComplete==true, and
+// every subsequent live online/offline transition carries SnapshotComplete==false
+// (the zero value). The provider relies on this sentinel to prune stale tenants
+// on a watch reconnect.
+func TestAggregator_WatchTenantsSnapshotComplete(t *testing.T) {
+	const (
+		preTenant  = "tenant-hotel" // online BEFORE the watcher subscribes → replay
+		liveTenant = "tenant-india" // comes online AFTER the sentinel → live event
+	)
+	h := newAggHarness(t, &Config{}, "sv::sandbox-provider::"+preTenant)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Register a relay for preTenant BEFORE the watcher subscribes so it appears
+	// in the replay burst (not as a live event).
+	preCtx, preCancel := context.WithCancel(ctx)
+	defer preCancel()
+	_ = h.relayTunnel(preCtx, preTenant)
+	waitForTenantOnline(t, h.agg.pairs, preTenant, 3*time.Second)
+
+	watch := h.watchTenants(ctx)
+	events := drainTenantEvents(watch)
+
+	// Phase 1: replay burst. preTenant must arrive as an online replay event with
+	// SnapshotComplete=false, in any order before the sentinel.
+	sawPreReplay := false
+	sentinel := nextEventUntilSentinel(t, events, 5*time.Second, func(ev *pb.TenantEvent) {
+		if ev.GetSnapshotComplete() {
+			t.Fatalf("replay event unexpectedly had SnapshotComplete=true: %+v", ev)
+		}
+		if ev.GetTenant() == preTenant {
+			if !ev.GetOnline() {
+				t.Fatalf("replay event for %q online=false, want true", preTenant)
+			}
+			sawPreReplay = true
+		}
+	})
+	if !sawPreReplay {
+		t.Fatalf("never saw replay online event for pre-online tenant %q", preTenant)
+	}
+
+	// Phase 2: the sentinel itself. Exactly one, SnapshotComplete=true, empty tenant.
+	if !sentinel.GetSnapshotComplete() {
+		t.Fatalf("sentinel SnapshotComplete=false, want true")
+	}
+	if sentinel.GetTenant() != "" {
+		t.Fatalf("sentinel tenant = %q, want empty", sentinel.GetTenant())
+	}
+
+	// Phase 3: live events. A relay coming online AFTER the sentinel must be a
+	// live online event with SnapshotComplete=false, then offline likewise.
+	// Switch the stub CN so the new relay's CN encodes liveTenant.
+	h.tunnelCN = "sv::sandbox-provider::" + liveTenant
+	liveCtx, liveCancel := context.WithCancel(ctx)
+	_ = h.relayTunnel(liveCtx, liveTenant)
+
+	onEv := nextEventByTenant(t, events, liveTenant, 5*time.Second)
+	if !onEv.GetOnline() {
+		t.Fatalf("live event online = false, want true")
+	}
+	if onEv.GetSnapshotComplete() {
+		t.Fatalf("live online event had SnapshotComplete=true, want false")
+	}
+
+	liveCancel()
+	offEv := nextEventByTenant(t, events, liveTenant, 5*time.Second)
+	if offEv.GetOnline() {
+		t.Fatalf("live event online = true, want false")
+	}
+	if offEv.GetSnapshotComplete() {
+		t.Fatalf("live offline event had SnapshotComplete=true, want false")
+	}
+}
+
+// waitForTenantOnline blocks until the pairingTable has a registered relay for
+// tenant, closing the relay-register vs watcher-subscribe race so the tenant is
+// guaranteed to land in the replay burst rather than as a live event.
+func waitForTenantOnline(t *testing.T, p *pairingTable, tenant string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		p.mu.Lock()
+		_, ok := p.relays[tenant]
+		p.mu.Unlock()
+		if ok {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for tenant %q relay to register", tenant)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// nextEventUntilSentinel reads events, invoking inspect on each non-sentinel
+// (replay) event, and returns the FIRST event with SnapshotComplete==true. It
+// fails if the stream closes or the deadline fires before the sentinel arrives.
+func nextEventUntilSentinel(t *testing.T, events <-chan *pb.TenantEvent, timeout time.Duration, inspect func(*pb.TenantEvent)) *pb.TenantEvent {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				t.Fatalf("watch stream closed before snapshot_complete sentinel")
+			}
+			if ev.GetSnapshotComplete() {
+				return ev
+			}
+			inspect(ev)
+		case <-deadline:
+			t.Fatalf("timed out waiting for snapshot_complete sentinel")
+			return nil
+		}
+	}
+}
+
 // waitForWatcherCount blocks until the pairingTable has at least n registered
 // watchers, closing the client/server registration race in the watch test.
 func waitForWatcherCount(t *testing.T, p *pairingTable, n int, timeout time.Duration) {

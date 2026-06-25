@@ -209,12 +209,20 @@ func (*WatchTenantsRequest) Descriptor() ([]byte, []int) {
 
 // TenantEvent reports a tenant's relay coming online (online=true) or going
 // offline (online=false).
+//
+// snapshot_complete is a terminal sentinel emitted exactly once per
+// (re)subscribe, after the burst of currently-online tenants is replayed and
+// before any live transitions stream. The provider uses it to deterministically
+// prune tenants that left during a watch disconnect (they are absent from the
+// replay set). Live events always carry snapshot_complete=false (the zero
+// value); the sentinel carries an empty tenant and online is irrelevant.
 type TenantEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Tenant        string                 `protobuf:"bytes,1,opt,name=tenant,proto3" json:"tenant,omitempty"`
-	Online        bool                   `protobuf:"varint,2,opt,name=online,proto3" json:"online,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Tenant           string                 `protobuf:"bytes,1,opt,name=tenant,proto3" json:"tenant,omitempty"`
+	Online           bool                   `protobuf:"varint,2,opt,name=online,proto3" json:"online,omitempty"`
+	SnapshotComplete bool                   `protobuf:"varint,3,opt,name=snapshot_complete,json=snapshotComplete,proto3" json:"snapshot_complete,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *TenantEvent) Reset() {
@@ -261,6 +269,13 @@ func (x *TenantEvent) GetOnline() bool {
 	return false
 }
 
+func (x *TenantEvent) GetSnapshotComplete() bool {
+	if x != nil {
+		return x.SnapshotComplete
+	}
+	return false
+}
+
 var File_sandbox_relay_tunnel_proto protoreflect.FileDescriptor
 
 const file_sandbox_relay_tunnel_proto_rawDesc = "" +
@@ -273,10 +288,11 @@ const file_sandbox_relay_tunnel_proto_rawDesc = "" +
 	"\x01f\"%\n" +
 	"\vTunnelHello\x12\x16\n" +
 	"\x06tenant\x18\x01 \x01(\tR\x06tenant\"\x15\n" +
-	"\x13WatchTenantsRequest\"=\n" +
+	"\x13WatchTenantsRequest\"j\n" +
 	"\vTenantEvent\x12\x16\n" +
 	"\x06tenant\x18\x01 \x01(\tR\x06tenant\x12\x16\n" +
-	"\x06online\x18\x02 \x01(\bR\x06online2\x9c\x01\n" +
+	"\x06online\x18\x02 \x01(\bR\x06online\x12+\n" +
+	"\x11snapshot_complete\x18\x03 \x01(\bR\x10snapshotComplete2\x9c\x01\n" +
 	"\x12SandboxRelayTunnel\x12<\n" +
 	"\x06Tunnel\x12\x16.aether.v1.TunnelFrame\x1a\x16.aether.v1.TunnelFrame(\x010\x01\x12H\n" +
 	"\fWatchTenants\x12\x1e.aether.v1.WatchTenantsRequest\x1a\x16.aether.v1.TenantEvent0\x01B-Z+github.com/scitrera/aether/api/proto;aetherb\x06proto3"

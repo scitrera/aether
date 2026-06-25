@@ -43,7 +43,15 @@ message WatchTenantsRequest {}
 
 // TenantEvent reports a tenant's relay coming online (online=true) or going
 // offline (online=false).
+//
+// snapshot_complete is a terminal sentinel emitted exactly once per
+// (re)subscribe, after the burst of currently-online tenants is replayed and
+// before any live transitions stream. The provider uses it to deterministically
+// prune tenants that left during a watch disconnect (they are absent from the
+// replay set). Live events always carry snapshot_complete=false (the zero
+// value); the sentinel carries an empty tenant and online is irrelevant.
 message TenantEvent {
   string tenant = 1;
   bool online = 2;
+  bool snapshot_complete = 3;
 }
