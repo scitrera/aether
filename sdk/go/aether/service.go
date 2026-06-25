@@ -65,6 +65,7 @@ func NewServiceClient(opts ServiceOptions) (*ServiceClient, error) {
 		Connection:  opts.Connection,
 		TLS:         opts.TLS,
 		Credentials: opts.Credentials,
+		Metadata:    opts.Metadata,
 	}
 
 	base, err := NewBaseClient(cfg)

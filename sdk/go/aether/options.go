@@ -172,7 +172,13 @@ type ClientOptions struct {
 	// Keys and values are passed to the server as metadata.
 	Credentials map[string]string
 
-	// Metadata contains additional metadata to send with the connection.
+	// Metadata contains additional gRPC metadata (headers) attached to the
+	// Connect stream's outgoing context, readable server-side via
+	// metadata.FromIncomingContext. Unlike Credentials (carried in the
+	// InitConnection payload), these ride as transport-level headers and are
+	// available before the first frame is read — e.g. an aggregator that pairs
+	// an inbound Connect by an "x-aether-tenant" header. Empty/nil = no extra
+	// headers (the pre-existing behavior), so this is fully backward-compatible.
 	Metadata map[string]string
 }
 

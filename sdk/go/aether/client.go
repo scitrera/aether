@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 )
 
 // =============================================================================
@@ -44,6 +45,13 @@ type BaseClient struct {
 	options    ConnectionOptions
 	tlsConfig  *TLSConfig
 	creds      map[string]string
+
+	// streamMetadata, when non-empty, is attached to the Connect stream's
+	// outgoing gRPC context as transport-level headers (via
+	// metadata.NewOutgoingContext) on every establishStream — including after
+	// a reconnect. Readable server-side via metadata.FromIncomingContext.
+	// nil/empty preserves the pre-existing behavior (no extra headers).
+	streamMetadata map[string]string
 
 	// preDialedConn, when non-nil, takes precedence over serverAddr/tlsConfig.
 	// Used by embedded callers (e.g. AetherLite's workflow engine) that
@@ -195,6 +203,11 @@ type BaseClientConfig struct {
 	// Keys and values are passed to the server as metadata.
 	Credentials map[string]string
 
+	// Metadata, when non-empty, is attached to the Connect stream's outgoing
+	// gRPC context as transport-level headers. Readable server-side via
+	// metadata.FromIncomingContext. nil/empty = no extra headers.
+	Metadata map[string]string
+
 	// QueueSize is the size of the outgoing message queue.
 	// Default: 100.
 	QueueSize int
@@ -270,6 +283,7 @@ func NewBaseClient(cfg BaseClientConfig) (*BaseClient, error) {
 		options:                 connOpts,
 		tlsConfig:               cfg.TLS,
 		creds:                   cfg.Credentials,
+		streamMetadata:          cfg.Metadata,
 		queueSize:               cfg.QueueSize,
 		sendSem:                 sendSem,
 		sendCh:                  make(chan *pb.UpstreamMessage, cfg.QueueSize),
@@ -477,8 +491,17 @@ func (c *BaseClient) establishStream(ctx context.Context) error {
 	// Create a context for the stream
 	c.streamCtx, c.streamCancel = context.WithCancel(ctx)
 
+	// Attach any caller-supplied stream metadata as transport-level headers.
+	// These are readable server-side via metadata.FromIncomingContext before
+	// the first frame is processed (e.g. an aggregator pairing by tenant). When
+	// streamMetadata is empty this is a no-op, preserving prior behavior.
+	streamCtx := context.Context(c.streamCtx)
+	if len(c.streamMetadata) > 0 {
+		streamCtx = metadata.NewOutgoingContext(streamCtx, metadata.New(c.streamMetadata))
+	}
+
 	// Create the stream
-	stream, err := c.client.Connect(c.streamCtx)
+	stream, err := c.client.Connect(streamCtx)
 	if err != nil {
 		return FromGRPCError(err)
 	}
