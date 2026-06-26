@@ -489,6 +489,14 @@ type KVGetOptions struct {
 	// If empty, uses the client's current workspace.
 	Workspace string
 
+	// Authorization carries an on-behalf-of AuthorizationContext stamped onto
+	// the KVOperation (proto field 9). When set, the synchronous GetSync path
+	// forwards it so the gateway resolves the operation under the named subject
+	// (e.g. a user OBO grant) instead of the connecting principal. nil leaves
+	// the operation as direct (today's behavior). Only the *Sync paths honor
+	// this; the async builders always send nil for backward compatibility.
+	Authorization *pb.AuthorizationContext
+
 	// Timeout for synchronous operations.
 	// If 0, uses a default timeout.
 	Timeout time.Duration
@@ -518,6 +526,13 @@ type KVPutOptions struct {
 	// TTL is the time-to-live for the key.
 	// 0 means no expiration.
 	TTL time.Duration
+
+	// Authorization carries an on-behalf-of AuthorizationContext stamped onto
+	// the KVOperation (proto field 9). When set, the synchronous PutSync path
+	// forwards it so the gateway resolves the write under the named subject
+	// (e.g. a user OBO grant). nil leaves the write as direct (today's
+	// behavior). Only the *Sync paths honor this.
+	Authorization *pb.AuthorizationContext
 
 	// Timeout for synchronous operations.
 	// If 0, uses a default timeout.
@@ -550,6 +565,13 @@ type KVListOptions struct {
 	// KVResponse.NextCursor to fetch the next page; empty starts from the
 	// beginning. Iterate until KVResponse.HasMore is false.
 	Cursor string
+
+	// Authorization carries an on-behalf-of AuthorizationContext stamped onto
+	// the KVOperation (proto field 9). When set, the synchronous ListSync path
+	// forwards it so the gateway resolves the list under the named subject
+	// (e.g. a user OBO grant). nil leaves the list as direct (today's
+	// behavior). Only the *Sync paths honor this.
+	Authorization *pb.AuthorizationContext
 
 	// Timeout for synchronous operations.
 	// If 0, uses a default timeout.

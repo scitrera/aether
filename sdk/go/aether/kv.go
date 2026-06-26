@@ -105,17 +105,25 @@ func (kv *KV) Get(key string, scope KVScope, userID, workspace string) error {
 
 // GetWithRequestID retrieves a value from the KV store with a specific request ID for correlation.
 func (kv *KV) GetWithRequestID(key string, scope KVScope, userID, workspace, requestID string) error {
+	return kv.getWithReqIDAuth(key, scope, userID, workspace, requestID, nil)
+}
+
+// getWithReqIDAuth is the internal GET builder carrying an optional
+// on-behalf-of AuthorizationContext (proto field 9). GetWithRequestID passes
+// nil (direct mode); GetSync forwards KVGetOptions.Authorization.
+func (kv *KV) getWithReqIDAuth(key string, scope KVScope, userID, workspace, requestID string, auth *pb.AuthorizationContext) error {
 	if scope == "" {
 		scope = KVScopeGlobal
 	}
 
 	op := &pb.KVOperation{
-		Op:        pb.KVOperation_GET,
-		Scope:     kvScopeToProto(scope),
-		Key:       key,
-		UserId:    userID,
-		Workspace: workspace,
-		RequestId: requestID,
+		Op:            pb.KVOperation_GET,
+		Scope:         kvScopeToProto(scope),
+		Key:           key,
+		UserId:        userID,
+		Workspace:     workspace,
+		RequestId:     requestID,
+		Authorization: auth,
 	}
 
 	return kv.client.Send(&pb.UpstreamMessage{
@@ -143,19 +151,27 @@ func (kv *KV) Put(key string, value []byte, scope KVScope, userID, workspace str
 
 // PutWithRequestID stores a value in the KV store with a specific request ID for correlation.
 func (kv *KV) PutWithRequestID(key string, value []byte, scope KVScope, userID, workspace string, ttl int64, requestID string) error {
+	return kv.putWithReqIDAuth(key, value, scope, userID, workspace, ttl, requestID, nil)
+}
+
+// putWithReqIDAuth is the internal PUT builder carrying an optional
+// on-behalf-of AuthorizationContext (proto field 9). PutWithRequestID passes
+// nil (direct mode); PutSync forwards KVPutOptions.Authorization.
+func (kv *KV) putWithReqIDAuth(key string, value []byte, scope KVScope, userID, workspace string, ttl int64, requestID string, auth *pb.AuthorizationContext) error {
 	if scope == "" {
 		scope = KVScopeGlobal
 	}
 
 	op := &pb.KVOperation{
-		Op:        pb.KVOperation_PUT,
-		Scope:     kvScopeToProto(scope),
-		Key:       key,
-		Value:     value,
-		UserId:    userID,
-		Workspace: workspace,
-		Ttl:       ttl,
-		RequestId: requestID,
+		Op:            pb.KVOperation_PUT,
+		Scope:         kvScopeToProto(scope),
+		Key:           key,
+		Value:         value,
+		UserId:        userID,
+		Workspace:     workspace,
+		Ttl:           ttl,
+		RequestId:     requestID,
+		Authorization: auth,
 	}
 
 	return kv.client.Send(&pb.UpstreamMessage{
@@ -188,19 +204,27 @@ func (kv *KV) ListWithRequestID(keyPrefix string, scope KVScope, userID, workspa
 // ListWithRequestID passes the zero values (server default, first page);
 // ListSync forwards KVListOptions.Limit/Cursor.
 func (kv *KV) listWithOpts(keyPrefix string, scope KVScope, userID, workspace, requestID string, limit int32, cursor string) error {
+	return kv.listWithOptsAuth(keyPrefix, scope, userID, workspace, requestID, limit, cursor, nil)
+}
+
+// listWithOptsAuth is the internal LIST builder carrying pagination plus an
+// optional on-behalf-of AuthorizationContext (proto field 9). listWithOpts
+// passes nil (direct mode); ListSync forwards KVListOptions.Authorization.
+func (kv *KV) listWithOptsAuth(keyPrefix string, scope KVScope, userID, workspace, requestID string, limit int32, cursor string, auth *pb.AuthorizationContext) error {
 	if scope == "" {
 		scope = KVScopeGlobal
 	}
 
 	op := &pb.KVOperation{
-		Op:        pb.KVOperation_LIST,
-		Scope:     kvScopeToProto(scope),
-		Key:       keyPrefix,
-		UserId:    userID,
-		Workspace: workspace,
-		RequestId: requestID,
-		Limit:     limit,
-		Cursor:    cursor,
+		Op:            pb.KVOperation_LIST,
+		Scope:         kvScopeToProto(scope),
+		Key:           keyPrefix,
+		UserId:        userID,
+		Workspace:     workspace,
+		RequestId:     requestID,
+		Limit:         limit,
+		Cursor:        cursor,
+		Authorization: auth,
 	}
 
 	return kv.client.Send(&pb.UpstreamMessage{
@@ -738,7 +762,7 @@ func (kv *KV) GetSync(ctx context.Context, opts KVGetOptions) (*KVResponse, erro
 		scope = KVScopeGlobal
 	}
 
-	if err := kv.GetWithRequestID(opts.Key, scope, opts.UserID, opts.Workspace, requestID); err != nil {
+	if err := kv.getWithReqIDAuth(opts.Key, scope, opts.UserID, opts.Workspace, requestID, opts.Authorization); err != nil {
 		return nil, err
 	}
 
@@ -785,7 +809,7 @@ func (kv *KV) PutSync(ctx context.Context, opts KVPutOptions) (*KVResponse, erro
 		ttlSeconds = int64(opts.TTL.Seconds())
 	}
 
-	if err := kv.PutWithRequestID(opts.Key, opts.Value, scope, opts.UserID, opts.Workspace, ttlSeconds, requestID); err != nil {
+	if err := kv.putWithReqIDAuth(opts.Key, opts.Value, scope, opts.UserID, opts.Workspace, ttlSeconds, requestID, opts.Authorization); err != nil {
 		return nil, err
 	}
 
@@ -826,7 +850,7 @@ func (kv *KV) ListSync(ctx context.Context, opts KVListOptions) (*KVResponse, er
 		scope = KVScopeGlobal
 	}
 
-	if err := kv.listWithOpts(opts.KeyPrefix, scope, opts.UserID, opts.Workspace, requestID, opts.Limit, opts.Cursor); err != nil {
+	if err := kv.listWithOptsAuth(opts.KeyPrefix, scope, opts.UserID, opts.Workspace, requestID, opts.Limit, opts.Cursor, opts.Authorization); err != nil {
 		return nil, err
 	}
 
