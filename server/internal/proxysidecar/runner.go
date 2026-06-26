@@ -399,6 +399,10 @@ func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tun
 					SourceTopic: msg.SourceTopic,
 					Payload:     msg.Payload,
 					MessageType: msg.MessageType,
+					// Forward the gateway-resolved OBO subject across the relay so
+					// the in-sandbox bridge can identify the user (parity with the
+					// direct subscription path in gateway/subscription.go).
+					OnBehalfSubject: msg.OnBehalfSubject,
 				},
 			},
 		})

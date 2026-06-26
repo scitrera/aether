@@ -971,8 +971,20 @@ func messageTypeToProto(mt MessageType) pb.MessageType {
 // SendWithOptions sends a message using the provided SendMessageOptions.
 // This is the options-based counterpart to the typed Send methods on each client type.
 func (c *BaseClient) SendWithOptions(opts SendMessageOptions) error {
-	msgType := messageTypeToProto(opts.MessageType)
-	return c.sendMessage(opts.TargetTopic, opts.Payload, msgType)
+	send := &pb.SendMessage{
+		TargetTopic: opts.TargetTopic,
+		Payload:     opts.Payload,
+		MessageType: messageTypeToProto(opts.MessageType),
+	}
+	// Explicit OBO: when set, the gateway resolves it and stamps the subject
+	// onto the delivered envelope (MessageEnvelope.on_behalf_subject). A bare
+	// send never assumes an OBO context.
+	if opts.Authorization != nil {
+		send.Authorization = opts.Authorization
+	}
+	return c.Send(&pb.UpstreamMessage{
+		Payload: &pb.UpstreamMessage_Send{Send: send},
+	})
 }
 
 // sendMessage sends a message to a target topic.
@@ -1967,10 +1979,11 @@ func (c *BaseClient) dispatchResponse(ctx context.Context, response *pb.Downstre
 func (c *BaseClient) handleIncomingMessage(ctx context.Context, msg *pb.IncomingMessage) error {
 	// Convert to high-level Message type
 	message := &Message{
-		SourceTopic: msg.GetSourceTopic(),
-		Payload:     msg.GetPayload(),
-		MessageType: msg.GetMessageType(),
-		ReceivedAt:  time.Now(),
+		SourceTopic:     msg.GetSourceTopic(),
+		Payload:         msg.GetPayload(),
+		MessageType:     msg.GetMessageType(),
+		OnBehalfSubject: msg.GetOnBehalfSubject(),
+		ReceivedAt:      time.Now(),
 	}
 
 	// Dispatch to generic message handler

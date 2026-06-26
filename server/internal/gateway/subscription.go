@@ -231,6 +231,9 @@ func (s *GatewayServer) createMessageHandler(client *ClientSession) func([]byte)
 					SourceTopic: parsed.env.Source,
 					Payload:     parsed.env.Payload,
 					MessageType: parsed.env.MessageType,
+					// Mirror the gateway-stamped OBO subject onto delivery so the
+					// recipient can identify the user the message was sent for.
+					OnBehalfSubject: parsed.env.GetOnBehalfSubject(),
 				},
 			},
 		})

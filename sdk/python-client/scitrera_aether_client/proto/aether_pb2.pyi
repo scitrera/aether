@@ -710,16 +710,18 @@ class KVResponse(_message.Message):
     def __init__(self, success: bool = ..., value: _Optional[bytes] = ..., keys: _Optional[_Iterable[str]] = ..., kv_map: _Optional[_Mapping[str, bytes]] = ..., request_id: _Optional[str] = ..., counter_value: _Optional[int] = ..., applied: bool = ..., next_cursor: _Optional[str] = ..., has_more: bool = ...) -> None: ...
 
 class IncomingMessage(_message.Message):
-    __slots__ = ("source_topic", "payload", "message_type", "workspace")
+    __slots__ = ("source_topic", "payload", "message_type", "workspace", "on_behalf_subject")
     SOURCE_TOPIC_FIELD_NUMBER: _ClassVar[int]
     PAYLOAD_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_TYPE_FIELD_NUMBER: _ClassVar[int]
     WORKSPACE_FIELD_NUMBER: _ClassVar[int]
+    ON_BEHALF_SUBJECT_FIELD_NUMBER: _ClassVar[int]
     source_topic: str
     payload: bytes
     message_type: MessageType
     workspace: str
-    def __init__(self, source_topic: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., workspace: _Optional[str] = ...) -> None: ...
+    on_behalf_subject: PrincipalRef
+    def __init__(self, source_topic: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., workspace: _Optional[str] = ..., on_behalf_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ...) -> None: ...
 
 class ConfigSnapshot(_message.Message):
     __slots__ = ("kv", "global_kv", "task_context", "workspace_exclusive_kv", "global_exclusive_kv")
@@ -3092,7 +3094,7 @@ class WorkflowResponse(_message.Message):
     def __init__(self, success: bool = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., data: _Optional[bytes] = ..., total_count: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class MessageEnvelope(_message.Message):
-    __slots__ = ("source", "payload", "message_type", "timestamp_ms", "metadata", "workspace")
+    __slots__ = ("source", "payload", "message_type", "timestamp_ms", "metadata", "workspace", "on_behalf_subject")
     class MetadataEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -3106,13 +3108,15 @@ class MessageEnvelope(_message.Message):
     TIMESTAMP_MS_FIELD_NUMBER: _ClassVar[int]
     METADATA_FIELD_NUMBER: _ClassVar[int]
     WORKSPACE_FIELD_NUMBER: _ClassVar[int]
+    ON_BEHALF_SUBJECT_FIELD_NUMBER: _ClassVar[int]
     source: str
     payload: bytes
     message_type: MessageType
     timestamp_ms: int
     metadata: _containers.ScalarMap[str, str]
     workspace: str
-    def __init__(self, source: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., timestamp_ms: _Optional[int] = ..., metadata: _Optional[_Mapping[str, str]] = ..., workspace: _Optional[str] = ...) -> None: ...
+    on_behalf_subject: PrincipalRef
+    def __init__(self, source: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., timestamp_ms: _Optional[int] = ..., metadata: _Optional[_Mapping[str, str]] = ..., workspace: _Optional[str] = ..., on_behalf_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ...) -> None: ...
 
 class AuditQuery(_message.Message):
     __slots__ = ("request_id", "start_time", "end_time", "event_type", "actor_type", "actor_id", "resource_type", "resource_id", "operation", "workspace", "only_failures", "limit", "offset", "subject_type", "subject_id", "authority_mode", "authority_grant_id", "authorization", "exclude_actor_types", "exclude_workspaces", "exclude_service_direct")

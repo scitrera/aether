@@ -481,6 +481,23 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 		// the envelope size for the common no-workspace bridge case.
 		envelope.Metadata = map[string]string{"workspace": effectiveWorkspace}
 	}
+	// Propagate the resolved on-behalf-of subject to the recipient, gateway-set
+	// and spoof-proof (like Source). This is the message-bus analog of the
+	// X-Auth-* identity headers ProxyHttp mints from the same resolved
+	// authority: it lets a recipient (e.g. platform-bridge) identify the user a
+	// message was sent for, distinct from the sending identity. Covers both the
+	// explicit SendMessage.authorization path and the auto task-authority
+	// fallback above. Subject identity only — acting-for uses the task
+	// authority-grant path, not this field.
+	if resolvedAuthority != nil && resolvedAuthority.Grant != nil {
+		g := resolvedAuthority.Grant
+		if g.SubjectType != "" && g.SubjectID != "" {
+			envelope.OnBehalfSubject = &pb.PrincipalRef{
+				PrincipalType: g.SubjectType,
+				PrincipalId:   g.SubjectID,
+			}
+		}
+	}
 
 	envelopeBytes, err := proto.Marshal(envelope)
 	if err != nil {

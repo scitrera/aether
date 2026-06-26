@@ -608,6 +608,15 @@ func WithOBOAuthorization(ctx context.Context, auth *pb.AuthorizationContext) co
 	return context.WithValue(ctx, oboContextKey{}, auth)
 }
 
+// OBOAuthorizationFromContext returns the OBO AuthorizationContext carried by
+// ctx (set via WithOBOAuthorization), or nil. It is the public, opt-in helper
+// for populating SendMessageOptions.Authorization from a context, pairing with
+// WithOBOAuthorization. Explicit by design: callers choose to forward the OBO
+// onto a send rather than having every send under an OBO context assume it.
+func OBOAuthorizationFromContext(ctx context.Context) *pb.AuthorizationContext {
+	return oboFromContext(ctx)
+}
+
 // oboFromContext retrieves an OBO AuthorizationContext from the context, or nil.
 func oboFromContext(ctx context.Context) *pb.AuthorizationContext {
 	if ctx == nil {

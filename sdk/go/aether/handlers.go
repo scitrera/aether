@@ -33,6 +33,13 @@ type Message struct {
 	// MessageType is the type of the message (CHAT, CONTROL, TOOL_CALL, EVENT, METRIC).
 	MessageType pb.MessageType
 
+	// OnBehalfSubject is the gateway-resolved on-behalf-of subject the message
+	// was sent for, when the sender supplied an OBO AuthorizationContext.
+	// Gateway-set and spoof-proof (like SourceTopic). Nil for direct (non-OBO)
+	// sends. Lets a recipient identify the user a message is sent for, distinct
+	// from the sending identity in SourceTopic.
+	OnBehalfSubject *pb.PrincipalRef
+
 	// ReceivedAt is the local time when the message was received.
 	ReceivedAt time.Time
 }

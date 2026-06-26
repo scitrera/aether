@@ -827,6 +827,16 @@ type SendMessageOptions struct {
 
 	// Metadata is optional message metadata.
 	Metadata map[string]string
+
+	// Authorization optionally carries an on-behalf-of AuthorizationContext for
+	// this send. The gateway validates it (grant + delegate + audience) and, on
+	// success, stamps the resolved subject onto the delivered
+	// MessageEnvelope.on_behalf_subject so the recipient can identify the user
+	// the message is sent for. EXPLICIT by design: a bare send never assumes an
+	// OBO context. Use OBOAuthorizationFromContext(ctx) to populate this from a
+	// context set via WithOBOAuthorization, or build the *pb.AuthorizationContext
+	// directly. Nil ⇒ direct (non-OBO) send.
+	Authorization *pb.AuthorizationContext
 }
 
 // =============================================================================
