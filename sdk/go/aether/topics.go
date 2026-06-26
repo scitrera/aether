@@ -61,6 +61,9 @@ const (
 
 	// TopicPrefixBridge is the prefix for bridge topics.
 	TopicPrefixBridge = "br"
+
+	// TopicPrefixService is the prefix for workspace-less service-principal topics.
+	TopicPrefixService = "sv"
 )
 
 // =============================================================================
@@ -77,6 +80,20 @@ const (
 //	// Returns: "br::example-bridge::instance-1"
 func BridgeTopic(implementation, specifier string) string {
 	return fmt.Sprintf("%s::%s::%s", TopicPrefixBridge, implementation, specifier)
+}
+
+// ServiceTopic creates a topic string for a workspace-less service principal.
+//
+// Format: sv::{implementation} — no specifier; the gateway routes to an active
+// instance of the service. Use this to address shared services like the
+// platform-bridge.
+//
+// Example:
+//
+//	topic := aether.ServiceTopic("platform-bridge")
+//	// Returns: "sv::platform-bridge"
+func ServiceTopic(implementation string) string {
+	return fmt.Sprintf("%s::%s", TopicPrefixService, implementation)
 }
 
 // =============================================================================
