@@ -199,11 +199,19 @@ func (h *KVHandler) HandleKVOperation(
 	// backend mode; its access is effectively limited to the reserved
 	// coordination namespace by the infra fast-path in checkKeyPermission
 	// (other keys still require an ACL grant it does not hold).
+	// The MetricsBridge is permitted so the billing bridge can run on a SINGLE
+	// connection (its identity is a singleton, so it cannot hold a second
+	// Service connection for KV without a duplicate-identity collision): it
+	// reads its billing:openmeter config and persists usage/invoice snapshots
+	// to the tenant's internal KV. Like the WorkflowEngine, this only opens the
+	// type gate — every key it touches still requires an explicit ACL grant via
+	// checkKeyPermission (seeded for metrics::shard0 in acl_seed.py).
 	if identity.Type != models.PrincipalAgent &&
 		identity.Type != models.PrincipalTask &&
 		identity.Type != models.PrincipalService &&
-		identity.Type != models.PrincipalWorkflowEngine {
-		return status.Error(codes.PermissionDenied, "only agents, tasks, services, and the workflow engine can access KV store")
+		identity.Type != models.PrincipalWorkflowEngine &&
+		identity.Type != models.PrincipalMetricsBridge {
+		return status.Error(codes.PermissionDenied, "only agents, tasks, services, the metrics bridge, and the workflow engine can access KV store")
 	}
 
 	// Map proto enum scope to internal KVScope (default to workspace for backward compatibility)
