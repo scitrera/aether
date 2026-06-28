@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -16,7 +16,10 @@ import (
 // Tracer is the package-level tracer used across the gateway.
 var Tracer trace.Tracer = noop.NewTracerProvider().Tracer("github.com/scitrera/aether/gateway")
 
-// InitTracer initializes OpenTelemetry tracing with an OTLP HTTP exporter.
+// InitTracer initializes OpenTelemetry tracing with an OTLP gRPC exporter.
+// gRPC (port 4317) matches InitMeter's otlpmetricgrpc exporter so both ride the
+// same OTEL_EXPORTER_OTLP_ENDPOINT (http:// scheme = insecure/plaintext); the
+// OTLP/HTTP exporter would POST /v1/traces to the gRPC port and fail.
 // If OTEL_EXPORTER_OTLP_ENDPOINT is not set, tracing is disabled (no-op).
 // Returns a shutdown function that should be deferred in main().
 func InitTracer(serviceName string) (shutdown func(context.Context) error, err error) {
@@ -28,7 +31,7 @@ func InitTracer(serviceName string) (shutdown func(context.Context) error, err e
 
 	ctx := context.Background()
 
-	exporter, err := otlptracehttp.New(ctx)
+	exporter, err := otlptracegrpc.New(ctx)
 	if err != nil {
 		return nil, err
 	}
