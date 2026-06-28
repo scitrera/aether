@@ -269,6 +269,22 @@ func main() {
 		logging.Logger.Debug().Msg("OpenTelemetry tracing disabled (OTEL_EXPORTER_OTLP_ENDPOINT not set)")
 	}
 
+	// Initialize OpenTelemetry metrics (OTLP gRPC) + Go runtime metrics.
+	// Gated on the same OTEL_EXPORTER_OTLP_ENDPOINT env var as tracing —
+	// no-op when unset. The gRPC server's otelgrpc stats handler (wired below)
+	// then also emits rpc.server.* metrics through this MeterProvider.
+	metricsShutdown, err := tracing.InitMeter("aether-gateway")
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Msg("failed to initialize metrics")
+	}
+	defer func() {
+		// Best-effort metrics flush/shutdown on exit; any error is unactionable here.
+		_ = metricsShutdown(context.Background())
+	}()
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+		logging.Logger.Info().Msg("OpenTelemetry metrics + Go runtime instrumentation enabled")
+	}
+
 	// Initialize OpenTelemetry log bridge — exports structured zerolog
 	// events to SigNoz via OTLP with trace context correlation.
 	logBridge, err := tracing.NewLogBridge(context.Background(), "aether-gateway")
