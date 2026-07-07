@@ -33,6 +33,7 @@ from ._common import (
     create_topic_global_agents,
     create_topic_global_users,
     create_topic_user_workspace,
+    create_topic_user_broadcast,
     SELF_ASSIGN,
     TARGETED,
     POOL,
@@ -4254,6 +4255,20 @@ class AsyncServiceClient(BaseAsyncAetherClient):
             payload, message_type=message_type, authorization=authorization,
         )
 
+    async def send_message_to_user_broadcast(self, user_id: str, payload: bytes,
+                                             message_type: int = aether_pb2.OPAQUE,
+                                             authorization: Optional[aether_pb2.AuthorizationContext] = None):
+        """Send a message to every one of a user's windows (uu::{user_id}).
+
+        Workspace-agnostic, non-progress channel for platform->user
+        notifications; the intended way for a service principal to push an
+        opaque update to a user without abusing the progress channel.
+        """
+        await self._send_message(
+            create_topic_user_broadcast(user_id),
+            payload, message_type=message_type, authorization=authorization,
+        )
+
     async def send_event(self, payload: bytes):
         """Send an event to the workflow engine (``event::*`` plane)."""
         await self._send_message("event::*", payload, message_type=aether_pb2.EVENT)
@@ -4638,6 +4653,20 @@ class AsyncWorkflowEngineClient(BaseAsyncAetherClient):
         """Send a message to a user's workspace-scoped topic."""
         await self._send_message(
             create_topic_user_workspace(user_id, workspace),
+            payload, message_type=message_type, authorization=authorization,
+        )
+
+    async def send_message_to_user_broadcast(self, user_id: str, payload: bytes,
+                                             message_type: int = aether_pb2.OPAQUE,
+                                             authorization: Optional[aether_pb2.AuthorizationContext] = None):
+        """Send a message to every one of a user's windows (uu::{user_id}).
+
+        Workspace-agnostic, non-progress channel for platform->user
+        notifications; reaches all of the user's windows regardless of the
+        workspace each is viewing.
+        """
+        await self._send_message(
+            create_topic_user_broadcast(user_id),
             payload, message_type=message_type, authorization=authorization,
         )
 

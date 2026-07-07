@@ -18,6 +18,7 @@ import {
   globalAgentsTopic,
   globalUsersTopic,
   userTopic,
+  userBroadcastTopic,
   metricWildcardTopic,
 } from "./topics.js";
 import type { Metric } from "./metrics-builder.js";
@@ -144,6 +145,25 @@ export class WorkflowEngineClient extends AetherClient {
     messageType: MessageType = MessageType.Opaque,
   ): void {
     this._sendMessage(userTopic(userId, windowId), payload, messageType);
+  }
+
+  /**
+   * Sends a message to every one of a user's windows, regardless of which
+   * workspace each window is viewing (topic uu::{userId}).
+   *
+   * This is the workspace-agnostic, non-progress channel for platform→user
+   * notifications.
+   *
+   * @param userId - Target user's ID
+   * @param payload - Message payload (bytes)
+   * @param messageType - Message type. Default: Opaque
+   */
+  sendToUserBroadcast(
+    userId: string,
+    payload: Uint8Array,
+    messageType: MessageType = MessageType.Opaque,
+  ): void {
+    this._sendMessage(userBroadcastTopic(userId), payload, messageType);
   }
 
   /**

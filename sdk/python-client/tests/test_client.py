@@ -42,6 +42,7 @@ from scitrera_aether_client._common import (
     create_topic_service,
     create_topic_task,
     create_topic_user,
+    create_topic_user_broadcast,
     create_topic_global_agents,
     create_topic_global_users,
     SERVICE_WILDCARD,
@@ -1400,6 +1401,11 @@ class TestTopicCreation:
         topic = create_topic_user("user-123", "window-456")
         assert topic == "us::user-123::window-456"
 
+    def test_create_topic_user_broadcast(self):
+        """Test per-user broadcast topic creation."""
+        topic = create_topic_user_broadcast("user-123")
+        assert topic == "uu::user-123"
+
     def test_create_topic_global_agents(self):
         """Test global agents broadcast topic creation."""
         topic = create_topic_global_agents("workspace")
@@ -2164,6 +2170,15 @@ class TestServiceClient:
         msg = client.request_queue.get_nowait()
         assert msg.HasField("send")
         assert msg.send.target_topic == "uw::user-1::workspace-a"
+
+    def test_send_message_to_user_broadcast_queues_message(self):
+        """send_message_to_user_broadcast puts correct UpstreamMessage on request_queue."""
+        from scitrera_aether_client.client import ServiceClient
+        client = ServiceClient(implementation="my-svc", specifier="pod-1")
+        client.send_message_to_user_broadcast("user-1", b"payload")
+        msg = client.request_queue.get_nowait()
+        assert msg.HasField("send")
+        assert msg.send.target_topic == "uu::user-1"
 
     def test_exported_from_package(self):
         """ServiceClient is importable from the top-level package."""

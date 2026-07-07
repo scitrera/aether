@@ -44,6 +44,11 @@ const (
 	// TopicPrefixUserWorkspace is the prefix for user workspace topics.
 	TopicPrefixUserWorkspace = "uw"
 
+	// TopicPrefixUserBroadcast is the prefix for per-user broadcast topics
+	// (workspace-agnostic; reaches all of a user's windows). Publishing is
+	// restricted to platform principals (service / workflow-engine / bridge).
+	TopicPrefixUserBroadcast = "uu"
+
 	// TopicPrefixGlobalAgents is the prefix for global agent broadcast topics.
 	TopicPrefixGlobalAgents = "ga"
 
@@ -207,6 +212,24 @@ func UserTopic(userID, windowID string) string {
 //	// Returns: "uw::alice::prod"
 func UserWorkspaceTopic(userID, workspace string) string {
 	return fmt.Sprintf("%s::%s::%s", TopicPrefixUserWorkspace, userID, workspace)
+}
+
+// UserBroadcastTopic creates a per-user broadcast topic string.
+//
+// Format: uu::{user_id}
+//
+// Messages sent to this topic reach every one of a user's open windows
+// regardless of which workspace each window is currently viewing — the
+// workspace-agnostic, non-progress complement to the per-user progress topic.
+// Only platform principals (service / workflow-engine / bridge) may publish;
+// the gateway rejects sends from workspace-scoped principals.
+//
+// Example:
+//
+//	topic := aether.UserBroadcastTopic("alice")
+//	// Returns: "uu::alice"
+func UserBroadcastTopic(userID string) string {
+	return fmt.Sprintf("%s::%s", TopicPrefixUserBroadcast, userID)
 }
 
 // GlobalUsersTopic creates a broadcast topic for all users in a workspace.

@@ -306,6 +306,18 @@ def create_topic_user_workspace(user_id: str, workspace: str) -> str:
     return f"uw{IDENTITY_SEP}{user_id}{IDENTITY_SEP}{workspace}"
 
 
+def create_topic_user_broadcast(user_id: str) -> str:
+    """Create a per-user broadcast topic (uu::{user_id}).
+
+    Reaches every one of a user's open windows regardless of which workspace
+    each window is currently viewing -- the workspace-agnostic, non-progress
+    complement to the per-user progress topic. Only platform principals
+    (service / workflow-engine / bridge) may publish; the gateway rejects
+    sends from workspace-scoped principals.
+    """
+    return f"uu{IDENTITY_SEP}{user_id}"
+
+
 def create_topic_global_agents(workspace: str) -> str:
     """Create a global broadcast topic for all agents in a workspace."""
     return f"ga{IDENTITY_SEP}{workspace}"
