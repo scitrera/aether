@@ -191,6 +191,7 @@ Authentication methods are configured via `auth.modes` in the YAML config. Multi
 | `tb` | Task Broadcast | `tb::{workspace}::{impl}` | Load-balancing topic; workers compete/round-robin |
 | `us` | User (Window) | `us::{user_id}::{window_id}` | Specific browser window |
 | `uw` | User (Workspace) | `uw::{user_id}::{workspace}` | User scoped to a workspace |
+| `uu` | User (Broadcast) | `uu::{user_id}` | All of a user's windows regardless of active workspace; workspace-agnostic, ordinary (non-progress) messages. Platform-principal senders only. |
 | `ga` | Global Agents | `ga::{workspace}` | Broadcast to all agents in a workspace |
 | `gu` | Global Users | `gu::{workspace}` | Broadcast to all users in a workspace |
 | `pg` | Progress | `pg::{workspace}` | Progress updates with server-side recipient filtering |
@@ -210,7 +211,7 @@ Each principal type automatically subscribes to specific topics on connection:
 | **Agent** | `ag::{ws}::{impl}::{spec}` | `ga::{ws}`, `pg::{ws}` |
 | **Task (Unique)** | `tu::{ws}::{impl}::{spec}` | — |
 | **Task (Non-Unique)** | `ta::{ws}::{impl}::{id}` | `tb::{ws}::{impl}` |
-| **User** | `us::{uid}::{wid}` | `gu::{ws}`, `uw::{uid}::{ws}`, `pg::{ws}` |
+| **User** | `us::{uid}::{wid}` | `uu::{uid}`, `pg::us::{uid}`, `gu::{ws}`, `uw::{uid}::{ws}`, `pg::{ws}` |
 | **Workflow Engine** | `event::receiver{shard}` (today: `event::receiver0`) | — |
 | **Metrics Bridge** | `metric::receiver{shard}` (today: `metric::receiver0`) | — |
 | **Orchestrator** | — | — (receives tasks via direct gRPC stream) |
@@ -221,18 +222,20 @@ Each principal type automatically subscribes to specific topics on connection:
 
 | Sender | Can Send To | Cannot Send To |
 |---|---|---|
-| **Agent** | Agents, Tasks, Users, Events, Metrics | Orchestrators, Progress |
-| **Task** | Agents, Tasks, Users, Events, Metrics | Orchestrators, Progress |
-| **User** | Agents, Tasks, Users | Events, Metrics, Progress |
-| **Workflow Engine** | Agents, Tasks, Users, Events, Metrics | — |
+| **Agent** | Agents, Tasks, Users, Events, Metrics | Orchestrators, Progress, User-Broadcast |
+| **Task** | Agents, Tasks, Users, Events, Metrics | Orchestrators, Progress, User-Broadcast |
+| **User** | Agents, Tasks, Users | Events, Metrics, Progress, User-Broadcast |
+| **Workflow Engine** | Agents, Tasks, Users, Events, Metrics, User-Broadcast | — |
 | **Metrics Bridge** | *None (receive only)* | All |
-| **Orchestrator** | Agent/Task topics only (status updates) | Events, Metrics |
-| **Service** | Any topic (cross-workspace); per-message ACL checked against target workspace | — |
-| **Bridge** | Any topic in any workspace; per-message ACL checked against target workspace | — |
+| **Orchestrator** | Agent/Task topics only (status updates) | Events, Metrics, User-Broadcast |
+| **Service** | Any topic (cross-workspace), incl. User-Broadcast; per-message ACL checked against target workspace | — |
+| **Bridge** | Any topic in any workspace, incl. User-Broadcast; per-message ACL checked against target workspace | — |
 
 **Cross-workspace enforcement:** Workspace-scoped principals cannot send to topics in other workspaces. The workspace component of the target topic must match the sender's workspace.
 
 **Cross-workspace event/metric broadcast:** Sending to `event.*` or `metric.*` topics in a workspace other than the sender's own native workspace requires the `capability/event_broadcast` or `capability/metric_broadcast` ACL permission respectively. Sending to the sender's own workspace is implicitly permitted.
+
+**User-broadcast (`uu::{user_id}`):** A workspace-agnostic channel that reaches every one of a user's open windows regardless of which workspace each window is viewing — the non-progress complement to the per-user progress topic `pg::us::{user_id}`. It carries ordinary `MessageEnvelope` protos (delivered as `IncomingMessage`), so it participates fully in the message-type system, audit, and metrics. Because the topic has no workspace component, the per-message workspace ACL cannot gate it; authorization is instead by principal type: **only Service, WorkflowEngine, and Bridge principals may publish.** All workspace-scoped principals (Users, Agents, Tasks, Orchestrators) are denied and must reach a user via `us::`/`uw::`/progress or task ownership. Users subscribe to their own `uu::{user_id}` topic on connect.
 
 **Metric payload enforcement:** Messages with type `METRIC` sent to `metric.*` topics must carry a valid `Metric` proto as their payload (see [Section 4.5](#45-metric-payload-schema)). The gateway validates and rejects malformed metric messages before they reach the Metrics Bridge.
 

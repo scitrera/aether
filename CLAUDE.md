@@ -123,6 +123,7 @@ cd server
 | `tb` | `tb::{workspace}::{impl}` | Task broadcast (load-balancing) |
 | `us` | `us::{user_id}::{window_id}` | User window-specific |
 | `uw` | `uw::{user_id}::{workspace}` | User workspace-scoped |
+| `uu` | `uu::{user_id}` | User broadcast — reaches all of a user's windows regardless of active workspace; workspace-agnostic, ordinary (non-progress) messages. Platform-principal senders only (see permission matrix). |
 | `ga` | `ga::{workspace}` | Global agent broadcast |
 | `gu` | `gu::{workspace}` | Global user broadcast |
 | `pg` | `pg::{workspace}` | Progress updates (server-side recipient filtering) |
@@ -184,6 +185,8 @@ An active gRPC stream connection represents both the distributed lock for that i
 | Bridge | Everything (any workspace) | — |
 
 Cross-workspace sends are blocked: workspace-scoped principals cannot target topics in other workspaces. Bridges are cross-workspace by design (no workspace component) and check ACL per-message against the target workspace.
+
+**User-broadcast (`uu::{user_id}`):** A workspace-agnostic channel that reaches every one of a user's windows regardless of which workspace each window is viewing (the non-progress complement to `pg::us::{user}`). Because the topic carries no workspace segment, the workspace ACL cannot gate it, so authorization is by principal type: **only Service, WorkflowEngine, and Bridge principals may publish** (`enforceTopicPermissions`). Users, Agents, Tasks, and Orchestrators are denied and must reach a user via `us::`/`uw::`/progress or task ownership. Users subscribe to their own `uu::` topic on connect.
 
 **Cross-workspace event/metric broadcast:** Sending to `event.*` or `metric.*` in another workspace requires `capability/event_broadcast` or `capability/metric_broadcast` ACL permission. Sending to the sender's own native workspace is implicitly permitted.
 
