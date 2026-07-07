@@ -33,7 +33,7 @@ const offlineCacheTTL = 5 * time.Second
 // validTopicPrefixSet is a map for O(1) topic prefix validation.
 var validTopicPrefixSet = map[string]bool{
 	"ag": true, "tu": true, "ta": true, "tb": true,
-	"us": true, "uw": true, "ga": true, "gu": true,
+	"us": true, "uw": true, "uu": true, "ga": true, "gu": true,
 	"pg": true, "tk": true, "event": true, "metric": true, "br": true, "sv": true,
 }
 
@@ -85,7 +85,9 @@ func workspaceFromTopic(topic string) string {
 		}
 		return parts[2]
 	}
-	// us, br, sv — no workspace component
+	// us, uu, br, sv — no workspace component. uu::{user_id} is deliberately
+	// workspace-agnostic (see UserBroadcastTopic); its authorization is enforced
+	// by principal type in enforceTopicPermissions, not by workspace ACL.
 	return ""
 }
 
@@ -753,6 +755,22 @@ var hasCrossWorkspaceBroadcastPermission = func(ctx context.Context, s *GatewayS
 // enforceTopicPermissions checks spec Section 3.2.2 permission matrix.
 // Returns an error if the sender's principal type is not allowed to publish to the target topic.
 func enforceTopicPermissions(sender models.Identity, targetTopic string) error {
+	// User-broadcast (uu::{user_id}) is a platform→user channel: it reaches
+	// every one of a user's windows regardless of active workspace and carries
+	// no workspace segment, so the downstream workspace ACL cannot gate it
+	// (workspaceFromTopic returns ""). The principal-type policy here is
+	// therefore the sole authorization check. Only platform principals may
+	// publish; workspace-scoped principals (users, agents, tasks, orchestrators)
+	// must reach a user via us::/uw::/pg:: or task ownership instead.
+	if strings.HasPrefix(targetTopic, "uu"+models.IdentitySep) {
+		switch sender.Type {
+		case models.PrincipalService, models.PrincipalWorkflowEngine, models.PrincipalBridge:
+			return nil
+		default:
+			return fmt.Errorf("only service, workflow-engine, and bridge principals may publish to user-broadcast (uu::) topics")
+		}
+	}
+
 	switch sender.Type {
 	case models.PrincipalUser:
 		// Users cannot send to event.*, metric.*, or pg.* topics

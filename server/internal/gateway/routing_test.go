@@ -417,6 +417,54 @@ func TestEnforceTopicPermissions(t *testing.T) {
 			targetTopic: "ag::ws2::impl::spec",
 			wantErr:     false,
 		},
+
+		// ----- User-broadcast (uu::): platform principals only -----
+		{
+			name:        "service can send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalService},
+			targetTopic: "uu::user1",
+			wantErr:     false,
+		},
+		{
+			name:        "workflow engine can send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalWorkflowEngine},
+			targetTopic: "uu::user1",
+			wantErr:     false,
+		},
+		{
+			name:        "bridge can send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalBridge},
+			targetTopic: "uu::user1",
+			wantErr:     false,
+		},
+		{
+			name:        "agent cannot send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"},
+			targetTopic: "uu::user1",
+			wantErr:     true,
+			errContains: "user-broadcast",
+		},
+		{
+			name:        "task cannot send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalTask, Workspace: "ws1"},
+			targetTopic: "uu::user1",
+			wantErr:     true,
+			errContains: "user-broadcast",
+		},
+		{
+			name:        "user cannot send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalUser, Workspace: "ws1"},
+			targetTopic: "uu::user1",
+			wantErr:     true,
+			errContains: "user-broadcast",
+		},
+		{
+			name:        "orchestrator cannot send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalOrchestrator, Workspace: "ws1"},
+			targetTopic: "uu::user1",
+			wantErr:     true,
+			errContains: "user-broadcast",
+		},
 	}
 
 	for _, tt := range tests {
@@ -486,6 +534,11 @@ func TestExtractWorkspaceFromTopic(t *testing.T) {
 		{
 			name:  "user window topic returns empty (no workspace)",
 			topic: "us::alice::window1",
+			want:  "",
+		},
+		{
+			name:  "user-broadcast topic returns empty (workspace-agnostic)",
+			topic: "uu::alice",
 			want:  "",
 		},
 		{
@@ -593,6 +646,11 @@ func TestValidateTopicFormat(t *testing.T) {
 		{
 			name:    "valid uw prefix",
 			topic:   "uw::user1::ws1",
+			wantErr: false,
+		},
+		{
+			name:    "valid uu prefix",
+			topic:   "uu::user1",
 			wantErr: false,
 		},
 		{
@@ -720,8 +778,9 @@ func TestSetupClientSubscriptions(t *testing.T) {
 			// pg::us::alice is the per-user progress topic shared by all of
 			// alice's open windows. Window-level filtering happens at delivery
 			// time via the recipient field, not at the topic level. See
-			// UserProgressTopic + isBareUserRecipientMatch.
-			wantSharedTopics: []string{"gu::prod", "uw::alice::prod", "pg::us::alice"},
+			// UserProgressTopic + isBareUserRecipientMatch. uu::alice is the
+			// per-user broadcast topic (non-progress platform→user channel).
+			wantSharedTopics: []string{"gu::prod", "uw::alice::prod", "pg::us::alice", "uu::alice"},
 		},
 		{
 			name: "user without workspace subscribes to window topic exclusively and per-user progress topic shared",
@@ -734,8 +793,9 @@ func TestSetupClientSubscriptions(t *testing.T) {
 			wantExclusiveTopics: []string{"us::bob::win-2"},
 			// Even without a workspace, users still subscribe to their
 			// per-user progress topic so targeted progress from agents in
-			// any workspace can reach them.
-			wantSharedTopics: []string{"pg::us::bob"},
+			// any workspace can reach them, and to their per-user broadcast
+			// topic for workspace-agnostic platform→user notifications.
+			wantSharedTopics: []string{"pg::us::bob", "uu::bob"},
 		},
 		{
 			name: "workflow engine subscribes to event::receiver0 fan-in shard regardless of workspace",

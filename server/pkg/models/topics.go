@@ -113,6 +113,30 @@ func UserWorkspaceTopic(userID, workspace string) (string, error) {
 	return "uw" + IdentitySep + userID + IdentitySep + workspace, nil
 }
 
+// UserBroadcastTopic returns a per-user broadcast topic used to reach every one
+// of a user's open windows regardless of which workspace each window is
+// currently viewing. Format: uu::{user_id}.
+//
+// It is the workspace-agnostic, non-progress complement to the existing
+// user-directed channels:
+//   - us::{user}::{window}     targets a single window
+//   - uw::{user}::{workspace}  targets only windows currently on that workspace
+//   - pg::us::{user}           reaches all windows but is progress-typed
+//
+// uu:: carries ordinary MessageEnvelope protos (delivered as IncomingMessage),
+// so it participates fully in the message-type system, audit, and metrics.
+// Because it has no workspace segment, workspaceFromTopic returns "" and the
+// workspace ACL cannot gate publishes; authorization is enforced by principal
+// type in enforceTopicPermissions, which restricts publishers to platform
+// principals (service / workflow-engine / bridge). Users subscribe to this
+// topic on connect (shared, with local fan-out to every window handler).
+func UserBroadcastTopic(userID string) (string, error) {
+	if err := ValidateSegment("user_id", userID); err != nil {
+		return "", err
+	}
+	return "uu" + IdentitySep + userID, nil
+}
+
 func ProgressTopic(workspace string) (string, error) {
 	if err := ValidateSegment("workspace", workspace); err != nil {
 		return "", err
@@ -280,6 +304,16 @@ func MustUserWindowTopic(userID, windowID string) string {
 // Use only for trusted segments.
 func MustUserWorkspaceTopic(userID, workspace string) string {
 	t, err := UserWorkspaceTopic(userID, workspace)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
+// MustUserBroadcastTopic builds a per-user broadcast topic and panics on invalid input.
+// Use only for trusted segments.
+func MustUserBroadcastTopic(userID string) string {
+	t, err := UserBroadcastTopic(userID)
 	if err != nil {
 		panic(err)
 	}

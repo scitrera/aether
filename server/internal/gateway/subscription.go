@@ -357,6 +357,21 @@ func (s *GatewayServer) setupClientSubscriptions(client *ClientSession) error {
 				logging.Logger.Warn().Err(err).Str("topic", upgTopic).Msg("failed to subscribe to user-progress topic")
 			}
 		}
+		// Subscribe to the per-user broadcast topic (uu::{user}) — a
+		// workspace-agnostic channel for platform→user notifications that
+		// reaches every one of the user's windows regardless of the active
+		// workspace. Shared subscription with local fan-out (mirroring the
+		// per-user progress topic), but carrying ordinary messages rather than
+		// progress updates, so it uses the generic message handler.
+		if identity.ID != "" {
+			ubTopic, err := models.UserBroadcastTopic(identity.ID)
+			if err != nil {
+				return fmt.Errorf("invalid user-broadcast topic: %w", err)
+			}
+			if err := s.subscribeClientToTopic(client, ubTopic); err != nil {
+				logging.Logger.Warn().Err(err).Str("topic", ubTopic).Msg("failed to subscribe to user-broadcast topic")
+			}
+		}
 		// Phase 2 "Design M": re-attach this session to the per-task chat
 		// message lanes of any tasks that are already RUNNING with this user
 		// as the participating OBO subject. The live subscribe path
