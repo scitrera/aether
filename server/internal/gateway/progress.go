@@ -507,9 +507,10 @@ func (s *GatewayServer) subscribeClientToProgress(client *ClientSession, workspa
 }
 
 // subscribeClientToUserProgress subscribes a user client to a per-user
-// progress topic (pg::us::{user}::{window}). The topic is self-scoped to a
-// single user-window, so no additional server-side recipient filtering is
-// required — the filter handler still applies self-echo suppression.
+// progress topic (pg::us::{user_id}). The topic is self-scoped to a single
+// user (all of that user's windows share it), so no additional server-side
+// recipient filtering is required — the filter handler still applies
+// self-echo suppression.
 func (s *GatewayServer) subscribeClientToUserProgress(client *ClientSession, topic string) error {
 	if client.HasSubscription(topic) {
 		return nil
