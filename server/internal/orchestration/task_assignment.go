@@ -1446,3 +1446,61 @@ func (tas *TaskAssignmentService) ReconcileOrphanedTasks(ctx context.Context) (i
 
 	return reconciled, nil
 }
+
+// taskClassInteractive mirrors the proto TaskClass enum value for INTERACTIVE
+// (see DefaultGraceWindowMs). Chat-message turns are minted with this class.
+const taskClassInteractive int32 = 1
+
+// staleInteractiveActiveStatuses is the pre-run + running set of statuses an
+// INTERACTIVE task moves through before reaching a terminal state. It
+// deliberately EXCLUDES the waiting_*/hibernated paused states so a turn that
+// is legitimately awaiting user input, an authority grant, an upstream
+// dependency, or a scheduled wake is never cancelled by the TTL sweep.
+var staleInteractiveActiveStatuses = []tasks.TaskStatus{
+	tasks.TaskStatusPending,
+	tasks.TaskStatusAssigned,
+	tasks.TaskStatusStarting,
+	tasks.TaskStatusRunning,
+}
+
+// CancelStaleInteractiveTasks cancels INTERACTIVE (chat_message turn) tasks that
+// have been sitting in a non-terminal, non-waiting state longer than ttl. These
+// are foreground turns that should complete in minutes; when the target sandbox
+// was offline/dead at mint or the harness crashed, they never reach a terminal
+// state and linger forever (12hr-old QUEUED chat tasks were observed). Unlike
+// ReconcileOrphanedTasks, this does not probe session liveness — an INTERACTIVE
+// turn older than the TTL is dead by definition.
+//
+// Cancellation goes through CancelTask so the queue row is retired and the
+// task's authority grant is revoked (never a raw status write). Errors are
+// best-effort (logged and skipped) so one bad task does not abort the sweep.
+// Returns the number of tasks cancelled.
+func (tas *TaskAssignmentService) CancelStaleInteractiveTasks(ctx context.Context, ttl time.Duration) (int, error) {
+	if ttl <= 0 {
+		return 0, nil
+	}
+
+	taskList, err := tas.taskStore.ListTasks(ctx, &tasks.TaskFilter{
+		TaskClass: taskClassInteractive,
+		Statuses:  staleInteractiveActiveStatuses,
+		Limit:     1000,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list interactive tasks: %w", err)
+	}
+
+	cutoff := time.Now().Add(-ttl)
+	cancelled := 0
+	for _, task := range taskList {
+		if !task.CreatedAt.Before(cutoff) {
+			continue
+		}
+		if err := tas.CancelTask(ctx, task.TaskID); err != nil {
+			logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Msg("stale interactive cancel: failed to cancel task")
+			continue
+		}
+		logging.Logger.Info().Str("task_id", task.TaskID).Time("created_at", task.CreatedAt).Msg("stale interactive cancel: cancelled stale interactive task")
+		cancelled++
+	}
+	return cancelled, nil
+}

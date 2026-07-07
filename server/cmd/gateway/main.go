@@ -571,8 +571,10 @@ func main() {
 		TaskPurgeInterval:      cfg.Cleanup.GetTaskPurgeInterval(),
 		CompletedTaskRetention: cfg.Cleanup.GetCompletedTaskRetention(),
 		FailedTaskRetention:    cfg.Cleanup.GetFailedTaskRetention(),
-		CancelledTaskRetention: cfg.Cleanup.GetCancelledTaskRetention(),
-		ReconciliationInterval: cfg.Cleanup.GetReconciliationInterval(),
+		CancelledTaskRetention:        cfg.Cleanup.GetCancelledTaskRetention(),
+		ReconciliationInterval:        cfg.Cleanup.GetReconciliationInterval(),
+		InteractiveTaskTTL:            cfg.Cleanup.GetInteractiveTaskTTL(),
+		InteractiveTaskCancelInterval: cfg.Cleanup.GetInteractiveTaskCancelInterval(),
 	}
 	gatewayOpts = append(gatewayOpts, gateway.WithCleanupService(cleanupConfig))
 

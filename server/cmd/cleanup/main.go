@@ -34,8 +34,9 @@ var (
 	runAll         = flag.Bool("all", false, "Run all cleanup jobs")
 	runTaskPurge   = flag.Bool("task-purge", false, "Run task purge job")
 	runReconcile   = flag.Bool("reconcile", false, "Run orphaned task reconciliation")
-	runStaleLocks  = flag.Bool("stale-locks", false, "Run stale lock cleanup")
-	runStaleClaims = flag.Bool("stale-claims", false, "Run stale claim recovery for orchestration tasks")
+	runStaleLocks       = flag.Bool("stale-locks", false, "Run stale lock cleanup")
+	runStaleClaims      = flag.Bool("stale-claims", false, "Run stale claim recovery for orchestration tasks")
+	runStaleInteractive = flag.Bool("stale-interactive", false, "Cancel stale interactive (chat turn) tasks older than the TTL")
 
 	// Override retention periods (uses config defaults if not specified)
 	completedRetention = flag.String("completed-retention", "", "Override completed task retention (e.g., '168h')")
@@ -59,7 +60,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  task-purge    Delete old completed/failed/cancelled tasks\n")
 		fmt.Fprintf(os.Stderr, "  reconcile     Fail tasks whose agents/orchestrators disconnected\n")
 		fmt.Fprintf(os.Stderr, "  stale-locks   Remove Redis locks with no TTL (legacy cleanup)\n")
-		fmt.Fprintf(os.Stderr, "  stale-claims  Recover orchestration tasks stuck in 'claimed' status\n\n")
+		fmt.Fprintf(os.Stderr, "  stale-claims  Recover orchestration tasks stuck in 'claimed' status\n")
+		fmt.Fprintf(os.Stderr, "  stale-interactive  Cancel stale interactive (chat turn) tasks older than the TTL\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
@@ -87,7 +89,7 @@ func main() {
 	}
 
 	// If no jobs specified, show help
-	if !*runAll && !*runTaskPurge && !*runReconcile && !*runStaleLocks && !*runStaleClaims {
+	if !*runAll && !*runTaskPurge && !*runReconcile && !*runStaleLocks && !*runStaleClaims && !*runStaleInteractive {
 		fmt.Fprintf(os.Stderr, "Error: No jobs specified. Use -all to run all jobs, or specify individual jobs.\n\n")
 		flag.Usage()
 		os.Exit(1)

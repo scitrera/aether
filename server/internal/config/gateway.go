@@ -371,6 +371,14 @@ type CleanupConfig struct {
 	// ReconciliationInterval is how often to run orphaned task reconciliation (e.g., "1m").
 	// Set to "0" to disable automatic reconciliation.
 	ReconciliationInterval string `yaml:"reconciliation_interval"`
+
+	// InteractiveTaskTTL is how old a non-terminal INTERACTIVE (chat turn) task
+	// may get before it is auto-cancelled (e.g., "1h").
+	InteractiveTaskTTL string `yaml:"interactive_task_ttl"`
+
+	// InteractiveTaskCancelInterval is how often to run the stale interactive
+	// task sweep (e.g., "15m"). Set to "0" to disable.
+	InteractiveTaskCancelInterval string `yaml:"interactive_task_cancel_interval"`
 }
 
 // GetTaskPurgeInterval parses the task purge interval duration
@@ -396,6 +404,16 @@ func (c *CleanupConfig) GetCancelledTaskRetention() time.Duration {
 // GetReconciliationInterval parses the reconciliation interval duration
 func (c *CleanupConfig) GetReconciliationInterval() time.Duration {
 	return parseDurationOrDefault(c.ReconciliationInterval, 1*time.Minute)
+}
+
+// GetInteractiveTaskTTL parses the interactive task TTL duration
+func (c *CleanupConfig) GetInteractiveTaskTTL() time.Duration {
+	return parseDurationOrDefault(c.InteractiveTaskTTL, 1*time.Hour)
+}
+
+// GetInteractiveTaskCancelInterval parses the interactive task cancel interval duration
+func (c *CleanupConfig) GetInteractiveTaskCancelInterval() time.Duration {
+	return parseDurationOrDefault(c.InteractiveTaskCancelInterval, 15*time.Minute)
 }
 
 // KVConfig contains KV store settings

@@ -32,6 +32,10 @@ type Config struct {
 	// Reconciliation settings
 	ReconciliationInterval time.Duration // How often to run orphaned task reconciliation (0 = disabled)
 
+	// Stale interactive task settings
+	InteractiveTaskTTL            time.Duration // How old a non-terminal INTERACTIVE (chat turn) task may get before being auto-cancelled
+	InteractiveTaskCancelInterval time.Duration // How often to run the stale interactive task sweep (0 = disabled)
+
 	// Stale claim settings
 	StaleClaimTimeout time.Duration // How long a task can stay 'claimed' before being recovered (0 = use default 5m)
 
@@ -46,8 +50,10 @@ func DefaultConfig() *Config {
 		CompletedTaskRetention:      7 * 24 * time.Hour,
 		FailedTaskRetention:         14 * 24 * time.Hour,
 		CancelledTaskRetention:      7 * 24 * time.Hour,
-		ReconciliationInterval:      1 * time.Minute,
-		StaleClaimTimeout:           5 * time.Minute,
+		ReconciliationInterval:        1 * time.Minute,
+		InteractiveTaskTTL:            1 * time.Hour,
+		InteractiveTaskCancelInterval: 15 * time.Minute,
+		StaleClaimTimeout:             5 * time.Minute,
 		LeaderElectionRetryInterval: 30 * time.Second,
 	}
 }
@@ -137,6 +143,10 @@ func (s *Service) RunAllJobs(ctx context.Context) []JobResult {
 	result = s.ReconcileOrphanedTasks(ctx)
 	results = append(results, result)
 
+	// Run stale interactive task cancellation
+	result = s.CancelStaleInteractiveTasks(ctx)
+	results = append(results, result)
+
 	// Run task purge
 	result = s.PurgeTasks(ctx)
 	results = append(results, result)
@@ -198,6 +208,38 @@ func (s *Service) ReconcileOrphanedTasks(ctx context.Context) JobResult {
 		result.Details = fmt.Sprintf("reconciled %d orphaned tasks", count)
 	} else {
 		result.Details = "no orphaned tasks found"
+	}
+
+	return result
+}
+
+// CancelStaleInteractiveTasks cancels non-terminal INTERACTIVE (chat turn)
+// tasks older than the configured TTL. These are foreground turns that never
+// reached a terminal state (dead/offline sandbox at mint, crashed harness) and
+// would otherwise linger forever.
+func (s *Service) CancelStaleInteractiveTasks(ctx context.Context) JobResult {
+	start := time.Now()
+	result := JobResult{JobName: "interactive_task_ttl_cancel"}
+
+	if s.taskService == nil {
+		result.Error = fmt.Errorf("task service not configured")
+		return result
+	}
+
+	count, err := s.taskService.CancelStaleInteractiveTasks(ctx, s.config.InteractiveTaskTTL)
+	result.Duration = time.Since(start)
+
+	if err != nil {
+		result.Error = err
+		return result
+	}
+
+	result.Success = true
+	result.ItemCount = int64(count)
+	if count > 0 {
+		result.Details = fmt.Sprintf("cancelled %d stale interactive tasks (ttl: %v)", count, s.config.InteractiveTaskTTL)
+	} else {
+		result.Details = "no stale interactive tasks found"
 	}
 
 	return result
@@ -394,6 +436,18 @@ func (r *BackgroundRunner) startCleanupJobs(parentCtx context.Context) {
 				logging.Logger.Error().Err(result.Error).Msg("task purge error")
 			} else if result.ItemCount > 0 {
 				logging.Logger.Info().Str("details", result.Details).Msg("task purge completed")
+			}
+		})
+	}
+
+	// Start stale interactive task cancellation if enabled
+	if s.config.InteractiveTaskCancelInterval > 0 {
+		go r.runPeriodic(cleanupCtx, "interactive_task_ttl_cancel", s.config.InteractiveTaskCancelInterval, func(ctx context.Context) {
+			result := s.CancelStaleInteractiveTasks(ctx)
+			if result.Error != nil {
+				logging.Logger.Error().Err(result.Error).Msg("stale interactive task cancel error")
+			} else if result.ItemCount > 0 {
+				logging.Logger.Info().Str("details", result.Details).Msg("stale interactive task cancel completed")
 			}
 		})
 	}

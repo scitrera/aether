@@ -136,6 +136,11 @@ func TestStoreConformance(t *testing.T) {
 				defer cleanup()
 				runNewFilters(t, store)
 			})
+			t.Run("TaskClassFilter", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runTaskClassFilter(t, store)
+			})
 			t.Run("Descendants", func(t *testing.T) {
 				store, _, cleanup := b.factory(t)
 				defer cleanup()
@@ -916,6 +921,63 @@ func postgresFactory(t *testing.T) (tasks.Store, *sql.DB, func()) {
 // which runs its own migrations, and returns the store. This factory
 // exercises the Stage 2 native implementation that will replace the
 // dbcompat path in AetherLite.
+// runTaskClassFilter: ListTasks must honor TaskFilter.TaskClass (positive) and
+// ExcludeTaskClasses identically on every backend. This is the invariant the
+// interactive-task TTL sweep (orchestration.CancelStaleInteractiveTasks) and the
+// frontend background-operations panel filter rely on — a divergence would make
+// the sweep cancel the wrong task classes, or leak chat turns into the panel.
+func runTaskClassFilter(t *testing.T, store tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+	const ws = "_taskclass"
+	const (
+		classInteractive int32 = 1 // proto TASK_CLASS_INTERACTIVE
+		classBackground  int32 = 2 // proto TASK_CLASS_BACKGROUND
+	)
+
+	mk := func(class int32) string {
+		task := newTestTask(t, "class")
+		task.Workspace = ws
+		task.TaskClass = class
+		if err := store.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask(class=%d): %v", class, err)
+		}
+		return task.TaskID
+	}
+	interactive := mk(classInteractive)
+	background := mk(classBackground)
+
+	// Positive TaskClass filter → only the interactive task.
+	got, err := store.ListTasks(ctx, &tasks.TaskFilter{Workspace: ws, TaskClass: classInteractive, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListTasks(task_class=interactive): %v", err)
+	}
+	if len(got) != 1 || got[0].TaskID != interactive {
+		t.Fatalf("TaskClass=interactive returned %d rows, want exactly [%s]", len(got), interactive)
+	}
+
+	// ExcludeTaskClasses → interactive omitted, background retained.
+	gotEx, err := store.ListTasks(ctx, &tasks.TaskFilter{Workspace: ws, ExcludeTaskClasses: []int32{classInteractive}, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListTasks(exclude interactive): %v", err)
+	}
+	var sawInteractive, sawBackground bool
+	for _, task := range gotEx {
+		switch task.TaskID {
+		case interactive:
+			sawInteractive = true
+		case background:
+			sawBackground = true
+		}
+	}
+	if sawInteractive {
+		t.Errorf("ExcludeTaskClasses=[interactive] still returned the interactive task")
+	}
+	if !sawBackground {
+		t.Errorf("ExcludeTaskClasses=[interactive] dropped the background task")
+	}
+}
+
 func sqliteNativeFactory(t *testing.T) (tasks.Store, *sql.DB, func()) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "tasks_native.db")

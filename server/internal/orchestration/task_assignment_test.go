@@ -2,9 +2,12 @@ package orchestration
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
@@ -13,9 +16,14 @@ import (
 	"github.com/scitrera/aether/internal/state"
 	regpg "github.com/scitrera/aether/internal/storage/registry/postgres"
 	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
+	taskssqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
 	"github.com/scitrera/aether/internal/testutil"
 	"github.com/scitrera/aether/pkg/models"
 	"github.com/scitrera/aether/pkg/tasks"
+
+	// Register the bare "sqlite" driver so CancelStaleInteractiveTasks can be
+	// tested against the native sqlite backend (always available, never skipped).
+	_ "modernc.org/sqlite"
 )
 
 func TestOrchestratedTaskPayload(t *testing.T) {
@@ -977,4 +985,72 @@ func TestStartTaskWithAgent_NoDispatcherIsSafe(t *testing.T) {
 	if stored.Status != "running" {
 		t.Errorf("task status = %q, want %q", stored.Status, "running")
 	}
+}
+
+// TestCancelStaleInteractiveTasks verifies the interactive-task TTL sweep:
+// only INTERACTIVE tasks in a non-terminal, non-waiting state older than the TTL
+// are cancelled. Runs against the NATIVE SQLITE backend (aetherlite path) so it is
+// ALWAYS exercised (no external DB, never skipped) AND proves the sweep's
+// TaskFilter{TaskClass,Statuses} is honored on the sqlite store — see the
+// TaskClassFilter conformance subtest for the postgres+sqlite store-level guarantee.
+func TestCancelStaleInteractiveTasks(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orch_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+
+	ctx := context.Background()
+	service := NewTaskAssignmentService(taskStore, nil, nil, nil, nil)
+
+	const taskClassBackground int32 = 2 // proto TaskClass_TASK_CLASS_BACKGROUND
+
+	// Create a task with the given class, then force its status + created_at via
+	// SQL so age/state are fully controlled regardless of CreateTask defaults.
+	mk := func(id string, class int32, status tasks.TaskStatus, createdAt time.Time) {
+		if err := taskStore.CreateTask(ctx, &tasks.Task{
+			TaskID: id, TaskType: "chat_message", Workspace: "ws-test", TaskClass: class,
+		}); err != nil {
+			t.Fatalf("CreateTask(%s): %v", id, err)
+		}
+		if _, err := db.ExecContext(ctx,
+			"UPDATE tasks SET status = ?, created_at = ? WHERE task_id = ?",
+			string(status), createdAt.UTC().Format(time.RFC3339Nano), id); err != nil {
+			t.Fatalf("force status/created_at (%s): %v", id, err)
+		}
+	}
+
+	now := time.Now()
+	old := now.Add(-2 * time.Hour)
+	mk("old-interactive", taskClassInteractive, tasks.TaskStatusPending, old)     // -> cancelled
+	mk("young-interactive", taskClassInteractive, tasks.TaskStatusPending, now)   // too young -> kept
+	mk("old-background", taskClassBackground, tasks.TaskStatusPending, old)       // wrong class -> kept
+	mk("old-terminal", taskClassInteractive, tasks.TaskStatusCompleted, old)     // terminal -> kept
+
+	n, err := service.CancelStaleInteractiveTasks(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("CancelStaleInteractiveTasks: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("cancelled = %d, want 1 (only the old interactive task)", n)
+	}
+
+	assertStatus := func(id string, want tasks.TaskStatus) {
+		got, gerr := taskStore.GetTask(ctx, id)
+		if gerr != nil {
+			t.Fatalf("GetTask(%s): %v", id, gerr)
+		}
+		if got.Status != want {
+			t.Errorf("task %s status = %q, want %q", id, got.Status, want)
+		}
+	}
+	assertStatus("old-interactive", tasks.TaskStatusCancelled) // reaped
+	assertStatus("young-interactive", tasks.TaskStatusPending) // under TTL
+	assertStatus("old-background", tasks.TaskStatusPending)    // not interactive
+	assertStatus("old-terminal", tasks.TaskStatusCompleted)   // already terminal
 }
