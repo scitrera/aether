@@ -1620,7 +1620,8 @@ class BaseAsyncAetherClient:
                           authorization: Optional[aether_pb2.AuthorizationContext] = None,
                           task_class: int = 0,
                           context_id: str = "",
-                          priority: int = 0) -> None:
+                          priority: int = 0,
+                          retry_policy: Optional[aether_pb2.RetryPolicy] = None) -> None:
         """
         Create a new task.
 
@@ -1656,6 +1657,7 @@ class BaseAsyncAetherClient:
             task_class=task_class,  # type: ignore[arg-type]
             context_id=context_id,
             priority=priority,  # type: ignore[arg-type]
+            retry_policy=retry_policy,
         )
         await self._request_queue.put(aether_pb2.UpstreamMessage(create_task=req))
 
@@ -1671,6 +1673,7 @@ class BaseAsyncAetherClient:
                                task_class: int = 0,
                                context_id: str = "",
                                priority: int = 0,
+                               retry_policy: Optional[aether_pb2.RetryPolicy] = None,
                                timeout: float = 10.0) -> Optional[aether_pb2.CreateTaskResponse]:
         """
         Create a new task and wait for the server's response containing the task_id.
@@ -1721,6 +1724,7 @@ class BaseAsyncAetherClient:
             context_id=context_id,
             request_id=request_id,
             priority=priority,  # type: ignore[arg-type]
+            retry_policy=retry_policy,
         )
         return await self._send_sync_op(
             aether_pb2.UpstreamMessage(create_task=req), request_id, timeout,
