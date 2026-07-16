@@ -78,6 +78,14 @@ func NewServer(cfg *Config, middleware *AuthMiddleware) (*Server, error) {
 	// Auth verify endpoint (available in both modes, primary in verify mode)
 	mux.HandleFunc("/auth/verify", s.handleAuthVerify)
 
+	// Optional-auth verify endpoint. Internal-only ext_authz plane: identical
+	// to /auth/verify EXCEPT that a request carrying no credentials is allowed
+	// through as an anonymous passthrough (200, no identity headers) instead of
+	// being rejected 401. Presented credentials still fail closed. This route is
+	// served on the same internal mux as /auth/verify and must never be added to
+	// an external front-door route list.
+	mux.HandleFunc("/auth/verify-optional", s.handleAuthVerifyOptional)
+
 	if cfg.Mode == ModeProxy {
 		// In proxy mode, all other requests go through auth + reverse proxy
 		mux.HandleFunc("/", s.handleProxy)
@@ -137,6 +145,38 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 // headers on success, or 401/403 on failure. This is the endpoint
 // consumed by nginx auth_request or Envoy ext_authz.
 func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
+	s.verifyAuth(w, r, false)
+}
+
+// handleAuthVerifyOptional is the optional-auth variant of handleAuthVerify.
+// It behaves EXACTLY like /auth/verify when the request carries a credential
+// (fail closed on bad/expired/denied creds), but treats a request with NO
+// credential as an anonymous passthrough: 200 with no identity headers, so a
+// downstream ext_authz consumer can forward it upstream and let the upstream
+// decide based on the (absent) identity.
+func (s *Server) handleAuthVerifyOptional(w http.ResponseWriter, r *http.Request) {
+	s.verifyAuth(w, r, true)
+}
+
+// verifyAuth is the shared implementation behind /auth/verify and
+// /auth/verify-optional. On the credential-present path both routes are
+// identical: authenticate, and on success stamp the trusted identity headers
+// and return 200 (Authenticate writes the 401/403 itself on failure).
+//
+// When optional is true and the request carries no credential the middleware
+// would use, verifyAuth short-circuits to 200 with NO identity headers
+// (anonymous passthrough) — instead of the 401 that /auth/verify returns. The
+// credential-presence check happens BEFORE Authenticate because Authenticate
+// writes a 401 to w on the no-credentials branch.
+func (s *Server) verifyAuth(w http.ResponseWriter, r *http.Request, optional bool) {
+	if optional && !s.middleware.HasCredentials(r) {
+		// Anonymous passthrough: no credentials presented. Emit 200 with no
+		// identity headers; the ext_authz consumer forwards upstream with no
+		// identity and the upstream decides based on its own policy.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	authed, err := s.middleware.Authenticate(w, r)
 	if err != nil {
 		// Authenticate already wrote the error response

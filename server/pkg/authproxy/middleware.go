@@ -104,6 +104,37 @@ func (m *AuthMiddleware) SetSessionCookieName(name string) {
 	m.sessionCookieName = name
 }
 
+// SessionCookieName returns the cookie name the middleware reads to derive a
+// session_token credential, or "" when session-cookie auth is disabled. This
+// exposes the same source Authenticate consults so callers (notably the
+// optional-auth verify handler) can perform a credential-presence pre-check
+// without duplicating the cookie-name wiring.
+func (m *AuthMiddleware) SessionCookieName() string {
+	return m.sessionCookieName
+}
+
+// HasCredentials reports whether the request carries ANY credential the
+// middleware would attempt to authenticate: a non-empty Authorization-derived
+// credential, or (when a session cookie name is configured) a non-empty
+// session cookie of that name. It mirrors the credential-selection logic in
+// Authenticate but performs no validation and writes nothing to the response.
+//
+// This is used by the optional-auth verify path to decide, BEFORE calling
+// Authenticate, whether a request should be treated as an anonymous
+// passthrough (no credential) or fail-closed authenticated (credential
+// present).
+func (m *AuthMiddleware) HasCredentials(r *http.Request) bool {
+	if len(extractCredentials(r)) > 0 {
+		return true
+	}
+	if m.sessionCookieName != "" {
+		if c, err := r.Cookie(m.sessionCookieName); err == nil && c.Value != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // NewAuthMiddleware creates a new AuthMiddleware with the given authenticator,
 // ACL evaluator, and tenant identifier. OBO authority resolution is disabled
 // and a pass-through identity resolver is used; use NewAuthMiddlewareWithResolver
