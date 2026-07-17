@@ -698,6 +698,39 @@ func (m *AuthMiddleware) SetResponseHeaders(w http.ResponseWriter, authed *Authe
 	}
 }
 
+// ClearResponseIdentityHeaders emits EVERY identity header the authenticated
+// SetResponseHeaders path could stamp — the canonical X-Auth-* / X-Aether-* set
+// plus any resolver-declared ExtraHeaders (e.g. X-Scitrera-*) — with an EMPTY
+// value on the response.
+//
+// This exists for the anonymous ext_authz passthrough (verify-optional with no
+// credential). Envoy's ext_authz copies the authz-response identity headers
+// onto the upstream request, OVERRIDING client-supplied ones, but ONLY for the
+// headers auth-go actually emits. If auth-go emits none on the anonymous path, a
+// client-supplied/spoofed X-Auth-Tenant-ID / X-Scitrera-User survives to the
+// backend. Emitting each identity header with an empty value forces Envoy to
+// overwrite the spoof with empty, so the backend sees no principal and denies.
+//
+// The extra-header names are sourced from the resolver via the optional
+// ExtraHeaderNaming interface so the cleared set can't drift from what the
+// resolver emits on the authenticated path.
+func (m *AuthMiddleware) ClearResponseIdentityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	for _, name := range identityheaders.CanonicalHeaderNames() {
+		h.Set(name, "")
+	}
+	if namer, ok := m.identityResolver.(ExtraHeaderNaming); ok {
+		for _, name := range namer.ExtraHeaderNames() {
+			if isReservedHeader(name) {
+				// Reserved X-Auth-* / X-Aether-* names are already cleared above
+				// and can never be resolver ExtraHeaders; skip to avoid churn.
+				continue
+			}
+			h.Set(name, "")
+		}
+	}
+}
+
 // extractCredentials builds the credentials map expected by the
 // composite authenticator from the HTTP Authorization header.
 // It routes the token to the appropriate authenticator based on format:

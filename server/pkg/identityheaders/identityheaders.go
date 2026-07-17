@@ -54,6 +54,51 @@ const (
 	HeaderXAetherCallerSubject = "X-Aether-Caller-Subject"
 )
 
+// canonicalHeaderNames is the authoritative set of every X-Auth-* / X-Aether-*
+// header name that mintWith can emit. It is the single source of truth used
+// both to mint (implicitly, via the constants below) and — crucially — to
+// CLEAR the trusted header set on an anonymous ext_authz passthrough, where the
+// consumer (Envoy) copies the authz-response identity headers over the upstream
+// request. Emitting each of these with an EMPTY value on the anonymous path
+// forces Envoy to overwrite any client-supplied/spoofed identity header with
+// empty, so a spoofed X-Auth-* / X-Aether-* can never survive to the backend.
+//
+// The identityheaders_test.go TestMintWith_EmitsOnlyCanonicalNames test asserts
+// mintWith never emits a name outside this slice, so the two cannot drift.
+var canonicalHeaderNames = []string{
+	HeaderTenantID,
+	HeaderUserID,
+	HeaderPrincipalType,
+	HeaderWorkspaceAccess,
+	HeaderScopes,
+	HeaderAPIKeyID,
+	HeaderActorType,
+	HeaderActorID,
+	HeaderAuthorityMode,
+	HeaderGrantID,
+	HeaderSubjectType,
+	HeaderSubjectID,
+	HeaderRootSubjectType,
+	HeaderRootSubjectID,
+	HeaderAudienceType,
+	HeaderAudienceID,
+	HeaderMaxAccessLevel,
+	HeaderWorkspaceScope,
+	HeaderXAetherCallerTopic,
+	HeaderXAetherCallerSubject,
+}
+
+// CanonicalHeaderNames returns a copy of the authoritative list of every
+// X-Auth-* / X-Aether-* header name that the minting path (mintWith) can emit.
+// Callers that need to CLEAR the trusted identity set (e.g. the auth-proxy
+// anonymous ext_authz passthrough) iterate this so they clear exactly the same
+// names the authenticated path stamps — the two cannot drift.
+func CanonicalHeaderNames() []string {
+	out := make([]string, len(canonicalHeaderNames))
+	copy(out, canonicalHeaderNames)
+	return out
+}
+
 // Authority mode values.
 const (
 	AuthorityModeDirect     = "direct"

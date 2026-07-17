@@ -170,9 +170,15 @@ func (s *Server) handleAuthVerifyOptional(w http.ResponseWriter, r *http.Request
 // writes a 401 to w on the no-credentials branch.
 func (s *Server) verifyAuth(w http.ResponseWriter, r *http.Request, optional bool) {
 	if optional && !s.middleware.HasCredentials(r) {
-		// Anonymous passthrough: no credentials presented. Emit 200 with no
-		// identity headers; the ext_authz consumer forwards upstream with no
-		// identity and the upstream decides based on its own policy.
+		// Anonymous passthrough: no credentials presented. Emit 200, but first
+		// stamp EVERY identity header the authenticated path would set to an
+		// EMPTY value. Envoy's ext_authz copies the authz-response identity
+		// headers onto the upstream request (overriding client-supplied ones),
+		// but ONLY the headers auth-go actually emits. Emitting nothing here
+		// would let a client-supplied/spoofed X-Auth-Tenant-ID / X-Scitrera-User
+		// survive to the backend; clearing them (empty override) ensures the
+		// upstream sees no principal and decides based on its own policy.
+		s.middleware.ClearResponseIdentityHeaders(w)
 		w.WriteHeader(http.StatusOK)
 		return
 	}

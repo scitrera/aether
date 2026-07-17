@@ -93,6 +93,24 @@ type ResolvedIdentity struct {
 	Reject *Rejection
 }
 
+// ExtraHeaderNaming is an OPTIONAL interface an IdentityResolver may implement
+// to declare the full set of ExtraHeaders names it can emit (e.g. Scitrera's
+// X-Scitrera-*). The auth-proxy uses it ONLY to CLEAR those headers on the
+// anonymous ext_authz passthrough (verify-optional with no credential): the
+// resolver is never invoked on that path, so the middleware needs a static
+// declaration of the extra header names to zero them out and prevent a
+// client-supplied value from surviving Envoy's authz-response override.
+//
+// Resolvers that do not implement this interface simply have their extra
+// headers (if any) not cleared on the anonymous path; the canonical X-Auth-* /
+// X-Aether-* set is always cleared regardless.
+type ExtraHeaderNaming interface {
+	// ExtraHeaderNames returns every header name this resolver may place in
+	// ResolvedIdentity.ExtraHeaders. It MUST be stable and safe for concurrent
+	// use.
+	ExtraHeaderNames() []string
+}
+
 // IdentityResolver maps an authenticator-verified principal + raw claims into
 // a ResolvedIdentity. Implementations MUST be safe for concurrent use.
 type IdentityResolver interface {

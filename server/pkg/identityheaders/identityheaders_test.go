@@ -474,3 +474,58 @@ func TestExpandSubjectInheritedScope(t *testing.T) {
 		})
 	}
 }
+
+// TestMintWith_EmitsOnlyCanonicalNames guards the drift invariant: every header
+// name mintWith can emit MUST be present in canonicalHeaderNames, so the
+// clear-on-anonymous path (CanonicalHeaderNames) zeroes exactly the set the
+// authenticated path stamps. Both direct and OBO modes are exercised with every
+// optional field populated so all conditional emissions fire.
+func TestMintWith_EmitsOnlyCanonicalNames(t *testing.T) {
+	canonical := make(map[string]struct{}, len(canonicalHeaderNames))
+	for _, n := range CanonicalHeaderNames() {
+		canonical[http.CanonicalHeaderKey(n)] = struct{}{}
+	}
+
+	// Direct mode with every optional field set.
+	direct := Mint(context.Background(), "tenant-1", Identity{
+		UserID:          "alice",
+		PrincipalType:   "User",
+		WorkspaceAccess: 20,
+		Scopes:          "read,write",
+		APIKeyID:        "key-123",
+		CallerTopic:     "ag.ws.impl.spec",
+		CallerSubject:   "usr.alice",
+	})
+
+	// OBO mode with every optional field set.
+	obo := Mint(context.Background(), "tenant-1", Identity{
+		UserID:          "svc",
+		PrincipalType:   "Service",
+		WorkspaceAccess: 30,
+		Scopes:          "read",
+		APIKeyID:        "key-9",
+		CallerTopic:     "ag.ws.impl.spec",
+		CallerSubject:   "usr.bob",
+		Authority: &AuthenticatedAuthority{
+			ActorType:       "Service",
+			ActorID:         "svc",
+			GrantID:         "grant-1",
+			SubjectType:     "User",
+			SubjectID:       "bob",
+			RootSubjectType: "User",
+			RootSubjectID:   "root",
+			AudienceType:    "Agent",
+			AudienceID:      "aud",
+			MaxAccessLevel:  40,
+			WorkspaceScope:  []string{"ws1", "ws2"},
+		},
+	})
+
+	for _, h := range []http.Header{direct, obo} {
+		for name := range h {
+			if _, ok := canonical[http.CanonicalHeaderKey(name)]; !ok {
+				t.Errorf("mintWith emitted %q which is absent from canonicalHeaderNames — update the slice to prevent clear/mint drift", name)
+			}
+		}
+	}
+}

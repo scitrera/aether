@@ -28,12 +28,32 @@ func newVerifyTestServer(t *testing.T) *Server {
 	return srv
 }
 
-// assertNoIdentityHeaders fails if any trusted identity header is present.
+// assertNoIdentityHeaders fails if any trusted identity header carries a value.
+// Used on fail-closed (401) paths where Authenticate returns before any header
+// is stamped or cleared, so the identity headers must be entirely absent.
 func assertNoIdentityHeaders(t *testing.T, h http.Header) {
 	t.Helper()
 	for _, name := range []string{HeaderTenantID, HeaderUserID, HeaderPrincipalType, HeaderWorkspaceAccess, HeaderActorType, HeaderActorID, HeaderAuthorityMode} {
 		if v := h.Get(name); v != "" {
-			t.Errorf("expected no %s header on anonymous passthrough, got %q", name, v)
+			t.Errorf("expected no %s header value, got %q", name, v)
+		}
+	}
+}
+
+// assertClearedIdentityHeaders fails if a trusted identity header is missing or
+// carries a non-empty value. On the anonymous ext_authz passthrough the handler
+// must EMIT every identity header with an empty value so Envoy's authz-response
+// override overwrites any client-supplied/spoofed identity header with empty.
+func assertClearedIdentityHeaders(t *testing.T, h http.Header) {
+	t.Helper()
+	for _, name := range []string{HeaderTenantID, HeaderUserID, HeaderPrincipalType, HeaderWorkspaceAccess, HeaderActorType, HeaderActorID, HeaderAuthorityMode} {
+		vals, present := h[http.CanonicalHeaderKey(name)]
+		if !present {
+			t.Errorf("expected %s to be present (empty) on anonymous passthrough, but it was absent", name)
+			continue
+		}
+		if len(vals) != 1 || vals[0] != "" {
+			t.Errorf("expected %s present with empty value on anonymous passthrough, got %v", name, vals)
 		}
 	}
 }
@@ -48,7 +68,7 @@ func TestVerifyOptional_NoCredentials_AnonymousPassthrough(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 for no-cred optional verify, got %d (body=%s)", w.Code, w.Body.String())
 	}
-	assertNoIdentityHeaders(t, w.Header())
+	assertClearedIdentityHeaders(t, w.Header())
 }
 
 func TestVerifyOptional_SessionCookieConfigured_ButAbsent_AnonymousPassthrough(t *testing.T) {
@@ -64,7 +84,7 @@ func TestVerifyOptional_SessionCookieConfigured_ButAbsent_AnonymousPassthrough(t
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 when configured session cookie absent, got %d", w.Code)
 	}
-	assertNoIdentityHeaders(t, w.Header())
+	assertClearedIdentityHeaders(t, w.Header())
 }
 
 func TestVerifyOptional_SessionCookiePresent_FailsClosed(t *testing.T) {
@@ -110,6 +130,52 @@ func TestVerify_NoCredentials_Unchanged(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 for no-cred /auth/verify, got %d", w.Code)
+	}
+}
+
+// extraHeaderResolver is a test IdentityResolver that also implements the
+// optional ExtraHeaderNaming interface, declaring a resolver-specific extra
+// header. Used to prove the anonymous passthrough clears resolver ExtraHeaders.
+type extraHeaderResolver struct{ NoOpResolver }
+
+func (extraHeaderResolver) ExtraHeaderNames() []string { return []string{"X-Scitrera-User"} }
+
+// TestVerifyOptional_Anonymous_ClearsClientSuppliedSpoof pins the security
+// invariant: a client that supplies its own X-Auth-* / X-Scitrera-* identity
+// headers on an anonymous (no-credential) verify-optional request gets those
+// headers overwritten to EMPTY on the authz response, so Envoy's override
+// clears the spoof rather than forwarding it upstream.
+func TestVerifyOptional_Anonymous_ClearsClientSuppliedSpoof(t *testing.T) {
+	cfg := &Config{Mode: ModeVerify, ListenAddr: ":0"}
+	m := &AuthMiddleware{
+		authenticator:    auth.NewCompositeAuthenticator(),
+		tenantID:         "test-tenant",
+		identityResolver: extraHeaderResolver{},
+	}
+	srv, err := NewServer(cfg, m)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/auth/verify-optional", nil)
+	// Client attempts to spoof identity.
+	r.Header.Set("X-Auth-Tenant-ID", "evil-tenant")
+	r.Header.Set("X-Auth-User-ID", "attacker")
+	r.Header.Set("X-Scitrera-User", "attacker@evil.example")
+	srv.httpServer.Handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for spoofed no-cred optional verify, got %d", w.Code)
+	}
+	assertClearedIdentityHeaders(t, w.Header())
+
+	// The resolver-declared extra header must also be cleared (present, empty).
+	vals, present := w.Header()["X-Scitrera-User"]
+	if !present {
+		t.Errorf("expected X-Scitrera-User present (empty) to clear the spoof, but it was absent")
+	} else if len(vals) != 1 || vals[0] != "" {
+		t.Errorf("expected X-Scitrera-User present with empty value, got %v", vals)
 	}
 }
 
