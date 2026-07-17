@@ -197,6 +197,7 @@ def create_service_init(implementation: str, specifier: str,
                         credentials: Optional[Dict[str, str]] = None,
                         resume_session_id: str = "",
                         extensions: Optional[List["aether_pb2.ExtensionDeclaration"]] = None,
+                        no_pool_consumer: bool = False,
                         ) -> aether_pb2.InitConnection:
     """Create an InitConnection message for a Service principal (workspace-less).
 
@@ -205,11 +206,17 @@ def create_service_init(implementation: str, specifier: str,
     privileged work on behalf of users via ``AuthorizationContext``.
 
     Canonical identity string: ``sv::{implementation}::{specifier}``.
+
+    ``no_pool_consumer`` opts this connection OUT of pool-task routing — the
+    gateway will not add it to the implementation worker index, so it is never
+    targeted for POOL-mode task assignments. Set it for serve-only instances
+    that register no task handlers (default False = consumer, back-compat).
     """
     return _apply_client_version_meta(aether_pb2.InitConnection(
         service=aether_pb2.ServiceIdentity(
             implementation=implementation,
             specifier=specifier,
+            no_pool_consumer=no_pool_consumer,
         ),
         credentials=credentials or {},
         resume_session_id=resume_session_id,

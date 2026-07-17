@@ -3838,7 +3838,8 @@ class ServiceClient(BaseAetherClient):
                  tls_client_cert_path: Optional[str] = None,
                  tls_client_key: Optional[bytes] = None,
                  tls_client_key_path: Optional[str] = None,
-                 extensions: Optional[List[aether_pb2.ExtensionDeclaration]] = None):
+                 extensions: Optional[List[aether_pb2.ExtensionDeclaration]] = None,
+                 consumes_pool_tasks: bool = True):
         if not implementation:
             raise InvalidArgumentError(
                 message="Service principal requires an implementation identifier",
@@ -3862,7 +3863,8 @@ class ServiceClient(BaseAetherClient):
         self.implementation = implementation
         self.specifier = specifier
         self.init = create_service_init(implementation, specifier, credentials,
-                                        extensions=extensions)
+                                        extensions=extensions,
+                                        no_pool_consumer=not consumes_pool_tasks)
 
     def connect(self, target: str = "localhost:50051"):
         super()._connect(self.init, target)

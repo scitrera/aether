@@ -476,12 +476,14 @@ class BridgeIdentity(_message.Message):
     def __init__(self, implementation: _Optional[str] = ..., specifier: _Optional[str] = ...) -> None: ...
 
 class ServiceIdentity(_message.Message):
-    __slots__ = ("implementation", "specifier")
+    __slots__ = ("implementation", "specifier", "no_pool_consumer")
     IMPLEMENTATION_FIELD_NUMBER: _ClassVar[int]
     SPECIFIER_FIELD_NUMBER: _ClassVar[int]
+    NO_POOL_CONSUMER_FIELD_NUMBER: _ClassVar[int]
     implementation: str
     specifier: str
-    def __init__(self, implementation: _Optional[str] = ..., specifier: _Optional[str] = ...) -> None: ...
+    no_pool_consumer: bool
+    def __init__(self, implementation: _Optional[str] = ..., specifier: _Optional[str] = ..., no_pool_consumer: bool = ...) -> None: ...
 
 class AgentIdentity(_message.Message):
     __slots__ = ("workspace", "implementation", "specifier")

@@ -4272,6 +4272,15 @@ type ServiceIdentity struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Implementation string                 `protobuf:"bytes,1,opt,name=implementation,proto3" json:"implementation,omitempty"` // e.g., "frontend-api", "platform-backend"
 	Specifier      string                 `protobuf:"bytes,2,opt,name=specifier,proto3" json:"specifier,omitempty"`           // Instance identifier for uniqueness (e.g., "pod-1", "default")
+	// When true, the gateway does NOT add this service connection to the
+	// pool-task worker index, so it is never targeted for POOL-mode task
+	// assignments for its implementation. Default false = pool consumer
+	// (back-compat: existing services keep receiving pool tasks). Serve-only
+	// instances that register no task handlers (e.g. a MemoryLayer server with
+	// its in-process worker disabled) set this so pool tasks are routed only to
+	// real workers instead of being claimed-and-dropped (and stuck until
+	// reconcile). Agents are always pool consumers regardless of this field.
+	NoPoolConsumer bool `protobuf:"varint,3,opt,name=no_pool_consumer,json=noPoolConsumer,proto3" json:"no_pool_consumer,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -4318,6 +4327,13 @@ func (x *ServiceIdentity) GetSpecifier() string {
 		return x.Specifier
 	}
 	return ""
+}
+
+func (x *ServiceIdentity) GetNoPoolConsumer() bool {
+	if x != nil {
+		return x.NoPoolConsumer
+	}
+	return false
 }
 
 type AgentIdentity struct {
@@ -18362,10 +18378,11 @@ const file_aether_proto_rawDesc = "" +
 	"\x12supported_profiles\x18\x03 \x03(\tR\x11supportedProfiles\"V\n" +
 	"\x0eBridgeIdentity\x12&\n" +
 	"\x0eimplementation\x18\x01 \x01(\tR\x0eimplementation\x12\x1c\n" +
-	"\tspecifier\x18\x02 \x01(\tR\tspecifier\"W\n" +
+	"\tspecifier\x18\x02 \x01(\tR\tspecifier\"\x81\x01\n" +
 	"\x0fServiceIdentity\x12&\n" +
 	"\x0eimplementation\x18\x01 \x01(\tR\x0eimplementation\x12\x1c\n" +
-	"\tspecifier\x18\x02 \x01(\tR\tspecifier\"s\n" +
+	"\tspecifier\x18\x02 \x01(\tR\tspecifier\x12(\n" +
+	"\x10no_pool_consumer\x18\x03 \x01(\bR\x0enoPoolConsumer\"s\n" +
 	"\rAgentIdentity\x12\x1c\n" +
 	"\tworkspace\x18\x01 \x01(\tR\tworkspace\x12&\n" +
 	"\x0eimplementation\x18\x02 \x01(\tR\x0eimplementation\x12\x1c\n" +

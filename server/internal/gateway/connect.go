@@ -209,8 +209,19 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 	// Services participate via the workspace-less key (":impl"), enabling
 	// pool tasks targeted at services (e.g. webhook delivery) to find a
 	// healthy instance without per-workspace registration.
-	if identity.Type == models.PrincipalAgent || identity.Type == models.PrincipalService {
+	//
+	// A service may opt OUT via ServiceIdentity.no_pool_consumer: serve-only
+	// instances that register no task handlers (e.g. a MemoryLayer server with
+	// its in-process worker disabled) set it so the gateway never targets them
+	// for POOL tasks they can't handle. Otherwise findWorkerByImplementation
+	// load-balances onto them, the gateway claims-and-pushes, and the drop
+	// leaves the task stuck-assigned until reconcile. Default false = consumer
+	// (back-compat). Agents are always pool consumers.
+	if identity.Type == models.PrincipalAgent ||
+		(identity.Type == models.PrincipalService && !init.GetService().GetNoPoolConsumer()) {
 		s.addToImplIndex(identity, client)
+	} else if identity.Type == models.PrincipalService {
+		logging.Logger.Info().Str("identity", identity.String()).Msg("service connected as non-pool-consumer; excluded from pool-task routing")
 	}
 
 	// 6. Start lock refresh goroutine

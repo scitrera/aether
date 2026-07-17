@@ -2107,6 +2107,29 @@ class TestServiceClient:
         assert client.init.service.implementation == "my-svc"
         assert client.init.service.specifier == "pod-1"
 
+    def test_init_default_is_pool_consumer(self):
+        """Default ServiceClient is a pool consumer (no_pool_consumer=False, back-compat)."""
+        from scitrera_aether_client.client import ServiceClient
+        client = ServiceClient(implementation="my-svc", specifier="pod-1")
+        assert client.init.service.no_pool_consumer is False
+
+    def test_init_consumes_pool_tasks_false_sets_no_pool_consumer(self):
+        """consumes_pool_tasks=False opts the service out of pool-task routing."""
+        from scitrera_aether_client.client import ServiceClient
+        client = ServiceClient(implementation="my-svc", specifier="pod-1",
+                               consumes_pool_tasks=False)
+        assert client.init.service.no_pool_consumer is True
+
+    def test_async_init_consumes_pool_tasks_maps_no_pool_consumer(self):
+        """AsyncServiceClient mirrors the mapping: consume=True->False, False->True."""
+        from scitrera_aether_client.client_async import AsyncServiceClient
+        worker = AsyncServiceClient(implementation="memorylayer", specifier="wkr",
+                                    consumes_pool_tasks=True)
+        server = AsyncServiceClient(implementation="memorylayer", specifier="srv",
+                                    consumes_pool_tasks=False)
+        assert worker.init.service.no_pool_consumer is False
+        assert server.init.service.no_pool_consumer is True
+
     def test_init_empty_implementation_raises(self):
         """ServiceClient raises InvalidArgumentError for empty implementation."""
         from scitrera_aether_client.client import ServiceClient
