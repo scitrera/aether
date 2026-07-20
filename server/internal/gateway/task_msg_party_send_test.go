@@ -230,3 +230,26 @@ func TestCheckMessageSendTaskPartyGrant(t *testing.T) {
 		t.Fatalf("checkMessageSend() level = %d; want %d (AccessReadWrite)", level, acl.AccessReadWrite)
 	}
 }
+
+// TestCheckMessageSendAgentMetricGrant confirms the additive metric-publish
+// path in checkMessageSend returns AccessReadWrite for an agent principal
+// targeting the metric fan-in plane, even though the plain per-workspace send
+// ACL would deny it. This is what lets least-privilege sandbox agents (e.g.
+// ag::_sandbox::sahara::*, deliberately READ-only on _sandbox) emit their own
+// token/usage metrics. The empty acl.Service{} means the regular workspace
+// fallback would NOT grant AccessReadWrite, so a passing result proves the
+// early additive grant fired.
+func TestCheckMessageSendAgentMetricGrant(t *testing.T) {
+	ctx := context.Background()
+	agent := models.Identity{Type: models.PrincipalAgent, Workspace: "_sandbox", Implementation: "sahara", Specifier: "sandbox-1"}
+
+	gw := &GatewayServer{acl: &acl.Service{}} // non-nil so the early ACL guard is passed
+
+	level, err := gw.checkMessageSend(ctx, agent, "metric::receiver0")
+	if err != nil {
+		t.Fatalf("checkMessageSend() error = %v; want nil", err)
+	}
+	if level != acl.AccessReadWrite {
+		t.Fatalf("checkMessageSend() level = %d; want %d (AccessReadWrite)", level, acl.AccessReadWrite)
+	}
+}

@@ -668,6 +668,27 @@ func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Iden
 		return acl.AccessReadWrite, nil
 	}
 
+	// Additive metric-publish grant: an agent principal may publish to the
+	// metric fan-in plane (post-rewrite metric::receiver{N}) without a
+	// per-workspace WRITE grant. This realizes the "same-workspace publish is
+	// implicit" contract (see routeMessage) for least-privilege agents — e.g.
+	// sahara sandbox agents, deliberately READ-only on _sandbox — that emit
+	// their own usage/token metrics. Safe because the other metric authz layers
+	// have already run or run independently: cross-workspace publishes were
+	// gated up-front by checkCrossWorkspaceBroadcast (capability/metric_broadcast),
+	// the topic permission matrix gated type eligibility, and negative-delta
+	// metrics are gated afterward by checkMetricCredit. Scoped to agent
+	// principals and the metric plane only (NOT event::, which drives the
+	// workflow engine) so it doesn't broaden other senders. OBO-carried metric
+	// sends (checkMessageSendWithAuthority) are not a current path.
+	if sender.Type == models.PrincipalAgent && strings.HasPrefix(targetTopic, "metric"+models.IdentitySep) {
+		logging.Logger.Info().
+			Str("from", sender.ToTopic()).
+			Str("target", targetTopic).
+			Msg("metric publish authorized via agent additive grant")
+		return acl.AccessReadWrite, nil
+	}
+
 	// System principals with no workspace (bridges/services) check ACL against the target workspace.
 	if sender.Workspace == "" {
 		targetWorkspace := workspaceFromTopic(targetTopic)
