@@ -59,10 +59,22 @@ func (s *Server) Run(ctx context.Context) error {
 	// 5. Initialize components
 	s.initComponents()
 
-	// 6. Register event handler on the Aether client
-	s.client.OnMessage(func(msgCtx context.Context, msg *aether.Message) error {
+	// 6. Register event handler on the Aether client.
+	//
+	// MUST be wrapped in AsyncMessageHandler: handleMessage → router.HandleEvent
+	// → JoinEngine.HandleArrival makes SYNCHRONOUS KV coord calls (SetNXSync on
+	// the coalesce/count/set gates) back to the gateway. The receive loop
+	// dispatches handlers inline on a single goroutine, and the KV response can
+	// only be delivered by that same loop — so a synchronous KV call from a
+	// handler running ON the loop self-deadlocks and always hits the 5s KV
+	// timeout (surfaced as "coalesce gate: DEADLINE_EXCEEDED"). AsyncMessageHandler
+	// runs each frame on its own goroutine, freeing the loop to deliver the
+	// nested response. See sdk/go/aether/async_handler.go + the OnMessage doc
+	// comment. Join arrivals are safe to process concurrently/out-of-order (the
+	// join engine rendezvous via distributed locks/counters/dedup).
+	s.client.OnMessage(aether.AsyncMessageHandler(func(msgCtx context.Context, msg *aether.Message) error {
 		return s.handleMessage(msgCtx, msg)
-	})
+	}))
 
 	// 6.1 Register workflow operation handler for forwarded CRUD requests from gateway
 	s.client.OnWorkflowOperation(s.handleWorkflowOperation)
