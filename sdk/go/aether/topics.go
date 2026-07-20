@@ -252,7 +252,7 @@ func GlobalUsersTopic(workspace string) string {
 
 // EventTopic creates a topic string for broadcast events.
 //
-// Format: event.{event_type}
+// Format: event::{event_type}
 //
 // Event topics are used by the Workflow Engine to receive and process
 // broadcast events. Only workflow engines can subscribe to event topics.
@@ -260,23 +260,26 @@ func GlobalUsersTopic(workspace string) string {
 // Example:
 //
 //	topic := aether.EventTopic("task.completed")
-//	// Returns: "event.task.completed"
+//	// Returns: "event::task.completed"
 func EventTopic(eventType string) string {
-	return fmt.Sprintf("%s.%s", TopicPrefixEvent, eventType)
+	return fmt.Sprintf("%s::%s", TopicPrefixEvent, eventType)
 }
 
 // EventWildcardTopic returns the wildcard pattern for all events.
 //
-// Format: event.*
+// Format: event::*
 //
-// This is the topic that Workflow Engines subscribe to for receiving all events.
+// This is the topic publishers target to broadcast to the Workflow Engine
+// fan-in. The gateway rewrites event::* / event::<ws> onto the sharded receiver
+// topic (validateTopicFormat requires the "::" identity separator — a legacy
+// "event.*" form is rejected as an invalid topic prefix).
 func EventWildcardTopic() string {
-	return TopicPrefixEvent + ".*"
+	return TopicPrefixEvent + "::*"
 }
 
 // MetricTopic creates a topic string for telemetry/metrics.
 //
-// Format: metric.{metric_type}
+// Format: metric::{metric_type}
 //
 // Metric topics are used by the Metrics Bridge to receive telemetry data.
 // Only metrics bridges can subscribe to metric topics.
@@ -284,18 +287,21 @@ func EventWildcardTopic() string {
 // Example:
 //
 //	topic := aether.MetricTopic("performance")
-//	// Returns: "metric.performance"
+//	// Returns: "metric::performance"
 func MetricTopic(metricType string) string {
-	return fmt.Sprintf("%s.%s", TopicPrefixMetric, metricType)
+	return fmt.Sprintf("%s::%s", TopicPrefixMetric, metricType)
 }
 
 // MetricWildcardTopic returns the wildcard pattern for all metrics.
 //
-// Format: metric.*
+// Format: metric::*
 //
-// This is the topic that Metrics Bridges subscribe to for receiving all metrics.
+// This is the topic publishers target to fan a metric into the Metrics Bridge.
+// The gateway rewrites metric::* / metric::<ws> onto the sharded receiver topic
+// (validateTopicFormat requires the "::" identity separator — a legacy "metric.*"
+// form is rejected as an invalid topic prefix, so metrics never route).
 func MetricWildcardTopic() string {
-	return TopicPrefixMetric + ".*"
+	return TopicPrefixMetric + "::*"
 }
 
 // ProgressTopic creates a topic string for workspace progress updates.
