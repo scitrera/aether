@@ -379,6 +379,15 @@ type CleanupConfig struct {
 	// InteractiveTaskCancelInterval is how often to run the stale interactive
 	// task sweep (e.g., "15m"). Set to "0" to disable.
 	InteractiveTaskCancelInterval string `yaml:"interactive_task_cancel_interval"`
+
+	// StartupTaskTTL is how old an UNCLAIMED (pending) agent_startup task may
+	// get before it is auto-cancelled (e.g., "30m"). Deliberately generous so a
+	// briefly-unavailable orchestrator's pending task is never reaped.
+	StartupTaskTTL string `yaml:"startup_task_ttl"`
+
+	// StartupTaskCancelInterval is how often to run the stale startup task
+	// sweep (e.g., "15m"). Set to "0" to disable.
+	StartupTaskCancelInterval string `yaml:"startup_task_cancel_interval"`
 }
 
 // GetTaskPurgeInterval parses the task purge interval duration
@@ -414,6 +423,16 @@ func (c *CleanupConfig) GetInteractiveTaskTTL() time.Duration {
 // GetInteractiveTaskCancelInterval parses the interactive task cancel interval duration
 func (c *CleanupConfig) GetInteractiveTaskCancelInterval() time.Duration {
 	return parseDurationOrDefault(c.InteractiveTaskCancelInterval, 15*time.Minute)
+}
+
+// GetStartupTaskTTL parses the startup task TTL duration
+func (c *CleanupConfig) GetStartupTaskTTL() time.Duration {
+	return parseDurationOrDefault(c.StartupTaskTTL, 30*time.Minute)
+}
+
+// GetStartupTaskCancelInterval parses the startup task cancel interval duration
+func (c *CleanupConfig) GetStartupTaskCancelInterval() time.Duration {
+	return parseDurationOrDefault(c.StartupTaskCancelInterval, 15*time.Minute)
 }
 
 // KVConfig contains KV store settings

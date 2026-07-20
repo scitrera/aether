@@ -34,7 +34,9 @@ const sendUpstreamTimeout = 30 * time.Second
 //   - ProxyHttpBodyChunk (fin=true)     → PriorityResponseHeader (terminal)
 //   - ProxyHttpBodyChunk (other)        → PriorityResponseChunk
 type serviceClientTransport struct {
-	client *aether.ServiceClient
+	// client now wraps an AgentClient (agent identity); all Send* methods
+	// call BaseClient methods, so only the field type changed.
+	client *aether.AgentClient
 }
 
 // SendTunnelData ships a TunnelData frame upstream. TunnelData carries the

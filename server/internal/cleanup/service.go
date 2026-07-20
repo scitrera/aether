@@ -36,6 +36,10 @@ type Config struct {
 	InteractiveTaskTTL            time.Duration // How old a non-terminal INTERACTIVE (chat turn) task may get before being auto-cancelled
 	InteractiveTaskCancelInterval time.Duration // How often to run the stale interactive task sweep (0 = disabled)
 
+	// Stale startup task settings
+	StartupTaskTTL            time.Duration // How old an UNCLAIMED (pending) agent_startup task may get before being auto-cancelled (generous, so a briefly-unavailable orchestrator's pending task is never reaped)
+	StartupTaskCancelInterval time.Duration // How often to run the stale startup task sweep (0 = disabled)
+
 	// Stale claim settings
 	StaleClaimTimeout time.Duration // How long a task can stay 'claimed' before being recovered (0 = use default 5m)
 
@@ -53,6 +57,8 @@ func DefaultConfig() *Config {
 		ReconciliationInterval:        1 * time.Minute,
 		InteractiveTaskTTL:            1 * time.Hour,
 		InteractiveTaskCancelInterval: 15 * time.Minute,
+		StartupTaskTTL:                30 * time.Minute,
+		StartupTaskCancelInterval:     15 * time.Minute,
 		StaleClaimTimeout:             5 * time.Minute,
 		LeaderElectionRetryInterval: 30 * time.Second,
 	}
@@ -145,6 +151,10 @@ func (s *Service) RunAllJobs(ctx context.Context) []JobResult {
 
 	// Run stale interactive task cancellation
 	result = s.CancelStaleInteractiveTasks(ctx)
+	results = append(results, result)
+
+	// Run stale startup task cancellation
+	result = s.CancelStaleStartupTasks(ctx)
 	results = append(results, result)
 
 	// Run task purge
@@ -240,6 +250,40 @@ func (s *Service) CancelStaleInteractiveTasks(ctx context.Context) JobResult {
 		result.Details = fmt.Sprintf("cancelled %d stale interactive tasks (ttl: %v)", count, s.config.InteractiveTaskTTL)
 	} else {
 		result.Details = "no stale interactive tasks found"
+	}
+
+	return result
+}
+
+// CancelStaleStartupTasks cancels UNCLAIMED (pending) agent_startup orchestration
+// tasks older than the configured TTL. These are pool tasks minted to spin up an
+// offline agent that no orchestrator ever claimed; cancelling them is
+// self-healing (the next message re-triggers a fresh startup task) and the TTL
+// is generous so a briefly-unavailable orchestrator's pending task is never
+// reaped out from under it.
+func (s *Service) CancelStaleStartupTasks(ctx context.Context) JobResult {
+	start := time.Now()
+	result := JobResult{JobName: "startup_task_ttl_cancel"}
+
+	if s.taskService == nil {
+		result.Error = fmt.Errorf("task service not configured")
+		return result
+	}
+
+	count, err := s.taskService.CancelStaleStartupTasks(ctx, s.config.StartupTaskTTL)
+	result.Duration = time.Since(start)
+
+	if err != nil {
+		result.Error = err
+		return result
+	}
+
+	result.Success = true
+	result.ItemCount = int64(count)
+	if count > 0 {
+		result.Details = fmt.Sprintf("cancelled %d stale startup tasks (ttl: %v)", count, s.config.StartupTaskTTL)
+	} else {
+		result.Details = "no stale startup tasks found"
 	}
 
 	return result
@@ -448,6 +492,18 @@ func (r *BackgroundRunner) startCleanupJobs(parentCtx context.Context) {
 				logging.Logger.Error().Err(result.Error).Msg("stale interactive task cancel error")
 			} else if result.ItemCount > 0 {
 				logging.Logger.Info().Str("details", result.Details).Msg("stale interactive task cancel completed")
+			}
+		})
+	}
+
+	// Start stale startup task cancellation if enabled
+	if s.config.StartupTaskCancelInterval > 0 {
+		go r.runPeriodic(cleanupCtx, "startup_task_ttl_cancel", s.config.StartupTaskCancelInterval, func(ctx context.Context) {
+			result := s.CancelStaleStartupTasks(ctx)
+			if result.Error != nil {
+				logging.Logger.Error().Err(result.Error).Msg("stale startup task cancel error")
+			} else if result.ItemCount > 0 {
+				logging.Logger.Info().Str("details", result.Details).Msg("stale startup task cancel completed")
 			}
 		})
 	}

@@ -618,7 +618,7 @@ func (t *Terminator) dispatchStreamingAndRespond(ctx context.Context, req *pb.Pr
 // tunnel acks, etc.) upstream. Composite-mode callers may wrap the transport
 // to add side-effects (e.g. routing to multiple consumers) but production
 // terminators pass the runtime's bare ServiceClient transport.
-func (t *Terminator) RegisterHandlers(client *aether.ServiceClient, transport tunnelTransport) {
+func (t *Terminator) RegisterHandlers(client *aether.AgentClient, transport tunnelTransport) {
 	client.OnMessage(func(msgCtx context.Context, msg *aether.Message) error {
 		// Plain SendMessage delivery path — terminators don't expect
 		// peer-to-peer messages, so this is a fall-through log.

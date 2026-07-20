@@ -10,22 +10,22 @@ import (
 	"github.com/scitrera/aether/sdk/go/aether"
 )
 
-// gatewayRuntime owns a single ServiceClient connection to the gateway and
+// gatewayRuntime owns a single AgentClient connection to the gateway and
 // the reconnection loop. It is mode-agnostic: terminator registers HTTP and
 // tunnel handlers on it, while relay mode (T37) attaches its own gRPC mitm
 // handlers to the same runtime without going through Terminator.
 //
 // The runtime does not own dispatcher logic — callers register handlers via
-// the underlying ServiceClient (exposed through Client()) before calling
+// the underlying AgentClient (exposed through Client()) before calling
 // Run.
 type gatewayRuntime struct {
 	cfg       *Config
-	client    *aether.ServiceClient
+	client    *aether.AgentClient
 	transport *serviceClientTransport
 
-	// creds is the live credential map handed to the ServiceClient. The SDK
+	// creds is the live credential map handed to the AgentClient. The SDK
 	// rebuilds the InitConnection from this same map on every (re)connect
-	// (see sdk/go/aether/service.go buildInitMessage), so mutating it in
+	// (see sdk/go/aether/agent.go buildInitMessage), so mutating it in
 	// place via refreshCredentials lets a reconnect present freshly-loaded
 	// credentials without rebuilding the client or re-installing handlers.
 	creds    aether.Credentials
@@ -46,13 +46,13 @@ type gatewayRuntime struct {
 }
 
 // gatewayConn is the minimal connect/run surface runConnectionLoop drives.
-// *aether.ServiceClient satisfies it; tests provide a fake.
+// *aether.AgentClient satisfies it; tests provide a fake.
 type gatewayConn interface {
 	Connect(ctx context.Context) error
 	Run(ctx context.Context) error
 }
 
-// newGatewayRuntime builds a runtime from cfg. The ServiceClient is not
+// newGatewayRuntime builds a runtime from cfg. The AgentClient is not
 // constructed until init() is called from Run() so callers can configure
 // hooks that depend on the runtime before the connection opens.
 func newGatewayRuntime(cfg *Config) *gatewayRuntime {
@@ -67,7 +67,7 @@ func newGatewayRuntime(cfg *Config) *gatewayRuntime {
 }
 
 // conn returns the connect/run target: the test override if set, else the
-// real ServiceClient.
+// real AgentClient.
 func (r *gatewayRuntime) conn() gatewayConn {
 	if r.connOverride != nil {
 		return r.connOverride
@@ -88,7 +88,7 @@ func applyCredential(creds aether.Credentials, cred string, kind CredentialKind)
 	}
 }
 
-// init creates the underlying ServiceClient using cfg.Gateway and
+// init creates the underlying AgentClient using cfg.Gateway and
 // cfg.Service. It is idempotent within a single runtime — a second call
 // after a successful first call is a no-op.
 func (r *gatewayRuntime) init() error {
@@ -114,7 +114,7 @@ func (r *gatewayRuntime) init() error {
 	r.creds = creds
 	r.credKind = kind
 
-	opts := aether.ServiceOptions{
+	opts := aether.AgentOptions{
 		ClientOptions: aether.ClientOptions{
 			ServerAddr: r.cfg.Gateway.Address,
 			Connection: aether.ConnectionOptions{
@@ -129,6 +129,7 @@ func (r *gatewayRuntime) init() error {
 			},
 			Credentials: creds,
 		},
+		Workspace:      r.cfg.Service.Workspace,
 		Implementation: r.cfg.Service.Implementation,
 		Specifier:      r.cfg.Service.Specifier,
 	}
@@ -139,23 +140,23 @@ func (r *gatewayRuntime) init() error {
 	}
 	opts.TLS = tlsCfg
 
-	client, err := aether.NewServiceClient(opts)
+	client, err := aether.NewAgentClient(opts)
 	if err != nil {
-		return fmt.Errorf("create service client: %w", err)
+		return fmt.Errorf("create agent client: %w", err)
 	}
 	r.client = client
 	r.transport = &serviceClientTransport{client: client}
 	return nil
 }
 
-// Client returns the underlying ServiceClient. Callers register OnMessage,
+// Client returns the underlying AgentClient. Callers register OnMessage,
 // OnProxyHttpRequest, etc. on it before invoking Run.
-func (r *gatewayRuntime) Client() *aether.ServiceClient {
+func (r *gatewayRuntime) Client() *aether.AgentClient {
 	return r.client
 }
 
 // Transport returns the production tunnelTransport that ships frames
-// upstream through the embedded ServiceClient.
+// upstream through the embedded AgentClient.
 func (r *gatewayRuntime) Transport() tunnelTransport {
 	return r.transport
 }

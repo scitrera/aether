@@ -577,17 +577,25 @@ func taskPartyAuthorized(sender models.Identity, task *tasks.Task) bool {
 		return false
 	}
 	callerTopic := sender.ToTopic()
-	// Tenancy guard: never cross the workspace boundary via this path.
-	if sender.Workspace != "" && task.Workspace != sender.Workspace {
-		return false
-	}
-	// Creator-match (task.ParentAgentID backs the proto creator_actor_id).
+	// Creator-match (task.ParentAgentID backs the proto creator_actor_id) and
+	// assignee-match are EXACT identity-topic matches — the sender IS the task's
+	// creator or assigned worker — so they authorize regardless of workspace: a
+	// task may be legitimately targeted ACROSS the workspace boundary (a
+	// per-sandbox sahara agent in _sandbox serving a chat task in the user's app
+	// workspace). Checked BEFORE the tenancy guard, which otherwise blocks a
+	// cross-workspace assignee from its own task's msg lane. (Mirrors the same
+	// reorder in authorizeTaskOp.)
 	if task.ParentAgentID != "" && task.ParentAgentID == callerTopic {
 		return true
 	}
-	// Assignee-match: the worker assigned to the task.
 	if task.AssignedTo != "" && task.AssignedTo == callerTopic {
 		return true
+	}
+	// Tenancy guard for the weaker OBO-subject path below: a workspace-scoped
+	// principal must not claim subject party-ship on a task in a different
+	// workspace. Workspace-less senders (services) skip it entirely.
+	if sender.Workspace != "" && task.Workspace != sender.Workspace {
+		return false
 	}
 	// OBO subject-match: the end user the task acts on behalf of (match by
 	// ID+type since a connected user topic carries a window specifier the
@@ -1662,9 +1670,28 @@ func (s *GatewayServer) authorizeTaskOp(ctx context.Context, client *ClientSessi
 	sessionUUID := client.SessionUUID
 	client.identityMu.RUnlock()
 
-	// Workspace mismatch is an immediate deny — even a creator/assignee
-	// match across workspaces should not be honored, since workspace is
-	// the strong tenancy boundary.
+	// Creator-match (cheapest): task.ParentAgentID is the storage column that
+	// backs the proto creator_actor_id field. This is an EXACT identity-topic
+	// match (the sender IS the creator), so it authorizes regardless of
+	// workspace: a task may be legitimately created/targeted ACROSS the
+	// workspace boundary — e.g. a per-sandbox sahara agent in `_sandbox` serving
+	// a chat task in the user's app workspace. Checked before the tenancy guard.
+	if task.ParentAgentID != "" && task.ParentAgentID == callerTopic {
+		return true
+	}
+
+	// Assignee-match: the worker assigned to the task may always act on it,
+	// regardless of workspace (same exact-identity, creator-authorized
+	// cross-workspace-assignment rationale as creator-match).
+	if task.AssignedTo != "" && task.AssignedTo == callerTopic {
+		return true
+	}
+
+	// Workspace mismatch is a deny for the WEAKER party paths below (OBO
+	// subject-match, workspace-admin): a workspace-scoped principal must not
+	// claim subject/admin party-ship on a task in a different workspace. The
+	// exact creator/assignee identity matches above are exempt (the sender IS
+	// that party); workspace-less senders (services) skip the guard entirely.
 	if callerWorkspace != "" && task.Workspace != callerWorkspace {
 		logging.Logger.Info().
 			Str("identity", callerIdentity.String()).
@@ -1683,17 +1710,6 @@ func (s *GatewayServer) authorizeTaskOp(ctx context.Context, client *ClientSessi
 			nil,
 		))
 		return false
-	}
-
-	// Creator-match (cheapest): task.ParentAgentID is the storage column
-	// that backs the proto creator_actor_id field.
-	if task.ParentAgentID != "" && task.ParentAgentID == callerTopic {
-		return true
-	}
-
-	// Assignee-match: the worker assigned to the task may always act on it.
-	if task.AssignedTo != "" && task.AssignedTo == callerTopic {
-		return true
 	}
 
 	// OBO subject-match: the end user the task acts on behalf of may operate

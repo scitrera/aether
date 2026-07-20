@@ -98,13 +98,30 @@ func TestTaskPartyAuthorized(t *testing.T) {
 			want:   false,
 		},
 		{
-			name:   "tenancy guard: assignee in different workspace",
+			// Cross-workspace assignee IS authorized: the exact assignee-identity
+			// match is workspace-independent (a task may be legitimately targeted
+			// across workspaces, e.g. a sandbox agent in _sandbox serving a chat
+			// task in the user's app workspace). The tenancy guard only gates the
+			// weaker OBO-subject path.
+			name:   "cross-workspace assignee authorized (exact identity match)",
 			sender: models.Identity{Type: models.PrincipalAgent, Workspace: "wsA", Implementation: "w", Specifier: "1"},
 			task: &tasks.Task{
 				Workspace: "wsB",
 				AssignedTo: models.Identity{
 					Type: models.PrincipalAgent, Workspace: "wsA", Implementation: "w", Specifier: "1",
 				}.ToTopic(),
+			},
+			want: true,
+		},
+		{
+			// The tenancy guard STILL blocks a cross-workspace OBO-subject: a user
+			// in wsA is the task's subject but the task is in wsB, and they are
+			// neither creator nor assignee.
+			name: "tenancy guard blocks cross-workspace OBO subject",
+			sender: models.Identity{Type: models.PrincipalUser, Workspace: "wsA", ID: "user:alice"},
+			task: &tasks.Task{
+				Workspace: "wsB",
+				Authority: tasks.TaskAuthorityInfo{SubjectType: string(models.PrincipalUser), SubjectID: "user:alice"},
 			},
 			want: false,
 		},
@@ -152,14 +169,14 @@ func TestTaskMsgSenderIsTaskParty(t *testing.T) {
 		}
 	})
 
-	t.Run("cross-workspace assignee blocked by tenancy guard", func(t *testing.T) {
+	t.Run("cross-workspace assignee authorized (exact identity match)", func(t *testing.T) {
 		agentWsA := models.Identity{Type: models.PrincipalAgent, Workspace: "wsA", Implementation: "w", Specifier: "1"}
 		gw := &GatewayServer{taskStore: &fakeGetTaskStore{
 			task: &tasks.Task{Workspace: "wsB", AssignedTo: agentWsA.ToTopic()},
 		}}
 		ok, isMsg := gw.taskMsgSenderIsTaskParty(ctx, agentWsA, "tk::wsB::task-1::msg")
-		if !isMsg || ok {
-			t.Fatalf("got (authorized=%v, isTaskMsg=%v); want (false, true)", ok, isMsg)
+		if !isMsg || !ok {
+			t.Fatalf("got (authorized=%v, isTaskMsg=%v); want (true, true)", ok, isMsg)
 		}
 	})
 

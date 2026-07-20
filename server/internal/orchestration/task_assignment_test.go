@@ -1054,3 +1054,68 @@ func TestCancelStaleInteractiveTasks(t *testing.T) {
 	assertStatus("old-background", tasks.TaskStatusPending)    // not interactive
 	assertStatus("old-terminal", tasks.TaskStatusCompleted)   // already terminal
 }
+
+// TestCancelStaleStartupTasks verifies the startup-task TTL sweep: only
+// UNCLAIMED (pending) agent_startup tasks older than the TTL are cancelled.
+// Runs against the NATIVE SQLITE backend (aetherlite path) so it is ALWAYS
+// exercised (no external DB, never skipped) AND proves the sweep's
+// TaskFilter{TaskType,Statuses} is honored on the sqlite store.
+func TestCancelStaleStartupTasks(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orch_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+
+	ctx := context.Background()
+	service := NewTaskAssignmentService(taskStore, nil, nil, nil, nil)
+
+	// Create a task with the given type, then force its status + created_at via
+	// SQL so age/state are fully controlled regardless of CreateTask defaults.
+	mk := func(id, taskType string, status tasks.TaskStatus, createdAt time.Time) {
+		if err := taskStore.CreateTask(ctx, &tasks.Task{
+			TaskID: id, TaskType: taskType, Workspace: "ws-test",
+		}); err != nil {
+			t.Fatalf("CreateTask(%s): %v", id, err)
+		}
+		if _, err := db.ExecContext(ctx,
+			"UPDATE tasks SET status = ?, created_at = ? WHERE task_id = ?",
+			string(status), createdAt.UTC().Format(time.RFC3339Nano), id); err != nil {
+			t.Fatalf("force status/created_at (%s): %v", id, err)
+		}
+	}
+
+	now := time.Now()
+	old := now.Add(-2 * time.Hour)
+	mk("old-startup", startupTaskType, tasks.TaskStatusPending, old)    // -> cancelled
+	mk("young-startup", startupTaskType, tasks.TaskStatusPending, now)  // too young -> kept
+	mk("old-other", "chat_message", tasks.TaskStatusPending, old)       // wrong type -> kept
+	mk("old-claimed", startupTaskType, tasks.TaskStatusAssigned, old)   // claimed (not pending) -> kept
+
+	n, err := service.CancelStaleStartupTasks(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("CancelStaleStartupTasks: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("cancelled = %d, want 1 (only the old pending startup task)", n)
+	}
+
+	assertStatus := func(id string, want tasks.TaskStatus) {
+		got, gerr := taskStore.GetTask(ctx, id)
+		if gerr != nil {
+			t.Fatalf("GetTask(%s): %v", id, gerr)
+		}
+		if got.Status != want {
+			t.Errorf("task %s status = %q, want %q", id, got.Status, want)
+		}
+	}
+	assertStatus("old-startup", tasks.TaskStatusCancelled) // reaped
+	assertStatus("young-startup", tasks.TaskStatusPending) // under TTL
+	assertStatus("old-other", tasks.TaskStatusPending)     // not a startup task
+	assertStatus("old-claimed", tasks.TaskStatusAssigned)  // already claimed
+}

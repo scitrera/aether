@@ -200,6 +200,7 @@ func devDefaults() *proxysidecar.Config {
 			Insecure: true,
 		},
 		Service: proxysidecar.ServiceConfig{
+			Workspace:      "_sandbox",
 			Implementation: "proxy-sidecar",
 			Specifier:      "instance-1",
 		},

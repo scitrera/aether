@@ -371,7 +371,7 @@ func (r *downstreamRouter) hasRelay() bool {
 
 // installOn wires the dispatcher hooks on client. The supplied transport
 // ships outbound proxy/tunnel envelopes upstream.
-func (r *downstreamRouter) installOn(client *aether.ServiceClient, transport tunnelTransport) {
+func (r *downstreamRouter) installOn(client *aether.AgentClient, transport tunnelTransport) {
 	if r.term == nil {
 		// The runtime is only built when terminator is enabled, so r.term is
 		// non-nil in practice. Defensive guard for future callers.

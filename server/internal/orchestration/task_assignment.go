@@ -1504,3 +1504,62 @@ func (tas *TaskAssignmentService) CancelStaleInteractiveTasks(ctx context.Contex
 	}
 	return cancelled, nil
 }
+
+// startupTaskType is the task_type of the pool-dispatched orchestration task
+// minted by triggerOrchestration to spin up an offline agent (see
+// HasActiveStartupTask / createOrchestratedStartupTask).
+const startupTaskType = "agent_startup"
+
+// CancelStaleStartupTasks cancels agent_startup orchestration tasks that have
+// sat UNCLAIMED (pending) longer than ttl. These are the pool tasks
+// triggerOrchestration mints when a message routes to an OFFLINE agent
+// (e.g. an offline sahara sandbox now registered as ag::_sandbox::sahara::<id>).
+// Registering the sandbox in the agent registry makes it technically
+// orchestratable, so an offline route creates a pending agent_startup task —
+// but with no sandbox orchestrator claiming them (orchestrator=0) and no
+// existing sweep collecting them (they are BACKGROUND/orchestrated, and
+// PurgeTasks only reaps terminal tasks), they linger forever.
+//
+// Cancelling an unclaimed startup task is self-healing: the next message to the
+// same offline target re-triggers a fresh startup task (HasActiveStartupTask
+// sees none once this one is cancelled), so nothing is permanently lost. The
+// TTL is deliberately GENEROUS: a legitimately-orchestratable agent whose
+// orchestrator is briefly unavailable must never have its pending startup task
+// cancelled out from under it. When a real sandbox orchestrator lands later, it
+// claims these (moving them out of pending) well before the sweeper's cutoff.
+//
+// The filter is Statuses:[pending] (pending == unclaimed) — once an
+// orchestrator claims a startup task it leaves the pending state and is no
+// longer eligible for this sweep. Cancellation goes through CancelTask so the
+// queue row is retired and any authority grant is revoked (never a raw status
+// write). Errors are best-effort (logged and skipped) so one bad task does not
+// abort the sweep. Returns the number of tasks cancelled.
+func (tas *TaskAssignmentService) CancelStaleStartupTasks(ctx context.Context, ttl time.Duration) (int, error) {
+	if ttl <= 0 {
+		return 0, nil
+	}
+
+	taskList, err := tas.taskStore.ListTasks(ctx, &tasks.TaskFilter{
+		TaskType: startupTaskType,
+		Statuses: []tasks.TaskStatus{tasks.TaskStatusPending},
+		Limit:    1000,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list startup tasks: %w", err)
+	}
+
+	cutoff := time.Now().Add(-ttl)
+	cancelled := 0
+	for _, task := range taskList {
+		if !task.CreatedAt.Before(cutoff) {
+			continue
+		}
+		if err := tas.CancelTask(ctx, task.TaskID); err != nil {
+			logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Str("target_implementation", task.TargetImplementation).Msg("stale startup cancel: failed to cancel task")
+			continue
+		}
+		logging.Logger.Info().Str("task_id", task.TaskID).Str("target_implementation", task.TargetImplementation).Time("created_at", task.CreatedAt).Msg("stale startup cancel: cancelled stale startup task")
+		cancelled++
+	}
+	return cancelled, nil
+}

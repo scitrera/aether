@@ -383,7 +383,11 @@ type TLSConfig struct {
 // ServiceConfig identifies the sidecar to the gateway. Required whenever
 // any surface that opens an upstream gateway connection is enabled
 // (terminator or relay).
+//
+// This block now drives an AGENT connection: workspace + implementation +
+// specifier form the agent identity ag::workspace::implementation::specifier.
 type ServiceConfig struct {
+	Workspace      string `yaml:"workspace"`
 	Implementation string `yaml:"implementation"`
 	Specifier      string `yaml:"specifier"`
 }
@@ -536,6 +540,9 @@ func (c *Config) Validate() error {
 	// upstream identity (it splices provider sessions verbatim).
 	needsService := c.Terminator.Enabled || c.Relay.Enabled || c.TenantRelay.Enabled
 	if needsService {
+		if c.Service.Workspace == "" {
+			errs = append(errs, "service.workspace is required when terminator, relay, or tenant_relay is enabled")
+		}
 		if c.Service.Implementation == "" {
 			errs = append(errs, "service.implementation is required when terminator, relay, or tenant_relay is enabled")
 		}

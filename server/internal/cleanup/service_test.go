@@ -153,10 +153,10 @@ func TestRunAllJobs_NilDependencies(t *testing.T) {
 
 	results := service.RunAllJobs(ctx)
 
-	// Should return 5 results (stale locks, stale claims, orphaned tasks, task
-	// purge, interactive-task TTL cancel)
-	if len(results) != 5 {
-		t.Fatalf("RunAllJobs() returned %d results, want 5", len(results))
+	// Should return 6 results (stale locks, stale claims, orphaned tasks, task
+	// purge, interactive-task TTL cancel, startup-task TTL cancel)
+	if len(results) != 6 {
+		t.Fatalf("RunAllJobs() returned %d results, want 6", len(results))
 	}
 
 	// All should fail or skip due to nil dependencies
