@@ -1970,6 +1970,14 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 
 	var response *pb.TaskOperationResponse
 
+	// Caller identity for task-op audit logging. The COMPLETE/FAIL branches log
+	// success + every failure reason so a silently-swallowed rejection — e.g. a
+	// sahara CompleteTask the SDK returns as Success=false without an error, the
+	// cause of chat tasks never leaving RUNNING — is diagnosable gateway-side.
+	client.identityMu.RLock()
+	callerTopic := client.Identity.ToTopic()
+	client.identityMu.RUnlock()
+
 	switch op.Op {
 	case pb.TaskOperation_CANCEL:
 		// Authorization: creator / assignee / workspace-admin (info-hiding).
@@ -2049,6 +2057,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		// Authorization: creator / assignee / workspace-admin (info-hiding).
 		task, err := s.taskStore.GetTask(ctx, op.TaskId)
 		if err != nil || task == nil {
+			logging.Logger.Warn().Str("from", callerTopic).Str("task_id", op.TaskId).Err(err).Msg("task COMPLETE rejected: task not found")
 			response = &pb.TaskOperationResponse{
 				Success: false,
 				Error:   ErrTaskNotFoundOrUnauthorized,
@@ -2056,6 +2065,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 			break
 		}
 		if !s.authorizeTaskOp(ctx, client, task) {
+			logging.Logger.Warn().Str("from", callerTopic).Str("task_id", op.TaskId).Str("assigned_to", task.AssignedTo).Msg("task COMPLETE rejected: unauthorized")
 			response = &pb.TaskOperationResponse{
 				Success: false,
 				Error:   ErrTaskNotFoundOrUnauthorized,
@@ -2067,6 +2077,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 			completeFn = s.orchestration.TaskService.CompleteTask
 		}
 		if err := completeFn(ctx, op.TaskId); err != nil {
+			logging.Logger.Warn().Str("from", callerTopic).Str("task_id", op.TaskId).Str("prior_status", string(task.Status)).Err(err).Msg("task COMPLETE rejected: completeFn error")
 			response = &pb.TaskOperationResponse{
 				Success: false,
 				Error:   err.Error(),
@@ -2074,6 +2085,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		} else {
 			// Re-fetch to get updated state
 			updated, _ := s.taskStore.GetTask(ctx, op.TaskId)
+			logging.Logger.Info().Str("from", callerTopic).Str("task_id", op.TaskId).Msg("task COMPLETE succeeded")
 			response = &pb.TaskOperationResponse{
 				Success: true,
 				Message: "task completed",
@@ -2092,6 +2104,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		// Authorization: creator / assignee / workspace-admin (info-hiding).
 		task, err := s.taskStore.GetTask(ctx, op.TaskId)
 		if err != nil || task == nil {
+			logging.Logger.Warn().Str("from", callerTopic).Str("task_id", op.TaskId).Err(err).Msg("task FAIL rejected: task not found")
 			response = &pb.TaskOperationResponse{
 				Success: false,
 				Error:   ErrTaskNotFoundOrUnauthorized,
@@ -2099,6 +2112,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 			break
 		}
 		if !s.authorizeTaskOp(ctx, client, task) {
+			logging.Logger.Warn().Str("from", callerTopic).Str("task_id", op.TaskId).Str("assigned_to", task.AssignedTo).Msg("task FAIL rejected: unauthorized")
 			response = &pb.TaskOperationResponse{
 				Success: false,
 				Error:   ErrTaskNotFoundOrUnauthorized,
@@ -2110,12 +2124,14 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 			failFn = s.orchestration.TaskService.FailTask
 		}
 		if err := failFn(ctx, op.TaskId, errMsg); err != nil {
+			logging.Logger.Warn().Str("from", callerTopic).Str("task_id", op.TaskId).Str("prior_status", string(task.Status)).Err(err).Msg("task FAIL rejected: failFn error")
 			response = &pb.TaskOperationResponse{
 				Success: false,
 				Error:   err.Error(),
 			}
 		} else {
 			updated, _ := s.taskStore.GetTask(ctx, op.TaskId)
+			logging.Logger.Info().Str("from", callerTopic).Str("task_id", op.TaskId).Str("reason", errMsg).Msg("task FAIL succeeded")
 			response = &pb.TaskOperationResponse{
 				Success: true,
 				Message: "task marked as failed",
