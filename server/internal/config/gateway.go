@@ -388,6 +388,15 @@ type CleanupConfig struct {
 	// StartupTaskCancelInterval is how often to run the stale startup task
 	// sweep (e.g., "15m"). Set to "0" to disable.
 	StartupTaskCancelInterval string `yaml:"startup_task_cancel_interval"`
+
+	// PoolTaskTTL is how old an UNCLAIMED (pending) regular POOL task may get
+	// before it is auto-cancelled (e.g., "1h"). Deliberately generous so a
+	// briefly-absent worker's pending task is never reaped.
+	PoolTaskTTL string `yaml:"pool_task_ttl"`
+
+	// PoolTaskCancelInterval is how often to run the stale pool task sweep
+	// (e.g., "15m"). Set to "0" to disable.
+	PoolTaskCancelInterval string `yaml:"pool_task_cancel_interval"`
 }
 
 // GetTaskPurgeInterval parses the task purge interval duration
@@ -433,6 +442,16 @@ func (c *CleanupConfig) GetStartupTaskTTL() time.Duration {
 // GetStartupTaskCancelInterval parses the startup task cancel interval duration
 func (c *CleanupConfig) GetStartupTaskCancelInterval() time.Duration {
 	return parseDurationOrDefault(c.StartupTaskCancelInterval, 15*time.Minute)
+}
+
+// GetPoolTaskTTL parses the pool task TTL duration
+func (c *CleanupConfig) GetPoolTaskTTL() time.Duration {
+	return parseDurationOrDefault(c.PoolTaskTTL, 1*time.Hour)
+}
+
+// GetPoolTaskCancelInterval parses the pool task cancel interval duration
+func (c *CleanupConfig) GetPoolTaskCancelInterval() time.Duration {
+	return parseDurationOrDefault(c.PoolTaskCancelInterval, 15*time.Minute)
 }
 
 // KVConfig contains KV store settings

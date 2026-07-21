@@ -631,6 +631,12 @@ func main() {
 		InteractiveTaskCancelInterval: cfg.Cleanup.GetInteractiveTaskCancelInterval(),
 		StartupTaskTTL:                cfg.Cleanup.GetStartupTaskTTL(),
 		StartupTaskCancelInterval:     cfg.Cleanup.GetStartupTaskCancelInterval(),
+		PoolTaskTTL:                   cfg.Cleanup.GetPoolTaskTTL(),
+		PoolTaskCancelInterval:        cfg.Cleanup.GetPoolTaskCancelInterval(),
+		// Single-node standalone runs the sweeps directly (no leader-election
+		// gating). Cluster mode (cenv.Enabled, JetStream dispatcher) is genuinely
+		// multi-node, so it keeps lease-based election to sweep on exactly one node.
+		SingleNode: !cenv.Enabled,
 	}
 	gatewayOpts = append(gatewayOpts, gateway.WithCleanupService(cleanupConfig))
 

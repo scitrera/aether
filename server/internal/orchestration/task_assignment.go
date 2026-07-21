@@ -1563,3 +1563,55 @@ func (tas *TaskAssignmentService) CancelStaleStartupTasks(ctx context.Context, t
 	}
 	return cancelled, nil
 }
+
+// CancelStalePoolTasks cancels regular POOL tasks that have sat UNCLAIMED
+// (pending) longer than ttl. A pool task is claimed by any matching worker when
+// it connects (DeliverPoolTasks); when no worker for its target implementation
+// ever connects, the pending row lingers forever. No existing sweep collects it:
+// agent_startup pool tasks are handled by CancelStaleStartupTasks, active
+// INTERACTIVE turns by CancelStaleInteractiveTasks, and PurgeTasks only reaps
+// terminal rows.
+//
+// The filter is AssignmentMode=pool + TaskCategory=regular + Statuses:[pending].
+// TaskCategory=regular deliberately EXCLUDES orchestrated agent_startup pool
+// tasks (TaskCategory=orchestrated), which CancelStaleStartupTasks owns, so the
+// two sweeps never double-cancel the same row. Once a worker claims a pool task
+// it leaves the pending state and is no longer eligible.
+//
+// Cancellation goes through CancelTask so the queue row is retired and any
+// authority grant is revoked (never a raw status write). The TTL is deliberately
+// GENEROUS: a legitimate pool task whose worker is briefly absent must never be
+// cancelled out from under it. Errors are best-effort (logged and skipped) so one
+// bad task does not abort the sweep. Returns the number of tasks cancelled.
+func (tas *TaskAssignmentService) CancelStalePoolTasks(ctx context.Context, ttl time.Duration) (int, error) {
+	if ttl <= 0 {
+		return 0, nil
+	}
+
+	poolMode := tasks.AssignmentModePool
+	regularCategory := tasks.TaskCategoryRegular
+	taskList, err := tas.taskStore.ListTasks(ctx, &tasks.TaskFilter{
+		AssignmentMode: &poolMode,
+		TaskCategory:   &regularCategory,
+		Statuses:       []tasks.TaskStatus{tasks.TaskStatusPending},
+		Limit:          1000,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list pool tasks: %w", err)
+	}
+
+	cutoff := time.Now().Add(-ttl)
+	cancelled := 0
+	for _, task := range taskList {
+		if !task.CreatedAt.Before(cutoff) {
+			continue
+		}
+		if err := tas.CancelTask(ctx, task.TaskID); err != nil {
+			logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Str("target_implementation", task.TargetImplementation).Msg("stale pool cancel: failed to cancel task")
+			continue
+		}
+		logging.Logger.Info().Str("task_id", task.TaskID).Str("target_implementation", task.TargetImplementation).Time("created_at", task.CreatedAt).Msg("stale pool cancel: cancelled stale pool task")
+		cancelled++
+	}
+	return cancelled, nil
+}

@@ -25,6 +25,18 @@ func TestDefaultConfig(t *testing.T) {
 	if config.ReconciliationInterval != 1*time.Minute {
 		t.Errorf("ReconciliationInterval = %v, want %v", config.ReconciliationInterval, 1*time.Minute)
 	}
+	if config.StartupTaskTTL != 30*time.Minute {
+		t.Errorf("StartupTaskTTL = %v, want %v", config.StartupTaskTTL, 30*time.Minute)
+	}
+	if config.StartupTaskCancelInterval != 15*time.Minute {
+		t.Errorf("StartupTaskCancelInterval = %v, want %v", config.StartupTaskCancelInterval, 15*time.Minute)
+	}
+	if config.PoolTaskTTL != 1*time.Hour {
+		t.Errorf("PoolTaskTTL = %v, want %v", config.PoolTaskTTL, 1*time.Hour)
+	}
+	if config.PoolTaskCancelInterval != 15*time.Minute {
+		t.Errorf("PoolTaskCancelInterval = %v, want %v", config.PoolTaskCancelInterval, 15*time.Minute)
+	}
 	if config.StaleClaimTimeout != 5*time.Minute {
 		t.Errorf("StaleClaimTimeout = %v, want %v", config.StaleClaimTimeout, 5*time.Minute)
 	}
@@ -153,10 +165,11 @@ func TestRunAllJobs_NilDependencies(t *testing.T) {
 
 	results := service.RunAllJobs(ctx)
 
-	// Should return 6 results (stale locks, stale claims, orphaned tasks, task
-	// purge, interactive-task TTL cancel, startup-task TTL cancel)
-	if len(results) != 6 {
-		t.Fatalf("RunAllJobs() returned %d results, want 6", len(results))
+	// Should return 7 results (stale locks, stale claims, orphaned tasks,
+	// interactive-task TTL cancel, startup-task TTL cancel, pool-task TTL cancel,
+	// task purge)
+	if len(results) != 7 {
+		t.Fatalf("RunAllJobs() returned %d results, want 7", len(results))
 	}
 
 	// All should fail or skip due to nil dependencies

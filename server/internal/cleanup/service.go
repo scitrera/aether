@@ -10,6 +10,7 @@ package cleanup
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -40,11 +41,25 @@ type Config struct {
 	StartupTaskTTL            time.Duration // How old an UNCLAIMED (pending) agent_startup task may get before being auto-cancelled (generous, so a briefly-unavailable orchestrator's pending task is never reaped)
 	StartupTaskCancelInterval time.Duration // How often to run the stale startup task sweep (0 = disabled)
 
+	// Stale pool task settings
+	PoolTaskTTL            time.Duration // How old an UNCLAIMED (pending) regular POOL task may get before being auto-cancelled (generous, so a briefly-absent worker's pending task is never reaped)
+	PoolTaskCancelInterval time.Duration // How often to run the stale pool task sweep (0 = disabled)
+
 	// Stale claim settings
 	StaleClaimTimeout time.Duration // How long a task can stay 'claimed' before being recovered (0 = use default 5m)
 
 	// Leader election settings
 	LeaderElectionRetryInterval time.Duration // How often to retry acquiring leadership if not leader (0 = use default 30s)
+
+	// SingleNode indicates a single-node/standalone deployment (aetherlite
+	// standalone / polling-dispatcher path). When true, StartBackground runs the
+	// periodic sweeps DIRECTLY without gating on distributed leader election —
+	// there is only one node, so election adds no safety and only risk: a
+	// stuck/foreign leader lease (any AcquireLock returning false) would silently
+	// starve every sweep with no recovery and no log signal. Clustered backends
+	// (Redis / JetStream) leave this false and keep lease-based election so
+	// exactly one node sweeps.
+	SingleNode bool
 }
 
 // DefaultConfig returns the default cleanup configuration
@@ -59,6 +74,8 @@ func DefaultConfig() *Config {
 		InteractiveTaskCancelInterval: 15 * time.Minute,
 		StartupTaskTTL:                30 * time.Minute,
 		StartupTaskCancelInterval:     15 * time.Minute,
+		PoolTaskTTL:                   1 * time.Hour,
+		PoolTaskCancelInterval:        15 * time.Minute,
 		StaleClaimTimeout:             5 * time.Minute,
 		LeaderElectionRetryInterval: 30 * time.Second,
 	}
@@ -155,6 +172,10 @@ func (s *Service) RunAllJobs(ctx context.Context) []JobResult {
 
 	// Run stale startup task cancellation
 	result = s.CancelStaleStartupTasks(ctx)
+	results = append(results, result)
+
+	// Run stale pool task cancellation
+	result = s.CancelStalePoolTasks(ctx)
 	results = append(results, result)
 
 	// Run task purge
@@ -289,6 +310,41 @@ func (s *Service) CancelStaleStartupTasks(ctx context.Context) JobResult {
 	return result
 }
 
+// CancelStalePoolTasks cancels UNCLAIMED (pending) regular POOL orchestration
+// tasks older than the configured TTL. These are pool tasks whose target-
+// implementation worker never connected to claim them; unlike agent_startup pool
+// tasks (covered by CancelStaleStartupTasks) and active INTERACTIVE turns
+// (covered by CancelStaleInteractiveTasks), nothing else collects them, so they
+// linger forever. The TTL is generous so a briefly-absent worker's pending task
+// is never reaped out from under it.
+func (s *Service) CancelStalePoolTasks(ctx context.Context) JobResult {
+	start := time.Now()
+	result := JobResult{JobName: "pool_task_ttl_cancel"}
+
+	if s.taskService == nil {
+		result.Error = fmt.Errorf("task service not configured")
+		return result
+	}
+
+	count, err := s.taskService.CancelStalePoolTasks(ctx, s.config.PoolTaskTTL)
+	result.Duration = time.Since(start)
+
+	if err != nil {
+		result.Error = err
+		return result
+	}
+
+	result.Success = true
+	result.ItemCount = int64(count)
+	if count > 0 {
+		result.Details = fmt.Sprintf("cancelled %d stale pool tasks (ttl: %v)", count, s.config.PoolTaskTTL)
+	} else {
+		result.Details = "no stale pool tasks found"
+	}
+
+	return result
+}
+
 // CleanupStaleClaims recovers orchestration tasks stuck in 'claimed' status.
 // This handles gateway crashes that leave tasks claimed but never delivered.
 func (s *Service) CleanupStaleClaims(ctx context.Context) JobResult {
@@ -388,6 +444,20 @@ func (s *Service) StartBackground(ctx context.Context) *BackgroundRunner {
 		stopped:    make(chan struct{}),
 		sessionID:  uuid.New().String(),
 		identity:   models.CleanupLeaderIdentity(),
+	}
+
+	// Single-node/standalone deployments (aetherlite standalone / polling-
+	// dispatcher path) must ALWAYS run the sweeps. There is exactly one node, so
+	// distributed leader election adds no safety and only risk: a stuck/foreign
+	// leader lease (any AcquireLock returning false) would silently starve every
+	// sweep with no recovery and no log signal (the exact failure reproduced in
+	// TestStartBackground_Badger_ForeignLeaderLock_StarvesSweep). Run the
+	// periodic jobs directly. Clustered backends fall through to lease-based
+	// election below so exactly one node sweeps.
+	if s.config.SingleNode {
+		logging.Logger.Info().Msg("cleanup: single-node mode — running jobs directly without leader election")
+		runner.startCleanupJobs(ctx)
+		return runner
 	}
 
 	// Check if leader election is possible (requires session registry)
@@ -508,6 +578,18 @@ func (r *BackgroundRunner) startCleanupJobs(parentCtx context.Context) {
 		})
 	}
 
+	// Start stale pool task cancellation if enabled
+	if s.config.PoolTaskCancelInterval > 0 {
+		go r.runPeriodic(cleanupCtx, "pool_task_ttl_cancel", s.config.PoolTaskCancelInterval, func(ctx context.Context) {
+			result := s.CancelStalePoolTasks(ctx)
+			if result.Error != nil {
+				logging.Logger.Error().Err(result.Error).Msg("stale pool task cancel error")
+			} else if result.ItemCount > 0 {
+				logging.Logger.Info().Str("details", result.Details).Msg("stale pool task cancel completed")
+			}
+		})
+	}
+
 	// Start reconciliation if enabled
 	if s.config.ReconciliationInterval > 0 {
 		go r.runPeriodic(cleanupCtx, "reconciliation", s.config.ReconciliationInterval, func(ctx context.Context) {
@@ -557,17 +639,36 @@ func (r *BackgroundRunner) setLeader(leader bool) {
 	}
 }
 
-// runPeriodic runs a job periodically until context is cancelled
+// runPeriodic runs a job periodically until context is cancelled.
+//
+// Each iteration is isolated behind panic recovery: a single failing sweep is
+// logged (with stack) and skipped rather than killing the loop. This matters
+// doubly because an unrecovered panic in this background goroutine would
+// otherwise crash the whole gateway process. Mirrors the recover()+debug.Stack()
+// guard on the background goroutine in gateway.SetCleanupService.
 func (r *BackgroundRunner) runPeriodic(ctx context.Context, name string, interval time.Duration, job func(context.Context)) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	runOnce := func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				logging.Logger.Error().
+					Interface("panic", rec).
+					Str("stack", string(debug.Stack())).
+					Str("job", name).
+					Msg("recovered from panic in cleanup job iteration")
+			}
+		}()
+		job(ctx)
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			job(ctx)
+			runOnce()
 		}
 	}
 }

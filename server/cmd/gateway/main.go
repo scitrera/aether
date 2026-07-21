@@ -577,6 +577,11 @@ func main() {
 		InteractiveTaskCancelInterval: cfg.Cleanup.GetInteractiveTaskCancelInterval(),
 		StartupTaskTTL:                cfg.Cleanup.GetStartupTaskTTL(),
 		StartupTaskCancelInterval:     cfg.Cleanup.GetStartupTaskCancelInterval(),
+		PoolTaskTTL:                   cfg.Cleanup.GetPoolTaskTTL(),
+		PoolTaskCancelInterval:        cfg.Cleanup.GetPoolTaskCancelInterval(),
+		// Full gateway is Redis-backed and multi-node-capable; keep lease-based
+		// leader election (SingleNode stays false) so exactly one node sweeps. A
+		// stuck Redis lease self-heals via LockTTL expiry.
 	}
 	gatewayOpts = append(gatewayOpts, gateway.WithCleanupService(cleanupConfig))
 
