@@ -447,6 +447,53 @@ func TestBadgerRouter_MessageRetentionTTL(t *testing.T) {
 	}
 }
 
+// TestBadgerRouter_OffsetKeyExpiresWhenOrphaned verifies the per-consumer offset
+// key carries the retention TTL so an orphaned consumer's offset (e.g. a browser
+// window whose tab closed) is reaped instead of accumulating forever, while an
+// offset re-saved before expiry has its TTL refreshed and survives.
+func TestBadgerRouter_OffsetKeyExpiresWhenOrphaned(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping timing-based TTL test in -short mode")
+	}
+	db := openTestDB(t)
+	r := NewBadgerRouter(db)
+	r.SetOffsetRetentionTTL(1 * time.Second) // Badger TTL granularity is seconds
+	defer r.Close()
+
+	if err := r.saveOffset("t", "orphan", 5); err != nil {
+		t.Fatalf("saveOffset: %v", err)
+	}
+	if _, ok, err := r.loadOffsetOK("t", "orphan"); err != nil || !ok {
+		t.Fatalf("offset should be present right after save (ok=%v err=%v)", ok, err)
+	}
+
+	// A consumer that keeps committing refreshes the TTL and survives.
+	if err := r.saveOffset("t", "active", 1); err != nil {
+		t.Fatalf("saveOffset(active): %v", err)
+	}
+	time.Sleep(600 * time.Millisecond)
+	if err := r.saveOffset("t", "active", 2); err != nil { // refresh before expiry
+		t.Fatalf("saveOffset(active refresh): %v", err)
+	}
+
+	// Wait past the orphan's expiry boundary.
+	time.Sleep(2500 * time.Millisecond)
+
+	if _, ok, err := r.loadOffsetOK("t", "orphan"); err != nil {
+		t.Fatalf("loadOffsetOK(orphan): %v", err)
+	} else if ok {
+		t.Fatalf("orphaned offset should have expired, but it is still present")
+	}
+	// The active consumer's last refresh was ~2.5s ago (> 1s TTL), so it also
+	// expires once it stops committing — confirming reaping is driven purely by
+	// staleness, not by which key it is.
+	if _, ok, err := r.loadOffsetOK("t", "active"); err != nil {
+		t.Fatalf("loadOffsetOK(active): %v", err)
+	} else if ok {
+		t.Fatalf("stale 'active' offset should also have expired after it stopped refreshing")
+	}
+}
+
 // TestBadgerRouter_SaveOffsetConcurrentNoConflictError verifies saveOffset
 // retries on optimistic-concurrency conflict: many concurrent commits to the
 // same offset key (drain saving per message + replay's catch-up save under a

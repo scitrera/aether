@@ -55,17 +55,32 @@ type BadgerRouter struct {
 	// expires it (native per-entry TTL, reclaimed by Badger's value-log GC). It
 	// caps otherwise-unbounded topic-log growth and the size of any cold-start /
 	// full-replay burst, while comfortably exceeding the realistic reconnect gap
-	// so a resuming consumer still catches up. The sequence counter and consumer
-	// offsets carry NO TTL, so expiry never rewinds them: a consumer resuming
-	// past an expired range simply finds fewer messages to replay. Zero disables
-	// expiry (retain forever). Set at construction; treat as immutable after use.
+	// so a resuming consumer still catches up. The SEQUENCE COUNTER (seq:{topic})
+	// carries NO TTL, so numbering is never rewound. Zero disables expiry (retain
+	// forever). Set at construction; treat as immutable after use.
 	messageTTL time.Duration
+
+	// offsetTTL bounds how long a per-consumer offset key is retained, refreshed
+	// on every save. Decoupled from messageTTL and deliberately generous (default
+	// 7d): the offset is a tiny 8-byte key, and keeping it well past the message
+	// window lets a consumer that was away a while still RESUME (replaying
+	// whatever messages remain) rather than cold-starting — while an orphaned
+	// per-window offset (its browser tab closed; a reopened tab gets a fresh
+	// window id) still expires instead of accumulating unboundedly as windows
+	// churn. Zero disables expiry (retain forever). Immutable after use.
+	offsetTTL time.Duration
 }
 
 // defaultMessageRetentionTTL is the default per-message retention. 24h caps
 // growth at roughly a day of traffic per topic while dwarfing the real reconnect
 // gap (seconds–minutes). Override via SetMessageRetentionTTL before first use.
 const defaultMessageRetentionTTL = 24 * time.Hour
+
+// defaultOffsetRetentionTTL is the default per-consumer offset retention. Much
+// more generous than message retention (offsets are tiny and worth keeping so a
+// consumer away for days still resumes), but still bounded so orphaned per-window
+// offsets don't grow without limit. Override via SetOffsetRetentionTTL.
+const defaultOffsetRetentionTTL = 7 * 24 * time.Hour
 
 // msgWithSeq bundles a message payload with its Badger sequence number so that
 // the drain goroutine can persist the exact offset of each processed message.
@@ -102,6 +117,7 @@ func NewBadgerRouterWithBufferSize(db *badger.DB, bufferSize int) *BadgerRouter 
 		subscriberBufferSize: bufferSize,
 		subs:                 make(map[string][]*subscriber),
 		messageTTL:           defaultMessageRetentionTTL,
+		offsetTTL:            defaultOffsetRetentionTTL,
 	}
 }
 
@@ -113,6 +129,16 @@ func (r *BadgerRouter) SetMessageRetentionTTL(d time.Duration) {
 		d = 0
 	}
 	r.messageTTL = d
+}
+
+// SetOffsetRetentionTTL overrides the per-consumer offset retention TTL. A value
+// <= 0 disables expiry (offsets retained forever). Call once at startup before
+// the router serves traffic; not safe to change concurrently with saveOffset.
+func (r *BadgerRouter) SetOffsetRetentionTTL(d time.Duration) {
+	if d < 0 {
+		d = 0
+	}
+	r.offsetTTL = d
 }
 
 // Close shuts down all active subscribers.
@@ -564,12 +590,23 @@ func (r *BadgerRouter) loadOffsetOK(topic, consumerName string) (uint64, bool, e
 // and the offset stalls, so the consumer re-replays the same backlog on the next
 // reconnect and re-sheds it under gateway backpressure. Mirrors appendMessage's
 // bounded ErrConflict retry (sub-millisecond txns; no backoff needed).
+//
+// The offset key carries offsetTTL (generous by default — 7d — and decoupled
+// from message retention), refreshed on every save. An active consumer rewrites
+// its offset as messages flow, so the TTL keeps resetting and the key never
+// expires while the consumer is alive; an orphaned per-window consumer (its
+// browser tab closed — a reopened tab gets a fresh window id from sessionStorage
+// anyway) stops refreshing and its offset eventually expires, so offset keys
+// don't accumulate unboundedly as windows churn.
 func (r *BadgerRouter) saveOffset(topic, consumerName string, seq uint64) error {
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, seq)
 	var lastErr error
 	for attempt := 0; attempt < appendMessageMaxRetries; attempt++ {
 		lastErr = r.db.Update(func(txn *badger.Txn) error {
+			if r.offsetTTL > 0 {
+				return txn.SetEntry(badger.NewEntry(offsetKey(topic, consumerName), buf).WithTTL(r.offsetTTL))
+			}
 			return txn.Set(offsetKey(topic, consumerName), buf)
 		})
 		if lastErr == nil {

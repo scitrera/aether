@@ -485,6 +485,16 @@ func main() {
 				logging.Logger.Warn().Str("value", ttlStr).Err(perr).Msg("invalid AETHER_MESSAGE_RETENTION_TTL; using default 24h")
 			}
 		}
+		// Consumer-offset retention: generous by default (7d) and decoupled from
+		// message retention. Override with a Go duration, or "0" to retain forever.
+		if ttlStr := os.Getenv("AETHER_OFFSET_RETENTION_TTL"); ttlStr != "" {
+			if d, perr := time.ParseDuration(ttlStr); perr == nil {
+				badgerRouter.SetOffsetRetentionTTL(d)
+				logging.Logger.Info().Dur("ttl", d).Msg("badger offset retention TTL set from AETHER_OFFSET_RETENTION_TTL")
+			} else {
+				logging.Logger.Warn().Str("value", ttlStr).Err(perr).Msg("invalid AETHER_OFFSET_RETENTION_TTL; using default 7d")
+			}
+		}
 		msgRouter = badgerRouter
 		dispatcher = orchestration.NewPollingTaskDispatcher(taskStore)
 	}
