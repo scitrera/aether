@@ -240,6 +240,23 @@ func (r *BadgerRouter) subscribe(topic, consumerName string, handler func([]byte
 	// Tell drain to skip any live messages that were already delivered by replay.
 	s.replayedUpTo = replayedUpTo
 
+	// Persist the consumer offset for the replayed range. drain saves the offset
+	// per live message, but replay (the reconnect catch-up path) did not — so a
+	// named consumer that caught up via replay never committed its progress, and
+	// those messages re-replayed on every reconnect. This is especially harmful
+	// for messages that only ever reach a consumer via replay: Publish drops from
+	// the live fan-out channel (non-blocking) when it is full, but still persists
+	// to badger, so a slow consumer's messages are delivered only via replay and,
+	// without this save, re-shed on every reconnect forever. Commit the highest
+	// replayed sequence so the next reconnect resumes from head. Named consumers
+	// only (anonymous subscribers, consumerName=="", don't track offsets).
+	if consumerName != "" && replayedUpTo > startSeq {
+		if err := r.saveOffset(topic, consumerName, replayedUpTo); err != nil {
+			logging.Logger.Error().Err(err).Str("topic", topic).Str("consumer", consumerName).
+				Msg("badger_router: failed to save consumer offset after replay")
+		}
+	}
+
 	// Start drain goroutine.
 	go r.drain(s, topic)
 

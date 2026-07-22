@@ -243,3 +243,65 @@ func TestBadgerRouter_SubscribeFromNow(t *testing.T) {
 		t.Errorf("expected %q, got %q", "after1", got[0])
 	}
 }
+
+// TestBadgerRouter_ReplayPersistsOffset verifies that catching up via the replay
+// path commits the consumer offset — so a named consumer that reconnects does not
+// re-replay (and, in production, re-shed) the same historical backlog forever.
+// This is the specific failure mode for messages that only ever reach a consumer
+// via replay: Publish drops from the live fan-out channel when full but still
+// persists to badger, so a slow consumer's messages are served via replay, and
+// without an offset save they re-deliver on every reconnect.
+func TestBadgerRouter_ReplayPersistsOffset(t *testing.T) {
+	db := openTestDB(t)
+	r := NewBadgerRouter(db)
+	defer r.Close()
+	ctx := context.Background()
+
+	// Publish 3 messages before any subscriber exists — they land in badger only
+	// (no live consumer), so the first subscribe serves them via replay, not drain.
+	for _, m := range []string{"a", "b", "c"} {
+		if err := r.Publish(ctx, "t", []byte(m)); err != nil {
+			t.Fatalf("Publish(%q) error = %v", m, err)
+		}
+	}
+
+	var mu sync.Mutex
+	var first []string
+	unsub1, err := r.SubscribeExclusive("t", "c1", func(p []byte) {
+		mu.Lock()
+		first = append(first, string(p))
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("first SubscribeExclusive() error = %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	n1 := len(first)
+	mu.Unlock()
+	if n1 != 3 {
+		t.Fatalf("first subscribe: expected 3 replayed, got %d", n1)
+	}
+	unsub1()
+
+	// Second subscribe with the SAME consumer name + db: replay must have persisted
+	// the offset, so there is nothing left to re-replay.
+	var second []string
+	unsub2, err := r.SubscribeExclusive("t", "c1", func(p []byte) {
+		mu.Lock()
+		second = append(second, string(p))
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("second SubscribeExclusive() error = %v", err)
+	}
+	defer unsub2()
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	n2 := len(second)
+	got2 := append([]string(nil), second...)
+	mu.Unlock()
+	if n2 != 0 {
+		t.Fatalf("second subscribe: expected 0 re-replayed (offset persisted by replay), got %d: %v", n2, got2)
+	}
+}
