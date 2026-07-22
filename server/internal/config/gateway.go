@@ -411,6 +411,11 @@ type CleanupConfig struct {
 	// (e.g., "15m"). Set to "0" to disable.
 	PoolTaskCancelInterval string `yaml:"pool_task_cancel_interval"`
 
+	// QueueReconcileInterval is how often to retire orphaned
+	// orchestrated_task_queue rows whose task is terminal/missing (e.g., "5m").
+	// Set to "0" to disable.
+	QueueReconcileInterval string `yaml:"queue_reconcile_interval"`
+
 	// AuditRetentionDays is how many days of comprehensive_audit_log rows to
 	// keep; older rows are deleted by the scheduled audit-retention sweep.
 	// Defaults to 90.
@@ -474,6 +479,11 @@ func (c *CleanupConfig) GetPoolTaskTTL() time.Duration {
 // GetPoolTaskCancelInterval parses the pool task cancel interval duration
 func (c *CleanupConfig) GetPoolTaskCancelInterval() time.Duration {
 	return parseDurationOrDefault(c.PoolTaskCancelInterval, 15*time.Minute)
+}
+
+// GetQueueReconcileInterval parses the orphaned-queue reconcile interval duration
+func (c *CleanupConfig) GetQueueReconcileInterval() time.Duration {
+	return parseDurationOrDefault(c.QueueReconcileInterval, 5*time.Minute)
 }
 
 // GetAuditRetentionDays returns the audit-log retention window in days,

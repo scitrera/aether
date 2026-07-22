@@ -582,6 +582,7 @@ func main() {
 		StartupTaskCancelInterval:     cfg.Cleanup.GetStartupTaskCancelInterval(),
 		PoolTaskTTL:                   cfg.Cleanup.GetPoolTaskTTL(),
 		PoolTaskCancelInterval:        cfg.Cleanup.GetPoolTaskCancelInterval(),
+		QueueReconcileInterval:        cfg.Cleanup.GetQueueReconcileInterval(),
 		AuditRetentionDays:            cfg.Cleanup.GetAuditRetentionDays(),
 		AuditCleanupInterval:          cfg.Cleanup.GetAuditCleanupInterval(),
 		// Full gateway is Redis-backed and multi-node-capable; keep lease-based

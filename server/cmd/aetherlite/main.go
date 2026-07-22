@@ -636,6 +636,7 @@ func main() {
 		StartupTaskCancelInterval:     cfg.Cleanup.GetStartupTaskCancelInterval(),
 		PoolTaskTTL:                   cfg.Cleanup.GetPoolTaskTTL(),
 		PoolTaskCancelInterval:        cfg.Cleanup.GetPoolTaskCancelInterval(),
+		QueueReconcileInterval:        cfg.Cleanup.GetQueueReconcileInterval(),
 		AuditRetentionDays:            cfg.Cleanup.GetAuditRetentionDays(),
 		AuditCleanupInterval:          cfg.Cleanup.GetAuditCleanupInterval(),
 		// Single-node standalone runs the sweeps directly (no leader-election
