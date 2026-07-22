@@ -33,6 +33,9 @@ type Config struct {
 	// Reconciliation settings
 	ReconciliationInterval time.Duration // How often to run orphaned task reconciliation (0 = disabled)
 
+	// Orphaned queue-entry reconciliation settings
+	QueueReconcileInterval time.Duration // How often to retire orphaned orchestrated_task_queue rows whose task is terminal/missing (0 = disabled)
+
 	// Stale interactive task settings
 	InteractiveTaskTTL            time.Duration // How old a non-terminal INTERACTIVE (chat turn) task may get before being auto-cancelled
 	InteractiveTaskCancelInterval time.Duration // How often to run the stale interactive task sweep (0 = disabled)
@@ -70,6 +73,7 @@ func DefaultConfig() *Config {
 		FailedTaskRetention:         14 * 24 * time.Hour,
 		CancelledTaskRetention:      7 * 24 * time.Hour,
 		ReconciliationInterval:        1 * time.Minute,
+		QueueReconcileInterval:        5 * time.Minute,
 		InteractiveTaskTTL:            1 * time.Hour,
 		InteractiveTaskCancelInterval: 15 * time.Minute,
 		StartupTaskTTL:                30 * time.Minute,
@@ -166,6 +170,10 @@ func (s *Service) RunAllJobs(ctx context.Context) []JobResult {
 	result = s.ReconcileOrphanedTasks(ctx)
 	results = append(results, result)
 
+	// Run orphaned orchestrated_task_queue reconciliation
+	result = s.ReconcileOrphanedQueueEntries(ctx)
+	results = append(results, result)
+
 	// Run stale interactive task cancellation
 	result = s.CancelStaleInteractiveTasks(ctx)
 	results = append(results, result)
@@ -239,6 +247,40 @@ func (s *Service) ReconcileOrphanedTasks(ctx context.Context) JobResult {
 		result.Details = fmt.Sprintf("reconciled %d orphaned tasks", count)
 	} else {
 		result.Details = "no orphaned tasks found"
+	}
+
+	return result
+}
+
+// ReconcileOrphanedQueueEntries retires orchestrated_task_queue rows that were
+// orphaned when their task went terminal (or was purged) without the
+// best-effort, dispatcher-gated retire firing. Without this sweep such rows sit
+// pending forever and the polling dispatcher polls the ghosts every tick. The
+// store method is idempotent and a no-op in clustered/JetStream mode (no SQL
+// queue rows), so this job is safe on every backend.
+func (s *Service) ReconcileOrphanedQueueEntries(ctx context.Context) JobResult {
+	start := time.Now()
+	result := JobResult{JobName: "orphaned_queue_entry_reconciliation"}
+
+	if s.taskStore == nil {
+		result.Error = fmt.Errorf("task store not configured")
+		return result
+	}
+
+	count, err := s.taskStore.ReconcileOrphanedQueueEntries(ctx)
+	result.Duration = time.Since(start)
+
+	if err != nil {
+		result.Error = err
+		return result
+	}
+
+	result.Success = true
+	result.ItemCount = count
+	if count > 0 {
+		result.Details = fmt.Sprintf("retired %d orphaned queue entries", count)
+	} else {
+		result.Details = "no orphaned queue entries found"
 	}
 
 	return result
@@ -586,6 +628,20 @@ func (r *BackgroundRunner) startCleanupJobs(parentCtx context.Context) {
 				logging.Logger.Error().Err(result.Error).Msg("stale pool task cancel error")
 			} else if result.ItemCount > 0 {
 				logging.Logger.Info().Str("details", result.Details).Msg("stale pool task cancel completed")
+			}
+		})
+	}
+
+	// Start orphaned queue-entry reconciliation if enabled. This runs under the
+	// same single-node-direct / leader-gated path as the other sweeps and is a
+	// no-op on clustered/JetStream backends (no SQL orchestrated_task_queue rows).
+	if s.config.QueueReconcileInterval > 0 {
+		go r.runPeriodic(cleanupCtx, "orphaned_queue_entry_reconciliation", s.config.QueueReconcileInterval, func(ctx context.Context) {
+			result := s.ReconcileOrphanedQueueEntries(ctx)
+			if result.Error != nil {
+				logging.Logger.Error().Err(result.Error).Msg("orphaned queue entry reconciliation error")
+			} else if result.ItemCount > 0 {
+				logging.Logger.Info().Str("details", result.Details).Msg("orphaned queue entry reconciliation completed")
 			}
 		})
 	}

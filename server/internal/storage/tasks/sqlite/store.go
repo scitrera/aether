@@ -1425,6 +1425,38 @@ func (s *Store) FailQueueEntryByTaskID(ctx context.Context, taskID, errorMsg str
 	return err
 }
 
+// ReconcileOrphanedQueueEntries retires every pending/claimed queue row whose
+// task is no longer live (terminal or purged) in one statement. Liveness is a
+// correlated NOT EXISTS against the tasks table restricted to the canonical
+// non-terminal status set, so a purged task (no row) and a terminal task (row
+// present but terminal status) are both treated as orphaned. See the
+// tasks.Store interface doc for the full contract.
+func (s *Store) ReconcileOrphanedQueueEntries(ctx context.Context) (int64, error) {
+	statuses := tasks.NonTerminalStatuses()
+	placeholders := make([]string, len(statuses))
+	args := make([]interface{}, 0, len(statuses)+2)
+	args = append(args, tasks.ReconcileErrorMessage, now())
+	for i, st := range statuses {
+		placeholders[i] = "?"
+		args = append(args, string(st))
+	}
+	query := fmt.Sprintf(`
+		UPDATE orchestrated_task_queue
+		SET status = 'failed', error_message = ?, completed_at = ?
+		WHERE status IN ('pending', 'claimed')
+		  AND NOT EXISTS (
+			SELECT 1 FROM tasks t
+			WHERE t.task_id = orchestrated_task_queue.task_id
+			  AND t.status IN (%s)
+		  )
+	`, strings.Join(placeholders, ", "))
+	res, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // =============================================================================
 // Disconnect tracking
 // =============================================================================

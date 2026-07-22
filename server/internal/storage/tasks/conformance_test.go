@@ -106,6 +106,11 @@ func TestStoreConformance(t *testing.T) {
 				defer cleanup()
 				runQueueByTaskID(t, store, db)
 			})
+			t.Run("QueueReconcileOrphaned", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runQueueReconcileOrphaned(t, store)
+			})
 			t.Run("QueueEntryDetails", func(t *testing.T) {
 				store, db, cleanup := b.factory(t)
 				defer cleanup()
@@ -678,6 +683,92 @@ func runQueueByTaskID(t *testing.T, store tasks.Store, db *sql.DB) {
 		if e.QueueID == queueID1 || e.QueueID == queueID2 {
 			t.Fatalf("PollPendingQueueEntries: terminated entry %s still returned", e.QueueID)
 		}
+	}
+}
+
+// runQueueReconcileOrphaned: ReconcileOrphanedQueueEntries retires pending/
+// claimed queue rows whose task is terminal (cancelled) or purged (missing),
+// while leaving rows whose task is still non-terminal (pending/running) alone.
+// This is the sweep that clears the orphaned pending rows the polling
+// dispatcher would otherwise poll forever.
+func runQueueReconcileOrphaned(t *testing.T, store tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	// A: task cancelled (terminal) -> its pending queue row must be retired.
+	taskCancelled := newTestTask(t, "reconcile-cancelled")
+	if err := store.CreateTask(ctx, taskCancelled); err != nil {
+		t.Fatalf("CreateTask(cancelled): %v", err)
+	}
+	if err := store.CancelTask(ctx, taskCancelled.TaskID); err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+	qCancelled := uuid.New().String()
+	insertQueueEntry(t, store, qCancelled, taskCancelled.TaskID, "impl-a", "_test", "local")
+
+	// B: task purged/missing (no tasks row) -> its pending queue row must be retired.
+	qPurged := uuid.New().String()
+	insertQueueEntry(t, store, qPurged, "purged-"+uuid.New().String(), "impl-b", "_test", "local")
+
+	// C: task still pending (non-terminal) -> its queue row must be preserved.
+	taskPending := newTestTask(t, "reconcile-pending")
+	if err := store.CreateTask(ctx, taskPending); err != nil {
+		t.Fatalf("CreateTask(pending): %v", err)
+	}
+	qPending := uuid.New().String()
+	insertQueueEntry(t, store, qPending, taskPending.TaskID, "impl-c", "_test", "local")
+
+	// D: task running (non-terminal) -> its queue row must be preserved.
+	taskRunning := newTestTask(t, "reconcile-running")
+	if err := store.CreateTask(ctx, taskRunning); err != nil {
+		t.Fatalf("CreateTask(running): %v", err)
+	}
+	if err := store.AssignTask(ctx, taskRunning.TaskID, "worker-1"); err != nil {
+		t.Fatalf("AssignTask: %v", err)
+	}
+	if err := store.StartTask(ctx, taskRunning.TaskID); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+	qRunning := uuid.New().String()
+	insertQueueEntry(t, store, qRunning, taskRunning.TaskID, "impl-d", "_test", "local")
+
+	retired, err := store.ReconcileOrphanedQueueEntries(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileOrphanedQueueEntries: %v", err)
+	}
+	if retired != 2 {
+		t.Fatalf("ReconcileOrphanedQueueEntries retired %d rows, want 2 (cancelled + purged)", retired)
+	}
+
+	// The orphaned rows must no longer poll; the live rows must still poll.
+	entries, err := store.PollPendingQueueEntries(ctx, 100)
+	if err != nil {
+		t.Fatalf("PollPendingQueueEntries: %v", err)
+	}
+	polled := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		polled[e.QueueID] = true
+	}
+	if polled[qCancelled] {
+		t.Errorf("orphaned (cancelled-task) queue row %s still polls after reconcile", qCancelled)
+	}
+	if polled[qPurged] {
+		t.Errorf("orphaned (purged-task) queue row %s still polls after reconcile", qPurged)
+	}
+	if !polled[qPending] {
+		t.Errorf("live (pending-task) queue row %s was wrongly retired by reconcile", qPending)
+	}
+	if !polled[qRunning] {
+		t.Errorf("live (running-task) queue row %s was wrongly retired by reconcile", qRunning)
+	}
+
+	// Idempotent: a second sweep retires nothing (the orphans are already terminal).
+	retired2, err := store.ReconcileOrphanedQueueEntries(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileOrphanedQueueEntries(2): %v", err)
+	}
+	if retired2 != 0 {
+		t.Errorf("second ReconcileOrphanedQueueEntries retired %d rows, want 0 (idempotent)", retired2)
 	}
 }
 

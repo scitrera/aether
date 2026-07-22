@@ -172,9 +172,10 @@ const (
 
 // Phase 1: task lifecycle helpers — re-exported from legacy package.
 var (
-	IsTerminal         = legacy.IsTerminal
-	IsWaiting          = legacy.IsWaiting
-	ValidateTransition = legacy.ValidateTransition
+	IsTerminal          = legacy.IsTerminal
+	IsWaiting           = legacy.IsWaiting
+	ValidateTransition  = legacy.ValidateTransition
+	NonTerminalStatuses = legacy.NonTerminalStatuses
 )
 
 // Phase 4: cursor pagination helpers re-exported from the legacy package so

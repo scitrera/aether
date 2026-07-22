@@ -831,6 +831,34 @@ func DefaultGraceWindowMs(class int32) int64 {
 	}
 }
 
+// retireQueueRowFailedDirect retires (status='failed') the SQL
+// orchestrated_task_queue row(s) for a task directly via the store, independent
+// of whether tas.dispatcher is wired. This is the reliable retire path that
+// prevents orphaned pending/claimed queue rows when the TaskAssignmentService
+// driving a terminal transition has no dispatcher (e.g. the cleanup service).
+// Idempotent and a no-op when no SQL row exists (clustered/JetStream mode uses a
+// NATS WorkQueue, not this table). Non-fatal: the reconcile sweep is the backstop.
+func (tas *TaskAssignmentService) retireQueueRowFailedDirect(ctx context.Context, taskID, reason string) {
+	if tas.taskStore == nil {
+		return
+	}
+	if err := tas.taskStore.FailQueueEntryByTaskID(ctx, taskID, reason); err != nil {
+		logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row directly (non-fatal)")
+	}
+}
+
+// retireQueueRowCompletedDirect is retireQueueRowFailedDirect's success twin:
+// it retires the queue row(s) as 'completed'. Same dispatcher-independent,
+// idempotent, no-op-in-JetStream semantics.
+func (tas *TaskAssignmentService) retireQueueRowCompletedDirect(ctx context.Context, taskID string) {
+	if tas.taskStore == nil {
+		return
+	}
+	if err := tas.taskStore.CompleteQueueEntryByTaskID(ctx, taskID); err != nil {
+		logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row directly (non-fatal)")
+	}
+}
+
 // CompleteTask marks a task as completed and revokes associated tokens
 func (tas *TaskAssignmentService) CompleteTask(ctx context.Context, taskID string) error {
 	// Phase 4 Stage B: snapshot pre-transition state so publishStatusChange
@@ -851,6 +879,13 @@ func (tas *TaskAssignmentService) CompleteTask(ctx context.Context, taskID strin
 	if err := tas.taskStore.CompleteTask(ctx, taskID); err != nil {
 		return err
 	}
+	// Retire the SQL orchestrated_task_queue row directly via the store so it no
+	// longer depends on tas.dispatcher being wired — the cleanup service's
+	// TaskAssignmentService instance has no dispatcher, which is exactly how
+	// terminal tasks left pending queue rows to be polled forever. The dispatcher
+	// block below is now redundant (it calls the same idempotent store method)
+	// but is retained for backward compatibility.
+	tas.retireQueueRowCompletedDirect(ctx, taskID)
 	if tas.dispatcher != nil {
 		if err := tas.dispatcher.CompleteTaskByTaskID(ctx, taskID); err != nil {
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task complete (non-fatal)")
@@ -878,6 +913,10 @@ func (tas *TaskAssignmentService) FailTask(ctx context.Context, taskID, errorMsg
 	if err := tas.taskStore.FailTask(ctx, taskID, errorMsg); err != nil {
 		return err
 	}
+	// Retire the SQL orchestrated_task_queue row directly (dispatcher-independent).
+	// See CompleteTask for the full rationale. The dispatcher block below is
+	// redundant but retained for backward compatibility.
+	tas.retireQueueRowFailedDirect(ctx, taskID, errorMsg)
 	if tas.dispatcher != nil {
 		if err := tas.dispatcher.FailTaskByTaskID(ctx, taskID, errorMsg); err != nil {
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task fail (non-fatal)")
@@ -903,6 +942,13 @@ func (tas *TaskAssignmentService) CancelTask(ctx context.Context, taskID string)
 	if err := tas.taskStore.CancelTask(ctx, taskID); err != nil {
 		return err
 	}
+	// Retire the SQL orchestrated_task_queue row directly (dispatcher-independent).
+	// This is the root-cause fix for orphaned pending queue rows: the cleanup
+	// service cancels tasks through a TaskAssignmentService whose dispatcher is
+	// nil, so the dispatcher-gated retire below never ran and the row was polled
+	// forever. See CompleteTask for the full rationale. The dispatcher block is
+	// redundant but retained for backward compatibility.
+	tas.retireQueueRowFailedDirect(ctx, taskID, "task cancelled")
 	if tas.dispatcher != nil {
 		if err := tas.dispatcher.FailTaskByTaskID(ctx, taskID, "task cancelled"); err != nil {
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task cancel (non-fatal)")
@@ -1125,6 +1171,10 @@ func (tas *TaskAssignmentService) RejectTask(ctx context.Context, taskID, reason
 	if err := tas.taskStore.RejectTask(ctx, taskID, reason); err != nil {
 		return err
 	}
+	// Retire the SQL orchestrated_task_queue row directly (dispatcher-independent).
+	// See CompleteTask for the full rationale. The dispatcher block below is
+	// redundant but retained for backward compatibility.
+	tas.retireQueueRowFailedDirect(ctx, taskID, reason)
 	if tas.dispatcher != nil {
 		if err := tas.dispatcher.FailTaskByTaskID(ctx, taskID, reason); err != nil {
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task reject (non-fatal)")

@@ -459,6 +459,27 @@ var terminalStatuses = map[TaskStatus]bool{
 	TaskStatusRejected:  true,
 }
 
+// allStatuses enumerates every defined TaskStatus in declaration order. It is
+// the single master list from which the non-terminal set is derived, so adding
+// a new status constant only requires appending it here (and to terminalStatuses
+// if it is terminal) — the reconcile sweeps that key off NonTerminalStatuses
+// then stay correct automatically.
+var allStatuses = []TaskStatus{
+	TaskStatusPending,
+	TaskStatusAssigned,
+	TaskStatusStarting,
+	TaskStatusRunning,
+	TaskStatusCompleted,
+	TaskStatusFailed,
+	TaskStatusCancelled,
+	TaskStatusDLQ,
+	TaskStatusWaitingInput,
+	TaskStatusWaitingAuthority,
+	TaskStatusWaitingDependency,
+	TaskStatusHibernated,
+	TaskStatusRejected,
+}
+
 // waitingStatuses is the set of paused states.
 var waitingStatuses = map[TaskStatus]bool{
 	TaskStatusWaitingInput:      true,
@@ -475,6 +496,22 @@ func IsTerminal(status TaskStatus) bool {
 // IsWaiting reports whether status is a paused/waiting state.
 func IsWaiting(status TaskStatus) bool {
 	return waitingStatuses[status]
+}
+
+// NonTerminalStatuses returns every status for which IsTerminal is false, in
+// declaration order. This is the canonical "task is still live" set — a task in
+// any of these states may yet transition, so anything keyed off it (e.g. the
+// orphaned orchestrated_task_queue reconcile sweep, which retires queue rows
+// whose task is terminal or missing) stays consistent with the transition
+// model. Derived from terminalStatuses so it cannot drift.
+func NonTerminalStatuses() []TaskStatus {
+	out := make([]TaskStatus, 0, len(allStatuses))
+	for _, s := range allStatuses {
+		if !terminalStatuses[s] {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // validTransitions defines the allowed from→to status transitions.

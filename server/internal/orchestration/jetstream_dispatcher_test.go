@@ -188,6 +188,9 @@ func (f *fakeTaskStore) CompleteQueueEntryByTaskID(ctx context.Context, taskID s
 func (f *fakeTaskStore) FailQueueEntryByTaskID(ctx context.Context, taskID, errorMsg string) error {
 	return nil
 }
+func (f *fakeTaskStore) ReconcileOrphanedQueueEntries(ctx context.Context) (int64, error) {
+	return 0, nil
+}
 
 // --- Unused methods (panic to surface unexpected calls) ---
 

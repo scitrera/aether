@@ -32,6 +32,11 @@ import (
 	"time"
 )
 
+// ReconcileErrorMessage is the error_message stamped on orchestrated_task_queue
+// rows retired by ReconcileOrphanedQueueEntries. Exported so the reconcile sweep
+// and its tests share a single canonical string.
+const ReconcileErrorMessage = "reconciled: task terminal or missing"
+
 // StoreTx is a backend-agnostic transaction handle for the tasks domain.
 // Each implementation (postgres, sqlite) returns its own concrete type from
 // BeginTx; the concrete type wraps a *sql.Tx internally and is recovered via
@@ -385,6 +390,19 @@ type Store interface {
 	// the given taskID as failed. Only transitions pending/claimed rows.
 	// Idempotent.
 	FailQueueEntryByTaskID(ctx context.Context, taskID, errorMsg string) error
+
+	// ReconcileOrphanedQueueEntries retires (status='failed', error_message=
+	// ReconcileErrorMessage, completed_at stamped) every orchestrated_task_queue
+	// row still in pending/claimed status whose task_id is NOT present in the
+	// tasks table with a NON-terminal status (i.e. the task is terminal —
+	// cancelled/completed/failed/rejected/dlq — or has been purged). This is the
+	// dispatcher-independent sweep that clears queue rows orphaned when a task
+	// went terminal (or was purged) without its best-effort, dispatcher-gated
+	// retire firing, so the polling dispatcher stops polling ghosts forever.
+	// Returns the number of rows retired. No-op-safe in clustered/JetStream mode
+	// (the SQL orchestrated_task_queue holds no rows there). The canonical
+	// non-terminal status set is derived from NonTerminalStatuses().
+	ReconcileOrphanedQueueEntries(ctx context.Context) (int64, error)
 
 	// =========================================================================
 	// Disconnect tracking

@@ -2,8 +2,18 @@ package cleanup
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	taskstore "github.com/scitrera/aether/internal/storage/tasks"
+	taskssqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
+
+	// Register the bare "sqlite" driver so the reconcile-job wiring test can run
+	// against the native sqlite store (always available, never skipped).
+	_ "modernc.org/sqlite"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -165,11 +175,11 @@ func TestRunAllJobs_NilDependencies(t *testing.T) {
 
 	results := service.RunAllJobs(ctx)
 
-	// Should return 7 results (stale locks, stale claims, orphaned tasks,
-	// interactive-task TTL cancel, startup-task TTL cancel, pool-task TTL cancel,
-	// task purge)
-	if len(results) != 7 {
-		t.Fatalf("RunAllJobs() returned %d results, want 7", len(results))
+	// Should return 8 results (stale locks, stale claims, orphaned tasks,
+	// orphaned queue entries, interactive-task TTL cancel, startup-task TTL
+	// cancel, pool-task TTL cancel, task purge)
+	if len(results) != 8 {
+		t.Fatalf("RunAllJobs() returned %d results, want 8", len(results))
 	}
 
 	// All should fail or skip due to nil dependencies
@@ -280,5 +290,59 @@ func TestConfig_ZeroValues(t *testing.T) {
 	}
 	if service.config.ReconciliationInterval != 0 {
 		t.Error("ReconciliationInterval should be 0")
+	}
+}
+
+// TestReconcileOrphanedQueueEntries_Job verifies the cleanup-service wiring:
+// the ReconcileOrphanedQueueEntries JobResult retires orphaned queue rows via
+// the store and reports the count. Runs against the native sqlite store.
+func TestReconcileOrphanedQueueEntries_Job(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cleanup_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+	ctx := context.Background()
+
+	// One cancelled (terminal) task with a pending queue row -> orphaned.
+	termID := uuid.New().String()
+	if err := store.CreateTask(ctx, &taskstore.Task{TaskID: termID, TaskType: "agent_startup", Workspace: "ws"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := store.CancelTask(ctx, termID); err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+	if err := store.InsertQueueEntry(ctx, uuid.New().String(), termID, "impl", "ws", "local", nil, int(taskstore.PriorityNormal)); err != nil {
+		t.Fatalf("InsertQueueEntry: %v", err)
+	}
+
+	service := NewService(store, nil, nil, nil)
+	result := service.ReconcileOrphanedQueueEntries(ctx)
+
+	if result.JobName != "orphaned_queue_entry_reconciliation" {
+		t.Errorf("JobName = %q, want %q", result.JobName, "orphaned_queue_entry_reconciliation")
+	}
+	if !result.Success {
+		t.Errorf("Success = false, err = %v", result.Error)
+	}
+	if result.ItemCount != 1 {
+		t.Errorf("ItemCount = %d, want 1", result.ItemCount)
+	}
+}
+
+// TestReconcileOrphanedQueueEntries_NilTaskStore guards the nil-store branch.
+func TestReconcileOrphanedQueueEntries_NilTaskStore(t *testing.T) {
+	service := NewService(nil, nil, nil, nil)
+	result := service.ReconcileOrphanedQueueEntries(context.Background())
+	if result.Success {
+		t.Error("Success should be false when task store is nil")
+	}
+	if result.Error == nil {
+		t.Error("Error should not be nil when task store is nil")
 	}
 }

@@ -44,6 +44,9 @@ func (f *fakeTaskStore) CompleteQueueEntryByTaskID(_ context.Context, _ string) 
 func (f *fakeTaskStore) FailQueueEntryByTaskID(_ context.Context, _, _ string) error {
 	return nil
 }
+func (f *fakeTaskStore) ReconcileOrphanedQueueEntries(_ context.Context) (int64, error) {
+	return 0, nil
+}
 func (f *fakeTaskStore) GetQueueEntryDetails(_ context.Context, queueID string) (*taskstore.QueueEntryDetails, error) {
 	return &taskstore.QueueEntryDetails{
 		TaskID:               queueID,

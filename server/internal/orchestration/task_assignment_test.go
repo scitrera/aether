@@ -15,6 +15,7 @@ import (
 	"github.com/scitrera/aether/internal/registry"
 	"github.com/scitrera/aether/internal/state"
 	regpg "github.com/scitrera/aether/internal/storage/registry/postgres"
+	taskstore "github.com/scitrera/aether/internal/storage/tasks"
 	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
 	taskssqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
 	"github.com/scitrera/aether/internal/testutil"
@@ -1053,6 +1054,147 @@ func TestCancelStaleInteractiveTasks(t *testing.T) {
 	assertStatus("young-interactive", tasks.TaskStatusPending) // under TTL
 	assertStatus("old-background", tasks.TaskStatusPending)    // not interactive
 	assertStatus("old-terminal", tasks.TaskStatusCompleted)   // already terminal
+}
+
+// TestCancelTask_RetiresQueueRowDirectlyWithoutDispatcher is the root-cause
+// regression guard: CancelTask must retire the orchestrated_task_queue row
+// directly through the store even when tas.dispatcher is nil (the cleanup
+// service's TaskAssignmentService instance). Before the fix, the retire was
+// dispatcher-gated, so a nil dispatcher left the pending queue row orphaned and
+// the polling dispatcher polled it forever. Runs against the NATIVE SQLITE
+// backend so it is ALWAYS exercised (no external DB, never skipped).
+func TestCancelTask_RetiresQueueRowDirectlyWithoutDispatcher(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orch_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+
+	ctx := context.Background()
+	// No dispatcher wired — this mirrors the cleanup-service code path.
+	service := NewTaskAssignmentService(taskStore, nil, nil, nil, nil)
+
+	taskID := uuid.New().String()
+	if err := taskStore.CreateTask(ctx, &tasks.Task{
+		TaskID: taskID, TaskType: "agent_startup", Workspace: "ws-test",
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	queueID := uuid.New().String()
+	if err := taskStore.InsertQueueEntry(ctx, queueID, taskID, "impl-x", "ws-test", "local", nil, int(tasks.PriorityNormal)); err != nil {
+		t.Fatalf("InsertQueueEntry: %v", err)
+	}
+
+	// Sanity: the row polls before the cancel.
+	before, err := taskStore.PollPendingQueueEntries(ctx, 100)
+	if err != nil {
+		t.Fatalf("PollPendingQueueEntries(before): %v", err)
+	}
+	if !containsQueueID(before, queueID) {
+		t.Fatalf("queue row %s did not poll before cancel", queueID)
+	}
+
+	if err := service.CancelTask(ctx, taskID); err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+
+	// The queue row must be retired despite the nil dispatcher.
+	after, err := taskStore.PollPendingQueueEntries(ctx, 100)
+	if err != nil {
+		t.Fatalf("PollPendingQueueEntries(after): %v", err)
+	}
+	if containsQueueID(after, queueID) {
+		t.Errorf("queue row %s still polls after CancelTask with nil dispatcher (orphaned)", queueID)
+	}
+
+	got, err := taskStore.GetTask(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != tasks.TaskStatusCancelled {
+		t.Errorf("task status = %q, want %q", got.Status, tasks.TaskStatusCancelled)
+	}
+}
+
+// TestReconcileOrphanedQueueEntries_SkipsLiveRetiresTerminal verifies the store
+// sweep at the orchestration seam: a pending queue row whose task is still
+// non-terminal (running) is preserved, while one whose task is terminal
+// (cancelled) is retired. Runs against the NATIVE SQLITE backend.
+func TestReconcileOrphanedQueueEntries_SkipsLiveRetiresTerminal(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orch_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+	ctx := context.Background()
+
+	// Live task (running) with a pending queue row — must survive.
+	liveID := uuid.New().String()
+	if err := taskStore.CreateTask(ctx, &tasks.Task{TaskID: liveID, TaskType: "agent_startup", Workspace: "ws-test"}); err != nil {
+		t.Fatalf("CreateTask(live): %v", err)
+	}
+	if err := taskStore.AssignTask(ctx, liveID, "worker-1"); err != nil {
+		t.Fatalf("AssignTask: %v", err)
+	}
+	if err := taskStore.StartTask(ctx, liveID); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+	liveQueue := uuid.New().String()
+	if err := taskStore.InsertQueueEntry(ctx, liveQueue, liveID, "impl-live", "ws-test", "local", nil, int(tasks.PriorityNormal)); err != nil {
+		t.Fatalf("InsertQueueEntry(live): %v", err)
+	}
+
+	// Terminal task (cancelled) with a pending queue row — must be retired.
+	termID := uuid.New().String()
+	if err := taskStore.CreateTask(ctx, &tasks.Task{TaskID: termID, TaskType: "agent_startup", Workspace: "ws-test"}); err != nil {
+		t.Fatalf("CreateTask(term): %v", err)
+	}
+	if err := taskStore.CancelTask(ctx, termID); err != nil {
+		t.Fatalf("CancelTask(term): %v", err)
+	}
+	termQueue := uuid.New().String()
+	if err := taskStore.InsertQueueEntry(ctx, termQueue, termID, "impl-term", "ws-test", "local", nil, int(tasks.PriorityNormal)); err != nil {
+		t.Fatalf("InsertQueueEntry(term): %v", err)
+	}
+
+	retired, err := taskStore.ReconcileOrphanedQueueEntries(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileOrphanedQueueEntries: %v", err)
+	}
+	if retired != 1 {
+		t.Fatalf("retired %d rows, want 1 (only the cancelled-task row)", retired)
+	}
+
+	after, err := taskStore.PollPendingQueueEntries(ctx, 100)
+	if err != nil {
+		t.Fatalf("PollPendingQueueEntries: %v", err)
+	}
+	if !containsQueueID(after, liveQueue) {
+		t.Errorf("live (running-task) queue row %s was wrongly retired", liveQueue)
+	}
+	if containsQueueID(after, termQueue) {
+		t.Errorf("orphaned (cancelled-task) queue row %s still polls after reconcile", termQueue)
+	}
+}
+
+// containsQueueID reports whether the polled entries include the given queue_id.
+func containsQueueID(entries []*taskstore.QueueEntryNotification, queueID string) bool {
+	for _, e := range entries {
+		if e.QueueID == queueID {
+			return true
+		}
+	}
+	return false
 }
 
 // TestCancelStaleStartupTasks verifies the startup-task TTL sweep: only
