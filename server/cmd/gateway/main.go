@@ -425,6 +425,9 @@ func main() {
 	auditLogger := audit.NewAuditLogger(db, cfg.Gateway.GatewayID, auditConfig)
 	defer auditLogger.Close()
 
+	// Coalesce high-volume repetitive audit events (chat-streaming chatter).
+	gatewayOpts = append(gatewayOpts, gateway.WithAuditCoalesceWindow(cfg.Audit.GetCoalesceWindow()))
+
 	// Gateway tenant id, minted into X-Auth-Tenant-ID on proxied requests.
 	// The gateway is per-tenant; AETHER_TENANT_ID names it (matching the
 	// proxy-sidecar env convention). When unset, the proxy path falls back to
@@ -579,6 +582,8 @@ func main() {
 		StartupTaskCancelInterval:     cfg.Cleanup.GetStartupTaskCancelInterval(),
 		PoolTaskTTL:                   cfg.Cleanup.GetPoolTaskTTL(),
 		PoolTaskCancelInterval:        cfg.Cleanup.GetPoolTaskCancelInterval(),
+		AuditRetentionDays:            cfg.Cleanup.GetAuditRetentionDays(),
+		AuditCleanupInterval:          cfg.Cleanup.GetAuditCleanupInterval(),
 		// Full gateway is Redis-backed and multi-node-capable; keep lease-based
 		// leader election (SingleNode stays false) so exactly one node sweeps. A
 		// stuck Redis lease self-heals via LockTTL expiry.

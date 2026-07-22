@@ -346,11 +346,24 @@ type AuditConfig struct {
 	FlushPeriod   string   `yaml:"flush_period"`
 	RetentionDays int      `yaml:"retention_days"`
 	ChannelBuffer int      `yaml:"channel_buffer"`
+
+	// CoalesceWindow is the window over which a burst of identical successful
+	// message-route / proxy-route audit events from the same sender→target is
+	// recorded once (the first = the authorization record) and the rest are
+	// suppressed. Defaults to "60s". Set to "0" to disable coalescing (audit
+	// every event).
+	CoalesceWindow string `yaml:"audit_coalesce_window"`
 }
 
 // GetFlushPeriod parses the flush period duration
 func (a *AuditConfig) GetFlushPeriod() time.Duration {
 	return parseDurationOrDefault(a.FlushPeriod, 5*time.Second)
+}
+
+// GetCoalesceWindow parses the audit coalesce window duration, defaulting to
+// 60s. A value of "0" disables coalescing (every event is audited).
+func (a *AuditConfig) GetCoalesceWindow() time.Duration {
+	return parseDurationOrDefault(a.CoalesceWindow, 60*time.Second)
 }
 
 // CleanupConfig contains cleanup job settings
@@ -397,6 +410,15 @@ type CleanupConfig struct {
 	// PoolTaskCancelInterval is how often to run the stale pool task sweep
 	// (e.g., "15m"). Set to "0" to disable.
 	PoolTaskCancelInterval string `yaml:"pool_task_cancel_interval"`
+
+	// AuditRetentionDays is how many days of comprehensive_audit_log rows to
+	// keep; older rows are deleted by the scheduled audit-retention sweep.
+	// Defaults to 90.
+	AuditRetentionDays int `yaml:"audit_retention_days"`
+
+	// AuditCleanupInterval is how often to run the scheduled audit-log
+	// retention sweep (e.g., "24h"). Set to "0" to disable.
+	AuditCleanupInterval string `yaml:"audit_cleanup_interval"`
 }
 
 // GetTaskPurgeInterval parses the task purge interval duration
@@ -452,6 +474,21 @@ func (c *CleanupConfig) GetPoolTaskTTL() time.Duration {
 // GetPoolTaskCancelInterval parses the pool task cancel interval duration
 func (c *CleanupConfig) GetPoolTaskCancelInterval() time.Duration {
 	return parseDurationOrDefault(c.PoolTaskCancelInterval, 15*time.Minute)
+}
+
+// GetAuditRetentionDays returns the audit-log retention window in days,
+// defaulting to 90 when unset (<= 0).
+func (c *CleanupConfig) GetAuditRetentionDays() int {
+	if c.AuditRetentionDays <= 0 {
+		return 90
+	}
+	return c.AuditRetentionDays
+}
+
+// GetAuditCleanupInterval parses the audit-log cleanup interval duration,
+// defaulting to 24h. A value of "0" disables the scheduled sweep.
+func (c *CleanupConfig) GetAuditCleanupInterval() time.Duration {
+	return parseDurationOrDefault(c.AuditCleanupInterval, 24*time.Hour)
 }
 
 // KVConfig contains KV store settings
@@ -845,6 +882,9 @@ func (c *Config) ApplyEnvOverrides() {
 	}
 	if v := os.Getenv("AETHER_AUDIT_EVENT_TYPES"); v != "" {
 		c.Audit.EventTypes = strings.Split(v, ",")
+	}
+	if v := os.Getenv("AETHER_AUDIT_COALESCE_WINDOW"); v != "" {
+		c.Audit.CoalesceWindow = v
 	}
 }
 

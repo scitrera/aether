@@ -41,7 +41,12 @@ type GatewayServer struct {
 	acl aclstore.Store
 	// auditLogger is the audit domain Store (internal/storage/audit).
 	auditLogger auditstore.Store
-	gatewayID   string
+	// auditCoalescer suppresses within-window bursts of identical successful
+	// message-route / proxy-route audit events (the chat-streaming chatter
+	// trim). Nil when coalescing is disabled (audit_coalesce_window = 0), in
+	// which case auditLog is a zero-overhead passthrough.
+	auditCoalescer *auditCoalescer
+	gatewayID      string
 	// tenantID is the tenant this gateway serves (the gateway is per-tenant).
 	// Minted into X-Auth-Tenant-ID on every ProxyHttpRequest so passthrough
 	// terminators (e.g. MemoryLayer's in-process terminator) receive a
@@ -193,6 +198,16 @@ func WithCheckpointDefaultTTL(ttl time.Duration) GatewayOption {
 func WithGatewayTenantID(tenantID string) GatewayOption {
 	return func(s *GatewayServer) {
 		s.tenantID = tenantID
+	}
+}
+
+// WithAuditCoalesceWindow enables coalescing of high-volume repetitive audit
+// events (successful message-route / proxy-route) so a burst from the same
+// sender→target is recorded once per window. A window of 0 (or negative)
+// disables coalescing entirely — every event is audited as before.
+func WithAuditCoalesceWindow(window time.Duration) GatewayOption {
+	return func(s *GatewayServer) {
+		s.auditCoalescer = newAuditCoalescer(window)
 	}
 }
 
@@ -707,6 +722,11 @@ func (s *GatewayServer) SetCleanupService(cleanupConfig *cleanup.Config) {
 			cleanupSvc.SetDispatcher(s.orchestration.Dispatcher)
 		}
 	}
+
+	// Give the cleanup service the audit store so the scheduled audit-retention
+	// job can prune comprehensive_audit_log. The store is the same handle the
+	// gateway writes through; nil-tolerant on the cleanup side (job skips).
+	cleanupSvc.SetAuditStore(s.auditLogger)
 
 	// Run startup cleanup jobs (stale locks + stale claims + orphaned task reconciliation)
 	go func() {

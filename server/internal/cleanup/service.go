@@ -48,6 +48,10 @@ type Config struct {
 	PoolTaskTTL            time.Duration // How old an UNCLAIMED (pending) regular POOL task may get before being auto-cancelled (generous, so a briefly-absent worker's pending task is never reaped)
 	PoolTaskCancelInterval time.Duration // How often to run the stale pool task sweep (0 = disabled)
 
+	// Audit-log retention settings
+	AuditRetentionDays   int           // Delete comprehensive_audit_log rows older than this many days (default 90)
+	AuditCleanupInterval time.Duration // How often to run the scheduled audit-log retention sweep (0 = disabled)
+
 	// Stale claim settings
 	StaleClaimTimeout time.Duration // How long a task can stay 'claimed' before being recovered (0 = use default 5m)
 
@@ -80,6 +84,8 @@ func DefaultConfig() *Config {
 		StartupTaskCancelInterval:     15 * time.Minute,
 		PoolTaskTTL:                   1 * time.Hour,
 		PoolTaskCancelInterval:        15 * time.Minute,
+		AuditRetentionDays:            90,
+		AuditCleanupInterval:          24 * time.Hour,
 		StaleClaimTimeout:             5 * time.Minute,
 		LeaderElectionRetryInterval: 30 * time.Second,
 	}
@@ -109,6 +115,18 @@ type SessionRegistry interface {
 var _ SessionRegistry = (*state.SessionRegistry)(nil)
 var _ SessionRegistry = (*state.BadgerSessionRegistry)(nil)
 
+// AuditStore is the narrow surface the cleanup service needs to enforce audit-
+// log retention: a single delete-old-rows call. The audit domain Store
+// (internal/storage/audit) satisfies this across all three backends (sqlite,
+// postgres, jetstream). Declared as a local interface — mirroring the
+// SessionRegistry pattern above — so the cleanup package does not take a hard
+// dependency on the audit storage package.
+type AuditStore interface {
+	// CleanupOldLogs deletes audit rows older than retentionDays and returns
+	// the number of rows removed.
+	CleanupOldLogs(ctx context.Context, retentionDays int) (int64, error)
+}
+
 // Service provides cleanup operations for the gateway.
 // It can be used for both background goroutines and standalone cleanup commands.
 type Service struct {
@@ -117,6 +135,7 @@ type Service struct {
 	taskService     *orchestration.TaskAssignmentService
 	dispatcher      orchestration.TaskDispatcher
 	sessionRegistry SessionRegistry
+	auditStore      AuditStore
 	config          *Config
 }
 
@@ -141,6 +160,14 @@ func NewService(
 // SetDispatcher sets the orchestration dispatcher for stale claim recovery.
 func (s *Service) SetDispatcher(dispatcher orchestration.TaskDispatcher) {
 	s.dispatcher = dispatcher
+}
+
+// SetAuditStore sets the audit store used by the scheduled audit-retention job.
+// Passing nil leaves audit cleanup disabled (the job skips with success). A
+// setter (rather than a NewService param) keeps the many existing NewService
+// call sites unchanged.
+func (s *Service) SetAuditStore(auditStore AuditStore) {
+	s.auditStore = auditStore
 }
 
 // JobResult contains the result of a cleanup job
@@ -188,6 +215,10 @@ func (s *Service) RunAllJobs(ctx context.Context) []JobResult {
 
 	// Run task purge
 	result = s.PurgeTasks(ctx)
+	results = append(results, result)
+
+	// Run audit-log retention cleanup
+	result = s.CleanupOldAuditLogs(ctx)
 	results = append(results, result)
 
 	return results
@@ -458,6 +489,52 @@ func (s *Service) PurgeTasks(ctx context.Context) JobResult {
 	return result
 }
 
+// CleanupOldAuditLogs deletes comprehensive_audit_log rows older than the
+// configured retention window (default 90 days).
+//
+// Note on space reclamation: on SQLite (aetherlite) a DELETE frees the pages
+// for reuse — this caps growth / plateaus audit.db but does NOT shrink the file
+// on disk; reclaiming already-allocated space requires a manual VACUUM. We do
+// NOT auto-VACUUM here because VACUUM takes an exclusive lock and rewrites the
+// whole DB, which would stall the gateway. With a 90-day window nothing is
+// deleted until rows age past 90 days, so on a young database this is a no-op.
+func (s *Service) CleanupOldAuditLogs(ctx context.Context) JobResult {
+	start := time.Now()
+	result := JobResult{JobName: "audit_log_cleanup"}
+
+	// Nil-audit-store guard: audit cleanup is optional wiring. Skip cleanly
+	// rather than error so RunAllJobs / periodic runs stay quiet when no audit
+	// store is configured.
+	if s.auditStore == nil {
+		result.Success = true
+		result.Details = "skipped (no audit store)"
+		return result
+	}
+
+	retentionDays := s.config.AuditRetentionDays
+	if retentionDays <= 0 {
+		retentionDays = 90
+	}
+
+	count, err := s.auditStore.CleanupOldLogs(ctx, retentionDays)
+	result.Duration = time.Since(start)
+
+	if err != nil {
+		result.Error = err
+		return result
+	}
+
+	result.Success = true
+	result.ItemCount = count
+	if count > 0 {
+		result.Details = fmt.Sprintf("deleted %d audit log rows older than %d days", count, retentionDays)
+	} else {
+		result.Details = fmt.Sprintf("no audit log rows older than %d days", retentionDays)
+	}
+
+	return result
+}
+
 // BackgroundRunner manages periodic execution of cleanup jobs.
 // It can be stopped by canceling the provided context or calling Stop().
 // Uses leader election to ensure only one instance runs cleanup jobs across
@@ -628,6 +705,21 @@ func (r *BackgroundRunner) startCleanupJobs(parentCtx context.Context) {
 				logging.Logger.Error().Err(result.Error).Msg("stale pool task cancel error")
 			} else if result.ItemCount > 0 {
 				logging.Logger.Info().Str("details", result.Details).Msg("stale pool task cancel completed")
+			}
+		})
+	}
+
+	// Start scheduled audit-log retention if enabled and an audit store is
+	// wired. Runs on the same single-node-direct / leader-gated path as the
+	// other sweeps. Backend-agnostic: the store's CleanupOldLogs is implemented
+	// for sqlite, postgres, and jetstream.
+	if s.config.AuditCleanupInterval > 0 && s.auditStore != nil {
+		go r.runPeriodic(cleanupCtx, "audit_log_cleanup", s.config.AuditCleanupInterval, func(ctx context.Context) {
+			result := s.CleanupOldAuditLogs(ctx)
+			if result.Error != nil {
+				logging.Logger.Error().Err(result.Error).Msg("audit log cleanup error")
+			} else if result.ItemCount > 0 {
+				logging.Logger.Info().Str("details", result.Details).Msg("audit log cleanup completed")
 			}
 		})
 	}

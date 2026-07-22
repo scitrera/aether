@@ -175,17 +175,17 @@ func TestRunAllJobs_NilDependencies(t *testing.T) {
 
 	results := service.RunAllJobs(ctx)
 
-	// Should return 8 results (stale locks, stale claims, orphaned tasks,
+	// Should return 9 results (stale locks, stale claims, orphaned tasks,
 	// orphaned queue entries, interactive-task TTL cancel, startup-task TTL
-	// cancel, pool-task TTL cancel, task purge)
-	if len(results) != 8 {
-		t.Fatalf("RunAllJobs() returned %d results, want 8", len(results))
+	// cancel, pool-task TTL cancel, task purge, audit-log cleanup)
+	if len(results) != 9 {
+		t.Fatalf("RunAllJobs() returned %d results, want 9", len(results))
 	}
 
 	// All should fail or skip due to nil dependencies
 	for _, result := range results {
 		// These jobs gracefully skip when their dependency is nil
-		if result.JobName == "stale_claim_recovery" || result.JobName == "stale_lock_cleanup" {
+		if result.JobName == "stale_claim_recovery" || result.JobName == "stale_lock_cleanup" || result.JobName == "audit_log_cleanup" {
 			if !result.Success {
 				t.Errorf("Job %q should succeed (skip) when dependencies are nil", result.JobName)
 			}

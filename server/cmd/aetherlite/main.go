@@ -563,6 +563,9 @@ func main() {
 	}
 	defer auditLogger.Close()
 
+	// Coalesce high-volume repetitive audit events (chat-streaming chatter).
+	gatewayOpts = append(gatewayOpts, gateway.WithAuditCoalesceWindow(cfg.Audit.GetCoalesceWindow()))
+
 	// Cluster mode: wrap the gateway-consumed audit Store with the JetStream
 	// emitter so every LogEvent / LogEventSync also fans onto the "audit"
 	// stream. Inner sqlite store remains canonical (and is still passed to
@@ -633,6 +636,8 @@ func main() {
 		StartupTaskCancelInterval:     cfg.Cleanup.GetStartupTaskCancelInterval(),
 		PoolTaskTTL:                   cfg.Cleanup.GetPoolTaskTTL(),
 		PoolTaskCancelInterval:        cfg.Cleanup.GetPoolTaskCancelInterval(),
+		AuditRetentionDays:            cfg.Cleanup.GetAuditRetentionDays(),
+		AuditCleanupInterval:          cfg.Cleanup.GetAuditCleanupInterval(),
 		// Single-node standalone runs the sweeps directly (no leader-election
 		// gating). Cluster mode (cenv.Enabled, JetStream dispatcher) is genuinely
 		// multi-node, so it keeps lease-based election to sweep on exactly one node.
