@@ -93,6 +93,34 @@ func (s *GatewayServer) subscribeClientToTopicExclusive(client *ClientSession, t
 	return nil
 }
 
+// subscribeClientToTopicResumeOrTail subscribes a client to a shared/broadcast
+// topic with a per-window named consumer that resumes from its committed offset,
+// or — on a first-ever subscribe — starts at the tail instead of replaying the
+// whole topic. Use this (rather than the anonymous subscribeClientToTopic) for
+// broadcast lanes the client re-subscribes on every connect (gu/uw/uu): a
+// reconnect then replays only what was published while it was away instead of
+// re-dumping (and re-shedding under backpressure) the entire retained history.
+// The consumer name is the identity string, which is per-window, so each window
+// tracks its own offset without stealing another window's.
+func (s *GatewayServer) subscribeClientToTopicResumeOrTail(client *ClientSession, topic string) error {
+	if client.HasSubscription(topic) {
+		return nil // Already subscribed
+	}
+	client.identityMu.RLock()
+	consumerName := client.Identity.String()
+	client.identityMu.RUnlock()
+	cancel, err := s.router.SubscribeExclusiveResumeOrTail(topic, consumerName, s.createMessageHandler(client))
+	if err != nil {
+		return err
+	}
+	client.AddSubscription(topic, func() {
+		cancel()
+		topicSubscriptions.Dec()
+	})
+	topicSubscriptions.Inc()
+	return nil
+}
+
 // lookupTriggerTimestampMs retrieves the trigger_timestamp_ms from the task metadata for
 // the given taskID. Returns 0 if the task is not found, has no such key, or the value
 // cannot be parsed. Errors are non-fatal and only logged at debug level.
@@ -368,7 +396,7 @@ func (s *GatewayServer) setupClientSubscriptions(client *ClientSession) error {
 			if err != nil {
 				return fmt.Errorf("invalid user-broadcast topic: %w", err)
 			}
-			if err := s.subscribeClientToTopic(client, ubTopic); err != nil {
+			if err := s.subscribeClientToTopicResumeOrTail(client, ubTopic); err != nil {
 				logging.Logger.Warn().Err(err).Str("topic", ubTopic).Msg("failed to subscribe to user-broadcast topic")
 			}
 		}
@@ -440,7 +468,7 @@ func (s *GatewayServer) subscribeUserToWorkspaceTopics(client *ClientSession, wo
 	if err != nil {
 		return fmt.Errorf("invalid global user topic: %w", err)
 	}
-	if err := s.subscribeClientToTopic(client, guTopic); err != nil {
+	if err := s.subscribeClientToTopicResumeOrTail(client, guTopic); err != nil {
 		return fmt.Errorf("failed to subscribe to %s: %w", guTopic, err)
 	}
 
@@ -449,7 +477,7 @@ func (s *GatewayServer) subscribeUserToWorkspaceTopics(client *ClientSession, wo
 	if err != nil {
 		return fmt.Errorf("invalid user-workspace topic: %w", err)
 	}
-	if err := s.subscribeClientToTopic(client, uwTopic); err != nil {
+	if err := s.subscribeClientToTopicResumeOrTail(client, uwTopic); err != nil {
 		return fmt.Errorf("failed to subscribe to %s: %w", uwTopic, err)
 	}
 

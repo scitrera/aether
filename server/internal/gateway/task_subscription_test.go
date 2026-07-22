@@ -83,6 +83,10 @@ func (r *inProcessRouter) SubscribeExclusiveFromTimestamp(topic string, _ string
 	return r.subscribeInternal(topic, handler)
 }
 
+func (r *inProcessRouter) SubscribeExclusiveResumeOrTail(topic string, _ string, handler func([]byte)) (func(), error) {
+	return r.subscribeInternal(topic, handler)
+}
+
 // newSubscriptionTestServer builds a gateway with the in-process router and
 // a sqlite task store. Returns a cleanup closer.
 func newSubscriptionTestServer(t *testing.T) (*GatewayServer, *inProcessRouter, func()) {

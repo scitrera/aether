@@ -139,24 +139,54 @@ func (r *BadgerRouter) Publish(_ context.Context, topic string, payload []byte) 
 	return nil
 }
 
+// startPolicy selects where a subscription begins reading when it is created.
+type startPolicy int
+
+const (
+	// startResume resumes from the named consumer's committed offset; a cold
+	// consumer (no committed offset) — and every anonymous subscriber — starts
+	// at sequence 0 and replays the entire retained log.
+	startResume startPolicy = iota
+	// startTail starts at the current tail and never replays, ignoring any
+	// committed offset.
+	startTail
+	// startResumeOrTail resumes from the named consumer's committed offset when
+	// one exists, and otherwise starts at the current tail (NOT sequence 0). This
+	// is the right default for shared/broadcast lanes a client re-subscribes on
+	// every connect: first connect gets no history dump, reconnect replays only
+	// the gap since the last committed offset.
+	startResumeOrTail
+)
+
 // Subscribe creates a subscription with full replay from the consumer's last
 // persisted offset (or the beginning of the log if none exists).
 // The consumerName is derived from the handler address (not persisted), so
 // replay always starts from sequence 0 for anonymous subscribers.
 func (r *BadgerRouter) Subscribe(topic string, handler func([]byte)) (func(), error) {
-	return r.subscribe(topic, "", handler, false)
+	return r.subscribe(topic, "", handler, startResume)
 }
 
 // SubscribeExclusive creates a named exclusive subscription with replay.
 // Only one active subscriber per (topic, consumerName) is permitted.
 func (r *BadgerRouter) SubscribeExclusive(topic string, consumerName string, handler func([]byte)) (func(), error) {
-	return r.subscribe(topic, consumerName, handler, false)
+	return r.subscribe(topic, consumerName, handler, startResume)
 }
 
 // SubscribeExclusiveFromNow creates a named exclusive subscription that starts
 // from the current write position, skipping all previously stored messages.
 func (r *BadgerRouter) SubscribeExclusiveFromNow(topic string, consumerName string, handler func([]byte)) (func(), error) {
-	return r.subscribe(topic, consumerName, handler, true)
+	return r.subscribe(topic, consumerName, handler, startTail)
+}
+
+// SubscribeExclusiveResumeOrTail creates a named exclusive subscription that
+// resumes from the consumer's last committed offset, or — when no offset has
+// been committed yet (a brand-new consumer) — starts at the current tail instead
+// of replaying the whole topic from sequence 0. Use it for shared/broadcast
+// lanes a client re-subscribes on every (re)connect so a first connect gets no
+// history dump and a reconnect replays only the gap. Contrast SubscribeExclusive
+// (cold → full replay from 0) and SubscribeExclusiveFromNow (always tail).
+func (r *BadgerRouter) SubscribeExclusiveResumeOrTail(topic string, consumerName string, handler func([]byte)) (func(), error) {
+	return r.subscribe(topic, consumerName, handler, startResumeOrTail)
 }
 
 // SubscribeExclusiveFromTimestamp creates an exclusive subscription with full replay
@@ -167,7 +197,7 @@ func (r *BadgerRouter) SubscribeExclusiveFromNow(topic string, consumerName stri
 // already returns all messages since the log start for new consumers — a superset
 // of timestamp-based replay. The trigger message is guaranteed to be in that replay.
 func (r *BadgerRouter) SubscribeExclusiveFromTimestamp(topic string, consumerName string, _ int64, handler func([]byte)) (func(), error) {
-	return r.subscribe(topic, consumerName, handler, false)
+	return r.subscribe(topic, consumerName, handler, startResume)
 }
 
 // --------------------------------------------------------------------------
@@ -175,7 +205,7 @@ func (r *BadgerRouter) SubscribeExclusiveFromTimestamp(topic string, consumerNam
 // --------------------------------------------------------------------------
 
 // subscribe is the shared implementation for all three public Subscribe variants.
-func (r *BadgerRouter) subscribe(topic, consumerName string, handler func([]byte), fromNow bool) (func(), error) {
+func (r *BadgerRouter) subscribe(topic, consumerName string, handler func([]byte), policy startPolicy) (func(), error) {
 	exclusive := consumerName != ""
 
 	if exclusive {
@@ -184,32 +214,67 @@ func (r *BadgerRouter) subscribe(topic, consumerName string, handler func([]byte
 			return nil, fmt.Errorf("badger_router: exclusive consumer %q already active on topic %q", consumerName, topic)
 		}
 	}
+	// releaseLock undoes the exclusive lock reservation on any early-return error
+	// path (before the drain goroutine / unsub takes ownership of it).
+	releaseLock := func() {
+		if exclusive {
+			r.exclusiveLocks.Delete(topic + "\x00" + consumerName)
+		}
+	}
 
 	// Determine replay start sequence before registering in live fan-out so we
 	// don't miss any messages published concurrently during replay.
 	var startSeq uint64
-	if fromNow {
+	switch policy {
+	case startTail:
 		// Start after the current tail; no replay.
 		cur, err := r.currentSequence(topic)
 		if err != nil {
-			if exclusive {
-				r.exclusiveLocks.Delete(topic + "\x00" + consumerName)
-			}
+			releaseLock()
 			return nil, fmt.Errorf("badger_router: read sequence for %q: %w", topic, err)
 		}
 		startSeq = cur
-	} else if exclusive && consumerName != "" {
-		// Resume from persisted offset.
-		last, err := r.loadOffset(topic, consumerName)
-		if err != nil {
-			if exclusive {
-				r.exclusiveLocks.Delete(topic + "\x00" + consumerName)
+	case startResumeOrTail:
+		if exclusive {
+			// Resume from the committed offset if one exists; otherwise start at
+			// the current tail (a cold consumer skips the retained backlog rather
+			// than replaying from sequence 0).
+			last, ok, err := r.loadOffsetOK(topic, consumerName)
+			if err != nil {
+				releaseLock()
+				return nil, fmt.Errorf("badger_router: load offset for %q/%q: %w", topic, consumerName, err)
 			}
-			return nil, fmt.Errorf("badger_router: load offset for %q/%q: %w", topic, consumerName, err)
+			if ok {
+				startSeq = last // warm: replay only the gap (from last+1 below)
+			} else {
+				cur, cerr := r.currentSequence(topic)
+				if cerr != nil {
+					releaseLock()
+					return nil, fmt.Errorf("badger_router: read sequence for %q: %w", topic, cerr)
+				}
+				startSeq = cur // cold: start at tail
+			}
+		} else {
+			// Anonymous resume-or-tail has no offset to resume from → start at tail.
+			cur, err := r.currentSequence(topic)
+			if err != nil {
+				releaseLock()
+				return nil, fmt.Errorf("badger_router: read sequence for %q: %w", topic, err)
+			}
+			startSeq = cur
 		}
-		startSeq = last // replay from last+1 below
+	default: // startResume
+		if exclusive {
+			// Resume from persisted offset (cold → 0 → full replay).
+			last, err := r.loadOffset(topic, consumerName)
+			if err != nil {
+				releaseLock()
+				return nil, fmt.Errorf("badger_router: load offset for %q/%q: %w", topic, consumerName, err)
+			}
+			startSeq = last // replay from last+1 below
+		}
+		// For anonymous Subscribe, startSeq stays 0 → replay from beginning.
 	}
-	// For anonymous Subscribe, startSeq stays 0 → replay from beginning.
 
 	s := &subscriber{
 		handler: handler,
@@ -428,7 +493,17 @@ func (r *BadgerRouter) currentSequence(topic string) (uint64, error) {
 // loadOffset returns the last-read sequence number for a named consumer.
 // Returns 0 if no offset has been persisted yet.
 func (r *BadgerRouter) loadOffset(topic, consumerName string) (uint64, error) {
+	off, _, err := r.loadOffsetOK(topic, consumerName)
+	return off, err
+}
+
+// loadOffsetOK returns the last-read sequence number for a named consumer and
+// whether a committed offset actually exists. The bool distinguishes "no offset
+// persisted yet" (found=false) from a genuinely committed offset of 0, which
+// callers need to decide between full replay and tail on a cold consumer.
+func (r *BadgerRouter) loadOffsetOK(topic, consumerName string) (uint64, bool, error) {
 	var off uint64
+	var found bool
 	err := r.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(offsetKey(topic, consumerName))
 		if err == badger.ErrKeyNotFound {
@@ -437,6 +512,7 @@ func (r *BadgerRouter) loadOffset(topic, consumerName string) (uint64, error) {
 		if err != nil {
 			return err
 		}
+		found = true
 		return item.Value(func(val []byte) error {
 			if len(val) == 8 {
 				off = binary.BigEndian.Uint64(val)
@@ -444,7 +520,7 @@ func (r *BadgerRouter) loadOffset(topic, consumerName string) (uint64, error) {
 			return nil
 		})
 	})
-	return off, err
+	return off, found, err
 }
 
 // saveOffset persists seq as the consumer's last-read offset for topic.

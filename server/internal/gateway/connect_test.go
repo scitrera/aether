@@ -279,6 +279,10 @@ func (m *mockMessageRouter) SubscribeExclusiveFromTimestamp(topic string, consum
 	return m.SubscribeExclusive(topic, consumerName, handler)
 }
 
+func (m *mockMessageRouter) SubscribeExclusiveResumeOrTail(topic string, consumerName string, handler func([]byte)) (func(), error) {
+	return m.SubscribeExclusive(topic, consumerName, handler)
+}
+
 func (m *mockMessageRouter) hasSharedTopic(topic string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1261,11 +1265,13 @@ func TestSetupClientSubscriptions_UserGetsWindowAndWorkspaceTopics(t *testing.T)
 	if !router.hasExclusiveTopic("us::bob::win-42") {
 		t.Error("expected exclusive subscription for user window topic us.bob.win-42")
 	}
-	if !router.hasSharedTopic("gu::workspace-x") {
-		t.Error("expected shared subscription for global user topic gu.workspace-x")
+	// gu/uw broadcast lanes now use a per-window resume-or-tail (exclusive)
+	// consumer so reconnects replay only the gap, not the full retained history.
+	if !router.hasExclusiveTopic("gu::workspace-x") {
+		t.Error("expected exclusive (resume-or-tail) subscription for global user topic gu.workspace-x")
 	}
-	if !router.hasSharedTopic("uw::bob::workspace-x") {
-		t.Error("expected shared subscription for user-workspace topic uw.bob.workspace-x")
+	if !router.hasExclusiveTopic("uw::bob::workspace-x") {
+		t.Error("expected exclusive (resume-or-tail) subscription for user-workspace topic uw.bob.workspace-x")
 	}
 }
 

@@ -181,6 +181,15 @@ func (r *JetStreamRouter) SubscribeExclusiveFromNow(topic string, consumerName s
 	return r.subscribeDurable(topic, consumerName, jetstream.DeliverNewPolicy, 0, handler)
 }
 
+// SubscribeExclusiveResumeOrTail creates a durable consumer that resumes from
+// its stored position when it already exists, and otherwise starts at the tail.
+// DeliverNewPolicy applies only when the durable is first created (a cold
+// consumer → tail); NATS ignores DeliverPolicy on an existing durable, so a
+// warm consumer resumes from its committed offset — exactly resume-or-tail.
+func (r *JetStreamRouter) SubscribeExclusiveResumeOrTail(topic string, consumerName string, handler func([]byte)) (func(), error) {
+	return r.subscribeDurable(topic, consumerName, jetstream.DeliverNewPolicy, 0, handler)
+}
+
 // SubscribeExclusiveFromTimestamp creates a durable consumer. When
 // startTimestampMs > 0, new consumers start from messages at or after that
 // unix-millisecond timestamp; existing durable consumers resume from their

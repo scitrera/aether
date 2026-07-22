@@ -33,9 +33,13 @@ func taskMsgSubKey(taskID string) string {
 }
 
 // subscribeClientToTaskMessages subscribes a client to a task's per-task chat
-// message lane (tk::{ws}::{task}::msg) via the shared broadcast consumer. Live
-// path: invoked when a running subject-notice arrives, so no historical replay
-// is needed — new tokens flow from the point of subscription. Idempotent.
+// message lane (tk::{ws}::{task}::msg). Live path: invoked when a running
+// subject-notice arrives, so no historical replay is wanted — new tokens flow
+// from the point of subscription. Uses a per-(window, task) named consumer with
+// resume-or-tail semantics (matching the timestamp/backfill variant's consumer
+// name): a brand-new lane starts at the tail (not a full replay from seq 0,
+// which the previous anonymous Subscribe did), and a reconnect resumes from the
+// committed offset. Idempotent.
 func (s *GatewayServer) subscribeClientToTaskMessages(client *ClientSession, workspace, taskID string) {
 	if workspace == "" || taskID == "" {
 		return
@@ -49,7 +53,11 @@ func (s *GatewayServer) subscribeClientToTaskMessages(client *ClientSession, wor
 		logging.Logger.Warn().Err(err).Str("workspace", workspace).Str("task_id", taskID).Msg("invalid task-message topic; skipping subscribe")
 		return
 	}
-	cancel, err := s.router.Subscribe(topic, s.createMessageHandler(client))
+	client.identityMu.RLock()
+	consumerName := client.Identity.String() + models.IdentitySep + taskID
+	client.identityMu.RUnlock()
+
+	cancel, err := s.router.SubscribeExclusiveResumeOrTail(topic, consumerName, s.createMessageHandler(client))
 	if err != nil {
 		logging.Logger.Warn().Err(err).Str("topic", topic).Msg("failed to subscribe to task-message topic")
 		return

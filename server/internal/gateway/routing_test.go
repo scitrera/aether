@@ -53,6 +53,10 @@ func (m *mockRouter) SubscribeExclusiveFromTimestamp(topic string, consumerName 
 	return m.SubscribeExclusive(topic, consumerName, nil)
 }
 
+func (m *mockRouter) SubscribeExclusiveResumeOrTail(topic string, consumerName string, _ func([]byte)) (func(), error) {
+	return m.SubscribeExclusive(topic, consumerName, nil)
+}
+
 // hasSharedTopic returns true if the topic was subscribed to via the shared Subscribe path.
 func (m *mockRouter) hasSharedTopic(topic string) bool {
 	m.mu.Lock()
@@ -767,35 +771,39 @@ func TestSetupClientSubscriptions(t *testing.T) {
 			wantSharedTopics:    []string{"tb::prod::stream-proc"},
 		},
 		{
-			name: "user with workspace subscribes to window topic exclusively and workspace + per-user progress topics shared",
+			name: "user with workspace subscribes to window topic exclusively; broadcast lanes resume-or-tail (exclusive), progress shared",
 			identity: models.Identity{
 				Type:      models.PrincipalUser,
 				ID:        "alice",
 				Specifier: "win-1",
 				Workspace: "prod",
 			},
-			wantExclusiveTopics: []string{"us::alice::win-1"},
+			// The broadcast lanes gu/uw/uu now use a per-window named consumer
+			// (SubscribeExclusiveResumeOrTail) so a reconnect replays only the
+			// gap instead of re-dumping the whole retained history from seq 0;
+			// the mock records these on the exclusive path.
+			wantExclusiveTopics: []string{"us::alice::win-1", "gu::prod", "uw::alice::prod", "uu::alice"},
 			// pg::us::alice is the per-user progress topic shared by all of
 			// alice's open windows. Window-level filtering happens at delivery
 			// time via the recipient field, not at the topic level. See
-			// UserProgressTopic + isBareUserRecipientMatch. uu::alice is the
-			// per-user broadcast topic (non-progress platform→user channel).
-			wantSharedTopics: []string{"gu::prod", "uw::alice::prod", "pg::us::alice", "uu::alice"},
+			// UserProgressTopic + isBareUserRecipientMatch.
+			wantSharedTopics: []string{"pg::us::alice"},
 		},
 		{
-			name: "user without workspace subscribes to window topic exclusively and per-user progress topic shared",
+			name: "user without workspace subscribes to window topic exclusively; broadcast lane resume-or-tail (exclusive), progress shared",
 			identity: models.Identity{
 				Type:      models.PrincipalUser,
 				ID:        "bob",
 				Specifier: "win-2",
 				Workspace: "", // no workspace
 			},
-			wantExclusiveTopics: []string{"us::bob::win-2"},
+			// uu (per-user broadcast) now uses a per-window named resume-or-tail
+			// consumer; the mock records it on the exclusive path.
+			wantExclusiveTopics: []string{"us::bob::win-2", "uu::bob"},
 			// Even without a workspace, users still subscribe to their
 			// per-user progress topic so targeted progress from agents in
-			// any workspace can reach them, and to their per-user broadcast
-			// topic for workspace-agnostic platform→user notifications.
-			wantSharedTopics: []string{"pg::us::bob", "uu::bob"},
+			// any workspace can reach them.
+			wantSharedTopics: []string{"pg::us::bob"},
 		},
 		{
 			name: "workflow engine subscribes to event::receiver0 fan-in shard regardless of workspace",

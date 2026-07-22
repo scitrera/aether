@@ -306,6 +306,83 @@ func TestBadgerRouter_ReplayPersistsOffset(t *testing.T) {
 	}
 }
 
+// TestBadgerRouter_ResumeOrTail verifies the resume-or-tail start policy: a
+// cold consumer (no committed offset) starts at the tail and does NOT replay the
+// retained backlog, while a reconnecting consumer resumes from its committed
+// offset and replays only the gap — the fix for shared/broadcast lanes that a
+// client re-subscribes on every connect (they previously re-dumped full history).
+func TestBadgerRouter_ResumeOrTail(t *testing.T) {
+	db := openTestDB(t)
+	r := NewBadgerRouter(db)
+	defer r.Close()
+	ctx := context.Background()
+
+	// Retained backlog published before anyone subscribes.
+	for _, m := range []string{"old1", "old2", "old3"} {
+		if err := r.Publish(ctx, "t", []byte(m)); err != nil {
+			t.Fatalf("Publish(%q): %v", m, err)
+		}
+	}
+
+	var mu sync.Mutex
+	var got1 []string
+	unsub1, err := r.SubscribeExclusiveResumeOrTail("t", "c1", func(p []byte) {
+		mu.Lock()
+		got1 = append(got1, string(p))
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("cold SubscribeExclusiveResumeOrTail: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	coldReplayed := len(got1)
+	mu.Unlock()
+	if coldReplayed != 0 {
+		t.Fatalf("cold resume-or-tail should start at tail (0 backlog replayed), got %d: %v", coldReplayed, got1)
+	}
+
+	// Live messages after subscribe are delivered and advance the offset via drain.
+	for _, m := range []string{"live1", "live2"} {
+		if err := r.Publish(ctx, "t", []byte(m)); err != nil {
+			t.Fatalf("Publish(%q): %v", m, err)
+		}
+	}
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	got1Copy := append([]string(nil), got1...)
+	mu.Unlock()
+	if len(got1Copy) != 2 || got1Copy[0] != "live1" || got1Copy[1] != "live2" {
+		t.Fatalf("expected live delivery [live1 live2], got %v", got1Copy)
+	}
+	unsub1()
+
+	// A message published while the consumer is away — the gap to catch up on.
+	if err := r.Publish(ctx, "t", []byte("gap1")); err != nil {
+		t.Fatalf("Publish(gap1): %v", err)
+	}
+
+	// Reconnect: committed offset exists → replay only the gap, not the old
+	// backlog and not the already-seen live messages.
+	var got2 []string
+	unsub2, err := r.SubscribeExclusiveResumeOrTail("t", "c1", func(p []byte) {
+		mu.Lock()
+		got2 = append(got2, string(p))
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("warm SubscribeExclusiveResumeOrTail: %v", err)
+	}
+	defer unsub2()
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	got2Copy := append([]string(nil), got2...)
+	mu.Unlock()
+	if len(got2Copy) != 1 || got2Copy[0] != "gap1" {
+		t.Fatalf("reconnect should replay only the gap [gap1], got %v", got2Copy)
+	}
+}
+
 // TestBadgerRouter_SaveOffsetConcurrentNoConflictError verifies saveOffset
 // retries on optimistic-concurrency conflict: many concurrent commits to the
 // same offset key (drain saving per message + replay's catch-up save under a

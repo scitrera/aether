@@ -72,6 +72,12 @@ type MessageRouter interface {
 	// the router backend), falls back to existing replay semantics. Used for cold-starting
 	// pool-dispatched agents.
 	SubscribeExclusiveFromTimestamp(topic string, consumerName string, startTimestampMs int64, handler func([]byte)) (func(), error)
+	// SubscribeExclusiveResumeOrTail creates a named exclusive subscription that
+	// resumes from the consumer's committed offset when one exists, and otherwise
+	// starts at the current tail (NOT the beginning of the log). Use it for
+	// shared/broadcast lanes a client re-subscribes on every (re)connect so a
+	// first connect gets no full-history dump and a reconnect replays only the gap.
+	SubscribeExclusiveResumeOrTail(topic string, consumerName string, handler func([]byte)) (func(), error)
 }
 
 // KVReadWriter abstracts KV store operations used by the gateway and KVHandler.

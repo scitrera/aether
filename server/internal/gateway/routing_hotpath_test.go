@@ -419,6 +419,10 @@ func (r *errorPublishRouter) SubscribeExclusiveFromTimestamp(topic string, consu
 	return r.SubscribeExclusive(topic, consumer, h)
 }
 
+func (r *errorPublishRouter) SubscribeExclusiveResumeOrTail(topic string, consumer string, h func([]byte)) (func(), error) {
+	return r.SubscribeExclusive(topic, consumer, h)
+}
+
 func TestRouteMessage_PublishFails_SendsPublishFailedErrorToClient(t *testing.T) {
 	errRouter := &errorPublishRouter{
 		err: errors.New("broker unavailable"),

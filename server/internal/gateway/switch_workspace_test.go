@@ -225,12 +225,13 @@ func TestHandleSwitchWorkspace_ValidUser_NewWorkspaceTopicsSubscribed(t *testing
 	sw := &pb.SwitchWorkspace{NewWorkspaceId: "ws3"}
 	s.handleSwitchWorkspace(context.Background(), client, sw)
 
-	// After switch, user should be subscribed to gu.ws3 and uw.dave.ws3
-	if !router.hasSharedTopic("gu::ws3") {
-		t.Error("expected shared subscription for 'gu::ws3' after workspace switch")
+	// After switch, user should be subscribed to gu.ws3 and uw.dave.ws3 via the
+	// per-window resume-or-tail (exclusive) path.
+	if !router.hasExclusiveTopic("gu::ws3") {
+		t.Error("expected exclusive (resume-or-tail) subscription for 'gu::ws3' after workspace switch")
 	}
-	if !router.hasSharedTopic("uw::dave::ws3") {
-		t.Error("expected shared subscription for 'uw::dave::ws3' after workspace switch")
+	if !router.hasExclusiveTopic("uw::dave::ws3") {
+		t.Error("expected exclusive (resume-or-tail) subscription for 'uw::dave::ws3' after workspace switch")
 	}
 }
 
