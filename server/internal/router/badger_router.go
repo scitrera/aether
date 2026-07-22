@@ -448,12 +448,30 @@ func (r *BadgerRouter) loadOffset(topic, consumerName string) (uint64, error) {
 }
 
 // saveOffset persists seq as the consumer's last-read offset for topic.
+//
+// Retries on badger.ErrConflict: the offset key is written from the consumer's
+// drain goroutine (per live message) and once from the replay catch-up path, and
+// under a connection storm / heavy concurrent publish+commit load the optimistic
+// txn can conflict. Without the retry the save silently fails (logged, non-fatal)
+// and the offset stalls, so the consumer re-replays the same backlog on the next
+// reconnect and re-sheds it under gateway backpressure. Mirrors appendMessage's
+// bounded ErrConflict retry (sub-millisecond txns; no backoff needed).
 func (r *BadgerRouter) saveOffset(topic, consumerName string, seq uint64) error {
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, seq)
-	return r.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(offsetKey(topic, consumerName), buf)
-	})
+	var lastErr error
+	for attempt := 0; attempt < appendMessageMaxRetries; attempt++ {
+		lastErr = r.db.Update(func(txn *badger.Txn) error {
+			return txn.Set(offsetKey(topic, consumerName), buf)
+		})
+		if lastErr == nil {
+			return nil
+		}
+		if lastErr != badger.ErrConflict {
+			return lastErr
+		}
+	}
+	return lastErr
 }
 
 // replay calls handler for every message in the range (startSeq, currentSeq].

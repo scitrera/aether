@@ -305,3 +305,46 @@ func TestBadgerRouter_ReplayPersistsOffset(t *testing.T) {
 		t.Fatalf("second subscribe: expected 0 re-replayed (offset persisted by replay), got %d: %v", n2, got2)
 	}
 }
+
+// TestBadgerRouter_SaveOffsetConcurrentNoConflictError verifies saveOffset
+// retries on optimistic-concurrency conflict: many concurrent commits to the
+// same offset key (drain saving per message + replay's catch-up save under a
+// connection storm) must all succeed with no "Transaction Conflict" error.
+// Without the retry a conflicting save fails, the offset stalls, and the
+// consumer re-replays + re-sheds the same backlog on the next reconnect.
+func TestBadgerRouter_SaveOffsetConcurrentNoConflictError(t *testing.T) {
+	db := openTestDB(t)
+	r := NewBadgerRouter(db)
+	defer r.Close()
+
+	const n = 100
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(seq uint64) {
+			defer wg.Done()
+			<-start
+			if err := r.saveOffset("hot", "c1", seq); err != nil {
+				errs <- err
+			}
+		}(uint64(i + 1))
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent saveOffset failed (retry-on-conflict missing?): %v", err)
+	}
+
+	// A final read-back must return one of the written offsets (a valid commit),
+	// proving the key is not left in a wedged/uncommitted state.
+	off, err := r.loadOffset("hot", "c1")
+	if err != nil {
+		t.Fatalf("loadOffset after concurrent saves: %v", err)
+	}
+	if off < 1 || off > n {
+		t.Fatalf("final offset %d out of written range [1,%d]", off, n)
+	}
+}
