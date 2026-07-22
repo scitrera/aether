@@ -34,12 +34,17 @@ func taskMsgSubKey(taskID string) string {
 
 // subscribeClientToTaskMessages subscribes a client to a task's per-task chat
 // message lane (tk::{ws}::{task}::msg). Live path: invoked when a running
-// subject-notice arrives, so no historical replay is wanted — new tokens flow
-// from the point of subscription. Uses a per-(window, task) named consumer with
-// resume-or-tail semantics (matching the timestamp/backfill variant's consumer
-// name): a brand-new lane starts at the tail (not a full replay from seq 0,
-// which the previous anonymous Subscribe did), and a reconnect resumes from the
-// committed offset. Idempotent.
+// subject-notice arrives.
+//
+// Uses anonymous Subscribe (full replay from the lane start), NOT an
+// offset-tracking consumer: a task-message lane is a small, ephemeral, per-turn
+// buffer that must be replayed IN FULL on every (re)connect. A page reload keeps
+// the window id but loses the tab's rendered state, so the whole in-flight turn
+// has to be re-sent — resume-from-offset would skip the already-emitted tokens
+// the reloaded tab needs to re-render. Because the live path stays anonymous, it
+// commits no offset, so the connect-time backfill (a cold named consumer) still
+// replays the turn from the start. Retention TTL bounds the retained lane.
+// Idempotent.
 func (s *GatewayServer) subscribeClientToTaskMessages(client *ClientSession, workspace, taskID string) {
 	if workspace == "" || taskID == "" {
 		return
@@ -53,11 +58,7 @@ func (s *GatewayServer) subscribeClientToTaskMessages(client *ClientSession, wor
 		logging.Logger.Warn().Err(err).Str("workspace", workspace).Str("task_id", taskID).Msg("invalid task-message topic; skipping subscribe")
 		return
 	}
-	client.identityMu.RLock()
-	consumerName := client.Identity.String() + models.IdentitySep + taskID
-	client.identityMu.RUnlock()
-
-	cancel, err := s.router.SubscribeExclusiveResumeOrTail(topic, consumerName, s.createMessageHandler(client))
+	cancel, err := s.router.Subscribe(topic, s.createMessageHandler(client))
 	if err != nil {
 		logging.Logger.Warn().Err(err).Str("topic", topic).Msg("failed to subscribe to task-message topic")
 		return

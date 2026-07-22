@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/scitrera/aether/internal/lite"
@@ -49,7 +50,22 @@ type BadgerRouter struct {
 	// exclusiveLocks tracks which (topic, consumerName) pairs already have an
 	// active exclusive subscriber. The stored value is always struct{}{}.
 	exclusiveLocks sync.Map // key: topic+"\x00"+consumerName
+
+	// messageTTL bounds how long a published message is retained before Badger
+	// expires it (native per-entry TTL, reclaimed by Badger's value-log GC). It
+	// caps otherwise-unbounded topic-log growth and the size of any cold-start /
+	// full-replay burst, while comfortably exceeding the realistic reconnect gap
+	// so a resuming consumer still catches up. The sequence counter and consumer
+	// offsets carry NO TTL, so expiry never rewinds them: a consumer resuming
+	// past an expired range simply finds fewer messages to replay. Zero disables
+	// expiry (retain forever). Set at construction; treat as immutable after use.
+	messageTTL time.Duration
 }
+
+// defaultMessageRetentionTTL is the default per-message retention. 24h caps
+// growth at roughly a day of traffic per topic while dwarfing the real reconnect
+// gap (seconds–minutes). Override via SetMessageRetentionTTL before first use.
+const defaultMessageRetentionTTL = 24 * time.Hour
 
 // msgWithSeq bundles a message payload with its Badger sequence number so that
 // the drain goroutine can persist the exact offset of each processed message.
@@ -85,7 +101,18 @@ func NewBadgerRouterWithBufferSize(db *badger.DB, bufferSize int) *BadgerRouter 
 		db:                   db,
 		subscriberBufferSize: bufferSize,
 		subs:                 make(map[string][]*subscriber),
+		messageTTL:           defaultMessageRetentionTTL,
 	}
+}
+
+// SetMessageRetentionTTL overrides the per-message retention TTL. A value <= 0
+// disables expiry (messages retained forever). Call once at startup before the
+// router serves traffic; not safe to change concurrently with Publish.
+func (r *BadgerRouter) SetMessageRetentionTTL(d time.Duration) {
+	if d < 0 {
+		d = 0
+	}
+	r.messageTTL = d
 }
 
 // Close shuts down all active subscribers.
@@ -455,7 +482,12 @@ func (r *BadgerRouter) appendMessage(topic string, payload []byte) (uint64, erro
 				return err
 			}
 
-			// Write message.
+			// Write message. Carries a TTL so Badger natively expires old
+			// messages and bounds topic-log growth; the seq counter (above) has
+			// no TTL so sequence numbering is never rewound.
+			if r.messageTTL > 0 {
+				return txn.SetEntry(badger.NewEntry(messageKey(topic, seq), payload).WithTTL(r.messageTTL))
+			}
 			return txn.Set(messageKey(topic, seq), payload)
 		})
 		if lastErr == nil {

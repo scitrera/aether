@@ -473,7 +473,19 @@ func main() {
 		sessions = state.NewBadgerSessionRegistry(badgerDB)
 		kvStore = kv.NewBadgerKVStore(badgerDB)
 		checkpointStore = checkpoint.NewBadgerCheckpointStore(badgerDB)
-		msgRouter = routerpkg.NewBadgerRouter(badgerDB)
+		badgerRouter := routerpkg.NewBadgerRouter(badgerDB)
+		// Message retention: Badger expires topic messages after this TTL (native
+		// per-entry expiry) to bound log growth. Default 24h; override with a Go
+		// duration string (e.g. "6h", "72h"), or "0" to retain forever.
+		if ttlStr := os.Getenv("AETHER_MESSAGE_RETENTION_TTL"); ttlStr != "" {
+			if d, perr := time.ParseDuration(ttlStr); perr == nil {
+				badgerRouter.SetMessageRetentionTTL(d)
+				logging.Logger.Info().Dur("ttl", d).Msg("badger message retention TTL set from AETHER_MESSAGE_RETENTION_TTL")
+			} else {
+				logging.Logger.Warn().Str("value", ttlStr).Err(perr).Msg("invalid AETHER_MESSAGE_RETENTION_TTL; using default 24h")
+			}
+		}
+		msgRouter = badgerRouter
 		dispatcher = orchestration.NewPollingTaskDispatcher(taskStore)
 	}
 

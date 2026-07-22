@@ -778,16 +778,15 @@ func TestSetupClientSubscriptions(t *testing.T) {
 				Specifier: "win-1",
 				Workspace: "prod",
 			},
-			// The broadcast lanes gu/uw/uu now use a per-window named consumer
-			// (SubscribeExclusiveResumeOrTail) so a reconnect replays only the
-			// gap instead of re-dumping the whole retained history from seq 0;
-			// the mock records these on the exclusive path.
-			wantExclusiveTopics: []string{"us::alice::win-1", "gu::prod", "uw::alice::prod", "uu::alice"},
-			// pg::us::alice is the per-user progress topic shared by all of
-			// alice's open windows. Window-level filtering happens at delivery
-			// time via the recipient field, not at the topic level. See
-			// UserProgressTopic + isBareUserRecipientMatch.
-			wantSharedTopics: []string{"pg::us::alice"},
+			// Broadcast lanes (gu/uw/uu) and progress lanes (pg::us::alice, and
+			// the workspace pg::prod) now use per-window named consumers with
+			// resume-or-tail semantics so a reconnect replays only the gap instead
+			// of re-dumping the whole retained history from seq 0. Window-level
+			// progress filtering still happens at delivery time via the recipient
+			// field (see UserProgressTopic + isBareUserRecipientMatch). A user
+			// therefore has no shared (anonymous) subscriptions.
+			wantExclusiveTopics: []string{"us::alice::win-1", "gu::prod", "uw::alice::prod", "uu::alice", "pg::us::alice"},
+			wantSharedTopics:    []string{},
 		},
 		{
 			name: "user without workspace subscribes to window topic exclusively; broadcast lane resume-or-tail (exclusive), progress shared",
@@ -797,13 +796,13 @@ func TestSetupClientSubscriptions(t *testing.T) {
 				Specifier: "win-2",
 				Workspace: "", // no workspace
 			},
-			// uu (per-user broadcast) now uses a per-window named resume-or-tail
-			// consumer; the mock records it on the exclusive path.
-			wantExclusiveTopics: []string{"us::bob::win-2", "uu::bob"},
-			// Even without a workspace, users still subscribe to their
-			// per-user progress topic so targeted progress from agents in
-			// any workspace can reach them.
-			wantSharedTopics: []string{"pg::us::bob"},
+			// uu (per-user broadcast) and pg::us::bob (per-user progress) now use
+			// per-window named resume-or-tail consumers; the mock records them on
+			// the exclusive path. Even without a workspace the user still
+			// subscribes to their per-user progress topic so targeted progress
+			// from agents in any workspace can reach them.
+			wantExclusiveTopics: []string{"us::bob::win-2", "uu::bob", "pg::us::bob"},
+			wantSharedTopics:    []string{},
 		},
 		{
 			name: "workflow engine subscribes to event::receiver0 fan-in shard regardless of workspace",
@@ -963,13 +962,16 @@ func TestSetupClientSubscriptions_DuplicateSubscriptionIgnored(t *testing.T) {
 	sharedCount := len(router.subscribedTopics)
 	router.mu.Unlock()
 
-	if exclusiveCount != 1 {
-		t.Errorf("expected 1 exclusive subscription after duplicate call, got %d", exclusiveCount)
+	// The agent gets 2 exclusive subscriptions: its identity topic
+	// (ag::{ws}::{impl}::{spec}) and the workspace progress topic pg::{ws}, which
+	// now uses a resume-or-tail named consumer. Both are recorded once despite the
+	// duplicate setup call (ClientSession HasSubscription guard).
+	if exclusiveCount != 2 {
+		t.Errorf("expected 2 exclusive subscriptions after duplicate call, got %d", exclusiveCount)
 	}
-	// The shared Subscribe call may be deduplicated at the ClientSession level
-	// (HasSubscription guard). Agents get ga::{workspace} + pg::{workspace} = 2 shared.
-	if sharedCount != 2 {
-		t.Errorf("expected 2 shared subscriptions after duplicate call, got %d", sharedCount)
+	// Only ga::{workspace} remains on the shared (anonymous) path.
+	if sharedCount != 1 {
+		t.Errorf("expected 1 shared subscription after duplicate call, got %d", sharedCount)
 	}
 }
 

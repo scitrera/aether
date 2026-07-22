@@ -97,12 +97,12 @@ func TestProgressFilter_TaskLifecycle_SubscribesAndUnsubscribesMsgLane(t *testin
 
 	msgTopic := models.MustTaskMessageTopic("ws1", taskID)
 
-	// Running notice → subscribe. The live lane now uses a per-(window,task)
-	// named resume-or-tail consumer (was anonymous full-replay), so the mock
-	// records it on the exclusive path.
+	// Running notice → subscribe. The live lane uses anonymous full-replay
+	// (a per-turn lane must be re-sent in full on every connect, incl. a page
+	// reload), so the mock records it on the shared path.
 	runSubjectNoticeThroughFilter(t, s, client, "ws1", taskID, "running")
-	if !router.hasExclusiveTopic(msgTopic) {
-		t.Fatalf("expected exclusive (resume-or-tail) subscription to %q after running notice", msgTopic)
+	if !router.hasSharedTopic(msgTopic) {
+		t.Fatalf("expected shared subscription to %q after running notice", msgTopic)
 	}
 	if !client.HasSubscription(taskMsgSubKey(taskID)) {
 		t.Errorf("expected client subscription under %q", taskMsgSubKey(taskID))

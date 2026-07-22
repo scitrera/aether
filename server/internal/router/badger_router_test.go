@@ -383,6 +383,70 @@ func TestBadgerRouter_ResumeOrTail(t *testing.T) {
 	}
 }
 
+// TestBadgerRouter_MessageRetentionTTL verifies messages expire after the
+// retention TTL (bounding topic-log growth / replay-burst size) while the
+// sequence counter is preserved (no TTL), so numbering never rewinds.
+func TestBadgerRouter_MessageRetentionTTL(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping timing-based TTL test in -short mode")
+	}
+	db := openTestDB(t)
+	r := NewBadgerRouter(db)
+	r.SetMessageRetentionTTL(1 * time.Second) // Badger TTL granularity is seconds
+	defer r.Close()
+	ctx := context.Background()
+
+	// Retained-only messages (no live subscriber).
+	for _, m := range []string{"a", "b"} {
+		if err := r.Publish(ctx, "t", []byte(m)); err != nil {
+			t.Fatalf("Publish(%q): %v", m, err)
+		}
+	}
+
+	// Wait past the second-truncated expiry boundary.
+	time.Sleep(2500 * time.Millisecond)
+
+	// A fresh full-replay subscriber sees nothing — the backlog expired.
+	var mu sync.Mutex
+	var got []string
+	unsub, err := r.Subscribe("t", func(p []byte) {
+		mu.Lock()
+		got = append(got, string(p))
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer unsub()
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	replayed := append([]string(nil), got...)
+	mu.Unlock()
+	if len(replayed) != 0 {
+		t.Fatalf("expired backlog should not replay, got %v", replayed)
+	}
+
+	// Sequence numbering is preserved across expiry: the next publish is seq 3
+	// and is delivered live.
+	if err := r.Publish(ctx, "t", []byte("c")); err != nil {
+		t.Fatalf("Publish(c): %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	live := append([]string(nil), got...)
+	mu.Unlock()
+	if len(live) != 1 || live[0] != "c" {
+		t.Fatalf("expected live delivery of [c], got %v", live)
+	}
+	seq, err := r.currentSequence("t")
+	if err != nil {
+		t.Fatalf("currentSequence: %v", err)
+	}
+	if seq != 3 {
+		t.Fatalf("sequence counter should be preserved at 3 despite expiry, got %d", seq)
+	}
+}
+
 // TestBadgerRouter_SaveOffsetConcurrentNoConflictError verifies saveOffset
 // retries on optimistic-concurrency conflict: many concurrent commits to the
 // same offset key (drain saving per message + replay's catch-up save under a

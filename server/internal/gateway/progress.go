@@ -483,7 +483,10 @@ func (s *GatewayServer) notifyTaskStatusChangeFromTaskID(ctx context.Context, ta
 }
 
 // subscribeClientToProgress subscribes a client to the pg::{workspace} progress
-// stream using a shared consumer with a per-client filtering handler.
+// stream with a per-client filtering handler. Uses a per-client named consumer
+// with resume-or-tail semantics (consumer = identity string) so a (re)connect
+// starts at the tail rather than re-dumping the entire retained progress history
+// from seq 0; a reconnect replays only the gap since the committed offset.
 func (s *GatewayServer) subscribeClientToProgress(client *ClientSession, workspace string) error {
 	pgTopic, err := models.ProgressTopic(workspace)
 	if err != nil {
@@ -493,7 +496,10 @@ func (s *GatewayServer) subscribeClientToProgress(client *ClientSession, workspa
 		return nil
 	}
 
-	cancel, err := s.router.Subscribe(pgTopic, s.createProgressFilterHandler(client))
+	client.identityMu.RLock()
+	consumerName := client.Identity.String()
+	client.identityMu.RUnlock()
+	cancel, err := s.router.SubscribeExclusiveResumeOrTail(pgTopic, consumerName, s.createProgressFilterHandler(client))
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to progress topic %s: %w", pgTopic, err)
 	}
@@ -516,7 +522,10 @@ func (s *GatewayServer) subscribeClientToUserProgress(client *ClientSession, top
 		return nil
 	}
 
-	cancel, err := s.router.Subscribe(topic, s.createProgressFilterHandler(client))
+	client.identityMu.RLock()
+	consumerName := client.Identity.String()
+	client.identityMu.RUnlock()
+	cancel, err := s.router.SubscribeExclusiveResumeOrTail(topic, consumerName, s.createProgressFilterHandler(client))
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to user-progress topic %s: %w", topic, err)
 	}
