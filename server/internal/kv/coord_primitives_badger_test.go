@@ -201,3 +201,45 @@ func TestBadgerSetNX_ConcurrentSingleWinner(t *testing.T) {
 		t.Fatalf("expected exactly 1 SetNX winner, got %d", winners)
 	}
 }
+
+// TestBadgerIncrement_ConcurrentSameKey verifies the counter increment retries
+// on optimistic-concurrency conflict: many concurrent increments of the same hot
+// key (e.g. a per-user ratelimit counter under a connection storm) must all
+// succeed with no lost updates and no "failed to modify counter: Transaction
+// Conflict" errors. Without the retry, concurrent increments fail on ErrConflict.
+func TestBadgerIncrement_ConcurrentSameKey(t *testing.T) {
+	s := newTestBadgerStore(t)
+	ctx := context.Background()
+	agent := testAgent()
+
+	const n = 100
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if _, err := s.Increment(ctx, agent, ScopeGlobal, "hot", "", ""); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent Increment failed (retry-on-conflict missing?): %v", err)
+	}
+
+	// Final value must equal the number of successful increments — no lost
+	// updates. One extra increment reads back the committed total.
+	got, err := s.Increment(ctx, agent, ScopeGlobal, "hot", "", "")
+	if err != nil {
+		t.Fatalf("final Increment: %v", err)
+	}
+	if got != n+1 {
+		t.Fatalf("expected counter == %d after %d concurrent + 1 increments, got %d", n+1, n, got)
+	}
+}

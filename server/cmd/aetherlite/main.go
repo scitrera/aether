@@ -1235,6 +1235,16 @@ func openSQLiteWithDriver(ctx context.Context, path, driver string) (*sql.DB, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite database %s (driver=%s): %w", path, driver, err)
 	}
+	// Pin to a single connection (single-writer discipline). Two reasons:
+	//   1. busy_timeout is a PER-CONNECTION setting; setting it via ExecContext
+	//      below only cushions the one connection that runs it, so extra pool
+	//      connections opened under a concurrent-write burst would hit immediate
+	//      SQLITE_BUSY ("database is locked"). With one connection, the pragma
+	//      always applies.
+	//   2. Serializing all access on one connection prevents writer-vs-writer WAL
+	//      contention outright — the same discipline the per-domain sqlite stores
+	//      (tasks/registry/workflow/acl) already enforce in their constructors.
+	db.SetMaxOpenConns(1)
 	for _, pragma := range []string{
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA busy_timeout=5000",

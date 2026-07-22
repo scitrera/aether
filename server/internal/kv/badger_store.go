@@ -263,21 +263,33 @@ func (s *BadgerKVStore) Decrement(
 
 // addDelta performs an atomic read-modify-write to add delta to the stored integer.
 // Values are stored as their decimal string representation (matching Redis INCR semantics).
+//
+// Badger uses optimistic concurrency control, so concurrent increments against
+// the same key collide with ErrConflict — acute for hot keys like the per-user
+// ratelimit counter (ratelimit:user:{user}) under a connection storm (e.g. a
+// mass window refresh), where every request increments the same key. Retry the
+// pure read-modify-write, matching addDeltaGuarded's policy; without this the
+// conflict surfaced as a hard "failed to modify counter" error.
 func (s *BadgerKVStore) addDelta(fullKey []byte, delta int64) (int64, error) {
 	var newVal int64
-	err := s.db.Update(func(txn *badger.Txn) error {
-		current, err := readBadgerCounter(txn, fullKey)
-		if err != nil {
-			return err
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		err := s.db.Update(func(txn *badger.Txn) error {
+			current, err := readBadgerCounter(txn, fullKey)
+			if err != nil {
+				return err
+			}
+			newVal = current + delta
+			return txn.Set(fullKey, []byte(strconv.FormatInt(newVal, 10)))
+		})
+		if err == nil {
+			return newVal, nil
 		}
-		newVal = current + delta
-		encoded := []byte(strconv.FormatInt(newVal, 10))
-		return txn.Set(fullKey, encoded)
-	})
-	if err != nil {
+		if errors.Is(err, badger.ErrConflict) {
+			continue
+		}
 		return 0, fmt.Errorf("failed to modify counter: %w", err)
 	}
-	return newVal, nil
+	return 0, fmt.Errorf("failed to modify counter on %s: contention after %d attempts", string(fullKey), casMaxAttempts)
 }
 
 // readBadgerCounter loads the integer value at fullKey within the given

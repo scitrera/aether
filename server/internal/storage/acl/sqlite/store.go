@@ -138,6 +138,15 @@ const (
 //     physical file the shared writer targets (audit.db in lite).
 //   - gatewayID: stamped on every ACL-decision audit row.
 func New(db *sql.DB, sharedAudit audit.EventSink, auditDB *sql.DB, gatewayID string) (*Store, error) {
+	// Single-writer enforcement on the ACL state handle: without it, concurrent
+	// writers (e.g. simultaneous authority-grant INSERTs during a connection
+	// storm) run on separate pool connections and the second gets SQLITE_BUSY in
+	// WAL mode ("database is locked"). Pinning to one connection serializes all
+	// acl.db access — the same discipline the tasks/registry/workflow sqlite
+	// stores already apply. Also this handle is shared with the legacy
+	// internal/acl.Service (authority grants), so the cap must live on the handle.
+	db.SetMaxOpenConns(1)
+
 	// Run ACL-domain migrations against the state DB.
 	ctx := context.Background()
 	if err := applyMigrations(ctx, db, sqliteaclmigrations.MigrationFS, "sqlite_acl"); err != nil {
