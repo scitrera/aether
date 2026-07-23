@@ -23,7 +23,10 @@ The comprehensive audit logging system records all security-relevant events incl
 
 2. **Database Migration:**
    ```bash
-   # Ensure migration 005 has been applied
+   # Ensure at least migration 008 (comprehensive_audit_schema) has been
+   # applied. Migrations 010 (consolidate_audit), 011 (audit_partitioning),
+   # and 021 (audit_log_source) also alter comprehensive_audit_log, so in
+   # practice just run migrate up to head.
    migrate -path migrations -database "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable" up
    ```
 
@@ -33,18 +36,11 @@ The comprehensive audit logging system records all security-relevant events incl
 
 ## Automated Test
 
-Run the automated integration test:
-
-```bash
-./scripts/test_connection_audit.sh
-```
-
-This script will:
-1. Check prerequisites
-2. Clear old test audit logs
-3. Create and run a test client
-4. Verify audit events were logged
-5. Display results
+> **Note:** `scripts/test_connection_audit.sh` (and the other `scripts/test_*_audit.sh`
+> / `scripts/test_retention_cleanup.sh` scripts referenced by this guide) do not
+> exist in `server/scripts` in this repo. `server/scripts` currently only ships
+> `docker_rmq_test.sh`, `docker_valkey_test.sh`, and the `proxy_load` load-test
+> harness. Use the manual testing steps below until an automated script lands.
 
 ## Manual Testing
 
@@ -62,18 +58,16 @@ export AETHER_AUDIT_FLUSH_PERIOD=2s
 go run ./cmd/gateway
 ```
 
-You should see:
-```
-Audit logger configuration:
-  Enabled: true
-  Event types: [connection auth message kv admin acl]
-  Verbosity: high
-  Batch size: 10
-  Flush period: 2s
-  Retention: 90 days
-  Channel buffer: 1000
-Audit logger initialized (migration: 005_comprehensive_audit_schema.sql)
-```
+There is no dedicated "Audit logger configuration" startup banner printed by
+the gateway — `audit.NewAuditLogger` initializes silently. To confirm the
+config landed, check the effective values in code/config instead (or add a
+temporary log line). With `AETHER_AUDIT_EVENT_TYPES=all`, the enabled event
+types resolve to `[connection auth message kv task admin acl authorization
+authority_request]` (see `EventType*` constants in
+`internal/audit/types.go` and the `all` expansion in
+`internal/audit/config.go`) — note `custom` is excluded from `all` since it is
+reserved for principal-submitted events via `SubmitAuditEvent`, not
+gateway-emitted ones.
 
 ### 2. Connect a Test Client
 
@@ -447,8 +441,8 @@ SELECT
     success,
     metadata->>'scope' as scope,
     metadata->>'key' as key,
-    metadata->>'old_value' as old_value,
-    metadata->>'new_value' as new_value,
+    metadata->>'old_value_size' as old_value_size,
+    metadata->>'new_value_size' as new_value_size,
     metadata->>'result_count' as result_count
 FROM comprehensive_audit_log
 WHERE event_type = 'kv'
@@ -467,12 +461,12 @@ For the test client above, you should see:
    metadata: {
      "scope": "address",
      "key": "test-key",
-     "old_value": "",
-     "new_value": "value-1",
      "new_value_size": 7,
      "is_update": false
    }
    ```
+   Note: `old_value_size`/`new_value_size` (byte counts) are logged, never the
+   literal `old_value`/`new_value` strings — see the security note above.
 
 2. **KV GET (success)**
    ```sql
@@ -492,9 +486,7 @@ For the test client above, you should see:
    metadata: {
      "scope": "address",
      "key": "test-key",
-     "old_value": "value-1",
      "old_value_size": 7,
-     "new_value": "value-2",
      "new_value_size": 7,
      "is_update": true
    }
@@ -507,7 +499,7 @@ For the test client above, you should see:
    metadata: {
      "scope": "address",
      "key": "ttl-key",
-     "new_value": "expires",
+     "new_value_size": 7,
      "ttl_seconds": 300,
      "is_update": false
    }
@@ -541,7 +533,6 @@ For the test client above, you should see:
    metadata: {
      "scope": "address",
      "key": "test-key",
-     "old_value": "value-2",
      "old_value_size": 7
    }
    ```
@@ -551,11 +542,12 @@ For the test client above, you should see:
 Check that KV operations include all expected metadata:
 
 ```sql
--- Check PUT operations include before/after values
+-- Check PUT operations include before/after value sizes (not the values
+-- themselves — see the security note above)
 SELECT
     operation,
-    metadata->>'old_value' as old_value,
-    metadata->>'new_value' as new_value,
+    metadata->>'old_value_size' as old_value_size,
+    metadata->>'new_value_size' as new_value_size,
     metadata->>'is_update' as is_update
 FROM comprehensive_audit_log
 WHERE operation = 'kv_put'
@@ -563,11 +555,11 @@ ORDER BY timestamp DESC;
 ```
 
 ```sql
--- Check DELETE operations include old_value
+-- Check DELETE operations include old_value_size
 SELECT
     operation,
     metadata->>'key' as key,
-    metadata->>'old_value' as old_value
+    metadata->>'old_value_size' as old_value_size
 FROM comprehensive_audit_log
 WHERE operation = 'kv_delete'
 ORDER BY timestamp DESC;
@@ -628,9 +620,9 @@ ORDER BY timestamp DESC;
 
 #### Scenario 1: PUT Create vs Update
 1. PUT a new key
-2. Verify: is_update=false, old_value=""
+2. Verify: is_update=false, old_value_size absent/0
 3. PUT the same key with new value
-4. Verify: is_update=true, old_value contains previous value
+4. Verify: is_update=true, old_value_size reflects the previous value's byte length (the previous value itself is not logged)
 
 #### Scenario 2: Different Scopes
 Test KV operations with different scopes:
@@ -673,9 +665,9 @@ LIMIT 10;
 ### KV Audit Success Criteria
 
 ✅ All KV operations logged (GET, PUT, DELETE, LIST)
-✅ PUT operations include before/after values
-✅ PUT updates set is_update=true and include old_value
-✅ DELETE operations include old_value
+✅ PUT operations include before/after value sizes (old_value_size/new_value_size), not the values themselves
+✅ PUT updates set is_update=true and include old_value_size
+✅ DELETE operations include old_value_size
 ✅ LIST operations include result_count
 ✅ PUT with TTL includes ttl_seconds
 ✅ Failed operations have success=false
@@ -837,7 +829,19 @@ ORDER BY timestamp;
 
 #### 4. Verify Expected Events
 
-For each message sent, you should see TWO audit events:
+> **Coalescing note:** Successful `message_received`/`message_routed` events
+> (and `proxy_http_routed`) for the same (sender, target-topic, operation)
+> tuple are coalesced within a rolling window — only the first occurrence is
+> written, later repeats within the window are suppressed — to keep
+> high-volume chat token streaming from flooding `comprehensive_audit_log`.
+> Failures and every other event type are never coalesced. The window
+> defaults to 60s and is configurable via `AETHER_AUDIT_COALESCE_WINDOW`
+> (`0` disables coalescing). If you send the same message repeatedly to the
+> same target within the window, expect fewer rows than sends. Send to a
+> fresh target topic (or wait out the window) between test messages if you
+> need one row per send. See `internal/gateway/audit_coalesce.go`.
+
+For each message sent (outside the coalescing window, or to a distinct target), you should see TWO audit events:
 
 1. **message_received** - Logged after ACL check
    - operation: `message_received`
@@ -967,7 +971,6 @@ ORDER BY timestamp DESC;
 ✅ High verbosity: Includes message_content (truncated to 1KB)
 ✅ Failed operations have success=false with error_message
 ✅ All operations include session_id for correlation
-✅ task_id included in metadata for correlation with task system
 
 ### Verbosity Level Comparison
 
@@ -1120,6 +1123,19 @@ WHERE workspace = 'test' AND operation = 'test';
 ---
 
 ## 4. Testing Admin Action Audit Events
+
+> **STALE / NOT CURRENTLY WIRED UP:** `internal/audit/types.go` still defines
+> `OpAdminStateQuery` ("admin_state_query"), `OpAdminSessionDisconnect`
+> ("admin_session_disconnect"), and `OpAdminConfigChange`
+> ("admin_config_change"), but as of this writing nothing in the codebase
+> calls into the audit logger from the admin HTTP handlers
+> (`internal/admin/server.go`'s `/api/connections`, `/api/agents`,
+> `/api/kv/...`, `/api/tasks/.../retry|cancel`, etc. — verified via `grep -rn
+> "audit\." internal/admin`, zero hits outside tests). Following the steps
+> below will exercise the admin REST API but will **not** produce any
+> `event_type = 'admin'` rows in `comprehensive_audit_log`. Treat this section
+> as a spec for the intended behavior once admin-action auditing is
+> (re)implemented, not as a description of current behavior.
 
 ### Automated Test
 
@@ -1777,29 +1793,35 @@ Expected: Only `test_5d` and `test_2d` should remain (< 7 days old)
 
 ### Test 7: Background Cleanup Job
 
-The gateway runs a background cleanup job daily. To test it manually:
+The scheduled audit-log retention sweep is run by `internal/cleanup.Service`
+(`CleanupOldAuditLogs`, `internal/cleanup/service.go`), the same periodic-job
+runner that handles task purge/reconciliation — it is a `cleanup.Config`
+field, not a standalone ticker in `cmd/gateway/main.go`.
 
-1. **Start Gateway:**
+- Config keys (YAML only — there is no `AETHER_AUDIT_RETENTION_DAYS`-style env
+  override for these two; that env var only affects `AuditConfig.RetentionDays`,
+  a separate, unused-by-the-sweep knob consumed by the manual
+  `CleanupOldACLAuditLogs` admin RPC path):
+  - `cleanup.audit_retention_days` — default `90`
+  - `cleanup.audit_cleanup_interval` — default `24h`; set to `"0"` to disable
+    the scheduled sweep entirely
+
+1. **Start Gateway with a short interval for testing** (edit `configs/dev.yaml`
+   or your config file):
+   ```yaml
+   cleanup:
+     audit_retention_days: 30
+     audit_cleanup_interval: "1m"
+   ```
    ```bash
-   export AETHER_AUDIT_RETENTION_DAYS=30
-   go run ./cmd/gateway
+   go run ./cmd/gateway -config configs/dev.yaml
    ```
 
-2. **Check Logs:**
-   Look for log messages about cleanup job:
-   ```
-   [INFO] Audit log cleanup job started (runs daily)
-   [INFO] [Audit] Cleanup: purged N old audit log entries
-   ```
-
-3. **Verify in Database:**
-   After 24 hours, the cleanup job should have run automatically and deleted old records.
-
-For immediate testing, you can modify the ticker interval in `cmd/gateway/main.go`:
-```go
-// Change from 24 hours to 1 minute for testing
-ticker := time.NewTicker(1 * time.Minute)
-```
+2. **Verify in Database:**
+   After the configured interval, the cleanup job should have run
+   automatically and deleted rows older than `audit_retention_days`. The job
+   logs its result via `JobResult` (job name `audit_log_cleanup`); check
+   gateway logs for that job name and its `ItemCount`/`Details`.
 
 ### Retention Policy Verification
 
@@ -1841,17 +1863,13 @@ Different compliance requirements may need different retention periods:
 - **PCI-DSS**: 1 year minimum
 - **General Security**: 90 days
 
-Configure retention via environment variable:
+Configure the scheduled sweep's retention window via the gateway YAML config
+(`cleanup.audit_retention_days`; there is no environment-variable override for
+this field — see Test 7 above):
 
-```bash
-# 90-day retention (default)
-export AETHER_AUDIT_RETENTION_DAYS=90
-
-# 1-year retention (SOC2, PCI-DSS)
-export AETHER_AUDIT_RETENTION_DAYS=365
-
-# 6-year retention (HIPAA)
-export AETHER_AUDIT_RETENTION_DAYS=2190
+```yaml
+cleanup:
+  audit_retention_days: 90    # default (SOC2/PCI-DSS: 365, HIPAA: 2190)
 ```
 
 ### Cleanup Performance Testing
@@ -1898,13 +1916,13 @@ Expected:
 - Records older than the boundary are deleted
 
 ✅ **Background Job:**
-- Gateway starts background cleanup job on startup
-- Job runs every 24 hours
-- Job uses retention period from audit configuration
-- Job logs cleanup results (number of records purged)
+- Gateway's `cleanup.Service` starts the `audit_log_cleanup` periodic job on startup (when `cleanup.audit_cleanup_interval` is nonzero)
+- Job runs every 24 hours by default (`cleanup.audit_cleanup_interval`)
+- Job uses the retention period from `cleanup.audit_retention_days`
+- Job logs cleanup results (number of records purged) via its `JobResult`
 
 ✅ **Configuration:**
-- Retention period configurable via `AETHER_AUDIT_RETENTION_DAYS` environment variable
+- Retention period configurable via `cleanup.audit_retention_days` in the gateway YAML config (no environment-variable override)
 - Default retention is 90 days
 - Custom retention periods work correctly (7, 30, 90, 365, etc.)
 

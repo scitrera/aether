@@ -223,7 +223,7 @@ When a gateway instance crashes or becomes unavailable:
    - If session affinity expired, distribute via round-robin or least-connections
 4. **New Gateway Acquires Lock**:
    - Old lock may still exist (if crash prevented cleanup)
-   - Old lock has TTL and expires within 60 seconds
+   - Old lock has TTL and expires within 30 seconds
    - New gateway either acquires immediately (if old lock expired) or rejects with `DuplicateIdentityError`
 5. **Client Retries**: If rejected, client waits and retries exponentially (up to old lock TTL expiration)
 
@@ -268,6 +268,10 @@ spec:
 
 **Client Responsibility**: Implement idempotent message handling or track `message_id` for deduplication.
 
+### Task Reassignment After Worker Disconnect
+
+A background `DisconnectReaper` periodically scans tasks whose assigned worker has been disconnected longer than the task's grace window and fails them so they can be retried or reclaimed. It is decoupled from session-lock cleanup — a worker can reconnect to the same gateway or a different one in the fleet without losing its task — and is multi-gateway safe, since task state transitions are idempotent no-ops once a task is already terminal.
+
 ## Production Deployment Checklist
 
 ### Prerequisites
@@ -280,12 +284,12 @@ spec:
 - [ ] Set `AETHER_GATEWAY_ID` to unique value per instance (e.g., Pod name)
 - [ ] Set `REDIS_ADDR` to Redis cluster endpoint
 - [ ] Set `STREAM_URL` to RabbitMQ Streams cluster URL
-- [ ] Configure `PORT` (default 50051 for gRPC)
-- [ ] Set lock TTL via `LOCK_TTL_SECONDS` (default: 60)
+- [ ] Configure `AETHER_PORT` (default 50051 for gRPC)
+- [ ] Session lock TTL is a fixed 30-second constant (not configurable); locks are refreshed every 10 seconds while the connection is alive
 
 ### Load Balancer Configuration
 - [ ] Enable session affinity (ClientIP or Cookie)
-- [ ] Configure health checks on port 50051 (gRPC) or 8080 (HTTP health endpoint)
+- [ ] Configure health checks on port 50051 (gRPC) or 9090 (HTTP health endpoint — the ops/metrics port, see [Monitoring](monitoring.md))
 - [ ] Set health check interval: 10 seconds
 - [ ] Set health check timeout: 5 seconds
 - [ ] Set unhealthy threshold: 2 consecutive failures
@@ -369,7 +373,7 @@ redis-cli GET "session:ag.workspace1.impl.spec"
 redis-cli DEL "session:ag.workspace1.impl.spec"
 ```
 
-**Prevention**: Ensure `LOCK_TTL_SECONDS` is set (default 60). Locks auto-expire even if not explicitly released.
+**Prevention**: Session lock TTL is a fixed 30-second constant (`LockTTL` in `internal/state/session.go`) — it is not configurable via environment variable. Locks auto-expire even if not explicitly released, and connected gateways refresh the lock every 10 seconds (`LockRefreshInterval`) to keep it alive.
 
 ### Problem: Uneven Load Distribution
 

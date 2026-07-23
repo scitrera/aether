@@ -46,7 +46,7 @@ AetherLite creates a `./aether-lite-data/` directory on first run and stores all
 You should see output like:
 
 ```
-AetherLite v0.1.0 — embedded single-binary server
+AetherLite v0.2.1 — embedded single-binary server
 INF AetherLite gRPC gateway listening addr=:50051
 INF admin UI listening port=31880
 INF AetherLite is ready
@@ -68,17 +68,19 @@ The full deployment uses Docker-managed RabbitMQ and Redis and exposes the compl
 
 ## Step 1: Start Dependencies
 
-Aether requires RabbitMQ Streams for messaging and Redis (Valkey) for session state. The repository includes Docker scripts for both.
+Aether requires RabbitMQ Streams for messaging and Redis (Valkey) for session state. The repository includes Docker scripts for both, under `server/scripts/`.
 
-Open two terminal windows (or run both in the background):
+Open two terminal windows (or run both in the background), both starting from the `server/` directory:
 
 ```bash
 # Terminal 1 — RabbitMQ with Streams plugin
 # Starts on: stream port 55552, AMQP port 55672, management UI at http://localhost:15672
+cd server
 ./scripts/docker_rmq_test.sh
 
 # Terminal 2 — Redis (Valkey)
 # Starts on: port 56379 (cluster ports 56379-56381)
+cd server
 ./scripts/docker_valkey_test.sh
 ```
 
@@ -87,7 +89,8 @@ Wait a few seconds until both containers report that they are ready. You can ver
 ## Step 2: Build and Start the Gateway
 
 ```bash
-# Build the gateway binary
+# Build the gateway binary (from the server/ directory)
+cd server
 go build -o gateway ./cmd/gateway
 
 # Start with development defaults (no config file required)
@@ -109,7 +112,7 @@ The `--insecure-admin` flag permits the admin UI to run without an API key. This
 You should see output similar to:
 
 ```
-Aether Gateway v0.1.0
+Aether Gateway v0.2.1
 Aether Gateway starting...
 ...
 INF Aether Gateway listening addr=:50051

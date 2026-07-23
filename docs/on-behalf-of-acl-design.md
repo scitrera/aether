@@ -17,6 +17,7 @@ Implemented phase 1 enforcement:
 - request-time `on_behalf_of` resolution against persisted authority grants
 - subject ACL evaluation intersected with grant constraints
 - actor/subject/root-subject/grant lineage recorded in comprehensive audit events
+- gateway-set, spoof-proof propagation of the resolved OBO subject onto delivered messages (`MessageEnvelope.on_behalf_subject` / `IncomingMessage.on_behalf_subject`) so a recipient can identify the user a message was sent for, distinct from the sending identity
 
 Implemented admin lifecycle surface:
 
@@ -401,6 +402,15 @@ Suggested effective access formula:
 - `effective_access = min(subject_acl_level, grant.max_access_level)`
 
 The actor's own resource ACL is not intersected into the subject decision. The actor's authority is represented by being the named delegate on a valid grant. This keeps the model understandable and prevents service ACLs from unexpectedly shrinking subject rights after a grant has already been issued.
+
+### Delivery-Time Subject Propagation
+
+When a `SendMessage` resolves through an `AuthorizationContext` to an OBO subject, the gateway stamps that resolved subject onto the delivered message so the recipient can distinguish "who sent this" from "who it was sent for" — the message-bus analog of the `X-Auth-*` identity headers `ProxyHttp` mints from the same resolved authority.
+
+- `MessageEnvelope.on_behalf_subject` (`PrincipalRef`) is set by the gateway, never by the sender — spoof-proof, like `source`.
+- Mirrored to the recipient as `IncomingMessage.on_behalf_subject`.
+- Populated only when the send carried an `AuthorizationContext` that resolved to a grant with a non-empty `subject_type`/`subject_id`; empty for direct (non-OBO) sends.
+- Subject identity only — it lets a recipient (e.g. a platform bridge) scope behavior to the acting-for user, but it does not carry authority. A recipient that needs to *act for* the subject still goes through the task authority-grant path (`CreateTaskResponse.authority_grant_id`), not this field.
 
 ### Casbin Split
 

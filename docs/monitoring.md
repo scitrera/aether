@@ -10,7 +10,7 @@ Aether Gateway exposes Prometheus metrics at:
 GET http://localhost:9090/metrics
 ```
 
-The metrics port and endpoint are configured in the admin server. In production, this port should be network-isolated (internal only) to prevent metrics exposure on the public load balancer.
+Metrics are served by a dedicated ops server that is separate from the admin UI/API server (see [Admin UI Guide](admin-ui.md)) — it exists purely for Kubernetes health probes and the Prometheus scrape endpoint, with no authentication. The port defaults to 9090 and is configured via `gateway.ops_port` in the YAML config, the `--ops-port` flag, or the `AETHER_OPS_PORT` environment variable. In production, this port should be network-isolated (internal only) to prevent metrics exposure on the public load balancer.
 
 **Important:** The `/metrics` endpoint is intentionally unauthenticated per Prometheus convention. Restrict network access at the infrastructure level (firewall, VPC, etc.).
 
@@ -25,7 +25,7 @@ These metrics track client connection lifecycle and multiplicity.
 | `aether_active_connections` | Gauge | `workspace`, `principal_type` | Currently active client connections broken down by workspace and principal type (agent, task, user, orchestrator, workflow_engine, metrics_bridge) |
 | `aether_admin_active_connections_total` | Gauge | | Total number of active gRPC connections across all workspaces and principal types (updated every 5 seconds) |
 | `aether_connection_duration_seconds` | Histogram | `workspace`, `principal_type` | Duration of individual client connections in seconds. Buckets: 1s to ~4.5h (exponential, base 2) |
-| `aether_connection_attempts_total` | Counter | `workspace`, `principal_type`, `status` | Total connection attempts by outcome (success, failure, duplicate, auth_failed) |
+| `aether_connection_attempts_total` | Counter | `workspace`, `principal_type`, `status` | Total connection attempts by outcome (`success`, `lock_failed`, `quota_exceeded`, `acl_denied`) |
 
 **Example queries:**
 ```promql
@@ -47,7 +47,7 @@ These metrics monitor message throughput, errors, and latency.
 | Metric Name | Type | Labels | Description |
 |-------------|------|--------|-------------|
 | `aether_messages_routed_total` | Counter | `workspace`, `message_type` | Total messages successfully routed (CHAT, CONTROL, TOOL_CALL, EVENT, METRIC) |
-| `aether_message_errors_total` | Counter | `workspace`, `error_type` | Total message routing errors by type (invalid_topic, unauthorized, offline_target, etc.) |
+| `aether_message_errors_total` | Counter | `workspace`, `error_type` | Total message routing errors by type (`payload_too_large`, `rate_limited`, `workspace_rate_limited`, `permission_denied`, `cross_workspace_broadcast_denied`, `sv_wildcard_unavailable`, `metric_validation`, `publish_failed`) |
 | `aether_message_routing_latency_seconds` | Histogram | `workspace` | Latency of message routing from receive to publish (time spent in gateway). Buckets: 0.1ms to ~3.2s (exponential, base 2) |
 
 **Example queries:**
@@ -69,24 +69,42 @@ These metrics track configuration store operations and performance.
 
 | Metric Name | Type | Labels | Description |
 |-------------|------|--------|-------------|
-| `aether_kv_operations_total` | Counter | `operation`, `scope`, `status` | Total KV operations (get, set, delete, list) by scope (tenant, workspace, address) and outcome (success, failure) |
+| `aether_kv_operations_total` | Counter | `operation`, `scope`, `status` | Total KV operations by proto `OpType` name (`GET`, `PUT`, `LIST`, `DELETE`, `INCREMENT`, `DECREMENT`, `COMPARE_AND_SET`, `COMPARE_AND_DELETE`, etc.), scope, and outcome (`ok`, `error`) |
 | `aether_kv_operation_latency_seconds` | Histogram | `operation`, `scope` | Latency of KV store operations. Buckets: 0.1ms to ~800ms (exponential, base 2) |
 
 **Example queries:**
 ```promql
 # KV operation success rate
-sum(rate(aether_kv_operations_total{status="success"}[5m])) /
+sum(rate(aether_kv_operations_total{status="ok"}[5m])) /
 sum(rate(aether_kv_operations_total[5m]))
 
 # KV get latency p95
-histogram_quantile(0.95, rate(aether_kv_operation_latency_seconds_bucket{operation="get"}[5m]))
+histogram_quantile(0.95, rate(aether_kv_operation_latency_seconds_bucket{operation="GET"}[5m]))
 ```
 
-### Authentication & Authorization Metrics
+### Redis & RabbitMQ Backend Metrics
+
+These metrics track the health of the two stateful backends the gateway depends on (not exposed by AetherLite, which uses Badger/JetStream instead).
 
 | Metric Name | Type | Labels | Description |
 |-------------|------|--------|-------------|
-| `aether_auth_attempts_total` | Counter | `method`, `status` | Authentication attempts by method (api_key, token, mTLS) and outcome (success, failure, invalid) |
+| `aether_redis_operations_total` | Counter | `operation`, `status` | Total Redis session/lock operations (`lock_acquire`, `lock_refresh`, `lock_release`, `session_register`, `session_unregister`) by outcome (`success`, `failure`) |
+| `aether_session_lock_duration_seconds` | Histogram | | Duration of session lock acquisition. Buckets: 0.1ms to ~3.2s (exponential, base 2) |
+| `aether_circuit_breaker_state` | Gauge | `subsystem` | Circuit breaker state: 0=closed, 1=open, 2=half-open |
+| `aether_rabbitmq_publish_total` | Counter | `status` | Total RabbitMQ stream publish attempts by outcome |
+| `aether_rabbitmq_publish_duration_seconds` | Histogram | | Duration of RabbitMQ stream publish operations. Buckets: 0.1ms to ~3.2s (exponential, base 2) |
+
+**Example queries:**
+```promql
+# Redis operation failure rate
+sum(rate(aether_redis_operations_total{status="failure"}[5m])) /
+sum(rate(aether_redis_operations_total[5m]))
+
+# Circuit breaker currently open (1) for any subsystem
+aether_circuit_breaker_state == 1
+```
+
+**Note:** There is currently no dedicated authentication-attempt metric (`aether_auth_attempts_total` does not exist in the codebase). Credential authentication (mTLS/API key/OAuth) failures short-circuit the connection before any Prometheus counter is incremented, so they are only visible in gateway logs, not in `aether_connection_attempts_total` — that metric only covers post-authentication outcomes (lock, quota, ACL).
 
 ### Orchestration Metrics
 
@@ -273,7 +291,7 @@ Place these rules in your Prometheus alerting configuration:
 - alert: AetherKVOperationFailureRate
   expr: |
     (
-      sum(rate(aether_kv_operations_total{status="failure"}[5m])) by (scope)
+      sum(rate(aether_kv_operations_total{status="error"}[5m])) by (scope)
       /
       sum(rate(aether_kv_operations_total[5m])) by (scope)
     ) > 0.05
@@ -300,23 +318,25 @@ Place these rules in your Prometheus alerting configuration:
     description: "Gateway has zero active connections. Check if gateway is running and if clients can reach it."
 ```
 
-### Authentication Failures
+### Redis Lock Failures
+
+There is no dedicated authentication-attempt metric (see the note in [Redis & RabbitMQ Backend Metrics](#redis--rabbitmq-backend-metrics)). The closest actionable signal for identity/session problems is a spike in Redis lock failures, which surfaces both stale-lock contention and Redis connectivity issues:
 
 ```yaml
-- alert: AetherHighAuthFailureRate
+- alert: AetherHighRedisLockFailureRate
   expr: |
     (
-      sum(rate(aether_auth_attempts_total{status!="success"}[5m]))
+      sum(rate(aether_redis_operations_total{operation="lock_acquire", status="failure"}[5m]))
       /
-      sum(rate(aether_auth_attempts_total[5m]))
-    ) > 0.25
+      sum(rate(aether_redis_operations_total{operation="lock_acquire"}[5m]))
+    ) > 0.10
   for: 5m
   labels:
     severity: warning
     component: aether
   annotations:
-    summary: "High authentication failure rate"
-    description: "Authentication failure rate is {{ humanizePercentage $value }}. Check API keys and token configuration."
+    summary: "High Redis lock acquisition failure rate"
+    description: "Lock acquisition failure rate is {{ humanizePercentage $value }}. Check for stale locks (DuplicateIdentityError) and Redis connectivity/latency."
 ```
 
 ---
@@ -745,7 +765,7 @@ Import this dashboard into Grafana for a complete monitoring view:
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "sum(rate(aether_kv_operations_total{status=\"success\"}[1m])) by (operation)",
+          "expr": "sum(rate(aether_kv_operations_total{status=\"ok\"}[1m])) by (operation)",
           "legendFormat": "{{ operation }}",
           "refId": "A"
         }
@@ -830,7 +850,7 @@ Import this dashboard into Grafana for a complete monitoring view:
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "sum(rate(aether_kv_operations_total{status=\"failure\"}[5m])) by (scope) / sum(rate(aether_kv_operations_total[5m])) by (scope)",
+          "expr": "sum(rate(aether_kv_operations_total{status=\"error\"}[5m])) by (scope) / sum(rate(aether_kv_operations_total[5m])) by (scope)",
           "legendFormat": "{{ scope }}",
           "refId": "A"
         }
@@ -871,7 +891,7 @@ Add this job to your Prometheus `prometheus.yml`:
 scrape_configs:
   - job_name: 'aether-gateway'
     static_configs:
-      - targets: ['localhost:9090']  # Adjust port to match admin server port
+      - targets: ['localhost:9090']  # Adjust port to match the ops server port (gateway.ops_port / AETHER_OPS_PORT)
     scrape_interval: 30s
     scrape_timeout: 10s
     # Optional: authentication if you expose metrics on a secure endpoint
@@ -886,6 +906,25 @@ scrape_configs:
     #   key_file: '/etc/prometheus/client.key'
     #   insecure_skip_verify: false
 ```
+
+---
+
+## OTLP Traces & Metrics Export
+
+In addition to the Prometheus `/metrics` endpoint, both `gateway` and `aetherlite` can export traces and metrics directly via OTLP/gRPC to an OpenTelemetry Collector.
+
+Both exporters are gated on the same environment variable, `OTEL_EXPORTER_OTLP_ENDPOINT`. When it is unset, tracing and metrics export are both disabled and the SDKs fall back to no-op providers — there is no separate on/off flag for each signal.
+
+```bash
+# Typical OTLP/gRPC collector endpoint (insecure/plaintext for http:// scheme)
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4317"
+```
+
+- **Traces**: exported via `otlptracegrpc`, batched, and tagged with `service.name` (`aether-gateway` or `aether-lite`).
+- **Metrics**: exported via `otlpmetricgrpc` with a periodic reader (~60s interval by default), tagged with `service.name`, `service.namespace=scitrera`, and `service.version`.
+- **Go runtime metrics**: `InitMeter` also starts the OpenTelemetry Go runtime instrumentation, so `go_*`/process metrics (GC, goroutines, memory) are included in the OTLP metrics stream alongside the application-level counters/histograms.
+- The OTLP metrics exporter is a separate signal path from the Prometheus `aether_*` metrics described above — both can be enabled simultaneously and carry overlapping but not identical data (OTLP export includes Go runtime metrics that are not registered with the Prometheus registry).
+- Both `otlptracegrpc` and `otlpmetricgrpc` connect to the **same** endpoint over gRPC (typically port 4317); do not point `OTEL_EXPORTER_OTLP_ENDPOINT` at an OTLP/HTTP port (4318) — the gRPC exporters will fail against it.
 
 ---
 
@@ -953,28 +992,28 @@ Group panels by concern:
 4. **Orchestration** (trigger rates, resource usage)
 
 ### 5. Metering Integration
-Usage metering (billable connections, message byte counts, KV operations by scope) is planned but not yet integrated. Use Prometheus metrics as the current source of truth for capacity planning.
+A dedicated `aether_metering_*` metric namespace is already exposed for usage-based billing: `aether_metering_messages_routed_total`, `aether_metering_bytes_routed_total`, `aether_metering_kv_operations_total`, `aether_metering_checkpoint_operations_total`, and `aether_metering_task_operations_total` are actively incremented in the routing and orchestration paths (labeled by `workspace` and operation type). `aether_metering_active_connections` is defined but not currently updated by any code path. A billing pipeline that consumes these counters is not yet built — use them as the current source of truth for capacity planning and manual usage analysis in the meantime.
 
 ---
 
 ## Troubleshooting Guide
 
 ### High Message Error Rate
-1. Check `message_errors_total` by `error_type` to identify failure category
+1. Check `aether_message_errors_total` by `error_type` to identify failure category
 2. Examine gateway logs for specific error messages
-3. Verify RabbitMQ Streams health (producer/consumer status)
-4. Check Redis for lock contention issues
+3. Verify RabbitMQ Streams health via `aether_rabbitmq_publish_total{status="failure"}` and producer/consumer status
+4. Check Redis for lock contention issues via `aether_redis_operations_total{status="failure"}`
 
 ### Latency Spikes
 1. Compare message routing latency with RabbitMQ broker latency
-2. Check gateway CPU/memory utilization (OS metrics)
+2. Check gateway CPU/memory utilization (OS metrics) and Go runtime metrics (`go_memstats_*`, `go_goroutines`) exported via OTLP — see [OTLP Traces & Metrics Export](#otlp-traces--metrics-export)
 3. Monitor KV operation latency separately (Redis latency)
 4. Correlate with burst in connection attempts or message volume
 
 ### Connection Failures
-1. Check `connection_attempts_total{status!="success"}` by principal type
-2. Verify auth configuration (API keys, tokens)
-3. Monitor Redis lock contention (`connection_attempts_total{status="duplicate"}`)
+1. Check `aether_connection_attempts_total{status!="success"}` by principal type
+2. Verify auth configuration (API keys, tokens) — credential authentication failures are not counted in this metric, so check gateway logs directly
+3. Monitor Redis lock contention (`aether_connection_attempts_total{status="lock_failed"}`, `aether_redis_operations_total{operation="lock_acquire", status="failure"}`)
 4. Check network connectivity between clients and gateway
 
 ### No Active Connections
