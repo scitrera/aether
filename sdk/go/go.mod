@@ -5,7 +5,7 @@ go 1.25.12
 require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/scitrera/aether/api v0.2.2
-	github.com/scitrera/go-backpressure v0.1.0
+	github.com/scitrera/go-backpressure v0.1.1
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
 )

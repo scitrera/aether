@@ -1,6 +1,6 @@
 module github.com/scitrera/aether
 
-go 1.26.5
+go 1.25.12
 
 require (
 	github.com/MicahParks/keyfunc/v3 v3.8.0
@@ -32,7 +32,7 @@ require (
 	github.com/rs/zerolog v1.34.0
 	github.com/scitrera/aether/api v0.2.2
 	github.com/scitrera/aether/sdk/go v0.2.2
-	github.com/scitrera/go-backpressure v0.1.0
+	github.com/scitrera/go-backpressure v0.1.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.62.0

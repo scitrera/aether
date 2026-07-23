@@ -26,6 +26,7 @@ preferred_versions:
   go:
     "google.golang.org/grpc": "1.81.1"
     "google.golang.org/protobuf": "1.36.11"
+    "github.com/scitrera/go-backpressure": "v0.1.1"
   python:
     "grpcio": 1.81.1
     "grpcio-tools": 1.81.1
