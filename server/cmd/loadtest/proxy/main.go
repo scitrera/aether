@@ -11,8 +11,8 @@
 //   - some callers address the wildcard sv::echo, others pin to sv::echo::a
 //     or sv::echo::b
 //   - latency percentiles, gateway heap/goroutine deltas, and TunnelAck
-//     back-pressure events are written to stdout AND appended to
-//     server/docs/proxy-load-test-results.md (when --append-doc=PATH).
+//     back-pressure events are written to stdout AND appended to the
+//     Markdown file given by --append-doc=PATH (when set).
 //
 // Soft assertions: missed thresholds print "WARN" but never set a non-zero
 // exit code; the brief explicitly classifies these as observational.

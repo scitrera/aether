@@ -17,7 +17,7 @@ package integration
 //
 // It does NOT measure: real RMQ stream throughput, real network jitter, real
 // gateway memory under gRPC stream pressure, or service-side gRPC delivery
-// (which has a documented wiring gap — see proxy-load-test-results.md).
+// (which has a known wiring gap in this in-process harness).
 //
 // Run:
 //   cd server

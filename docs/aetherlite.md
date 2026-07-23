@@ -50,16 +50,10 @@ AETHER_ALLOW_DEV_MODE=true ./aetherlite --data-dir /var/lib/aether-lite --insecu
 | `--version` | — | Print version and exit |
 | `--help` | — | Print usage and exit |
 
-### Option 2: Individual binaries with `--lite` flag
-
-The `--lite` flag (or `mode: lite` in config) switches any standard binary to lite mode:
-
-```bash
-go build -o gateway ./cmd/gateway
-./gateway --lite --data-dir ./aether-lite-data --insecure-admin
-```
-
-This is useful when you want only the gateway component without the workflow server.
+> Lite mode is only available via the dedicated `cmd/aetherlite` binary. The
+> `cmd/gateway` binary no longer supports lite mode — it exits at startup if
+> `--lite` (or `mode: lite`) is set. Use `cmd/aetherlite` for embedded
+> single-binary deployments.
 
 ## Data Directory Layout
 
@@ -86,7 +80,7 @@ The data directory is created automatically on first run. Back it up like any ot
 
 ## Configuration
 
-AetherLite uses the same YAML configuration format as the full gateway. When using `./aetherlite`, `mode: lite` is always forced. When using `./gateway --lite`, add `mode: lite` to your YAML.
+AetherLite uses the same YAML configuration format as the full gateway. When using `./aetherlite`, `mode: lite` is always forced.
 
 Minimal production config example:
 

@@ -182,6 +182,8 @@ RabbitMQ Streams.
 #### Start Development Dependencies
 
 ```bash
+cd server   # scripts, configs, and cmd/ all live under server/
+
 # RabbitMQ Streams (ports 55552 stream, 55672 AMQP, management UI on 15672)
 ./scripts/docker_rmq_test.sh
 
@@ -192,14 +194,16 @@ RabbitMQ Streams.
 #### Build and Run
 
 ```bash
+cd server   # if not already there
+
 # Build
 go build -o gateway ./cmd/gateway
 
-# Run with the default dev config
+# Run with the dev config
 ./gateway --config configs/dev.yaml
 
-# Or run directly
-go run ./cmd/gateway
+# Or run directly with dev defaults (no config file required)
+go run ./cmd/gateway --dev
 ```
 
 #### Run Tests
@@ -260,11 +264,12 @@ log_level: "info"
 
 | Flag                                                                | Description                                            |
 |---------------------------------------------------------------------|--------------------------------------------------------|
-| `--config <path>`                                                   | Path to YAML config file (default: `configs/dev.yaml`) |
+| `--config <path>`                                                   | Path to YAML config file (required unless `--dev`)     |
+| `--dev`                                                             | Start with hardcoded dev defaults when no config file  |
 | `--port <n>`                                                        | gRPC server port (overrides config)                    |
 | `--tls`                                                             | Enable mTLS                                            |
 | `--cert-file`, `--key-file`, `--ca-file`                            | mTLS certificate paths                                 |
-| `--db-host`, `--db-port`, `--db-user`, `--db-password`, `--db-name` | PostgreSQL overrides                                   |
+| `--db-host`, `--db-port`, `--db-user`, `--db-name`                  | PostgreSQL overrides                                   |
 | `--redis <host:port>`                                               | Redis address override                                 |
 | `--stream-url`                                                      | RabbitMQ Stream URL override                           |
 | `--amqp-url`                                                        | RabbitMQ AMQP URL override                             |

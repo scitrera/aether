@@ -110,7 +110,7 @@ workspace.
 
 ### 2.3a AetherLite Mode
 
-AetherLite is an alternative deployment mode that eliminates all external service dependencies by substituting in-process backends. It is activated via the `--lite` flag on any binary, or via `mode: lite` in the YAML config. The `cmd/aetherlite` binary always runs in lite mode.
+AetherLite is an alternative deployment mode that eliminates all external service dependencies by substituting in-process backends. It runs as the dedicated `cmd/aetherlite` binary, which always operates in lite mode. The `cmd/gateway` binary no longer supports lite mode (it exits at startup if `--lite` or `mode: lite` is set).
 
 **Backend substitutions:**
 
@@ -697,8 +697,8 @@ Configuration is loaded from a YAML file with environment variable overrides and
 
 ### 14.1 Go SDK (`sdk/go/`)
 
-Full-featured SDK with typed clients for all six principal types. Features:
-- `AgentClient`, `TaskClient`, `UserClient`, `OrchestratorClient`, `WorkflowEngineClient`, `MetricsBridgeClient`
+Full-featured SDK with typed clients for all eight principal types. Features:
+- `AgentClient`, `TaskClient`, `UserClient`, `OrchestratorClient`, `WorkflowEngineClient`, `MetricsBridgeClient`, `ServiceClient`, `BridgeClient`
 - Synchronous and asynchronous KV and checkpoint operations
 - Auto-reconnection with exponential backoff and jitter
 - Task creation with targeted, broadcast, and auto assignment modes

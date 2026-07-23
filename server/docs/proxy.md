@@ -863,10 +863,6 @@ exposes per-envelope outcomes:
 | `full_buffer`   | Target's deliveryCh was full; routed via RMQ to avoid stalling.        |
 | `disabled`      | Bypass turned off by config or env override.                           |
 
-For the broader roadmap of routing-layer optimizations and the design
-rationale behind the single-node bypass, see
-[proxy-architecture-roadmap.md](proxy-architecture-roadmap.md).
-
 ## Caller Identity Headers
 
 Two additional headers are stamped on every proxied request that reaches a
@@ -920,7 +916,4 @@ UDS path convention, SDK config snippets, spawn-time grant scopes
 ## Related Documents
 
 - [proxy-quickstart.md](proxy-quickstart.md) — running the sidecar, integration tests, and auth-proxy regression suite
-- [proxy-cutover.md](proxy-cutover.md) — production rollout criteria, SLOs, rollback steps, and runbook
-- [proxy-load-test-results.md](proxy-load-test-results.md) — routing-layer benchmark results and scope caveats
-- [proxy-architecture-roadmap.md](proxy-architecture-roadmap.md) — phased plan for proxy/tunnel routing-layer evolution
 - [proxy-sandbox.md](proxy-sandbox.md) — sandbox deployment pattern (relay+terminator, UDS, grant scopes)

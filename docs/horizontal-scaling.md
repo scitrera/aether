@@ -1,6 +1,6 @@
 # Horizontal Scaling Architecture
 
-> **Note: AetherLite is single-node only.** If you are running `./aetherlite` or `./gateway --lite`, horizontal scaling is not supported — all state is held in local Badger and SQLite databases that cannot be shared across processes. To scale horizontally, use the full Aether stack with Redis, RabbitMQ, and PostgreSQL as described in this document. See [aetherlite.md](aetherlite.md) for AetherLite limitations.
+> **Note: AetherLite is single-node only.** If you are running `./aetherlite`, horizontal scaling is not supported — all state is held in local Badger and SQLite databases that cannot be shared across processes. To scale horizontally, use the full Aether stack with Redis, RabbitMQ, and PostgreSQL as described in this document. See [aetherlite.md](aetherlite.md) for AetherLite limitations.
 
 This document describes how to deploy Aether Gateway in a horizontally scaled configuration with session affinity for high availability and load distribution.
 

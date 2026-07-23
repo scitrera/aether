@@ -15,7 +15,7 @@ and the design decisions behind the join subsystem.
 ## 1. Architecture
 
 The WFE is a **standalone binary** (`cmd/workflow`) that connects to the Aether
-gateway as a `WorkflowEngineClient` (one of the seven principal types). It holds
+gateway as a `WorkflowEngineClient` (one of the eight principal types). It holds
 no Redis connection of its own and owns no database driver: persistence is
 injected as a `WorkflowStore` (Postgres or SQLite), and all distributed
 coordination runs over the gateway's KV via the SDK.

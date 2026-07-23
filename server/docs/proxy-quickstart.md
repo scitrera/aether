@@ -90,7 +90,7 @@ ok      github.com/scitrera/aether/tests/integration    2.014s
 - Cross-gateway dispatch with real RabbitMQ Streams replay — exercised by
   the unit tests in `server/internal/gateway/proxy_routing_test.go`; a
   wire-level load test against a deployed gateway + RMQ + Redis stack is
-  still pending (see [proxy-load-test-results.md](proxy-load-test-results.md)).
+  still pending.
 
 ## Running the auth-proxy regression suite
 
@@ -117,5 +117,4 @@ For a full development-mode boot of the gateway + sidecar pair, see
 ## Related Documents
 
 - [proxy.md](proxy.md) — feature overview, SDK one-liners, ACL/OBO, limits, audit events, failure modes
-- [proxy-cutover.md](proxy-cutover.md) — production rollout criteria, SLOs, rollback steps, and runbook
-- [proxy-load-test-results.md](proxy-load-test-results.md) — routing-layer benchmark results and scope caveats
+- [proxy-sandbox.md](proxy-sandbox.md) — sandbox deployment pattern (relay+terminator, UDS, grant scopes)

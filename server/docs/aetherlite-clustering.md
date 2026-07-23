@@ -1,7 +1,5 @@
 # AetherLite Clustering Guide
 
-**Strategic design rationale:** See `/home/drew/.claude/plans/review-home-drew-oss-rqlite-and-home-dre-distributed-biscuit.md` for the complete architectural reasoning behind topology selection, backup tiers, and JetStream integration.
-
 ---
 
 ## TL;DR: Topology Selection
