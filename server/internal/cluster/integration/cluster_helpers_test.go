@@ -175,16 +175,45 @@ func waitForClusterFormed(t *testing.T, c *cluster3) {
 			}
 		}
 		if ready {
-			// Give JetStream meta-group a brief moment to elect a leader so
-			// stream/KV creation on first call doesn't ENOQUORUM. 200ms is
-			// empirically sufficient on a laptop; CI may need more but 500ms
-			// is still cheap.
-			time.Sleep(500 * time.Millisecond)
+			// Routes are up, but replicated stream/KV creation additionally
+			// needs the JetStream meta-leader elected — otherwise the first
+			// CreateOrUpdateKeyValue blocks on ENOQUORUM until it clears. A fixed
+			// sleep here is racy: under -race the election routinely takes well
+			// over a second, which is what made phase-5 flake with "open KV
+			// bucket: context deadline exceeded". Actively poll JetStream
+			// readiness instead of guessing a duration.
+			waitForJetStreamReady(t, c)
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("3-node cluster did not finish forming within 15s")
+}
+
+// waitForJetStreamReady blocks until every node's JetStream is ready — i.e.
+// AccountInfo succeeds, which requires the JetStream meta-leader to be elected
+// and reachable. This gates replicated stream/KV creation so it doesn't race
+// the meta-election. The deadline is generous because -race instrumentation
+// slows Raft election substantially (a fixed sub-second sleep is never enough
+// under -race).
+func waitForJetStreamReady(t *testing.T, c *cluster3) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for _, n := range c.Nodes {
+		js := n.JetStream()
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, err := js.AccountInfo(ctx)
+			cancel()
+			if err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("JetStream meta-leader not ready within 30s: %v", err)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 }
 
 // waitUntil polls the supplied predicate until it returns true or the deadline
