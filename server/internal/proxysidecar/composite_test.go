@@ -963,6 +963,162 @@ func compositeRecvWithTimeout(t *testing.T, s pb.AetherGateway_ConnectClient) *p
 	}
 }
 
+// startRunnerForIdentity spins up a fake gateway + an httptest backend + a
+// Runner (terminator + relay enabled) whose Service.Workspace is `workspace`.
+// It waits for the runtime to dial the fake gateway and returns the recorded
+// upstream stream. An empty workspace exercises the workspace-less Service
+// identity path (sv::{impl}::{spec}); a non-empty workspace exercises the
+// Agent identity path (ag::{ws}::{impl}::{spec}). Teardown is registered via
+// t.Cleanup. Mirrors newCompositeHarness but parameterised on the identity
+// discriminator and without a sandbox client (the assertions only need the
+// runtime's own InitConnection).
+func startRunnerForIdentity(t *testing.T, workspace string) *compositeFakeStream {
+	t.Helper()
+
+	gw := newCompositeFakeGateway()
+	gwLis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen gateway: %v", err)
+	}
+	gwSrv := grpc.NewServer()
+	pb.RegisterAetherGatewayServer(gwSrv, gw)
+	go func() { _ = gwSrv.Serve(gwLis) }()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+
+	relayPath := filepath.Join(t.TempDir(), "relay.sock")
+	cfg := &Config{
+		Gateway: GatewayConfig{Address: gwLis.Addr().String(), Insecure: true},
+		Service: ServiceConfig{Workspace: workspace, Implementation: "sidecar", Specifier: "instance-1"},
+		Terminator: TerminatorConfig{
+			Enabled: true,
+			Backends: []BackendConfig{{
+				Name:         "default",
+				Kind:         BackendKindHTTP,
+				URL:          backend.URL,
+				AllowPaths:   []string{"/*"},
+				AllowMethods: []string{"GET", "POST", "PUT", "DELETE"},
+				MaxBodyBytes: 1 << 20,
+				HeaderMode:   HeaderModePassthrough,
+			}},
+		},
+		Relay: RelayConfig{
+			Enabled: true,
+			Listen:  "unix://" + relayPath,
+			AllowedOps: AllowedOpsConfig{
+				Profile: AllowedOpsProfileSandboxDefault,
+				Set:     true,
+			},
+		},
+		TenantID: "tenant-test",
+	}
+
+	runner, err := NewRunner(cfg, "")
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = runner.Run(ctx)
+	}()
+
+	var gwStream *compositeFakeStream
+	select {
+	case gwStream = <-gw.streamCh:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatalf("runner runtime never connected to fake gateway")
+	}
+
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+		}
+		gwSrv.GracefulStop()
+		_ = gwLis.Close()
+		backend.Close()
+	})
+
+	return gwStream
+}
+
+// waitForInit blocks until the runtime's first upstream InitConnection is
+// recorded on the stream (the runner always sends InitConnection as its first
+// upstream frame), or the deadline passes.
+func waitForInit(t *testing.T, s *compositeFakeStream) *pb.InitConnection {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if m := s.findUpstream(func(m *pb.UpstreamMessage) bool {
+			_, ok := m.GetPayload().(*pb.UpstreamMessage_Init)
+			return ok
+		}); m != nil {
+			return m.GetPayload().(*pb.UpstreamMessage_Init).Init
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("runtime never sent InitConnection to fake gateway")
+	return nil
+}
+
+// TestRunner_AgentIdentityPath proves the AGENT identity path: with
+// Service.Workspace set, gatewayRuntime.init() builds an AgentClient, so the
+// FIRST upstream InitConnection carries an Agent identity keyed to that
+// workspace (ag::{ws}::{impl}::{spec}). This is the counterpart to the
+// workspace-less Service path exercised by TestRunner_ServiceIdentityPath and
+// the rest of the composite suite.
+func TestRunner_AgentIdentityPath(t *testing.T) {
+	t.Parallel()
+
+	stream := startRunnerForIdentity(t, "ws-1")
+	init := waitForInit(t, stream)
+
+	agent, ok := init.GetClientType().(*pb.InitConnection_Agent)
+	if !ok {
+		t.Fatalf("InitConnection client_type = %T; want Agent (workspace was set)", init.GetClientType())
+	}
+	if agent.Agent.GetWorkspace() != "ws-1" {
+		t.Errorf("agent workspace = %q; want ws-1", agent.Agent.GetWorkspace())
+	}
+	if agent.Agent.GetImplementation() != "sidecar" {
+		t.Errorf("agent implementation = %q; want sidecar", agent.Agent.GetImplementation())
+	}
+	if agent.Agent.GetSpecifier() != "instance-1" {
+		t.Errorf("agent specifier = %q; want instance-1", agent.Agent.GetSpecifier())
+	}
+}
+
+// TestRunner_ServiceIdentityPath proves the SERVICE identity path is distinct
+// from the agent path: with an empty Service.Workspace, gatewayRuntime.init()
+// builds a ServiceClient, so the FIRST upstream InitConnection carries a
+// workspace-less Service identity (sv::{impl}::{spec}) — the ServiceIdentity
+// proto has no workspace concept.
+func TestRunner_ServiceIdentityPath(t *testing.T) {
+	t.Parallel()
+
+	stream := startRunnerForIdentity(t, "")
+	init := waitForInit(t, stream)
+
+	svc, ok := init.GetClientType().(*pb.InitConnection_Service)
+	if !ok {
+		t.Fatalf("InitConnection client_type = %T; want Service (workspace was empty)", init.GetClientType())
+	}
+	if svc.Service.GetImplementation() != "sidecar" {
+		t.Errorf("service implementation = %q; want sidecar", svc.Service.GetImplementation())
+	}
+	if svc.Service.GetSpecifier() != "instance-1" {
+		t.Errorf("service specifier = %q; want instance-1", svc.Service.GetSpecifier())
+	}
+}
+
 // TestRunner_RejectsConfigWithNoSurfacesEnabled covers the validation rule
 // that a config with every surface disabled is rejected.
 func TestRunner_RejectsConfigWithNoSurfacesEnabled(t *testing.T) {

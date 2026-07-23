@@ -10,22 +10,27 @@ import (
 	"github.com/scitrera/aether/sdk/go/aether"
 )
 
-// gatewayRuntime owns a single AgentClient connection to the gateway and
-// the reconnection loop. It is mode-agnostic: terminator registers HTTP and
+// gatewayRuntime owns a single gateway connection and the reconnection loop.
+// The connection is identity-agnostic: it holds a *aether.BaseClient that is
+// backed by EITHER a ServiceClient (workspace-less sv::{impl}::{spec}) or an
+// AgentClient (ag::{ws}::{impl}::{spec}), selected in init() by whether a
+// workspace is configured. It is mode-agnostic: terminator registers HTTP and
 // tunnel handlers on it, while relay mode (T37) attaches its own gRPC mitm
 // handlers to the same runtime without going through Terminator.
 //
 // The runtime does not own dispatcher logic — callers register handlers via
-// the underlying AgentClient (exposed through Client()) before calling
-// Run.
+// the underlying BaseClient (exposed through Client()) before calling
+// Run. All messaging/handler methods used here (OnMessage, OnProxyHttp*,
+// OnTunnel*, SendWithPriority, Connect, Run, Close) are defined on BaseClient,
+// so the same wiring serves both identity kinds.
 type gatewayRuntime struct {
 	cfg       *Config
-	client    *aether.AgentClient
+	client    *aether.BaseClient
 	transport *serviceClientTransport
 
-	// creds is the live credential map handed to the AgentClient. The SDK
+	// creds is the live credential map handed to the client. The SDK
 	// rebuilds the InitConnection from this same map on every (re)connect
-	// (see sdk/go/aether/agent.go buildInitMessage), so mutating it in
+	// (see sdk/go/aether/{agent,service}.go buildInitMessage), so mutating it in
 	// place via refreshCredentials lets a reconnect present freshly-loaded
 	// credentials without rebuilding the client or re-installing handlers.
 	creds    aether.Credentials
@@ -46,13 +51,14 @@ type gatewayRuntime struct {
 }
 
 // gatewayConn is the minimal connect/run surface runConnectionLoop drives.
-// *aether.AgentClient satisfies it; tests provide a fake.
+// *aether.BaseClient satisfies it (Connect/Run are BaseClient methods, shared
+// by both ServiceClient and AgentClient); tests provide a fake.
 type gatewayConn interface {
 	Connect(ctx context.Context) error
 	Run(ctx context.Context) error
 }
 
-// newGatewayRuntime builds a runtime from cfg. The AgentClient is not
+// newGatewayRuntime builds a runtime from cfg. The gateway client is not
 // constructed until init() is called from Run() so callers can configure
 // hooks that depend on the runtime before the connection opens.
 func newGatewayRuntime(cfg *Config) *gatewayRuntime {
@@ -67,7 +73,7 @@ func newGatewayRuntime(cfg *Config) *gatewayRuntime {
 }
 
 // conn returns the connect/run target: the test override if set, else the
-// real AgentClient.
+// real gateway client (service- or agent-backed BaseClient).
 func (r *gatewayRuntime) conn() gatewayConn {
 	if r.connOverride != nil {
 		return r.connOverride
@@ -88,9 +94,15 @@ func applyCredential(creds aether.Credentials, cred string, kind CredentialKind)
 	}
 }
 
-// init creates the underlying AgentClient using cfg.Gateway and
+// init creates the underlying gateway client using cfg.Gateway and
 // cfg.Service. It is idempotent within a single runtime — a second call
 // after a successful first call is a no-op.
+//
+// The client kind is chosen by whether a workspace is configured. Service
+// identities are workspace-less (sv::{impl}::{spec}); Agent identities require
+// a workspace (ag::{ws}::{impl}::{spec}). Both are backed by BaseClient, so the
+// runtime stores the embedded *BaseClient either way and the handler/transport
+// wiring is identical downstream.
 func (r *gatewayRuntime) init() error {
 	if r.client != nil {
 		return nil
@@ -114,49 +126,66 @@ func (r *gatewayRuntime) init() error {
 	r.creds = creds
 	r.credKind = kind
 
-	opts := aether.AgentOptions{
-		ClientOptions: aether.ClientOptions{
-			ServerAddr: r.cfg.Gateway.Address,
-			Connection: aether.ConnectionOptions{
-				RetryOnDuplicate:  true,
-				MaxRetries:        0,
-				AutoReconnect:     true,
-				InitialBackoff:    1 * time.Second,
-				MaxBackoff:        30 * time.Second,
-				BackoffMultiplier: 2.0,
-				ConnectTimeout:    30 * time.Second,
-				KeepAliveInterval: 30 * time.Second,
-			},
-			Credentials: creds,
-		},
-		Workspace:      r.cfg.Service.Workspace,
-		Implementation: r.cfg.Service.Implementation,
-		Specifier:      r.cfg.Service.Specifier,
-	}
-
 	tlsCfg, err := buildTLSConfig(r.cfg.Gateway)
 	if err != nil {
 		return err
 	}
-	opts.TLS = tlsCfg
 
-	client, err := aether.NewAgentClient(opts)
-	if err != nil {
-		return fmt.Errorf("create agent client: %w", err)
+	clientOpts := aether.ClientOptions{
+		ServerAddr: r.cfg.Gateway.Address,
+		Connection: aether.ConnectionOptions{
+			RetryOnDuplicate:  true,
+			MaxRetries:        0,
+			AutoReconnect:     true,
+			InitialBackoff:    1 * time.Second,
+			MaxBackoff:        30 * time.Second,
+			BackoffMultiplier: 2.0,
+			ConnectTimeout:    30 * time.Second,
+			KeepAliveInterval: 30 * time.Second,
+		},
+		Credentials: creds,
+		TLS:         tlsCfg,
 	}
-	r.client = client
-	r.transport = &serviceClientTransport{client: client}
+
+	// Workspace-presence discriminator: an empty workspace means a workspace-
+	// less Service identity (sv::{impl}::{spec}); a set workspace means an
+	// Agent identity (ag::{ws}::{impl}::{spec}). Both client types embed
+	// *BaseClient, so we store the embedded base client and the rest of the
+	// runtime is identity-agnostic.
+	if r.cfg.Service.Workspace == "" {
+		sc, err := aether.NewServiceClient(aether.ServiceOptions{
+			ClientOptions:  clientOpts,
+			Implementation: r.cfg.Service.Implementation,
+			Specifier:      r.cfg.Service.Specifier,
+		})
+		if err != nil {
+			return fmt.Errorf("create service client: %w", err)
+		}
+		r.client = sc.BaseClient
+	} else {
+		ac, err := aether.NewAgentClient(aether.AgentOptions{
+			ClientOptions:  clientOpts,
+			Workspace:      r.cfg.Service.Workspace,
+			Implementation: r.cfg.Service.Implementation,
+			Specifier:      r.cfg.Service.Specifier,
+		})
+		if err != nil {
+			return fmt.Errorf("create agent client: %w", err)
+		}
+		r.client = ac.BaseClient
+	}
+	r.transport = &serviceClientTransport{client: r.client}
 	return nil
 }
 
-// Client returns the underlying AgentClient. Callers register OnMessage,
-// OnProxyHttpRequest, etc. on it before invoking Run.
-func (r *gatewayRuntime) Client() *aether.AgentClient {
+// Client returns the underlying BaseClient (service- or agent-backed). Callers
+// register OnMessage, OnProxyHttpRequest, etc. on it before invoking Run.
+func (r *gatewayRuntime) Client() *aether.BaseClient {
 	return r.client
 }
 
 // Transport returns the production tunnelTransport that ships frames
-// upstream through the embedded AgentClient.
+// upstream through the embedded BaseClient.
 func (r *gatewayRuntime) Transport() tunnelTransport {
 	return r.transport
 }

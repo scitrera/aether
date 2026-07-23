@@ -609,16 +609,16 @@ func (t *Terminator) dispatchStreamingAndRespond(ctx context.Context, req *pb.Pr
 }
 
 // RegisterHandlers installs the terminator's inbound dispatcher hooks on the
-// supplied ServiceClient. This is the work `Run` performs after building its
-// own runtime; composite-mode callers reuse a shared runtime and call this
-// directly so the same connection can serve both terminator and relay
-// surfaces.
+// supplied BaseClient (backed by either a ServiceClient or an AgentClient).
+// This is the work `Run` performs after building its own runtime;
+// composite-mode callers reuse a shared runtime and call this directly so the
+// same connection can serve both terminator and relay surfaces.
 //
 // The supplied transport ships outbound proxy/tunnel envelopes (responses,
 // tunnel acks, etc.) upstream. Composite-mode callers may wrap the transport
 // to add side-effects (e.g. routing to multiple consumers) but production
-// terminators pass the runtime's bare ServiceClient transport.
-func (t *Terminator) RegisterHandlers(client *aether.AgentClient, transport tunnelTransport) {
+// terminators pass the runtime's bare BaseClient transport.
+func (t *Terminator) RegisterHandlers(client *aether.BaseClient, transport tunnelTransport) {
 	client.OnMessage(func(msgCtx context.Context, msg *aether.Message) error {
 		// Plain SendMessage delivery path — terminators don't expect
 		// peer-to-peer messages, so this is a fall-through log.
