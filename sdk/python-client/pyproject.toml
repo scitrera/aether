@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scitrera-aether-client"
-version = "0.2.1"
+version = "0.2.2"
 description = "Python client SDK for Scitrera Aether distributed control plane"
 readme = "README.md"
 license = "Apache-2.0"
@@ -36,13 +36,13 @@ classifiers = [
     "Framework :: AsyncIO",
 ]
 dependencies = [
-    "grpcio==1.80.0",
+    "grpcio==1.81.1",
     "protobuf>6",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "grpcio==1.80.0",
+    "grpcio==1.81.1",
     "pytest==9.0.3",
     "pytest==9.0.3",
     "mypy>=1.8.0",

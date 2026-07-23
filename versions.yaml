@@ -9,17 +9,17 @@
 # directives in each go.mod handle local builds; the `require` pins handle downstream
 # `go get` from pkg.go.dev. The gomod_require rules below keep those pins in sync.
 
-aether-gateway: 0.2.1
+aether-gateway: 0.2.2
 
-aether-sdk-go: 0.2.1          # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
+aether-sdk-go: 0.2.2         # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
 
-aether-sdk-typescript: 0.2.1  # @scitrera/aether-client
+aether-sdk-typescript: 0.2.2  # @scitrera/aether-client
 
-aether-sdk-python: 0.2.1      # scitrera-aether-client
-aether-sdk-python-ag2: 0.0.1  # scitrera-aether-ag2
+aether-sdk-python: 0.2.2      # scitrera-aether-client
+aether-sdk-python-ag2: 0.0.2  # scitrera-aether-ag2
 
 go_toolchain:
-  go: "1.25.10"
+  go: "1.25.12"
 
 # set explicit versions where possible to protect against supply chain attacks
 preferred_versions:
@@ -27,8 +27,8 @@ preferred_versions:
     "google.golang.org/grpc": "1.81.1"
     "google.golang.org/protobuf": "1.36.11"
   python:
-    "grpcio": 1.80.0
-    "grpcio-tools": 1.80.0
+    "grpcio": 1.81.1
+    "grpcio-tools": 1.81.1
     "protobuf": ">6"  # TODO: pin version that will be compatible with opentelemetry grpc
     "pytest": 9.0.3
   typescript:
