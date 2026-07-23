@@ -36,7 +36,7 @@ func (l testLogger) Errorf(format string, args ...any) { l.t.Logf("ERR  "+format
 //  5. Assert the data matches the original seed.
 func TestClusterIntegration_BackupRoundtrip_PerDomain(t *testing.T) {
 	c := setupCluster3(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	// Use node-0 as the leader/operator for the backup coordinator. The
@@ -135,7 +135,11 @@ func TestClusterIntegration_BackupRoundtrip_PerDomain(t *testing.T) {
 		}
 	})
 
-	deadline := time.Now().Add(15 * time.Second)
+	// Wait for BOTH domains to produce a .bin before cancelling the coordinator;
+	// cancelling mid-upload of the second domain (context canceled) is what made
+	// this flake under CI's 2-core load. The loop breaks the instant both are
+	// present, so a generous deadline costs a passing run nothing.
+	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		streamObjs, _ := storage.List(ctx, fmt.Sprintf("cluster-rt/%s", streamName))
 		kvObjs, _ := storage.List(ctx, fmt.Sprintf("cluster-rt/%s", kvBucket))
