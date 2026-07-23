@@ -538,11 +538,12 @@ func (c *Config) Validate() error {
 	// to the gateway is on. The initiator does not (yet) own a connection,
 	// so it does not contribute to this requirement. The aggregator owns no
 	// upstream identity (it splices provider sessions verbatim).
+	//
+	// A Service principal is workspace-less — its identity is sv::{impl}::{spec}
+	// and the ServiceIdentity proto has no workspace field — so only the
+	// implementation and specifier are required here (do NOT require a workspace).
 	needsService := c.Terminator.Enabled || c.Relay.Enabled || c.TenantRelay.Enabled
 	if needsService {
-		if c.Service.Workspace == "" {
-			errs = append(errs, "service.workspace is required when terminator, relay, or tenant_relay is enabled")
-		}
 		if c.Service.Implementation == "" {
 			errs = append(errs, "service.implementation is required when terminator, relay, or tenant_relay is enabled")
 		}
