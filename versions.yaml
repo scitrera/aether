@@ -41,6 +41,8 @@ project_rules:
     - { type: go_version,    path: server/internal/version/version.go }
     - { type: gomod_require, path: server/go.mod, args: [ github.com/scitrera/aether/api ] }
     - { type: gomod_require, path: server/go.mod, args: [ github.com/scitrera/aether/sdk/go ] }
+  aether-api-go:
+    - { type: gomod_require, path: api/go.mod }
   aether-sdk-go:
     - { type: go_version,    path: sdk/go/aether/version.go }
     - { type: gomod_require, path: sdk/go/go.mod, args: [ github.com/scitrera/aether/api ] }
