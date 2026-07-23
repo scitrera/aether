@@ -243,7 +243,11 @@ func (h *tenantRelayHarness) awaitGatewayStream() *fakeGatewayStream {
 	select {
 	case s := <-h.gateway.streamCh:
 		return s
-	case <-time.After(3 * time.Second):
+	case <-time.After(15 * time.Second):
+		// Generous: a passing test returns the instant the runner dials, so this
+		// only bounds a genuinely stuck run. 3s was too tight under CI's 2-core
+		// -race load (the runner goroutine can be starved past a few seconds),
+		// which made this flake in the -race unit job.
 		h.t.Fatalf("timed out waiting for gateway stream")
 		return nil
 	}

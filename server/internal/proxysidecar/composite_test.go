@@ -198,7 +198,7 @@ func newCompositeHarness(t *testing.T, backendHandler http.HandlerFunc) *composi
 	var gwStream *compositeFakeStream
 	select {
 	case gwStream = <-gw.streamCh:
-	case <-time.After(3 * time.Second):
+	case <-time.After(15 * time.Second):
 		cancel()
 		t.Fatalf("runner runtime never connected to fake gateway")
 	}
@@ -1031,7 +1031,7 @@ func startRunnerForIdentity(t *testing.T, workspace string) *compositeFakeStream
 	var gwStream *compositeFakeStream
 	select {
 	case gwStream = <-gw.streamCh:
-	case <-time.After(3 * time.Second):
+	case <-time.After(15 * time.Second):
 		cancel()
 		t.Fatalf("runner runtime never connected to fake gateway")
 	}
