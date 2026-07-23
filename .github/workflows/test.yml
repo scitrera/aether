@@ -180,3 +180,13 @@ jobs:
       - name: Run govulncheck
         working-directory: server
         run: govulncheck ./...
+
+      # Informational scan of the published Go SDK, which reaches the Docker
+      # orchestrator (sdk/go/orchestrators/docker) and thus CALLS the docker/docker
+      # vulnerabilities tracked in SECURITY.md's Known Issues. continue-on-error so
+      # the build stays green on those already-tracked, no-upstream-fix advisories,
+      # while surfacing them (and any genuinely new SDK vuln) in the CI log.
+      - name: Run govulncheck (SDK — informational, non-blocking)
+        working-directory: sdk/go
+        continue-on-error: true
+        run: govulncheck ./...
