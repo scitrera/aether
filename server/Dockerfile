@@ -4,7 +4,7 @@
 # builds when the runner and target differ (e.g. amd64 runner producing
 # arm64 binaries).
 # Build context must be the repo root: docker build -f server/Dockerfile .
-FROM --platform=$BUILDPLATFORM golang:1.25.10-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25.12-alpine AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
