@@ -133,7 +133,11 @@ jobs:
 
       - name: Run integration tests
         working-directory: server
-        run: go test -race -count=1 -tags=integration ./...
+        # Serialize with -p 1 -parallel 1: these integration tests spin up
+        # embedded NATS clusters and real sidecar runners/tunnels. Running them
+        # concurrently on the 2-core runner starves timing-sensitive setup
+        # (JetStream elections, tunnel handshakes) and causes contention flakes.
+        run: go test -race -count=1 -p 1 -parallel 1 -tags=integration ./...
 
   e2e:
     runs-on: ubuntu-latest
@@ -155,7 +159,10 @@ jobs:
         working-directory: server
         env:
           AETHER_ALLOW_DEV_MODE: "true"
-        run: go test -tags=e2e -count=1 -timeout 360s ./internal/proxysidecar/integration_e2e/...
+        # -parallel 1: the e2e tests share one aetherlite subprocess; running the
+        # t.Parallel tunnel tests concurrently against the shared gateway causes
+        # tunnel-lifecycle races (PEER_RESET) under 2-core-runner load. Serialize.
+        run: go test -tags=e2e -count=1 -p 1 -parallel 1 -timeout 360s ./internal/proxysidecar/integration_e2e/...
 
   security:
     runs-on: ubuntu-latest
