@@ -33,7 +33,7 @@ func TestClusterIntegration_IdentityLock_ExactlyOneWinner(t *testing.T) {
 	for i := 0; i < N; i++ {
 		nodeIdx := i % len(c.Nodes)
 		js := c.Node(nodeIdx).JetStream()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scaled(10*time.Second))
 		s, err := state.NewJetStreamSession(ctx, js, state.JetStreamSessionConfig{Replicas: 3})
 		cancel()
 		if err != nil {
@@ -66,7 +66,7 @@ func TestClusterIntegration_IdentityLock_ExactlyOneWinner(t *testing.T) {
 		go func(i int, s *state.JetStreamSession) {
 			defer wg.Done()
 			start.Wait()
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), scaled(15*time.Second))
 			defer cancel()
 			sessionID := fmt.Sprintf("sess-racer-%02d", i)
 			r, err := s.AcquireOrResumeLock(ctx, identity, sessionID, "", 0, state.ConnectMeta{})
@@ -118,7 +118,7 @@ func TestClusterIntegration_IdentityLock_ExactlyOneWinner(t *testing.T) {
 func TestClusterIntegration_IdentityLock_NodeKillMidAcquire(t *testing.T) {
 	c := setupCluster3(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scaled(30*time.Second))
 	defer cancel()
 
 	// Build sessions on node-0 (survivor) and node-1 (victim). Both use
@@ -182,7 +182,7 @@ func TestClusterIntegration_IdentityLock_NodeKillMidAcquire(t *testing.T) {
 		acquired bool
 		forced   bool
 	)
-	if got := waitUntil(15*time.Second, 100*time.Millisecond, func() bool {
+	if got := waitUntil(scaled(15*time.Second), 100*time.Millisecond, func() bool {
 		r, err := survivor.AcquireOrResumeLock(ctx, identity, "sess-survivor", "", 24*60*60*1000, state.ConnectMeta{})
 		ok, f := r.Acquired, r.Forced
 		if err != nil {

@@ -335,7 +335,7 @@ func setupAuthorityRelay(t *testing.T) *authorityRelayHarness {
 	es := setupCluster1(t)
 	js := es.JetStream()
 
-	startCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	startCtx, cancel := context.WithTimeout(context.Background(), scaled(15*time.Second))
 	defer cancel()
 
 	inner := newFakeAuthLifecycle()
@@ -384,7 +384,7 @@ func setupAuthorityRelay(t *testing.T) *authorityRelayHarness {
 		cancelRun()
 		select {
 		case <-done:
-		case <-time.After(5 * time.Second):
+		case <-time.After(scaled(5 * time.Second)):
 			t.Fatalf("waker did not shut down within 5s")
 		}
 	}
@@ -477,7 +477,7 @@ func TestAuthorityLifecycle_EndToEnd(t *testing.T) {
 		h := setupAuthorityRelay(t)
 		defer h.stopWaker()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scaled(15*time.Second))
 		defer cancel()
 
 		const (
@@ -504,7 +504,7 @@ func TestAuthorityLifecycle_EndToEnd(t *testing.T) {
 			t.Fatalf("resolved status = %q want approved", resolved.Status)
 		}
 
-		got := waitForResume(t, h.svc, taskID, 5*time.Second)
+		got := waitForResume(t, h.svc, taskID, scaled(5*time.Second))
 		if got.to != tasks.TaskStatusRunning {
 			t.Errorf("resume target = %q want %q", got.to, tasks.TaskStatusRunning)
 		}
@@ -518,7 +518,7 @@ func TestAuthorityLifecycle_EndToEnd(t *testing.T) {
 		h := setupAuthorityRelay(t)
 		defer h.stopWaker()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scaled(15*time.Second))
 		defer cancel()
 
 		const (
@@ -536,7 +536,7 @@ func TestAuthorityLifecycle_EndToEnd(t *testing.T) {
 			t.Fatalf("deny: %v", err)
 		}
 
-		got := waitForFail(t, h.svc, taskID, 5*time.Second)
+		got := waitForFail(t, h.svc, taskID, scaled(5*time.Second))
 		// authorityEventFailureReason composes either
 		//   "authority request denied: <reason>" (when ResolutionReason is
 		//   present on the embedded request payload) or
@@ -558,7 +558,7 @@ func TestAuthorityLifecycle_EndToEnd(t *testing.T) {
 		h := setupAuthorityRelay(t)
 		defer h.stopWaker()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scaled(15*time.Second))
 		defer cancel()
 
 		const (
@@ -575,7 +575,7 @@ func TestAuthorityLifecycle_EndToEnd(t *testing.T) {
 			t.Fatalf("cancel: %v", err)
 		}
 
-		got := waitForFail(t, h.svc, taskID, 5*time.Second)
+		got := waitForFail(t, h.svc, taskID, scaled(5*time.Second))
 		if !containsAll(got.reason, "cancelled") {
 			t.Errorf("fail reason = %q want substring 'cancelled'", got.reason)
 		}
@@ -593,7 +593,7 @@ func TestAuthorityLifecycle_EndToEnd(t *testing.T) {
 		h := setupAuthorityRelay(t)
 		defer h.stopWaker()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), scaled(15*time.Second))
 		defer cancel()
 
 		const workspace = "ws-watch"
@@ -674,7 +674,7 @@ func TestAuthorityLifecycle_EndToEnd(t *testing.T) {
 			eventType acl.AuthorityRequestEventType
 		}
 		var got []seen
-		deadline := time.After(8 * time.Second)
+		deadline := time.After(scaled(8 * time.Second))
 		for len(got) < 6 {
 			select {
 			case evt := <-received:
@@ -732,7 +732,7 @@ func TestAuthorityLifecycle_EventPayloadShape(t *testing.T) {
 	h := setupAuthorityRelay(t)
 	defer h.stopWaker()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scaled(15*time.Second))
 	defer cancel()
 
 	const workspace = "ws-shape"
@@ -782,7 +782,7 @@ func TestAuthorityLifecycle_EventPayloadShape(t *testing.T) {
 	}
 
 	// Wait for both events to land at the inspector.
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(scaled(5 * time.Second))
 	for rawCreated.Load() == nil || rawApproved.Load() == nil {
 		if time.Now().After(deadline) {
 			t.Fatalf("did not receive both created+approved within 5s")

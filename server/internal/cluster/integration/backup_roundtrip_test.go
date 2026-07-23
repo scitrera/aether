@@ -36,7 +36,7 @@ func (l testLogger) Errorf(format string, args ...any) { l.t.Logf("ERR  "+format
 //  5. Assert the data matches the original seed.
 func TestClusterIntegration_BackupRoundtrip_PerDomain(t *testing.T) {
 	c := setupCluster3(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scaled(30*time.Second))
 	defer cancel()
 
 	// Use node-0 as the leader/operator for the backup coordinator. The
@@ -131,7 +131,7 @@ func TestClusterIntegration_BackupRoundtrip_PerDomain(t *testing.T) {
 		runCancel()
 		select {
 		case <-runDone:
-		case <-time.After(5 * time.Second):
+		case <-time.After(scaled(5 * time.Second)):
 		}
 	})
 
@@ -139,7 +139,7 @@ func TestClusterIntegration_BackupRoundtrip_PerDomain(t *testing.T) {
 	// cancelling mid-upload of the second domain (context canceled) is what made
 	// this flake under CI's 2-core load. The loop breaks the instant both are
 	// present, so a generous deadline costs a passing run nothing.
-	deadline := time.Now().Add(45 * time.Second)
+	deadline := time.Now().Add(scaled(15 * time.Second))
 	for time.Now().Before(deadline) {
 		streamObjs, _ := storage.List(ctx, fmt.Sprintf("cluster-rt/%s", streamName))
 		kvObjs, _ := storage.List(ctx, fmt.Sprintf("cluster-rt/%s", kvBucket))
@@ -195,7 +195,7 @@ func TestClusterIntegration_BackupRoundtrip_PerDomain(t *testing.T) {
 	}
 
 	gotStream := make(map[string]string)
-	streamDeadline := time.Now().Add(5 * time.Second)
+	streamDeadline := time.Now().Add(scaled(5 * time.Second))
 	for len(gotStream) < len(wantStream) && time.Now().Before(streamDeadline) {
 		msg, err := cons.Next(jetstream.FetchMaxWait(500 * time.Millisecond))
 		if err != nil {

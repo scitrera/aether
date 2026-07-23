@@ -132,7 +132,7 @@ func setupCluster3(t *testing.T) *cluster3 {
 			HAMode:      clusternats.HAModeAuto,
 		}
 		es := &clusternats.EmbeddedServer{}
-		startCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		startCtx, cancel := context.WithTimeout(context.Background(), scaled(20*time.Second))
 		err := es.Start(startCtx, cfg)
 		cancel()
 		if err != nil {
@@ -160,7 +160,7 @@ func setupCluster3(t *testing.T) *cluster3 {
 // will list 3 URLs (its own + 2 peers) once gossip has settled.
 func waitForClusterFormed(t *testing.T, c *cluster3) {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(scaled(15 * time.Second))
 	for time.Now().Before(deadline) {
 		ready := true
 		for _, n := range c.Nodes {
@@ -198,11 +198,11 @@ func waitForClusterFormed(t *testing.T, c *cluster3) {
 // under -race).
 func waitForJetStreamReady(t *testing.T, c *cluster3) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(scaled(30 * time.Second))
 	for _, n := range c.Nodes {
 		js := n.JetStream()
 		for {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), scaled(2*time.Second))
 			_, err := js.AccountInfo(ctx)
 			cancel()
 			if err == nil {

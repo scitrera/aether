@@ -29,7 +29,7 @@ import (
 func TestClusterIntegration_Phase5_PrefixIndex_LiveUpdateCrossNode(t *testing.T) {
 	c := setupCluster3(t)
 
-	bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), scaled(15*time.Second))
 	defer bootstrapCancel()
 
 	// Open the registry bucket on BOTH nodes. CreateOrUpdateKeyValue is
@@ -60,7 +60,7 @@ func TestClusterIntegration_Phase5_PrefixIndex_LiveUpdateCrossNode(t *testing.T)
 	}
 
 	const implementation = "com.example.docmgmt"
-	publishCtx, publishCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	publishCtx, publishCancel := context.WithTimeout(context.Background(), scaled(5*time.Second))
 	defer publishCancel()
 	reg := &registry.AgentRegistration{
 		Implementation: implementation,
@@ -77,7 +77,7 @@ func TestClusterIntegration_Phase5_PrefixIndex_LiveUpdateCrossNode(t *testing.T)
 	// KV update up via cross-node replication and fan-out within ~100ms.
 	// Allow up to 2s of slack for slow CI runners.
 	const target = "docmgmt/document/abc"
-	if !waitUntil(2*time.Second, 10*time.Millisecond, func() bool {
+	if !waitUntil(scaled(2*time.Second), 10*time.Millisecond, func() bool {
 		impl, _, ok := idx.Lookup(target)
 		return ok && impl == implementation
 	}) {
@@ -92,12 +92,12 @@ func TestClusterIntegration_Phase5_PrefixIndex_LiveUpdateCrossNode(t *testing.T)
 	}
 
 	// Sanity: DeleteAgent should propagate too.
-	deleteCtx, deleteCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	deleteCtx, deleteCancel := context.WithTimeout(context.Background(), scaled(5*time.Second))
 	defer deleteCancel()
 	if err := registry.DeleteAgent(deleteCtx, kvWriter, implementation); err != nil {
 		t.Fatalf("DeleteAgent: %v", err)
 	}
-	if !waitUntil(2*time.Second, 10*time.Millisecond, func() bool {
+	if !waitUntil(scaled(2*time.Second), 10*time.Millisecond, func() bool {
 		_, _, ok := idx.Lookup(target)
 		return !ok
 	}) {

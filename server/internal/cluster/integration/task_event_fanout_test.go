@@ -107,7 +107,7 @@ func TestClusterIntegration_TaskEventFanout_StatusChangedRecursive(t *testing.T)
 	// "out-of-band consumer verification" called out by the task.
 	wsEsc := natscodec.EscapeForSubject(ws)
 	rawFilter := fmt.Sprintf("tk.%s.>", wsEsc)
-	rawCtx, rawCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	rawCtx, rawCancel := context.WithTimeout(context.Background(), scaled(20*time.Second))
 	defer rawCancel()
 	rawCons, err := js.CreateOrUpdateConsumer(rawCtx, "tk", jetstream.ConsumerConfig{
 		Durable:       "fanout-raw-subject-verify",
@@ -149,7 +149,7 @@ func TestClusterIntegration_TaskEventFanout_StatusChangedRecursive(t *testing.T)
 	// creation.
 	time.Sleep(400 * time.Millisecond)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scaled(20*time.Second))
 	defer cancel()
 
 	// ----- Publish PARENT status-changed progression -----
@@ -208,7 +208,7 @@ func TestClusterIntegration_TaskEventFanout_StatusChangedRecursive(t *testing.T)
 	// Expected: 4 parent status-changed + 1 child child-lifecycle = 5 total.
 	const wantTotal = 5
 	collected := make([]recv, 0, wantTotal)
-	deadline := time.After(10 * time.Second)
+	deadline := time.After(scaled(10 * time.Second))
 	for len(collected) < wantTotal {
 		select {
 		case r := <-received:
@@ -256,7 +256,7 @@ func TestClusterIntegration_TaskEventFanout_StatusChangedRecursive(t *testing.T)
 
 	// ----- Verify codec-translated subjects via the raw consumer -----
 	// Wait briefly for the raw consumer to have caught up with the publisher.
-	if ok := waitUntil(2*time.Second, 50*time.Millisecond, func() bool {
+	if ok := waitUntil(scaled(2*time.Second), 50*time.Millisecond, func() bool {
 		rawMu.Lock()
 		defer rawMu.Unlock()
 		return len(rawSubjects) >= wantTotal
@@ -331,7 +331,7 @@ func TestClusterIntegration_TaskEventFanout_CrossWorkspaceIsolation(t *testing.T
 
 	time.Sleep(400 * time.Millisecond)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scaled(10*time.Second))
 	defer cancel()
 
 	// Publish to workspace A.
@@ -372,7 +372,7 @@ func TestClusterIntegration_TaskEventFanout_CrossWorkspaceIsolation(t *testing.T
 			t.Errorf("wsA subscriber got task=%q ws=%q, want task=%q ws=%q",
 				gotA.GetTaskId(), gotA.GetWorkspace(), taskA, wsA)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(scaled(3 * time.Second)):
 		t.Fatal("wsA subscriber did not receive its own workspace event (sanity check failed)")
 	}
 
@@ -386,7 +386,7 @@ func TestClusterIntegration_TaskEventFanout_CrossWorkspaceIsolation(t *testing.T
 			t.Errorf("wsB subscriber got task=%q ws=%q, want task=%q ws=%q",
 				gotB.GetTaskId(), gotB.GetWorkspace(), taskB, wsB)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(scaled(3 * time.Second)):
 		t.Fatal("wsB subscriber did not receive its own workspace event")
 	}
 
