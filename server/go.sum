@@ -184,8 +184,8 @@ github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7
 github.com/rs/xid v1.6.0/go.mod h1:7XoLgs4eV+QndskICGsho+ADou8ySMSjJKDIan90Nz0=
 github.com/rs/zerolog v1.34.0 h1:k43nTLIwcTVQAncfCw4KZ2VY6ukYoZaBPNOE8txlOeY=
 github.com/rs/zerolog v1.34.0/go.mod h1:bJsvje4Z08ROH4Nhs5iH600c3IkWhwp44iRc54W6wYQ=
-github.com/scitrera/go-backpressure v0.1.0 h1:I55SB+PUqLB92FYueKgLRLwECsYGJje6K6NaAeSdAxM=
-github.com/scitrera/go-backpressure v0.1.0/go.mod h1:2bK7pLzy0LE3BPQ029FflI06VvjHQNAevkS4pTUGYmQ=
+github.com/scitrera/go-backpressure v0.1.1 h1:MhLWsg0qAVjF43/yQ6JHlrvT6sWpRIIPSu/58XjMbo0=
+github.com/scitrera/go-backpressure v0.1.1/go.mod h1:2bK7pLzy0LE3BPQ029FflI06VvjHQNAevkS4pTUGYmQ=
 github.com/spaolacci/murmur3 v1.1.0 h1:7c1g84S4BPRrfL5Xrdp6fOJ206sU9y293DDHaoy0bLI=
 github.com/spaolacci/murmur3 v1.1.0/go.mod h1:JwIasOWyU6f++ZhiEuf87xNszmSA2myDM2Kzu9HwQUA=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
