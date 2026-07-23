@@ -46,7 +46,7 @@ AetherLite creates a `./aether-lite-data/` directory on first run and stores all
 You should see output like:
 
 ```
-AetherLite v0.2.1 — embedded single-binary server
+AetherLite v0.2.2 — embedded single-binary server
 INF AetherLite gRPC gateway listening addr=:50051
 INF admin UI listening port=31880
 INF AetherLite is ready
@@ -112,7 +112,7 @@ The `--insecure-admin` flag permits the admin UI to run without an API key. This
 You should see output similar to:
 
 ```
-Aether Gateway v0.2.1
+Aether Gateway v0.2.2
 Aether Gateway starting...
 ...
 INF Aether Gateway listening addr=:50051
