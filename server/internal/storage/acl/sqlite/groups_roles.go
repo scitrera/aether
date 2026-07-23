@@ -246,11 +246,12 @@ func (s *Store) ListGroupMembers(ctx context.Context, groupName string) ([]*acls
 	var out []*aclstore.GroupMember
 	for rows.Next() {
 		m := &aclstore.GroupMember{GroupName: groupName}
-		var grantedBy, expiresAt sql.NullString
-		if err := rows.Scan(&m.MemberType, &m.MemberID, &grantedBy, &m.GrantedAt, &expiresAt); err != nil {
+		var grantedBy, grantedAt, expiresAt sql.NullString
+		if err := rows.Scan(&m.MemberType, &m.MemberID, &grantedBy, &grantedAt, &expiresAt); err != nil {
 			return nil, err
 		}
 		m.GrantedBy = grantedBy.String
+		assignGranted(&m.GrantedAt, grantedAt)
 		assignExpiry(&m.ExpiresAt, expiresAt)
 		out = append(out, m)
 	}
@@ -270,11 +271,12 @@ func (s *Store) ListPrincipalGroups(ctx context.Context, memberType, memberID st
 	var out []*aclstore.GroupMember
 	for rows.Next() {
 		m := &aclstore.GroupMember{MemberType: memberType, MemberID: memberID}
-		var grantedBy, expiresAt sql.NullString
-		if err := rows.Scan(&m.GroupName, &grantedBy, &m.GrantedAt, &expiresAt); err != nil {
+		var grantedBy, grantedAt, expiresAt sql.NullString
+		if err := rows.Scan(&m.GroupName, &grantedBy, &grantedAt, &expiresAt); err != nil {
 			return nil, err
 		}
 		m.GrantedBy = grantedBy.String
+		assignGranted(&m.GrantedAt, grantedAt)
 		assignExpiry(&m.ExpiresAt, expiresAt)
 		out = append(out, m)
 	}
@@ -348,11 +350,12 @@ func (s *Store) ListRoleAssignments(ctx context.Context, roleName string) ([]*ac
 	var out []*aclstore.RoleAssignment
 	for rows.Next() {
 		a := &aclstore.RoleAssignment{RoleName: roleName}
-		var grantedBy, expiresAt sql.NullString
-		if err := rows.Scan(&a.AssigneeType, &a.AssigneeID, &grantedBy, &a.GrantedAt, &expiresAt); err != nil {
+		var grantedBy, grantedAt, expiresAt sql.NullString
+		if err := rows.Scan(&a.AssigneeType, &a.AssigneeID, &grantedBy, &grantedAt, &expiresAt); err != nil {
 			return nil, err
 		}
 		a.GrantedBy = grantedBy.String
+		assignGranted(&a.GrantedAt, grantedAt)
 		assignExpiry(&a.ExpiresAt, expiresAt)
 		out = append(out, a)
 	}
@@ -372,11 +375,12 @@ func (s *Store) ListPrincipalRoles(ctx context.Context, assigneeType, assigneeID
 	var out []*aclstore.RoleAssignment
 	for rows.Next() {
 		a := &aclstore.RoleAssignment{AssigneeType: assigneeType, AssigneeID: assigneeID}
-		var grantedBy, expiresAt sql.NullString
-		if err := rows.Scan(&a.RoleName, &grantedBy, &a.GrantedAt, &expiresAt); err != nil {
+		var grantedBy, grantedAt, expiresAt sql.NullString
+		if err := rows.Scan(&a.RoleName, &grantedBy, &grantedAt, &expiresAt); err != nil {
 			return nil, err
 		}
 		a.GrantedBy = grantedBy.String
+		assignGranted(&a.GrantedAt, grantedAt)
 		assignExpiry(&a.ExpiresAt, expiresAt)
 		out = append(out, a)
 	}
@@ -539,6 +543,18 @@ func assignExpiry(dst **time.Time, col sql.NullString) {
 		t := parseTime(col.String)
 		if !t.IsZero() {
 			*dst = &t
+		}
+	}
+}
+
+// assignGranted parses a granted_at TEXT column (formatTime layout) into dst.
+// SQLite stores timestamps as TEXT, so granted_at MUST be scanned as a string and
+// parsed here — scanning straight into a time.Time fails with
+// "unsupported Scan ... storing driver.Value type string into type *time.Time".
+func assignGranted(dst *time.Time, col sql.NullString) {
+	if col.Valid && col.String != "" {
+		if t := parseTime(col.String); !t.IsZero() {
+			*dst = t
 		}
 	}
 }

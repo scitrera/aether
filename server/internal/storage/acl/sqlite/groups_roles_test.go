@@ -95,6 +95,70 @@ func TestSQLiteGroupsRoles_EndToEnd(t *testing.T) {
 	}
 }
 
+// TestSQLiteGroupsRoles_ListReadsGrantedAt guards the list read-back paths for
+// role assignments + group members. SQLite stores granted_at as TEXT, so these
+// queries must scan it as a string and parse it — a direct time.Time scan fails
+// with "unsupported Scan ... storing driver.Value type string into type
+// *time.Time". These paths had no coverage (the other tests use CheckAccess /
+// ExplainAccess, which read the in-memory enforcer, not the SQL rows) and shipped
+// that bug.
+func TestSQLiteGroupsRoles_ListReadsGrantedAt(t *testing.T) {
+	ctx := context.Background()
+	s := newRolesTestStore(t)
+	before := time.Now().Add(-time.Minute)
+
+	if _, err := s.CreateRole(ctx, "wsadmin", "", "tester", nil); err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+	if _, err := s.CreateGroup(ctx, "eng", "", "tester", nil); err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := s.AssignRole(ctx, "wsadmin", aclstore.PrincipalTypeGroup, "eng", "tester", nil); err != nil {
+		t.Fatalf("AssignRole: %v", err)
+	}
+	if _, err := s.AddGroupMember(ctx, "eng", aclstore.PrincipalTypeUser, "alice", "tester", nil); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	assigns, err := s.ListRoleAssignments(ctx, "wsadmin")
+	if err != nil {
+		t.Fatalf("ListRoleAssignments: %v", err)
+	}
+	if len(assigns) != 1 {
+		t.Fatalf("want 1 role assignment, got %d", len(assigns))
+	}
+	if assigns[0].GrantedAt.IsZero() || assigns[0].GrantedAt.Before(before) {
+		t.Fatalf("assignment GrantedAt not parsed from TEXT: %v", assigns[0].GrantedAt)
+	}
+	if assigns[0].GrantedBy != "tester" {
+		t.Fatalf("assignment GrantedBy = %q, want tester", assigns[0].GrantedBy)
+	}
+
+	members, err := s.ListGroupMembers(ctx, "eng")
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	if len(members) != 1 || members[0].GrantedAt.IsZero() || members[0].GrantedAt.Before(before) {
+		t.Fatalf("member GrantedAt not parsed from TEXT: %+v", members)
+	}
+
+	// Principal-oriented reads share the same scan path.
+	proles, err := s.ListPrincipalRoles(ctx, aclstore.PrincipalTypeGroup, "eng")
+	if err != nil {
+		t.Fatalf("ListPrincipalRoles: %v", err)
+	}
+	if len(proles) != 1 || proles[0].GrantedAt.IsZero() {
+		t.Fatalf("principal-role GrantedAt not parsed: %+v", proles)
+	}
+	pgroups, err := s.ListPrincipalGroups(ctx, aclstore.PrincipalTypeUser, "alice")
+	if err != nil {
+		t.Fatalf("ListPrincipalGroups: %v", err)
+	}
+	if len(pgroups) != 1 || pgroups[0].GrantedAt.IsZero() {
+		t.Fatalf("principal-group GrantedAt not parsed: %+v", pgroups)
+	}
+}
+
 // ExplainAccess surfaces the resolved subject set, the contributing rules
 // (the "why"), and the decision — none of which CheckAccess exposes.
 func TestSQLiteGroupsRoles_ExplainAccess(t *testing.T) {
