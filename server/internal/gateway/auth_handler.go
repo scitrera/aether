@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -70,6 +71,14 @@ type AuthHandler struct {
 	// authFailRecords holds per-identity (keyed by identity.String()) failure
 	// bookkeeping for the auth-failure throttle.
 	authFailRecords map[string]*authFailRecord
+
+	// devMode relaxes the anonymous/no-cert credential requirement for
+	// impersonable principals (Agent/Service/Task/User/Bridge): when true, such
+	// a connection is admitted WITHOUT a credential, with a warning. Set from
+	// AETHER_DEV_MODE (the -dev flag) and NEVER true in production. This lets
+	// local/e2e sidecars connect to a -dev gateway that has no authenticator
+	// configured; production (dev mode off) still enforces credentials.
+	devMode bool
 }
 
 // newAuthHandler creates an AuthHandler from gateway server configuration.
@@ -81,6 +90,7 @@ func newAuthHandler(authenticator *auth.CompositeAuthenticator, mtlsRequired boo
 		acl:             aclService,
 		auditLogger:     auditLogger,
 		authFailRecords: make(map[string]*authFailRecord),
+		devMode:         os.Getenv("AETHER_DEV_MODE") == "true",
 	}
 }
 
@@ -560,9 +570,9 @@ func (h *AuthHandler) authenticateCredentials(ctx context.Context, init *pb.Init
 			engaged := h.recordAuthFailure(identityKey, time.Now())
 			logging.Logger.Warn().Err(authErr).Str("identity", identityKey).Msg("credential authentication failed")
 			h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identityKey, audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), false, authErr.Error(), map[string]interface{}{
-				"reason":          "credential_auth_failed",
-				"method":          "composite",
-				"throttle_new":    engaged,
+				"reason":       "credential_auth_failed",
+				"method":       "composite",
+				"throttle_new": engaged,
 			}))
 			return "", identity, status.Errorf(codes.Unauthenticated, "credential authentication failed: %v", authErr)
 		}
@@ -706,6 +716,13 @@ func (h *AuthHandler) authenticateCredentials(ctx context.Context, init *pb.Init
 			needsCredential := (!hasCertificate || isAnonymous) &&
 				!IsInProcessConn(ctx) &&
 				isImpersonablePrincipal(identity.Type)
+			if needsCredential && h.devMode {
+				logging.Logger.Warn().
+					Str("identity", identityKey).
+					Str("claimed_type", string(identity.Type)).
+					Msg("dev mode (AETHER_DEV_MODE): admitting anonymous impersonable principal without a credential — NOT FOR PRODUCTION")
+				needsCredential = false
+			}
 			if needsCredential {
 				engaged := h.recordAuthFailure(identityKey, time.Now())
 				logging.Logger.Warn().
@@ -713,11 +730,11 @@ func (h *AuthHandler) authenticateCredentials(ctx context.Context, init *pb.Init
 					Bool("throttle_new", engaged).
 					Msg("anonymous/no-cert connection: impersonable principal presented no valid credential")
 				h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identityKey, audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), false, "no credential presented for impersonable principal", map[string]interface{}{
-					"reason":         "no_credential_for_impersonable",
-					"claimed_type":   string(identity.Type),
-					"is_anonymous":   isAnonymous,
-					"has_cert":       hasCertificate,
-					"throttle_new":   engaged,
+					"reason":       "no_credential_for_impersonable",
+					"claimed_type": string(identity.Type),
+					"is_anonymous": isAnonymous,
+					"has_cert":     hasCertificate,
+					"throttle_new": engaged,
 				}))
 				return "", identity, status.Errorf(codes.Unauthenticated,
 					"anonymous connection as %s requires a matching API key credential", identity.Type)
@@ -736,17 +753,24 @@ func (h *AuthHandler) authenticateCredentials(ctx context.Context, init *pb.Init
 		(!hasCertificate || isAnonymous) &&
 		!IsInProcessConn(ctx) &&
 		isImpersonablePrincipal(identity.Type) {
-		logging.Logger.Warn().
-			Str("identity", identity.String()).
-			Msg("anonymous/no-cert connection: impersonable principal with no authenticator configured")
-		h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identity.String(), audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), false, "no authenticator configured for impersonable principal on anonymous path", map[string]interface{}{
-			"reason":       "no_authenticator_for_impersonable",
-			"claimed_type": string(identity.Type),
-			"is_anonymous": isAnonymous,
-			"has_cert":     hasCertificate,
-		}))
-		return "", identity, status.Errorf(codes.Unauthenticated,
-			"anonymous connection as %s requires API key auth but no authenticator is configured", identity.Type)
+		if h.devMode {
+			logging.Logger.Warn().
+				Str("identity", identity.String()).
+				Str("claimed_type", string(identity.Type)).
+				Msg("dev mode (AETHER_DEV_MODE): admitting anonymous impersonable principal with no authenticator configured — NOT FOR PRODUCTION")
+		} else {
+			logging.Logger.Warn().
+				Str("identity", identity.String()).
+				Msg("anonymous/no-cert connection: impersonable principal with no authenticator configured")
+			h.auditLog(ctx, audit.NewAuthEvent(string(identity.Type), identity.String(), audit.OpAuthTokenValidation, identity.Workspace, uuid.New(), false, "no authenticator configured for impersonable principal on anonymous path", map[string]interface{}{
+				"reason":       "no_authenticator_for_impersonable",
+				"claimed_type": string(identity.Type),
+				"is_anonymous": isAnonymous,
+				"has_cert":     hasCertificate,
+			}))
+			return "", identity, status.Errorf(codes.Unauthenticated,
+				"anonymous connection as %s requires API key auth but no authenticator is configured", identity.Type)
+		}
 	}
 
 	return associatedTaskID, identity, nil
