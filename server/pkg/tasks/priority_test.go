@@ -33,7 +33,7 @@ func TestTaskPriority_Ordering(t *testing.T) {
 	// directly as a descending dispatch sort key.
 	ordered := []TaskPriority{PriorityXLow, PriorityLow, PriorityNormal, PriorityHigh, PriorityPreempt}
 	for i := 1; i < len(ordered); i++ {
-		if !(ordered[i-1] < ordered[i]) {
+		if ordered[i-1] >= ordered[i] {
 			t.Errorf("priority weights not strictly increasing: %d (%s) !< %d (%s)",
 				ordered[i-1], ordered[i-1], ordered[i], ordered[i])
 		}

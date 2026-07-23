@@ -151,7 +151,11 @@ func (t *Terminator) Run(ctx context.Context) error {
 
 	t.RegisterHandlers(t.runtime.Client(), t.runtime.Transport())
 
-	go t.runtime.runConnectionLoop(ctx)
+	go func() {
+		if err := t.runtime.runConnectionLoop(ctx); err != nil {
+			log.Warn().Err(err).Msg("terminator: gateway connection loop ended with error")
+		}
+	}()
 
 	log.Info().
 		Str("gateway", t.cfg.Gateway.Address).

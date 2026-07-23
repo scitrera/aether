@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -727,12 +726,6 @@ func roleAssignmentToAdmin(a *aclstore.RoleAssignment) *admin.ACLRoleAssignmentI
 		ExpiresAt:    a.ExpiresAt,
 	}
 }
-
-// isACLGroupNotFound reports whether err wraps aclstore.ErrGroupNotFound.
-func isACLGroupNotFound(err error) bool { return errors.Is(err, aclstore.ErrGroupNotFound) }
-
-// isACLRoleNotFound reports whether err wraps aclstore.ErrRoleNotFound.
-func isACLRoleNotFound(err error) bool { return errors.Is(err, aclstore.ErrRoleNotFound) }
 
 func adminResourceScopeToACL(entries []*admin.ACLAuthorityGrantResourceScope) map[string][]string {
 	if len(entries) == 0 {

@@ -523,7 +523,7 @@ func (c *Config) Validate() error {
 	// pairs provider streams with relay tunnels), so it does not require the
 	// top-level gateway.address. Every other surface that talks to a gateway
 	// does. Skip the requirement only when the aggregator is the sole surface.
-	if c.Gateway.Address == "" && !(c.Aggregator.Enabled && !c.Terminator.Enabled && !c.Relay.Enabled && !c.TenantRelay.Enabled) {
+	if c.Gateway.Address == "" && (!c.Aggregator.Enabled || c.Terminator.Enabled || c.Relay.Enabled || c.TenantRelay.Enabled) {
 		errs = append(errs, "gateway.address is required")
 	}
 
