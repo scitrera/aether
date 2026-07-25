@@ -56,8 +56,8 @@ preferred_versions:
 
 # GitHub Actions generation. Run: generate-ci-gha [--check|--force]
 #
-# only_workflows is an allowlist. Still hand-maintained and therefore absent:
-# test-go — see .github/workflows/test.yml. Add entries here as each is adopted.
+# only_workflows is an allowlist. Everything is generated now except
+# integration.yml, which keeps the two jobs that need service containers.
 ci:
   # Pinned deliberately: a bare `scitrera-repo-tools` floats to the newest
   # release, which is the same unpinned-tooling drift proto-check exists to
@@ -75,6 +75,7 @@ ci:
     - publish-python
     - publish-npm
     - publish-go
+    - test-go
     - build-docker
   python:
     # The extra is named `dev` here, not the generator's default `test`.
@@ -92,6 +93,8 @@ ci:
     # -short matches what test.yml runs for unit CI: without it the suite tries
     # to reach RabbitMQ/Valkey/Postgres, which only the integration job provides.
     test_args: "-short -race -count=1"
+    # Preserves the go-coverage artifact that the hand-written test.yml uploaded.
+    coverage: true
     # Verify that scripts/tag-release.sh actually cut api/, sdk/go/ and server/
     # tags for the release. Flip to `push` — and drop tag-release.sh — once a
     # real release has proven the wiring.
