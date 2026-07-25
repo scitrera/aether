@@ -63,7 +63,7 @@ ci:
   # release, which is the same unpinned-tooling drift proto-check exists to
   # catch. Bump in lockstep with the proto toolchain when repo-tools changes
   # generated output.
-  repo_tools_source: "scitrera-repo-tools==0.1.14"
+  repo_tools_source: "scitrera-repo-tools==0.1.15"
   # One `v*.*.*` tag drives every artifact, so the GitHub Release belongs to the
   # tag rather than to any single language's publish flow.
   github_release: true
@@ -74,6 +74,7 @@ ci:
     - test-npm
     - publish-python
     - publish-npm
+    - publish-go
     - build-docker
   python:
     # The extra is named `dev` here, not the generator's default `test`.
@@ -87,11 +88,17 @@ ci:
     # the one Python project whose version tracks the tag; ag2 is versioned
     # independently (0.0.2), so a single tag cannot verify both.
     verify_tag_version: aether-sdk-python
+  go:
+    # -short matches what test.yml runs for unit CI: without it the suite tries
+    # to reach RabbitMQ/Valkey/Postgres, which only the integration job provides.
+    test_args: "-short -race -count=1"
+    # Verify that scripts/tag-release.sh actually cut api/, sdk/go/ and server/
+    # tags for the release. Flip to `push` — and drop tag-release.sh — once a
+    # real release has proven the wiring.
+    module_tags: verify
   docker:
     # Empty to preserve build.yml's behavior: images build on a tag that was
-    # already tested on its branch, with no inlined test gate. Revisit once
-    # test-go is generated — inlining it today would drag in the `go vet`
-    # failures that currently keep sdk/go out of the generated test workflow.
+    # already tested on its branch, with no inlined test gate.
     test_prereqs: []
 
 # Container images. Mirrors the hand-written build.yml this replaces: dual

@@ -19,49 +19,8 @@ permissions:
   id-token: write
 
 jobs:
-  test-aether-sdk-python:
-    name: Test aether-sdk-python (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install
-        run: pip install -e ".[dev]"
-        working-directory: sdk/python-client
-
-      - name: Run tests
-        run: python -m pytest -v
-        working-directory: sdk/python-client
-
-  test-aether-sdk-python-ag2:
-    name: Test aether-sdk-python-ag2 (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install
-        run: pip install -e ".[dev]"
-        working-directory: sdk/python-ag2
-
-      - name: Run tests
-        run: python -m pytest -v
-        working-directory: sdk/python-ag2
+  tests:
+    uses: ./.github/workflows/test-python.yml
 
   verify-tag:
     name: Verify tag matches aether-sdk-python version
@@ -73,14 +32,14 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0
 
       - name: Verify versions are in sync
-        run: uvx --from 'scitrera-repo-tools==0.1.14' sync-versions --check --verbose
+        run: uvx --from 'scitrera-repo-tools==0.1.15' sync-versions --check --verbose
 
       - name: Compare tag against versions.yaml
         if: github.ref_type == 'tag'
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME#v}"
-          declared="$(uvx --from 'scitrera-repo-tools==0.1.14' sync-versions --print-version aether-sdk-python)"
+          declared="$(uvx --from 'scitrera-repo-tools==0.1.15' sync-versions --print-version aether-sdk-python)"
           if [ "$tag" != "$declared" ]; then
             echo "::error::Tag ${GITHUB_REF_NAME} does not match the aether-sdk-python version declared in versions.yaml ($declared)"
             exit 1
@@ -90,7 +49,7 @@ jobs:
   publish-aether-sdk-python:
     name: Publish aether-sdk-python to PyPI
     runs-on: ubuntu-latest
-    needs: [ test-aether-sdk-python, test-aether-sdk-python-ag2, verify-tag ]
+    needs: [ tests, verify-tag ]
     environment:
       name: pypi
     permissions:
@@ -107,7 +66,7 @@ jobs:
           python-version: '3.12'
 
       - name: Rewrite local refs to version pins
-        run: uvx --from 'scitrera-repo-tools==0.1.14' sync-versions --release
+        run: uvx --from 'scitrera-repo-tools==0.1.15' sync-versions --release
 
       - name: Build sdist + wheel
         run: |
@@ -130,7 +89,7 @@ jobs:
   publish-aether-sdk-python-ag2:
     name: Publish aether-sdk-python-ag2 to PyPI
     runs-on: ubuntu-latest
-    needs: [ test-aether-sdk-python, test-aether-sdk-python-ag2, verify-tag ]
+    needs: [ tests, verify-tag ]
     environment:
       name: pypi
     permissions:
@@ -147,7 +106,7 @@ jobs:
           python-version: '3.12'
 
       - name: Rewrite local refs to version pins
-        run: uvx --from 'scitrera-repo-tools==0.1.14' sync-versions --release
+        run: uvx --from 'scitrera-repo-tools==0.1.15' sync-versions --release
 
       - name: Build sdist + wheel
         run: |
