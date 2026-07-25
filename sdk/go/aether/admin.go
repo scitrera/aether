@@ -98,12 +98,7 @@ func NewAdminClient(opts AdminOptions) (*AdminClient, error) {
 	if err := opts.Validate(); err != nil {
 		return nil, err
 	}
-	uc, err := NewUserClient(UserOptions{
-		ClientOptions: opts.ClientOptions,
-		UserID:        opts.UserID,
-		WindowID:      opts.WindowID,
-		Workspace:     opts.Workspace,
-	})
+	uc, err := NewUserClient(UserOptions(opts))
 	if err != nil {
 		return nil, err
 	}

@@ -258,11 +258,6 @@ func (c *BaseClient) appendProxyChunk(requestID string, data []byte, fin bool) {
 // dispatchResponse handlers (called from client.go's dispatchResponse switch)
 // =============================================================================
 
-// handleProxyHttpResponse processes a ProxyHttpResponse from the gateway.
-func (c *BaseClient) handleProxyHttpResponse(resp *pb.ProxyHttpResponse) {
-	c.resolveProxyResponse(resp.GetRequestId(), resp)
-}
-
 // handleProxyHttpBodyChunk processes a ProxyHttpBodyChunk from the gateway.
 func (c *BaseClient) handleProxyHttpBodyChunk(chunk *pb.ProxyHttpBodyChunk) {
 	if chunk.GetIsRequest() {

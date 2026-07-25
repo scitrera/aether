@@ -2025,9 +2025,12 @@ func (c *BaseClient) handleConfigSnapshot(ctx context.Context, config *pb.Config
 	}
 
 	// Convert to high-level ConfigSnapshot type
+	// The gateway stopped populating these (see aether.proto); they are read
+	// anyway so an older gateway that still sends them keeps working, and
+	// ConfigSnapshot.KV/GlobalKV are public SDK API.
 	snapshot := &ConfigSnapshot{
-		KV:       config.GetKv(),
-		GlobalKV: config.GetGlobalKv(),
+		KV:       config.GetKv(),       //nolint:staticcheck // deprecated wire field, kept for older gateways
+		GlobalKV: config.GetGlobalKv(), //nolint:staticcheck // deprecated wire field, kept for older gateways
 	}
 
 	return c.handlers.OnConfig(ctx, snapshot)

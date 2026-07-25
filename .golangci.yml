@@ -49,6 +49,15 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
+      # Test scaffolding: mocks exist to satisfy interfaces (mockStream
+      # implements pb.AetherGateway_ConnectClient), so every method has to be
+      # present whether or not a given test calls it. `unused` cannot tell a
+      # contract-satisfying method from dead code, and removing one breaks the
+      # mock. Genuinely orphaned test helpers are worth deleting, but that is a
+      # deliberate cleanup rather than something CI should force.
+      - path: _test\.go
+        linters:
+          - unused
       # Defer/cleanup-style Close calls on close-shaped receivers. errcheck
       # cannot resolve interface methods on concrete receivers, so we suppress
       # the common patterns by the text of the message itself.

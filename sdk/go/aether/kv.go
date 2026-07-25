@@ -916,24 +916,6 @@ func (kv *KV) drainResponseQueue() {
 	}
 }
 
-// waitForResponse waits for a KV response with timeout (legacy queue-based).
-func (kv *KV) waitForResponse(ctx context.Context, timeout time.Duration) (*KVResponse, error) {
-	// Create a timer for the timeout
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	queue := kv.client.KVResponseQueue()
-
-	select {
-	case <-ctx.Done():
-		return nil, NewTimeoutError("context canceled", timeout.Seconds())
-	case <-timer.C:
-		return nil, NewTimeoutError("KV operation timed out", timeout.Seconds())
-	case resp := <-queue:
-		return resp, nil
-	}
-}
-
 // waitForCorrelatedResponse waits for a KV response on a correlated channel with timeout.
 func (kv *KV) waitForCorrelatedResponse(ctx context.Context, ch chan *KVResponse, timeout time.Duration) (*KVResponse, error) {
 	timer := time.NewTimer(timeout)
