@@ -55,6 +55,17 @@ ci:
   repo_tools_source: "scitrera-repo-tools==0.1.13"
   only_workflows:
     - proto-check
+    - version-check
+    - test-python
+    - test-npm
+  python:
+    # The extra is named `dev` here, not the generator's default `test`.
+    install: 'pip install -e ".[dev]"'
+    # Disabled for now: ruff currently reports 67 findings across the two Python
+    # SDKs (60 in python-client, 7 in python-ag2). Enable this — and pin `ruff`
+    # under preferred_versions.python so the linter cannot float — once those are
+    # cleaned up. Leaving it on today would make every PR red.
+    lint: none
 
 # Protobuf/gRPC codegen. Run: compile-protos [--check]
 #
