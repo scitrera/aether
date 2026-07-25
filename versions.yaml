@@ -63,7 +63,7 @@ ci:
   # release, which is the same unpinned-tooling drift proto-check exists to
   # catch. Bump in lockstep with the proto toolchain when repo-tools changes
   # generated output.
-  repo_tools_source: "scitrera-repo-tools==0.1.18"
+  repo_tools_source: "scitrera-repo-tools==0.1.19"
   # `push_branches` is deliberately unset, so develop stays in both the push and
   # pull_request trigger lists and every check runs twice for a commit pushed to
   # an open PR's branch. That is the intended trade: both runs complete and both
@@ -97,6 +97,14 @@ ci:
     # the one Python project whose version tracks the tag; ag2 is versioned
     # independently (0.0.2), so a single tag cannot verify both.
     verify_tag_version: aether-sdk-python
+  npm:
+    # Load-bearing, not cosmetic. It grants id-token: write to the publish job,
+    # which is what lets npm mint an OIDC token and sign a provenance statement.
+    # Without it the publish falls back to plain token auth and this package
+    # rejects it with a misleading 404 — the mode every tag-triggered npm publish
+    # has failed in, including v0.1.60 and v0.2.1. NODE_AUTH_TOKEN is still sent;
+    # the token and OIDC are used together.
+    use_provenance: true
   go:
     # -short matches what test.yml runs for unit CI: without it the suite tries
     # to reach RabbitMQ/Valkey/Postgres, which only the integration job provides.
