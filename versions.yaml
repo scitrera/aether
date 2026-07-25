@@ -40,24 +40,41 @@ preferred_versions:
     "@grpc/grpc-js": "1.14.3"
     "@grpc/proto-loader": "0.8.1"
 
+# NOTE: no `dependency_mappings` block, deliberately.
+#
+# It would order the publish jobs so scitrera-aether-client reaches PyPI before
+# scitrera-aether-ag2, but the two settings are inseparable: declaring
+# `dependencies` requires the matching `packages` entry, and `packages` makes
+# sync-versions rewrite ag2's requirement from `scitrera-aether-client>=0.2.0` to
+# `==<monorepo version>`. That tightens a *published* package's constraint and can
+# break resolution for anyone depending on both.
+#
+# The ordering buys little here: ag2's constraint is a floor, so the previous
+# client release already satisfies it and publishing out of order is harmless.
+# Add both settings together if lockstep exact-pinning ever becomes the intent —
+# most likely alongside raising ag2's floor to the current client version.
+
 # GitHub Actions generation. Run: generate-ci-gha [--check|--force]
 #
-# only_workflows is an allowlist: the generator owns proto-check.yml and nothing
-# else. Every other workflow here is still hand-maintained — the generated
-# test-{python,npm,go}.yml would duplicate what test.yml already covers, and
-# version-check.yml plus the publish workflows would be rewritten. Add entries
-# here as each one is adopted.
+# only_workflows is an allowlist. Still hand-maintained and therefore absent:
+# test-go — see .github/workflows/test.yml. Add entries here as each is adopted.
 ci:
   # Pinned deliberately: a bare `scitrera-repo-tools` floats to the newest
   # release, which is the same unpinned-tooling drift proto-check exists to
   # catch. Bump in lockstep with the proto toolchain when repo-tools changes
   # generated output.
-  repo_tools_source: "scitrera-repo-tools==0.1.13"
+  repo_tools_source: "scitrera-repo-tools==0.1.14"
+  # One `v*.*.*` tag drives every artifact, so the GitHub Release belongs to the
+  # tag rather than to any single language's publish flow.
+  github_release: true
   only_workflows:
     - proto-check
     - version-check
     - test-python
     - test-npm
+    - publish-python
+    - publish-npm
+    - build-docker
   python:
     # The extra is named `dev` here, not the generator's default `test`.
     install: 'pip install -e ".[dev]"'
@@ -66,6 +83,43 @@ ci:
     # under preferred_versions.python so the linter cannot float — once those are
     # cleaned up. Leaving it on today would make every PR red.
     lint: none
+    # Refuse to publish when the pushed tag disagrees with versions.yaml. Names
+    # the one Python project whose version tracks the tag; ag2 is versioned
+    # independently (0.0.2), so a single tag cannot verify both.
+    verify_tag_version: aether-sdk-python
+  docker:
+    # Empty to preserve build.yml's behavior: images build on a tag that was
+    # already tested on its branch, with no inlined test gate. Revisit once
+    # test-go is generated — inlining it today would drag in the `go vet`
+    # failures that currently keep sdk/go out of the generated test workflow.
+    test_prereqs: []
+
+# Container images. Mirrors the hand-written build.yml this replaces: dual
+# registry, amd64+arm64 via QEMU, and a gateway -> aetherlite -> aetherlite-dev
+# cascade that threads BASE_IMAGE from each parent's freshly built tag.
+docker:
+  ghcr: scitrera
+  dockerhub: scitrera
+  images:
+    aether:
+      context: .
+      dockerfile: server/Dockerfile
+      version_from: aether-gateway
+    aetherlite:
+      context: server
+      dockerfile: server/Dockerfile.aetherlite-dev
+      needs: aether
+      version_from: aether-gateway
+    aetherlite-dev:
+      context: server
+      dockerfile: server/Dockerfile.aetherlite-dev
+      needs: aetherlite
+      # Same repository as `aetherlite`, distinguished only by the dev- tag
+      # prefix. Without this override the descriptor key would publish a new
+      # `aetherlite-dev` repository instead.
+      image_name: aetherlite
+      tag_style: dev
+      version_from: aether-gateway
 
 # Protobuf/gRPC codegen. Run: compile-protos [--check]
 #
