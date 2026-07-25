@@ -15,18 +15,16 @@ import (
 	"github.com/scitrera/aether/server/pkg/models"
 )
 
-// The cross-agent shared per-user KV scopes must be DENIED by default on the
-// SQLite (lite) path, exactly as on postgres.
+// kv_scope access is DENY-BY-DEFAULT on the SQLite (lite) path, exactly as on
+// postgres — lite and full are meant to differ in deployment logistics, not
+// behaviour.
 //
-// This is a parity test, not just a seed test. lite and full are meant to differ
-// in deployment logistics, not behaviour, but the SQLite tree never carried the
-// equivalent of postgres 019: both trees seed user/agent/task/service_kv_scope
-// at READ_WRITE(20), so with no explicit deny a cross-agent read of another
-// user's shared KV resolved enforcer-no-match -> fallback -> ALLOWED. These
-// scopes hold billing, API keys and OAuth tokens.
-//
-// An explicit rule is the only way to express it: acl_fallback_policies is keyed
-// by (principal_type, resource_type) and cannot distinguish scope NAMES.
+// History worth keeping: both trees originally seeded user/agent/task/
+// service_kv_scope at READ_WRITE(20), so anything without a rule was ALLOWED —
+// including cross-agent reads of another user's shared KV (billing, API keys,
+// OAuth tokens). That was first patched with per-scope NONE(0) rows, which broke
+// legitimate access (see TestSQLiteKVScope_ExplicitGlobGrantResolves) and is now
+// expressed as a deny-by-default fallback instead (migrations 031 / sqlite 006).
 func newKVScopeTestStore(t *testing.T) *aclsqlite.Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "acl_kv_scope.db")
@@ -58,9 +56,8 @@ func kvScopeAllowed(t *testing.T, store *aclsqlite.Store, principal models.Ident
 	return decision.Allowed
 }
 
-// Every principal type that can hold a wildcard subject must be denied — "all
-// authenticated principals" cannot be expressed as one row, so a per-type rule
-// is seeded for each.
+// No principal type reaches the shared per-user scopes without an explicit
+// grant. These are the scopes the whole exercise exists to protect.
 func TestSQLiteKVScope_SharedUserScopesDeniedByDefault(t *testing.T) {
 	store := newKVScopeTestStore(t)
 
@@ -82,18 +79,63 @@ func TestSQLiteKVScope_SharedUserScopesDeniedByDefault(t *testing.T) {
 	}
 }
 
-// Guard against over-tightening: the deny is scoped to the two SHARED scopes.
-// Everything else on kv_scope must still resolve via the seeded fallback, or we
-// would have broken every agent's access to its own KV.
-func TestSQLiteKVScope_OtherScopesStillPermitted(t *testing.T) {
+// Deny-by-default: with no explicit grant, a principal reaches NO kv_scope.
+//
+// This replaced a row-based deny that encoded denial as access_level NONE(0).
+// NONE is the absence of an access level, not an assertion of denial — and
+// structurally it could not be carved out, because the enforcer returns at the
+// first matching specificity tier and a wildcard-principal rule on an exact
+// resource (tier 2) always outranks an sv::<impl>::* glob grant (tier 5).
+func TestSQLiteKVScope_DenyByDefaultWithoutAGrant(t *testing.T) {
 	store := newKVScopeTestStore(t)
 
 	agent := models.Identity{Type: models.PrincipalAgent, ID: "ag::some::agent"}
-	for _, scope := range []string{"global-exclusive", "workspace-exclusive"} {
-		if !kvScopeAllowed(t, store, agent, scope) {
-			t.Errorf("agent was DENIED on kv_scope:%s — the deny must be limited to the " +
-				"two cross-agent shared per-user scopes", scope)
+	for _, scope := range []string{"user-shared", "user-workspace-shared", "global", "workspace"} {
+		if kvScopeAllowed(t, store, agent, scope) {
+			t.Errorf("ungranted agent was ALLOWED on kv_scope:%s — the fallback should "+
+				"no longer hand out access to scopes nobody granted", scope)
 		}
+	}
+}
+
+// THE REGRESSION THIS EXISTS FOR: an explicit glob grant must actually resolve.
+//
+// Under the old row-based deny, platform-server held exactly this grant and was
+// still denied in production ("KV access denied ... Wildcard rule: NONE"),
+// because the tier-2 wildcard deny short-circuited before the tier-5 glob was
+// ever consulted. With the deny expressed as a fallback instead, nothing
+// short-circuits ahead of the grant.
+//
+// The identity embeds the pod name, which is why the grant must be a glob and
+// cannot be an exact tier-1 rule.
+func TestSQLiteKVScope_ExplicitGlobGrantResolves(t *testing.T) {
+	store := newKVScopeTestStore(t)
+	ctx := context.Background()
+
+	platformServer := models.Identity{
+		Type: models.PrincipalService,
+		ID:   "sv::platform-server::ws-platform-server-7ccbf5cbf9-bhn4c-botwinick",
+	}
+	if kvScopeAllowed(t, store, platformServer, "user-shared") {
+		t.Fatal("precondition failed: allowed before any grant exists")
+	}
+
+	if _, err := store.GrantAccess(ctx, "service", "sv::platform-server::*",
+		"kv_scope", "user-shared", 20, "_test", "per-user session state", nil); err != nil {
+		t.Fatalf("GrantAccess: %v", err)
+	}
+
+	if !kvScopeAllowed(t, store, platformServer, "user-shared") {
+		t.Error("explicit sv::platform-server::* grant did NOT resolve for a concrete " +
+			"pod identity — the glob tier is being short-circuited again")
+	}
+	// The grant is scoped: it must not leak to the sibling scope or to others.
+	if kvScopeAllowed(t, store, platformServer, "user-workspace-shared") {
+		t.Error("grant on user-shared leaked to user-workspace-shared")
+	}
+	other := models.Identity{Type: models.PrincipalService, ID: "sv::other-service::pod-1"}
+	if kvScopeAllowed(t, store, other, "user-shared") {
+		t.Error("grant scoped to platform-server leaked to another service")
 	}
 }
 
