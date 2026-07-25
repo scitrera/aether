@@ -12,7 +12,12 @@ on:
   workflow_call:
 
 concurrency:
-  group: test-go-${{ github.ref }}
+  # Keyed on the branch, not the ref: a push to a branch that already has an
+  # open PR fires both `push` and `pull_request`, and github.ref differs between
+  # them (refs/heads/X vs refs/pull/N/merge) so they would not otherwise
+  # collapse. github.head_ref is set only for pull_request events, so both
+  # resolve to the same branch name and the redundant run is cancelled.
+  group: test-go-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:
@@ -75,11 +80,47 @@ jobs:
           cache-dependency-path: api/go.sum
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: Run govulncheck
-        run: govulncheck ./...
         working-directory: api
+        env:
+          IGNORED_ADVISORIES: ""
+        run: |
+          set -uo pipefail
+          report="$RUNNER_TEMP/govulncheck-aether-api-go.json"
+          # Exit status is non-zero when anything is found; the JSON is what we
+          # judge on, so do not let `set -e` stop us before reading it.
+          govulncheck -format json ./... > "$report"
+          status=$?
+          if [ ! -s "$report" ]; then
+            echo "::error::govulncheck produced no output (exit $status)"
+            exit 1
+          fi
+
+          # A finding with a function in its trace is reachable from this module.
+          called=$(jq -r 'select(has("finding")) | .finding
+                          | select((.trace[0].function? // null) != null) | .osv'                      "$report" | sort -u)
+
+          fail=0
+          for vuln in $called; do
+            if printf '%s\n' $IGNORED_ADVISORIES | grep -qx "$vuln"; then
+              echo "::notice::$vuln reachable but allow-listed (see ci.go.govulncheck_ignore)"
+            else
+              echo "::error::$vuln is reachable and not allow-listed — see https://pkg.go.dev/vuln/$vuln"
+              fail=1
+            fi
+          done
+
+          # An allow-list entry that no longer matches anything is stale: the
+          # dependency was fixed or dropped, and the waiver should go with it.
+          for vuln in $IGNORED_ADVISORIES; do
+            if ! printf '%s\n' $called | grep -qx "$vuln"; then
+              echo "::warning::$vuln is allow-listed but no longer reachable; drop it from ci.go.govulncheck_ignore"
+            fi
+          done
+
+          [ "$fail" = 0 ]
   test-aether-gateway:
     name: Test aether-gateway
     runs-on: ubuntu-latest
@@ -136,11 +177,47 @@ jobs:
           cache-dependency-path: server/go.sum
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: Run govulncheck
-        run: govulncheck ./...
         working-directory: server
+        env:
+          IGNORED_ADVISORIES: ""
+        run: |
+          set -uo pipefail
+          report="$RUNNER_TEMP/govulncheck-aether-gateway.json"
+          # Exit status is non-zero when anything is found; the JSON is what we
+          # judge on, so do not let `set -e` stop us before reading it.
+          govulncheck -format json ./... > "$report"
+          status=$?
+          if [ ! -s "$report" ]; then
+            echo "::error::govulncheck produced no output (exit $status)"
+            exit 1
+          fi
+
+          # A finding with a function in its trace is reachable from this module.
+          called=$(jq -r 'select(has("finding")) | .finding
+                          | select((.trace[0].function? // null) != null) | .osv'                      "$report" | sort -u)
+
+          fail=0
+          for vuln in $called; do
+            if printf '%s\n' $IGNORED_ADVISORIES | grep -qx "$vuln"; then
+              echo "::notice::$vuln reachable but allow-listed (see ci.go.govulncheck_ignore)"
+            else
+              echo "::error::$vuln is reachable and not allow-listed — see https://pkg.go.dev/vuln/$vuln"
+              fail=1
+            fi
+          done
+
+          # An allow-list entry that no longer matches anything is stale: the
+          # dependency was fixed or dropped, and the waiver should go with it.
+          for vuln in $IGNORED_ADVISORIES; do
+            if ! printf '%s\n' $called | grep -qx "$vuln"; then
+              echo "::warning::$vuln is allow-listed but no longer reachable; drop it from ci.go.govulncheck_ignore"
+            fi
+          done
+
+          [ "$fail" = 0 ]
   test-aether-sdk-go:
     name: Test aether-sdk-go
     runs-on: ubuntu-latest
@@ -197,8 +274,48 @@ jobs:
           cache-dependency-path: sdk/go/go.sum
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: Run govulncheck
-        run: govulncheck ./...
         working-directory: sdk/go
+        env:
+          # GO-2026-4887: docker/docker <= v28.5.2; no upstream fix; see SECURITY.md
+          # GO-2026-4883: docker/docker <= v28.5.2; no upstream fix; see SECURITY.md
+          # GO-2026-5617: docker cp bind-mount redirection race; no upstream fix; see SECURITY.md
+          # GO-2026-5668: docker cp symlink-swap empty-file race; no upstream fix; see SECURITY.md
+          IGNORED_ADVISORIES: "GO-2026-4887 GO-2026-4883 GO-2026-5617 GO-2026-5668"
+        run: |
+          set -uo pipefail
+          report="$RUNNER_TEMP/govulncheck-aether-sdk-go.json"
+          # Exit status is non-zero when anything is found; the JSON is what we
+          # judge on, so do not let `set -e` stop us before reading it.
+          govulncheck -format json ./... > "$report"
+          status=$?
+          if [ ! -s "$report" ]; then
+            echo "::error::govulncheck produced no output (exit $status)"
+            exit 1
+          fi
+
+          # A finding with a function in its trace is reachable from this module.
+          called=$(jq -r 'select(has("finding")) | .finding
+                          | select((.trace[0].function? // null) != null) | .osv'                      "$report" | sort -u)
+
+          fail=0
+          for vuln in $called; do
+            if printf '%s\n' $IGNORED_ADVISORIES | grep -qx "$vuln"; then
+              echo "::notice::$vuln reachable but allow-listed (see ci.go.govulncheck_ignore)"
+            else
+              echo "::error::$vuln is reachable and not allow-listed — see https://pkg.go.dev/vuln/$vuln"
+              fail=1
+            fi
+          done
+
+          # An allow-list entry that no longer matches anything is stale: the
+          # dependency was fixed or dropped, and the waiver should go with it.
+          for vuln in $IGNORED_ADVISORIES; do
+            if ! printf '%s\n' $called | grep -qx "$vuln"; then
+              echo "::warning::$vuln is allow-listed but no longer reachable; drop it from ci.go.govulncheck_ignore"
+            fi
+          done
+
+          [ "$fail" = 0 ]

@@ -12,7 +12,12 @@ on:
   workflow_call:
 
 concurrency:
-  group: test-python-${{ github.ref }}
+  # Keyed on the branch, not the ref: a push to a branch that already has an
+  # open PR fires both `push` and `pull_request`, and github.ref differs between
+  # them (refs/heads/X vs refs/pull/N/merge) so they would not otherwise
+  # collapse. github.head_ref is set only for pull_request events, so both
+  # resolve to the same branch name and the redundant run is cancelled.
+  group: test-python-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:

@@ -46,7 +46,7 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0
 
       - name: Verify generated Go code is up to date
-        run: uvx --from 'scitrera-repo-tools==0.1.15' compile-protos --check --lang go
+        run: uvx --from 'scitrera-repo-tools==0.1.17' compile-protos --check --lang go
 
   proto-check-python:
     name: compile-protos --check (python)
@@ -65,7 +65,7 @@ jobs:
         run: pip install grpcio-tools==1.81.1
 
       - name: Verify generated Python code is up to date
-        run: uvx --from 'scitrera-repo-tools==0.1.15' compile-protos --check --lang python --python "$(which python)"
+        run: uvx --from 'scitrera-repo-tools==0.1.17' compile-protos --check --lang python --python "$(which python)"
 
   proto-check-typescript:
     name: compile-protos --check (typescript)
@@ -85,4 +85,4 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0
 
       - name: Verify generated TypeScript code is up to date
-        run: uvx --from 'scitrera-repo-tools==0.1.15' compile-protos --check --lang typescript
+        run: uvx --from 'scitrera-repo-tools==0.1.17' compile-protos --check --lang typescript

@@ -32,14 +32,14 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0
 
       - name: Verify versions are in sync
-        run: uvx --from 'scitrera-repo-tools==0.1.15' sync-versions --check --verbose
+        run: uvx --from 'scitrera-repo-tools==0.1.17' sync-versions --check --verbose
 
       - name: Compare tag against versions.yaml
         if: github.ref_type == 'tag'
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME#v}"
-          declared="$(uvx --from 'scitrera-repo-tools==0.1.15' sync-versions --print-version aether-sdk-python)"
+          declared="$(uvx --from 'scitrera-repo-tools==0.1.17' sync-versions --print-version aether-sdk-python)"
           if [ "$tag" != "$declared" ]; then
             echo "::error::Tag ${GITHUB_REF_NAME} does not match the aether-sdk-python version declared in versions.yaml ($declared)"
             exit 1
@@ -66,7 +66,7 @@ jobs:
           python-version: '3.12'
 
       - name: Rewrite local refs to version pins
-        run: uvx --from 'scitrera-repo-tools==0.1.15' sync-versions --release
+        run: uvx --from 'scitrera-repo-tools==0.1.17' sync-versions --release
 
       - name: Build sdist + wheel
         run: |
@@ -106,7 +106,7 @@ jobs:
           python-version: '3.12'
 
       - name: Rewrite local refs to version pins
-        run: uvx --from 'scitrera-repo-tools==0.1.15' sync-versions --release
+        run: uvx --from 'scitrera-repo-tools==0.1.17' sync-versions --release
 
       - name: Build sdist + wheel
         run: |
