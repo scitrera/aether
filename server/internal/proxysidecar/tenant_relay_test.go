@@ -29,10 +29,18 @@ type fakeAggregator struct {
 	upFrames []*pb.TunnelFrame
 
 	// eofAfterSend, when true, makes Tunnel return (closing its send-half)
-	// immediately after pushing upFrames instead of looping on Recv. The
-	// relay's pumpUp then observes io.EOF on tunnel.Recv() → runPumps returns
-	// nil, exercising the clean tunnel-EOF teardown path.
+	// after pushing upFrames instead of looping on Recv. The relay's pumpUp
+	// then observes io.EOF on tunnel.Recv() → runPumps returns nil, exercising
+	// the clean tunnel-EOF teardown path.
 	eofAfterSend bool
+
+	// eofGate, when non-nil, is awaited before the eofAfterSend half-close so a
+	// test can order its assertions ahead of the relay's teardown. It must be
+	// set before the harness starts. Without it the half-close races Run's
+	// return, and Run's deferred gateway conn.Close() can tear the connection
+	// down before the gateway server ever dispatches its Connect handler —
+	// making any server-side assertion (awaitGatewayStream) flaky under load.
+	eofGate chan struct{}
 
 	mu       sync.Mutex
 	hello    *pb.TunnelHello
@@ -70,6 +78,15 @@ func (a *fakeAggregator) Tunnel(stream grpc.BidiStreamingServer[pb.TunnelFrame, 
 	}
 
 	if a.eofAfterSend {
+		// Hold the half-close until the test releases it, so server-side
+		// assertions can run before the relay tears down (see eofGate).
+		if a.eofGate != nil {
+			select {
+			case <-a.eofGate:
+			case <-stream.Context().Done():
+				return stream.Context().Err()
+			}
+		}
 		// Returning closes the server's send-half; the relay's pumpUp sees
 		// io.EOF on tunnel.Recv().
 		return nil
@@ -244,10 +261,13 @@ func (h *tenantRelayHarness) awaitGatewayStream() *fakeGatewayStream {
 	case s := <-h.gateway.streamCh:
 		return s
 	case <-time.After(15 * time.Second):
-		// Generous: a passing test returns the instant the runner dials, so this
-		// only bounds a genuinely stuck run. 3s was too tight under CI's 2-core
-		// -race load (the runner goroutine can be starved past a few seconds),
-		// which made this flake in the -race unit job.
+		// Generous: a passing test returns the instant the gateway server
+		// dispatches Connect, so this only bounds a genuinely stuck run.
+		// NOTE: raising this bound does not fix ordering bugs. A caller must not
+		// let the relay's Run return before this call — Run's deferred
+		// conn.Close() can tear the gateway connection down before the server
+		// dispatches Connect, in which case no timeout is long enough (see
+		// eofGate).
 		h.t.Fatalf("timed out waiting for gateway stream")
 		return nil
 	}
@@ -421,11 +441,19 @@ func TestTenantRelay_TunnelEOFReturnsNil(t *testing.T) {
 		{F: &pb.TunnelFrame_Up{Up: providerInit()}},
 	})
 	agg.eofAfterSend = true
+	// Gate the half-close: assert the init reached the gateway FIRST, then let
+	// the tunnel EOF. Ungated, the EOF races Run's return, whose deferred
+	// gateway conn.Close() can beat the gateway server's dispatch of Connect
+	// entirely — so the stream the relay demonstrably opened is never observed
+	// server-side. That is a test-ordering bug, not slowness: it reproduces at
+	// any timeout under CPU starvation.
+	agg.eofGate = make(chan struct{})
 	h := newTenantRelayHarnessAgg(t, agg)
 
-	// The init still reaches the gateway before the tunnel half-closes.
 	gwStream := h.awaitGatewayStream()
 	_ = awaitGatewayMessages(t, gwStream, 1)
+
+	close(agg.eofGate)
 
 	select {
 	case err := <-h.runErr:
