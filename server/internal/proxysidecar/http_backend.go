@@ -5,15 +5,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"path"
 	"strings"
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/pkg/identityheaders"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/pkg/identityheaders"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // proxyResponseError signals that the proxy could not deliver the request to
@@ -36,6 +37,11 @@ type httpBackend struct {
 	cfg      BackendConfig
 	tenantID string
 	resolver identityheaders.AuthorityResolver
+	// baseURL is the request-URL prefix the outgoing http.Request is built on.
+	// For TCP backends it equals cfg.URL. For unix-domain-socket backends
+	// (cfg.URL = "unix:///path.sock") it is a fixed "http://unix" placeholder
+	// host while client/streamingClient dial the socket via a custom DialContext.
+	baseURL  string
 	client   *http.Client
 	// streamingClient is used for stream_response_indefinitely requests; it
 	// has no per-request Timeout (which would otherwise cap the whole
@@ -44,15 +50,34 @@ type httpBackend struct {
 }
 
 func newHTTPBackend(cfg BackendConfig, tenantID string, resolver identityheaders.AuthorityResolver) *httpBackend {
-	return &httpBackend{
+	b := &httpBackend{
 		cfg:      cfg,
 		tenantID: tenantID,
 		resolver: resolver,
+		baseURL:  cfg.URL,
 		client: &http.Client{
 			Timeout: time.Duration(cfg.IdleTimeoutMs) * time.Millisecond,
 		},
 		streamingClient: &http.Client{},
 	}
+	// Unix-domain-socket backend (cfg.URL = "unix:///path.sock"): dial the socket
+	// via a custom DialContext and build requests against a fixed http://unix host
+	// (the path is the socket, NOT part of the HTTP request path). This lets a
+	// backend — e.g. the sidecar-config API — be reachable ONLY by this in-process
+	// terminator through a UDS in the sidecar's own filesystem, never by other
+	// processes/containers that merely share the pod network namespace (a TCP
+	// loopback port would be reachable by them; a UDS is gated by filesystem/mount
+	// namespace isolation).
+	if strings.HasPrefix(cfg.URL, "unix://") {
+		socketPath := strings.TrimPrefix(cfg.URL, "unix://")
+		dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+		}
+		b.baseURL = "http://unix"
+		b.client.Transport = &http.Transport{DialContext: dial}
+		b.streamingClient.Transport = &http.Transport{DialContext: dial}
+	}
+	return b
 }
 
 // matches reports whether this backend should handle the given method/path.
@@ -173,7 +198,7 @@ func (b *httpBackend) buildBackendRequest(ctx context.Context, req *pb.ProxyHttp
 			"method %s path %s not permitted by backend %q", req.GetMethod(), req.GetPath(), b.cfg.Name)
 	}
 
-	url := strings.TrimRight(b.cfg.URL, "/") + req.GetPath()
+	url := strings.TrimRight(b.baseURL, "/") + req.GetPath()
 	httpReq, err := http.NewRequestWithContext(ctx, req.GetMethod(), url, bytes.NewReader(body))
 	if err != nil {
 		return nil, newProxyError(pb.ProxyError_DECODE_FAILED, "build backend request: %v", err)

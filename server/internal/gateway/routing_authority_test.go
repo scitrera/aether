@@ -3,7 +3,7 @@ package gateway
 import (
 	"testing"
 
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // TestApplyAuthorityToTaskContext verifies that applyAuthorityToTaskContext

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/scitrera/aether/internal/router/natscodec"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/router/natscodec"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 const (
@@ -122,29 +122,67 @@ func scopeTag(scope KVScope) string {
 	}
 }
 
-// buildKey constructs the full NATS KV key for an entry.
-// Format: {scopeTag}/{impl}/{spec}/{userID}/{workspace}/{userKey}
+// buildJSKey constructs the full NATS KV key for an entry.
+//
+// Layout mirrors BuildNamespace semantics (see namespace.go): the agent
+// identity segments (impl, spec) are ONLY embedded for SharingExclusive
+// scopes. For SharingShared scopes (global, workspace, user-shared,
+// user-workspace-shared) the agent identity is omitted so that all agents
+// in the tenant rendezvous on the same storage key. The identity
+// (user/workspace) segments included depend on spec.Identity.
 func buildJSKey(agent models.Identity, scope KVScope, userID, workspace, key string) string {
-	return strings.Join([]string{
-		scopeTag(scope),
-		encodeKVSegment(agent.Implementation),
-		encodeKVSegment(agent.Specifier),
-		encodeKVSegment(userID),
-		encodeKVSegment(workspace),
-		encodeKVSegment(key),
-	}, jsSeparator)
+	spec, ok := ScopeSpecFromKVScope(scope)
+	if !ok {
+		// Unknown scope — fall back to the most restrictive (per-agent
+		// per-user-per-workspace) layout to preserve isolation rather than
+		// accidentally leak across agents. Callers should always use a
+		// canonical KVScope value.
+		spec = SpecUserWorkspace
+	}
+	segments := []string{scopeTag(scope)}
+	if spec.Sharing == SharingExclusive {
+		segments = append(segments,
+			encodeKVSegment(agent.Implementation),
+			encodeKVSegment(agent.Specifier),
+		)
+	}
+	switch spec.Identity {
+	case IdentityScopeWorkspace:
+		segments = append(segments, encodeKVSegment(workspace))
+	case IdentityScopeUser:
+		segments = append(segments, encodeKVSegment(userID))
+	case IdentityScopeUserWorkspace:
+		segments = append(segments, encodeKVSegment(userID), encodeKVSegment(workspace))
+	}
+	segments = append(segments, encodeKVSegment(key))
+	return strings.Join(segments, jsSeparator)
 }
 
 // buildJSPrefix constructs the namespace prefix for list/filter operations.
-// The prefix ends with "/" so NATS keys() matching works by prefix.
+// The prefix ends with jsSeparator so NATS keys() matching works by prefix.
+// Mirrors buildJSKey's conditional inclusion of agent-identity segments based
+// on spec.Sharing.
 func buildJSPrefix(agent models.Identity, scope KVScope, userID, workspace string) string {
-	return strings.Join([]string{
-		scopeTag(scope),
-		encodeKVSegment(agent.Implementation),
-		encodeKVSegment(agent.Specifier),
-		encodeKVSegment(userID),
-		encodeKVSegment(workspace),
-	}, jsSeparator) + jsSeparator
+	spec, ok := ScopeSpecFromKVScope(scope)
+	if !ok {
+		spec = SpecUserWorkspace
+	}
+	segments := []string{scopeTag(scope)}
+	if spec.Sharing == SharingExclusive {
+		segments = append(segments,
+			encodeKVSegment(agent.Implementation),
+			encodeKVSegment(agent.Specifier),
+		)
+	}
+	switch spec.Identity {
+	case IdentityScopeWorkspace:
+		segments = append(segments, encodeKVSegment(workspace))
+	case IdentityScopeUser:
+		segments = append(segments, encodeKVSegment(userID))
+	case IdentityScopeUserWorkspace:
+		segments = append(segments, encodeKVSegment(userID), encodeKVSegment(workspace))
+	}
+	return strings.Join(segments, jsSeparator) + jsSeparator
 }
 
 // extractUserKey strips the namespace prefix from a full NATS KV key and
@@ -273,6 +311,7 @@ func (s *JetStreamKVStore) ListPaginated(
 ) (*ListResult, error) {
 	limit := DefaultListLimit
 	offset := 0
+	keyPrefix := ""
 	if opts != nil {
 		if opts.Limit > 0 {
 			limit = opts.Limit
@@ -282,6 +321,7 @@ func (s *JetStreamKVStore) ListPaginated(
 				offset = n
 			}
 		}
+		keyPrefix = opts.KeyPrefix
 	}
 
 	prefix := buildJSPrefix(agent, scope, userID, workspace)
@@ -307,7 +347,19 @@ func (s *JetStreamKVStore) ListPaginated(
 		// non-fatal: we already collected what we can
 		_ = err
 	}
-	sort.Strings(matching)
+	// Apply the user-key prefix filter BEFORE offset/limit so the page bounds
+	// matching keys, not all keys in the scope. Keys are decoded to their
+	// user-facing form (the NATS key is per-segment escaped) for the compare.
+	if keyPrefix != "" {
+		filtered := make([]string, 0, len(matching))
+		for _, k := range matching {
+			if uk, ok := extractUserKey(k, prefix); ok && strings.HasPrefix(uk, keyPrefix) {
+				filtered = append(filtered, k)
+			}
+		}
+		matching = filtered
+	}
+
 	sort.Strings(matching)
 
 	// Apply offset.
@@ -505,6 +557,237 @@ func (s *JetStreamKVStore) casCounter(
 		return 0, false, fmt.Errorf("casCounter update %s: %w", key, writeErr)
 	}
 	return 0, false, fmt.Errorf("casCounter %s: too much contention after %d attempts", key, jsMaxCASAttempts)
+}
+
+// SetNX sets key=value only if the key is absent. Returns true iff written.
+//
+// Soft-TTL subtlety: NATS KV has no native per-key TTL, so an entry whose
+// encoded soft-TTL has elapsed still physically exists. kv.Create would then
+// return ErrKeyExists for a key that is *logically* free. We therefore Get
+// first: on a logically-expired entry we Update-over its revision (treating it
+// as a fresh acquire); only a present, non-expired entry blocks the SetNX.
+func (s *JetStreamKVStore) SetNX(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	fullKey := buildJSKey(agent, scope, userID, workspace, key)
+
+	for attempt := 0; attempt < jsMaxCASAttempts; attempt++ {
+		encoded := []byte(encodeStoredValue(value, ttl))
+		entry, err := s.kv.Get(ctx, fullKey)
+		if err != nil {
+			if !errors.Is(err, jetstream.ErrKeyNotFound) {
+				return false, fmt.Errorf("setnx get %s: %w", key, err)
+			}
+			// Absent → atomic create-if-absent.
+			if _, cErr := s.kv.Create(ctx, fullKey, encoded); cErr != nil {
+				if isRevisionConflict(cErr) {
+					continue // someone created concurrently; re-evaluate
+				}
+				return false, fmt.Errorf("setnx create %s: %w", key, cErr)
+			}
+			return true, nil
+		}
+		// Present: free only if the soft-TTL has elapsed.
+		_, _, expired := decodeStoredValue(string(entry.Value()), time.Now())
+		if !expired {
+			return false, nil
+		}
+		if _, uErr := s.kv.Update(ctx, fullKey, encoded, entry.Revision()); uErr != nil {
+			if isRevisionConflict(uErr) {
+				continue
+			}
+			return false, fmt.Errorf("setnx update-expired %s: %w", key, uErr)
+		}
+		return true, nil
+	}
+	return false, fmt.Errorf("setnx %s: too much contention after %d attempts", key, jsMaxCASAttempts)
+}
+
+// CompareAndSet sets key=value only if the current (non-expired) value equals
+// expected. Returns true iff the swap was applied. A missing or logically
+// expired key never matches.
+func (s *JetStreamKVStore) CompareAndSet(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	expected string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	fullKey := buildJSKey(agent, scope, userID, workspace, key)
+
+	for attempt := 0; attempt < jsMaxCASAttempts; attempt++ {
+		entry, err := s.kv.Get(ctx, fullKey)
+		if err != nil {
+			if errors.Is(err, jetstream.ErrKeyNotFound) {
+				return false, nil // missing never matches a non-empty expected
+			}
+			return false, fmt.Errorf("compare-and-set get %s: %w", key, err)
+		}
+		decoded, _, expired := decodeStoredValue(string(entry.Value()), time.Now())
+		if expired || decoded != expected {
+			return false, nil
+		}
+		encoded := []byte(encodeStoredValue(value, ttl))
+		if _, uErr := s.kv.Update(ctx, fullKey, encoded, entry.Revision()); uErr != nil {
+			if isRevisionConflict(uErr) {
+				continue
+			}
+			return false, fmt.Errorf("compare-and-set update %s: %w", key, uErr)
+		}
+		return true, nil
+	}
+	return false, fmt.Errorf("compare-and-set %s: too much contention after %d attempts", key, jsMaxCASAttempts)
+}
+
+// CompareAndDelete deletes key only if the current (non-expired) value equals
+// expected. Returns true iff the delete was applied.
+func (s *JetStreamKVStore) CompareAndDelete(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	expected string,
+	userID string,
+	workspace string,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	fullKey := buildJSKey(agent, scope, userID, workspace, key)
+
+	for attempt := 0; attempt < jsMaxCASAttempts; attempt++ {
+		entry, err := s.kv.Get(ctx, fullKey)
+		if err != nil {
+			if errors.Is(err, jetstream.ErrKeyNotFound) {
+				return false, nil
+			}
+			return false, fmt.Errorf("compare-and-delete get %s: %w", key, err)
+		}
+		decoded, _, expired := decodeStoredValue(string(entry.Value()), time.Now())
+		if expired || decoded != expected {
+			return false, nil
+		}
+		// Revision-guarded delete: fail closed (retry) if a concurrent writer
+		// bumped the revision between Get and Delete.
+		if dErr := s.kv.Delete(ctx, fullKey, jetstream.LastRevision(entry.Revision())); dErr != nil {
+			if isRevisionConflict(dErr) {
+				continue
+			}
+			return false, fmt.Errorf("compare-and-delete delete %s: %w", key, dErr)
+		}
+		return true, nil
+	}
+	return false, fmt.Errorf("compare-and-delete %s: too much contention after %d attempts", key, jsMaxCASAttempts)
+}
+
+// SetAdd atomically adds member to the JSON-encoded set stored at key via a
+// revision-guarded CAS loop. Returns whether the member was newly added (false
+// if already present) and the cardinality after the add. When ttl > 0 the
+// soft-TTL window is (re)set on a newly-added member; a logically-expired entry
+// is treated as empty and overwritten. Duplicate adds are pure reads.
+func (s *JetStreamKVStore) SetAdd(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	member string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, int64, error) {
+	if err := validateKey(key); err != nil {
+		return false, 0, err
+	}
+	fullKey := buildJSKey(agent, scope, userID, workspace, key)
+
+	for attempt := 0; attempt < jsMaxCASAttempts; attempt++ {
+		var rev uint64
+		raw := ""
+
+		entry, err := s.kv.Get(ctx, fullKey)
+		if err != nil {
+			if !errors.Is(err, jetstream.ErrKeyNotFound) {
+				return false, 0, fmt.Errorf("set-add get %s: %w", key, err)
+			}
+			// Absent → Create path (rev==0), empty set.
+		} else {
+			rev = entry.Revision()
+			decoded, _, expired := decodeStoredValue(string(entry.Value()), time.Now())
+			if !expired {
+				raw = decoded
+			}
+			// Expired → treat as empty but Update over the stale revision.
+		}
+
+		set := parseMemberSet(raw)
+		if _, ok := set[member]; ok {
+			return false, int64(len(set)), nil // duplicate — no write
+		}
+		set[member] = struct{}{}
+		card := int64(len(set))
+		encoded := []byte(encodeStoredValue(encodeMemberSet(set), ttl))
+
+		var writeErr error
+		if rev == 0 {
+			_, writeErr = s.kv.Create(ctx, fullKey, encoded)
+		} else {
+			_, writeErr = s.kv.Update(ctx, fullKey, encoded, rev)
+		}
+		if writeErr == nil {
+			return true, card, nil
+		}
+		if isRevisionConflict(writeErr) {
+			continue
+		}
+		return false, 0, fmt.Errorf("set-add update %s: %w", key, writeErr)
+	}
+	return false, 0, fmt.Errorf("set-add %s: too much contention after %d attempts", key, jsMaxCASAttempts)
+}
+
+// SetCard returns the cardinality of the set stored at key (0 if absent or
+// logically expired).
+func (s *JetStreamKVStore) SetCard(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	userID string,
+	workspace string,
+) (int64, error) {
+	if err := validateKey(key); err != nil {
+		return 0, err
+	}
+	fullKey := buildJSKey(agent, scope, userID, workspace, key)
+
+	entry, err := s.kv.Get(ctx, fullKey)
+	if err != nil {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("set-card get %s: %w", key, err)
+	}
+	decoded, _, expired := decodeStoredValue(string(entry.Value()), time.Now())
+	if expired {
+		return 0, nil
+	}
+	return int64(len(parseMemberSet(decoded))), nil
 }
 
 // isRevisionConflict returns true for errors that indicate a concurrent

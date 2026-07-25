@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/sdk/go/aether"
@@ -17,7 +16,6 @@ import (
 // Server is the top-level workflow server that orchestrates all components.
 type Server struct {
 	cfg       *Config
-	redis     redis.UniversalClient
 	client    *aether.WorkflowEngineClient
 	store     WorkflowStore
 	router    *Router
@@ -50,11 +48,8 @@ func (s *Server) Run(ctx context.Context) error {
 	// 1. The store is already constructed and migrated by the caller.
 	//    The workflow package never opens databases or runs migrations.
 
-	// 2. Connect to Redis (skipped in lite mode)
-	if s.cfg.Mode != ModeLite {
-		s.initRedis()
-		defer s.redis.Close()
-	}
+	// 2. (Leader election no longer needs a dedicated Redis connection — it runs
+	//    over the gateway's KV via the WorkflowEngine client; see initComponents.)
 
 	// 4. Create Aether WorkflowEngineClient
 	if err := s.initAetherClient(); err != nil {
@@ -64,10 +59,22 @@ func (s *Server) Run(ctx context.Context) error {
 	// 5. Initialize components
 	s.initComponents()
 
-	// 6. Register event handler on the Aether client
-	s.client.OnMessage(func(msgCtx context.Context, msg *aether.Message) error {
+	// 6. Register event handler on the Aether client.
+	//
+	// MUST be wrapped in AsyncMessageHandler: handleMessage → router.HandleEvent
+	// → JoinEngine.HandleArrival makes SYNCHRONOUS KV coord calls (SetNXSync on
+	// the coalesce/count/set gates) back to the gateway. The receive loop
+	// dispatches handlers inline on a single goroutine, and the KV response can
+	// only be delivered by that same loop — so a synchronous KV call from a
+	// handler running ON the loop self-deadlocks and always hits the 5s KV
+	// timeout (surfaced as "coalesce gate: DEADLINE_EXCEEDED"). AsyncMessageHandler
+	// runs each frame on its own goroutine, freeing the loop to deliver the
+	// nested response. See sdk/go/aether/async_handler.go + the OnMessage doc
+	// comment. Join arrivals are safe to process concurrently/out-of-order (the
+	// join engine rendezvous via distributed locks/counters/dedup).
+	s.client.OnMessage(aether.AsyncMessageHandler(func(msgCtx context.Context, msg *aether.Message) error {
 		return s.handleMessage(msgCtx, msg)
-	})
+	}))
 
 	// 6.1 Register workflow operation handler for forwarded CRUD requests from gateway
 	s.client.OnWorkflowOperation(s.handleWorkflowOperation)
@@ -116,17 +123,10 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}()
 
-	// 8. Start leader election refresh loop (Redis mode only)
-	if redisLeader, ok := s.leader.(*RedisLeaderElector); ok {
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Error().Interface("panic", r).Msg("recovered from panic in leader election goroutine")
-				}
-			}()
-			redisLeader.RunRefreshLoop(ctx)
-		}()
-	}
+	// 8. Start the leader election loop. The coord-backed elector handles
+	// acquisition AND lease renewal internally (the single-node elector is a
+	// no-op that is always leader), so no separate refresh goroutine is needed.
+	s.leader.Start(ctx)
 
 	// Wait for leadership before starting scheduler and monitor
 	s.waitForLeadership(ctx)
@@ -201,24 +201,10 @@ func (s *Server) Run(ctx context.Context) error {
 			log.Warn().Err(err).Msg("workflow admin server shutdown returned error")
 		}
 	}
-	s.leader.Release(context.Background())
-	return nil
-}
-
-func (s *Server) initRedis() {
-	addrs := s.cfg.Redis.Cluster
-	if len(addrs) == 1 {
-		s.redis = redis.NewClient(&redis.Options{
-			Addr:     addrs[0],
-			Password: s.cfg.Redis.Password,
-		})
-	} else {
-		s.redis = redis.NewUniversalClient(&redis.UniversalOptions{
-			Addrs:    addrs,
-			Password: s.cfg.Redis.Password,
-		})
+	if err := s.leader.Shutdown(context.Background()); err != nil {
+		log.Warn().Err(err).Msg("leader election shutdown returned error")
 	}
-	log.Info().Strs("addrs", addrs).Msg("Redis client initialized")
+	return nil
 }
 
 func (s *Server) initAetherClient() error {
@@ -301,19 +287,39 @@ func (s *Server) initComponents() {
 
 	// s.store is guaranteed non-nil by NewServer.
 	s.executor = NewExecutor(s.client, s.cfg.Aether.Workspace)
-	if s.cfg.Mode == ModeLite {
-		s.leader = NewSingleNodeLeaderElector()
-	} else {
-		s.leader = NewRedisLeaderElector(s.redis, "workflow:leader", impl)
-	}
+	// Leader election runs over the gateway's KV store via the WorkflowEngine
+	// client, on the shared global scope under the reserved coordination key.
+	// One leader is elected across replicas in every backend mode (Redis /
+	// Badger / JetStream) with no dedicated Redis connection. In single-node
+	// deployments the sole instance simply wins the lock immediately.
+	leaderLocker := s.client.KV().Locker(aether.CoordScope{Scope: aether.KVScopeGlobal})
+	s.leader = NewCoordLeaderElector(leaderLocker, workflowLeaderKey, impl)
 
 	exprEng := NewExprEngine(s.cfg.Workflow.GetRuleCacheSize())
 	tmplEng := NewTemplateEngine(s.cfg.Workflow.GetRuleCacheSize())
 
-	s.router = NewRouter(s.store, exprEng, tmplEng, s.executor, s.cfg.Workflow.GetRuleCacheTTL())
+	// Join engine shares the WorkflowEngine client's KV (global scope, reserved
+	// coordination namespace) for its atomic arrival counter, dedup ledger, and
+	// fire-marker — portable across Redis / Badger / JetStream like the leader lock.
+	joinScope := aether.CoordScope{Scope: aether.KVScopeGlobal}
+	joinSetBackend := &kvJoinSet{kv: s.client.KV(), scope: joinScope}
+	joinEng := NewJoinEngine(s.store, exprEng, s.executor, s.client.KV().Counter(joinScope), s.client.KV().Locker(joinScope), joinSetBackend, s.cfg.Aether.Workspace)
+
+	s.router = NewRouter(s.store, exprEng, tmplEng, s.executor, joinEng, s.cfg.Workflow.GetRuleCacheTTL())
 	s.dagEng = NewDAGEngine(s.store, exprEng, tmplEng, s.executor, &s.cfg.Workflow)
-	s.scheduler = NewScheduler(s.store, s.executor, s.dagEng, s.leader, s.cfg.Workflow.GetSchedulerPollInterval())
+	s.scheduler = NewScheduler(s.store, s.executor, s.dagEng, s.leader, joinEng, s.cfg.Workflow.GetSchedulerPollInterval())
 	s.stateMach = NewStateMachineEngine(s.store, s.executor)
+}
+
+// kvJoinSet adapts the WorkflowEngine client's KV to the join engine's joinSet
+// interface, issuing the gRPC SetAdd primitive on the shared coordination scope.
+type kvJoinSet struct {
+	kv    *aether.KV
+	scope aether.CoordScope
+}
+
+func (s *kvJoinSet) SetAdd(ctx context.Context, key, member string, ttl time.Duration) (bool, int64, error) {
+	return s.kv.SetAddSync(ctx, key, []byte(member), s.scope.Scope, s.scope.UserID, s.scope.Workspace, ttl, aether.DefaultKVTimeout)
 }
 
 func (s *Server) handleMessage(ctx context.Context, msg *aether.Message) error {
@@ -401,14 +407,16 @@ func (s *Server) runStateMachineMonitor(ctx context.Context) {
 }
 
 func (s *Server) waitForLeadership(ctx context.Context) {
+	// The election loop (started via s.leader.Start) acquires leadership
+	// asynchronously; poll until this instance leads or ctx is cancelled.
 	for {
-		if s.leader.TryAcquire(ctx) {
+		if s.leader.IsLeader() {
 			return
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(5 * time.Second):
+		case <-time.After(time.Second):
 		}
 	}
 }

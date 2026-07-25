@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/cluster/nats"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/cluster/nats"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // newTestJSStore boots an embedded NATS server and returns a JetStreamKVStore.
@@ -554,5 +554,112 @@ func TestJetStreamKV_ScopeIsolation(t *testing.T) {
 	}
 	if _, ok := globalItems["wskey"]; ok {
 		t.Error("workspace-scope key should not appear in global-scope listing")
+	}
+}
+
+// jsAgentA and jsAgentB are two distinct agent identities sharing the same
+// tenant/workspace. Used by the cross-principal scope tests below to verify
+// that the JetStream key layout honours ScopeSpec.Sharing (mirroring the
+// Badger gateway integration test conventions).
+func jsAgentA() models.Identity {
+	return models.Identity{
+		Type:           models.PrincipalAgent,
+		Workspace:      "ws-test",
+		Implementation: "worker",
+		Specifier:      "agent-a",
+	}
+}
+
+func jsAgentB() models.Identity {
+	return models.Identity{
+		Type:           models.PrincipalAgent,
+		Workspace:      "ws-test",
+		Implementation: "worker",
+		Specifier:      "agent-b",
+	}
+}
+
+// TestJetStreamKV_UserShared_CrossAgentRendezvous verifies that a write by
+// agent A to ScopeUserShared is immediately readable by agent B under the
+// same userID. This is the JetStream-backend regression test for the bug
+// where buildJSKey was unconditionally embedding the caller's agent identity
+// even for shared scopes, making USER_SHARED behave like the per-principal
+// USER scope.
+func TestJetStreamKV_UserShared_CrossAgentRendezvous(t *testing.T) {
+	s := newTestJSStore(t)
+	ctx := context.Background()
+	const userID = "alice"
+
+	// Agent A writes.
+	if err := s.Set(ctx, jsAgentA(), kv.ScopeUserShared, "notebook", "page-1-content", userID, "", 0); err != nil {
+		t.Fatalf("agentA Set: %v", err)
+	}
+
+	// Agent B reads — must see the same value.
+	val, err := s.Get(ctx, jsAgentB(), kv.ScopeUserShared, "notebook", userID, "")
+	if err != nil {
+		t.Fatalf("agentB Get: %v", err)
+	}
+	if val != "page-1-content" {
+		t.Errorf("cross-agent rendezvous failed: agentB got %q, want %q", val, "page-1-content")
+	}
+
+	// List from agent B must also surface agent A's write.
+	items, err := s.List(ctx, jsAgentB(), kv.ScopeUserShared, userID, "")
+	if err != nil {
+		t.Fatalf("agentB List: %v", err)
+	}
+	if v, ok := items["notebook"]; !ok || v != "page-1-content" {
+		t.Errorf("expected agentB List to include agentA's write; got %v", items)
+	}
+}
+
+// TestJetStreamKV_UserWorkspaceShared_CrossAgentRendezvous mirrors the
+// USER_SHARED test but adds the workspace dimension. Agent A writes under
+// (user, workspace); agent B must read the same value.
+func TestJetStreamKV_UserWorkspaceShared_CrossAgentRendezvous(t *testing.T) {
+	s := newTestJSStore(t)
+	ctx := context.Background()
+	const userID = "carol"
+	const workspace = "ws-test"
+
+	if err := s.Set(ctx, jsAgentA(), kv.ScopeUserWorkspaceShared, "state", "active", userID, workspace, 0); err != nil {
+		t.Fatalf("agentA Set: %v", err)
+	}
+
+	val, err := s.Get(ctx, jsAgentB(), kv.ScopeUserWorkspaceShared, "state", userID, workspace)
+	if err != nil {
+		t.Fatalf("agentB Get: %v", err)
+	}
+	if val != "active" {
+		t.Errorf("cross-agent rendezvous failed for user-workspace-shared: got %q, want \"active\"", val)
+	}
+}
+
+// TestJetStreamKV_User_IsolatesAgents proves the fix did NOT accidentally
+// make the per-principal ScopeUser cross-agent. Agent A writes under user X;
+// agent B reading under the same user X and key must MISS (different storage
+// keys because USER is SharingExclusive).
+func TestJetStreamKV_User_IsolatesAgents(t *testing.T) {
+	s := newTestJSStore(t)
+	ctx := context.Background()
+	const userID = "dave"
+
+	if err := s.Set(ctx, jsAgentA(), kv.ScopeUser, "tab-state", "agent-a-value", userID, "", 0); err != nil {
+		t.Fatalf("agentA Set: %v", err)
+	}
+
+	// Agent B reading at ScopeUser for the same userID must NOT see A's value.
+	if _, err := s.Get(ctx, jsAgentB(), kv.ScopeUser, "tab-state", userID, ""); err == nil {
+		t.Error("expected ErrKeyNotFound for agentB Get on per-principal USER scope; got nil error (isolation broken)")
+	}
+
+	// Agent A still reads its own value back.
+	valA, err := s.Get(ctx, jsAgentA(), kv.ScopeUser, "tab-state", userID, "")
+	if err != nil {
+		t.Fatalf("agentA Get: %v", err)
+	}
+	if valA != "agent-a-value" {
+		t.Errorf("agentA per-principal USER readback: got %q, want %q", valA, "agent-a-value")
 	}
 }

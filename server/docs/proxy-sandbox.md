@@ -6,9 +6,7 @@ environment where an untrusted process (a spawned LLM agent, a tool-runner
 container, etc.) can participate in the Aether network without holding any
 credentials.
 
-**Related documents:** [proxy.md](proxy.md) · [proxy-cutover.md](proxy-cutover.md) ·
-[proxy-architecture-roadmap.md](proxy-architecture-roadmap.md) ·
-[proxy-quickstart.md](proxy-quickstart.md)
+**Related documents:** [proxy.md](proxy.md) · [proxy-quickstart.md](proxy-quickstart.md)
 
 ---
 

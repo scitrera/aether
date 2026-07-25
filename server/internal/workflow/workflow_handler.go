@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	pb "github.com/scitrera/aether/api/proto"
@@ -72,6 +73,14 @@ func (s *Server) handleWorkflowOperation(ctx context.Context, op *pb.WorkflowOpe
 		return s.handleCreateSMInstance(ctx, op)
 	case pb.WorkflowOperation_SEND_SM_EVENT:
 		return s.handleSendSMEvent(ctx, op)
+
+	// ---- Joins ----
+	case pb.WorkflowOperation_LIST_JOINS:
+		return s.handleListJoins(ctx, op)
+	case pb.WorkflowOperation_GET_JOIN:
+		return s.handleGetJoin(ctx, op)
+	case pb.WorkflowOperation_CANCEL_JOIN:
+		return s.handleCancelJoin(ctx, op)
 
 	default:
 		return &pb.WorkflowResponse{
@@ -561,4 +570,93 @@ func (s *Server) handleSendSMEvent(ctx context.Context, op *pb.WorkflowOperation
 	}
 	log.Debug().Str("instance_id", instanceID).Str("event", eventName).Msg("state machine event sent via gRPC stream")
 	return jsonResponse(op.RequestId, instance)
+}
+
+// =============================================================================
+// Joins
+// =============================================================================
+
+// joinView is the observability projection of a Join (N5). It deliberately
+// omits the internal firing-action JSON (on_complete/on_timeout/on_partial_failure).
+type joinView struct {
+	JoinName       string     `json:"join_name"`
+	Workspace      string     `json:"workspace"`
+	CorrelationKey string     `json:"correlation_key"`
+	Mode           string     `json:"mode"`
+	Arrived        int64      `json:"arrived"`
+	Expected       *int64     `json:"expected,omitempty"`
+	Dirty          bool       `json:"dirty"`
+	Status         string     `json:"status"`
+	DeadlineAt     *time.Time `json:"deadline_at,omitempty"`
+	LingerUntil    *time.Time `json:"linger_until,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+func toJoinView(j Join) joinView {
+	return joinView{
+		JoinName:       j.JoinName,
+		Workspace:      j.Workspace,
+		CorrelationKey: j.CorrelationKey,
+		Mode:           j.Mode,
+		Arrived:        j.ArrivedCount,
+		Expected:       j.ExpectedCount,
+		Dirty:          j.Dirty,
+		Status:         j.Status,
+		DeadlineAt:     j.DeadlineAt,
+		LingerUntil:    j.LingerUntil,
+		CreatedAt:      j.CreatedAt,
+		UpdatedAt:      j.UpdatedAt,
+	}
+}
+
+func toJoinViews(joins []Join) []joinView {
+	views := make([]joinView, 0, len(joins))
+	for _, j := range joins {
+		views = append(views, toJoinView(j))
+	}
+	return views
+}
+
+func (s *Server) handleListJoins(ctx context.Context, op *pb.WorkflowOperation) (*pb.WorkflowResponse, error) {
+	joins, err := s.store.ListJoins(ctx, op.Workspace)
+	if err != nil {
+		return errResponse(op.RequestId, err.Error()), nil
+	}
+	return jsonResponse(op.RequestId, toJoinViews(joins))
+}
+
+func (s *Server) handleGetJoin(ctx context.Context, op *pb.WorkflowOperation) (*pb.WorkflowResponse, error) {
+	j, err := s.store.GetJoin(ctx, op.Id, op.Workspace, op.SecondaryId)
+	if err != nil {
+		return errResponse(op.RequestId, err.Error()), nil
+	}
+	if j == nil {
+		return errResponse(op.RequestId, "join not found"), nil
+	}
+	return jsonResponse(op.RequestId, toJoinView(*j))
+}
+
+func (s *Server) handleCancelJoin(ctx context.Context, op *pb.WorkflowOperation) (*pb.WorkflowResponse, error) {
+	j, err := s.store.GetJoin(ctx, op.Id, op.Workspace, op.SecondaryId)
+	if err != nil {
+		return errResponse(op.RequestId, err.Error()), nil
+	}
+	if j == nil {
+		return errResponse(op.RequestId, "join not found"), nil
+	}
+	if j.Status != JoinStatusOpen {
+		// Already terminal — cancellation is idempotent.
+		return jsonResponse(op.RequestId, map[string]any{
+			"status":  j.Status,
+			"message": "join already terminal",
+		})
+	}
+	if err := s.store.MarkJoinTerminal(ctx, j.ID, JoinStatusCancelled, time.Now().Add(time.Minute)); err != nil {
+		return errResponse(op.RequestId, err.Error()), nil
+	}
+	return jsonResponse(op.RequestId, map[string]any{
+		"status":  JoinStatusCancelled,
+		"message": "join cancelled",
+	})
 }

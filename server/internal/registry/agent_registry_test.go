@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	_ "github.com/lib/pq"
-	"github.com/scitrera/aether/internal/testutil"
+	"github.com/scitrera/aether/server/internal/testutil"
 )
 
 func setupTestDB(t *testing.T) (*sql.DB, func()) {

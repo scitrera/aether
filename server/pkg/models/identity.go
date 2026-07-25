@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/scitrera/aether/pkg/sharding"
+	"github.com/scitrera/aether/server/pkg/sharding"
 )
 
 // System workspace and implementation constants for internal identities

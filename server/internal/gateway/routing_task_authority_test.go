@@ -11,12 +11,13 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/circuitbreaker"
-	tasks "github.com/scitrera/aether/internal/storage/tasks"
-	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
-	"github.com/scitrera/aether/internal/testutil"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/circuitbreaker"
+	tasks "github.com/scitrera/aether/server/internal/storage/tasks"
+	taskpg "github.com/scitrera/aether/server/internal/storage/tasks/postgres"
+	"github.com/scitrera/aether/server/internal/testutil"
+	"github.com/scitrera/aether/server/pkg/models"
+	"google.golang.org/protobuf/proto"
 )
 
 // TestRouteMessage_AutoResolvesSessionTaskAuthority verifies that when an agent
@@ -144,6 +145,10 @@ func TestRouteMessage_AutoResolvesSessionTaskAuthority(t *testing.T) {
 	// Delegation would deny and nothing would be published.
 	router.mu.Lock()
 	published := len(router.publishedMessages)
+	var publishedPayload []byte
+	if published > 0 {
+		publishedPayload = router.publishedMessages[0].payload
+	}
 	router.mu.Unlock()
 
 	stream.mu.Lock()
@@ -160,6 +165,23 @@ func TestRouteMessage_AutoResolvesSessionTaskAuthority(t *testing.T) {
 	}
 	if published != 1 {
 		t.Errorf("expected 1 published message (authority path), got %d", published)
+	}
+
+	// The gateway must stamp the resolved OBO subject onto the delivered
+	// envelope so a recipient can identify the user the message was sent for.
+	if publishedPayload != nil {
+		var env pb.MessageEnvelope
+		if err := proto.Unmarshal(publishedPayload, &env); err != nil {
+			t.Fatalf("unmarshal published envelope: %v", err)
+		}
+		obo := env.GetOnBehalfSubject()
+		if obo == nil {
+			t.Fatal("expected MessageEnvelope.on_behalf_subject to be stamped")
+		}
+		if obo.GetPrincipalType() != "user" || obo.GetPrincipalId() != userID {
+			t.Errorf("on_behalf_subject = (%q,%q), want (user,%q)",
+				obo.GetPrincipalType(), obo.GetPrincipalId(), userID)
+		}
 	}
 }
 

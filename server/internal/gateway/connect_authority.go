@@ -6,9 +6,9 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // handleResolveAuthority resolves an authority grant against the caller's

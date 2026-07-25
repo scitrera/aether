@@ -26,9 +26,9 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/audit"
-	"github.com/scitrera/aether/internal/quota"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/internal/quota"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // ---------------------------------------------------------------------------

@@ -19,10 +19,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/scitrera/aether/internal/storage/audit"
-	auditpg "github.com/scitrera/aether/internal/storage/audit/postgres"
-	auditsqlite "github.com/scitrera/aether/internal/storage/audit/sqlite"
-	"github.com/scitrera/aether/internal/testutil"
+	"github.com/scitrera/aether/server/internal/storage/audit"
+	auditpg "github.com/scitrera/aether/server/internal/storage/audit/postgres"
+	auditsqlite "github.com/scitrera/aether/server/internal/storage/audit/sqlite"
+	"github.com/scitrera/aether/server/internal/testutil"
 )
 
 // storeFactory builds a Store and returns a cleanup func. The factory may

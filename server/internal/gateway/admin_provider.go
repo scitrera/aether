@@ -9,17 +9,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/scitrera/aether/internal/admin"
-	"github.com/scitrera/aether/internal/auth"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/internal/quota"
-	"github.com/scitrera/aether/internal/registry"
-	"github.com/scitrera/aether/internal/router"
-	"github.com/scitrera/aether/internal/state"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	regstore "github.com/scitrera/aether/internal/storage/registry"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/admin"
+	"github.com/scitrera/aether/server/internal/auth"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/internal/quota"
+	"github.com/scitrera/aether/server/internal/registry"
+	"github.com/scitrera/aether/server/internal/router"
+	"github.com/scitrera/aether/server/internal/state"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	regstore "github.com/scitrera/aether/server/internal/storage/registry"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 const adminVersion = "0.1.0"
@@ -310,10 +310,12 @@ func formatDuration(d time.Duration) string {
 // Ensure GatewayStateProvider implements StateProvider
 var _ admin.StateProvider = (*GatewayStateProvider)(nil)
 
-// Compile-time assertions: both KV backends must satisfy KVReadWriter so that
-// callers can pass either *kv.Store (Redis/full mode) or *kv.BadgerKVStore
-// (Badger/lite mode) to NewGatewayStateProvider without a nil placeholder.
+// Compile-time assertions: all KV backends must satisfy KVReadWriter so that
+// callers can pass *kv.Store (Redis/full mode), *kv.BadgerKVStore (single-node
+// lite mode), or *kv.JetStreamKVStore (cluster lite mode) to
+// NewGatewayStateProvider without a nil placeholder.
 var (
 	_ KVReadWriter = (*kv.Store)(nil)
 	_ KVReadWriter = (*kv.BadgerKVStore)(nil)
+	_ KVReadWriter = (*kv.JetStreamKVStore)(nil)
 )

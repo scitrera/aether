@@ -243,3 +243,296 @@ func TestBadgerRouter_SubscribeFromNow(t *testing.T) {
 		t.Errorf("expected %q, got %q", "after1", got[0])
 	}
 }
+
+// TestBadgerRouter_ReplayPersistsOffset verifies that catching up via the replay
+// path commits the consumer offset — so a named consumer that reconnects does not
+// re-replay (and, in production, re-shed) the same historical backlog forever.
+// This is the specific failure mode for messages that only ever reach a consumer
+// via replay: Publish drops from the live fan-out channel when full but still
+// persists to badger, so a slow consumer's messages are served via replay, and
+// without an offset save they re-deliver on every reconnect.
+func TestBadgerRouter_ReplayPersistsOffset(t *testing.T) {
+	db := openTestDB(t)
+	r := NewBadgerRouter(db)
+	defer r.Close()
+	ctx := context.Background()
+
+	// Publish 3 messages before any subscriber exists — they land in badger only
+	// (no live consumer), so the first subscribe serves them via replay, not drain.
+	for _, m := range []string{"a", "b", "c"} {
+		if err := r.Publish(ctx, "t", []byte(m)); err != nil {
+			t.Fatalf("Publish(%q) error = %v", m, err)
+		}
+	}
+
+	var mu sync.Mutex
+	var first []string
+	unsub1, err := r.SubscribeExclusive("t", "c1", func(p []byte) {
+		mu.Lock()
+		first = append(first, string(p))
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("first SubscribeExclusive() error = %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	n1 := len(first)
+	mu.Unlock()
+	if n1 != 3 {
+		t.Fatalf("first subscribe: expected 3 replayed, got %d", n1)
+	}
+	unsub1()
+
+	// Second subscribe with the SAME consumer name + db: replay must have persisted
+	// the offset, so there is nothing left to re-replay.
+	var second []string
+	unsub2, err := r.SubscribeExclusive("t", "c1", func(p []byte) {
+		mu.Lock()
+		second = append(second, string(p))
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("second SubscribeExclusive() error = %v", err)
+	}
+	defer unsub2()
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	n2 := len(second)
+	got2 := append([]string(nil), second...)
+	mu.Unlock()
+	if n2 != 0 {
+		t.Fatalf("second subscribe: expected 0 re-replayed (offset persisted by replay), got %d: %v", n2, got2)
+	}
+}
+
+// TestBadgerRouter_ResumeOrTail verifies the resume-or-tail start policy: a
+// cold consumer (no committed offset) starts at the tail and does NOT replay the
+// retained backlog, while a reconnecting consumer resumes from its committed
+// offset and replays only the gap — the fix for shared/broadcast lanes that a
+// client re-subscribes on every connect (they previously re-dumped full history).
+func TestBadgerRouter_ResumeOrTail(t *testing.T) {
+	db := openTestDB(t)
+	r := NewBadgerRouter(db)
+	defer r.Close()
+	ctx := context.Background()
+
+	// Retained backlog published before anyone subscribes.
+	for _, m := range []string{"old1", "old2", "old3"} {
+		if err := r.Publish(ctx, "t", []byte(m)); err != nil {
+			t.Fatalf("Publish(%q): %v", m, err)
+		}
+	}
+
+	var mu sync.Mutex
+	var got1 []string
+	unsub1, err := r.SubscribeExclusiveResumeOrTail("t", "c1", func(p []byte) {
+		mu.Lock()
+		got1 = append(got1, string(p))
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("cold SubscribeExclusiveResumeOrTail: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	coldReplayed := len(got1)
+	mu.Unlock()
+	if coldReplayed != 0 {
+		t.Fatalf("cold resume-or-tail should start at tail (0 backlog replayed), got %d: %v", coldReplayed, got1)
+	}
+
+	// Live messages after subscribe are delivered and advance the offset via drain.
+	for _, m := range []string{"live1", "live2"} {
+		if err := r.Publish(ctx, "t", []byte(m)); err != nil {
+			t.Fatalf("Publish(%q): %v", m, err)
+		}
+	}
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	got1Copy := append([]string(nil), got1...)
+	mu.Unlock()
+	if len(got1Copy) != 2 || got1Copy[0] != "live1" || got1Copy[1] != "live2" {
+		t.Fatalf("expected live delivery [live1 live2], got %v", got1Copy)
+	}
+	unsub1()
+
+	// A message published while the consumer is away — the gap to catch up on.
+	if err := r.Publish(ctx, "t", []byte("gap1")); err != nil {
+		t.Fatalf("Publish(gap1): %v", err)
+	}
+
+	// Reconnect: committed offset exists → replay only the gap, not the old
+	// backlog and not the already-seen live messages.
+	var got2 []string
+	unsub2, err := r.SubscribeExclusiveResumeOrTail("t", "c1", func(p []byte) {
+		mu.Lock()
+		got2 = append(got2, string(p))
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("warm SubscribeExclusiveResumeOrTail: %v", err)
+	}
+	defer unsub2()
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	got2Copy := append([]string(nil), got2...)
+	mu.Unlock()
+	if len(got2Copy) != 1 || got2Copy[0] != "gap1" {
+		t.Fatalf("reconnect should replay only the gap [gap1], got %v", got2Copy)
+	}
+}
+
+// TestBadgerRouter_MessageRetentionTTL verifies messages expire after the
+// retention TTL (bounding topic-log growth / replay-burst size) while the
+// sequence counter is preserved (no TTL), so numbering never rewinds.
+func TestBadgerRouter_MessageRetentionTTL(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping timing-based TTL test in -short mode")
+	}
+	db := openTestDB(t)
+	r := NewBadgerRouter(db)
+	r.SetMessageRetentionTTL(1 * time.Second) // Badger TTL granularity is seconds
+	defer r.Close()
+	ctx := context.Background()
+
+	// Retained-only messages (no live subscriber).
+	for _, m := range []string{"a", "b"} {
+		if err := r.Publish(ctx, "t", []byte(m)); err != nil {
+			t.Fatalf("Publish(%q): %v", m, err)
+		}
+	}
+
+	// Wait past the second-truncated expiry boundary.
+	time.Sleep(2500 * time.Millisecond)
+
+	// A fresh full-replay subscriber sees nothing — the backlog expired.
+	var mu sync.Mutex
+	var got []string
+	unsub, err := r.Subscribe("t", func(p []byte) {
+		mu.Lock()
+		got = append(got, string(p))
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer unsub()
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	replayed := append([]string(nil), got...)
+	mu.Unlock()
+	if len(replayed) != 0 {
+		t.Fatalf("expired backlog should not replay, got %v", replayed)
+	}
+
+	// Sequence numbering is preserved across expiry: the next publish is seq 3
+	// and is delivered live.
+	if err := r.Publish(ctx, "t", []byte("c")); err != nil {
+		t.Fatalf("Publish(c): %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	live := append([]string(nil), got...)
+	mu.Unlock()
+	if len(live) != 1 || live[0] != "c" {
+		t.Fatalf("expected live delivery of [c], got %v", live)
+	}
+	seq, err := r.currentSequence("t")
+	if err != nil {
+		t.Fatalf("currentSequence: %v", err)
+	}
+	if seq != 3 {
+		t.Fatalf("sequence counter should be preserved at 3 despite expiry, got %d", seq)
+	}
+}
+
+// TestBadgerRouter_OffsetKeyExpiresWhenOrphaned verifies the per-consumer offset
+// key carries the retention TTL so an orphaned consumer's offset (e.g. a browser
+// window whose tab closed) is reaped instead of accumulating forever, while an
+// offset re-saved before expiry has its TTL refreshed and survives.
+func TestBadgerRouter_OffsetKeyExpiresWhenOrphaned(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping timing-based TTL test in -short mode")
+	}
+	db := openTestDB(t)
+	r := NewBadgerRouter(db)
+	r.SetOffsetRetentionTTL(1 * time.Second) // Badger TTL granularity is seconds
+	defer r.Close()
+
+	if err := r.saveOffset("t", "orphan", 5); err != nil {
+		t.Fatalf("saveOffset: %v", err)
+	}
+	if _, ok, err := r.loadOffsetOK("t", "orphan"); err != nil || !ok {
+		t.Fatalf("offset should be present right after save (ok=%v err=%v)", ok, err)
+	}
+
+	// A consumer that keeps committing refreshes the TTL and survives.
+	if err := r.saveOffset("t", "active", 1); err != nil {
+		t.Fatalf("saveOffset(active): %v", err)
+	}
+	time.Sleep(600 * time.Millisecond)
+	if err := r.saveOffset("t", "active", 2); err != nil { // refresh before expiry
+		t.Fatalf("saveOffset(active refresh): %v", err)
+	}
+
+	// Wait past the orphan's expiry boundary.
+	time.Sleep(2500 * time.Millisecond)
+
+	if _, ok, err := r.loadOffsetOK("t", "orphan"); err != nil {
+		t.Fatalf("loadOffsetOK(orphan): %v", err)
+	} else if ok {
+		t.Fatalf("orphaned offset should have expired, but it is still present")
+	}
+	// The active consumer's last refresh was ~2.5s ago (> 1s TTL), so it also
+	// expires once it stops committing — confirming reaping is driven purely by
+	// staleness, not by which key it is.
+	if _, ok, err := r.loadOffsetOK("t", "active"); err != nil {
+		t.Fatalf("loadOffsetOK(active): %v", err)
+	} else if ok {
+		t.Fatalf("stale 'active' offset should also have expired after it stopped refreshing")
+	}
+}
+
+// TestBadgerRouter_SaveOffsetConcurrentNoConflictError verifies saveOffset
+// retries on optimistic-concurrency conflict: many concurrent commits to the
+// same offset key (drain saving per message + replay's catch-up save under a
+// connection storm) must all succeed with no "Transaction Conflict" error.
+// Without the retry a conflicting save fails, the offset stalls, and the
+// consumer re-replays + re-sheds the same backlog on the next reconnect.
+func TestBadgerRouter_SaveOffsetConcurrentNoConflictError(t *testing.T) {
+	db := openTestDB(t)
+	r := NewBadgerRouter(db)
+	defer r.Close()
+
+	const n = 100
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(seq uint64) {
+			defer wg.Done()
+			<-start
+			if err := r.saveOffset("hot", "c1", seq); err != nil {
+				errs <- err
+			}
+		}(uint64(i + 1))
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent saveOffset failed (retry-on-conflict missing?): %v", err)
+	}
+
+	// A final read-back must return one of the written offsets (a valid commit),
+	// proving the key is not left in a wedged/uncommitted state.
+	off, err := r.loadOffset("hot", "c1")
+	if err != nil {
+		t.Fatalf("loadOffset after concurrent saves: %v", err)
+	}
+	if off < 1 || off > n {
+		t.Fatalf("final offset %d out of written range [1,%d]", off, n)
+	}
+}

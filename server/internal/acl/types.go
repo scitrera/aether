@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // Access levels - hierarchical permission levels
@@ -54,6 +54,21 @@ const (
 	PrincipalTypeBridge         = "bridge"
 	PrincipalTypeService        = "service"
 	PrincipalTypeWildcard       = "wildcard"
+	// PrincipalTypeGroup and PrincipalTypeRole are synthetic subject types
+	// used for role/group authorization. They are never authenticated
+	// principals; they appear only as the target of Casbin grouping (g) edges
+	// and as the principal_type of acl_rules rows that grant permissions to a
+	// group or role. The "id" of a group/role subject is its (unique) name,
+	// so subjects read "group:<group_name>" / "role:<role_name>".
+	PrincipalTypeGroup = "group"
+	PrincipalTypeRole  = "role"
+)
+
+// Subject prefixes for the synthetic group/role subjects used in Casbin
+// grouping edges and acl_rules. Equal to "<type>:".
+const (
+	GroupSubjectPrefix = PrincipalTypeGroup + ":" // "group:"
+	RoleSubjectPrefix  = PrincipalTypeRole + ":"  // "role:"
 )
 
 // Reserved identifiers for ACL system
@@ -95,6 +110,8 @@ const (
 	// against the subject), so the subject's own ACL remains the security ceiling.
 	WorkspaceScopeSubjectInherited = "_subject_workspaces"
 	PermissionQueryConnections     = "capability/query_connections" // capability gate — query the live-connection status of principals other than self
+	PermissionKVPurgeIdentity      = "capability/kv_purge_identity" // capability gate — REMOVAL-ONLY purge of another principal's KV namespace (lifecycle managers reaping ephemeral principals); never reads/returns values
+	PermissionMintUserTokens       = "capability/mint_user_tokens"  // capability gate — mint API tokens with principal_type=user (per-user session keys minted by the platform-server on a user's behalf)
 )
 
 // Decision constants

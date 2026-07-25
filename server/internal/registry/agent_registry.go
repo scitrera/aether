@@ -12,7 +12,7 @@ import (
 
 	"github.com/lib/pq"
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/scitrera/aether/pkg/errors"
+	"github.com/scitrera/aether/server/pkg/errors"
 )
 
 // KVSetter is satisfied by any registry store that supports optional

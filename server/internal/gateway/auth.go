@@ -4,7 +4,7 @@ import (
 	"context"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // authenticateMTLS delegates to the AuthHandler.
@@ -18,6 +18,6 @@ func (s *GatewayServer) resolveConnectionIdentity(ctx context.Context, init *pb.
 }
 
 // authenticateCredentials delegates to the AuthHandler.
-func (s *GatewayServer) authenticateCredentials(ctx context.Context, init *pb.InitConnection, identity models.Identity, hasCertificate bool) (string, models.Identity, error) {
-	return s.authHandler.authenticateCredentials(ctx, init, identity, hasCertificate)
+func (s *GatewayServer) authenticateCredentials(ctx context.Context, init *pb.InitConnection, identity models.Identity, hasCertificate bool, isAnonymous bool) (string, models.Identity, error) {
+	return s.authHandler.authenticateCredentials(ctx, init, identity, hasCertificate, isAnonymous)
 }

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"strings"
 
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/logging"
 	"sync"
 	"time"
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	natssrv "github.com/scitrera/aether/internal/cluster/nats"
+	natssrv "github.com/scitrera/aether/server/internal/cluster/nats"
 )
 
 // newTestJetStreamRouter spins up a single-node embedded NATS server and

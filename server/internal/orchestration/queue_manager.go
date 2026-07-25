@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // OrchestratedTaskPayload represents a task for agent startup

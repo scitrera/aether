@@ -2,20 +2,29 @@ package orchestration
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"github.com/scitrera/aether/internal/registry"
-	"github.com/scitrera/aether/internal/state"
-	regpg "github.com/scitrera/aether/internal/storage/registry/postgres"
-	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
-	"github.com/scitrera/aether/internal/testutil"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/registry"
+	"github.com/scitrera/aether/server/internal/state"
+	regpg "github.com/scitrera/aether/server/internal/storage/registry/postgres"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	taskpg "github.com/scitrera/aether/server/internal/storage/tasks/postgres"
+	taskssqlite "github.com/scitrera/aether/server/internal/storage/tasks/sqlite"
+	"github.com/scitrera/aether/server/internal/testutil"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/tasks"
+
+	// Register the bare "sqlite" driver so CancelStaleInteractiveTasks can be
+	// tested against the native sqlite backend (always available, never skipped).
+	_ "modernc.org/sqlite"
 )
 
 func TestOrchestratedTaskPayload(t *testing.T) {
@@ -977,4 +986,278 @@ func TestStartTaskWithAgent_NoDispatcherIsSafe(t *testing.T) {
 	if stored.Status != "running" {
 		t.Errorf("task status = %q, want %q", stored.Status, "running")
 	}
+}
+
+// TestCancelStaleInteractiveTasks verifies the interactive-task TTL sweep:
+// only INTERACTIVE tasks in a non-terminal, non-waiting state older than the TTL
+// are cancelled. Runs against the NATIVE SQLITE backend (aetherlite path) so it is
+// ALWAYS exercised (no external DB, never skipped) AND proves the sweep's
+// TaskFilter{TaskClass,Statuses} is honored on the sqlite store — see the
+// TaskClassFilter conformance subtest for the postgres+sqlite store-level guarantee.
+func TestCancelStaleInteractiveTasks(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orch_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+
+	ctx := context.Background()
+	service := NewTaskAssignmentService(taskStore, nil, nil, nil, nil)
+
+	const taskClassBackground int32 = 2 // proto TaskClass_TASK_CLASS_BACKGROUND
+
+	// Create a task with the given class, then force its status + created_at via
+	// SQL so age/state are fully controlled regardless of CreateTask defaults.
+	mk := func(id string, class int32, status tasks.TaskStatus, createdAt time.Time) {
+		if err := taskStore.CreateTask(ctx, &tasks.Task{
+			TaskID: id, TaskType: "chat_message", Workspace: "ws-test", TaskClass: class,
+		}); err != nil {
+			t.Fatalf("CreateTask(%s): %v", id, err)
+		}
+		if _, err := db.ExecContext(ctx,
+			"UPDATE tasks SET status = ?, created_at = ? WHERE task_id = ?",
+			string(status), createdAt.UTC().Format(time.RFC3339Nano), id); err != nil {
+			t.Fatalf("force status/created_at (%s): %v", id, err)
+		}
+	}
+
+	now := time.Now()
+	old := now.Add(-2 * time.Hour)
+	mk("old-interactive", taskClassInteractive, tasks.TaskStatusPending, old)     // -> cancelled
+	mk("young-interactive", taskClassInteractive, tasks.TaskStatusPending, now)   // too young -> kept
+	mk("old-background", taskClassBackground, tasks.TaskStatusPending, old)       // wrong class -> kept
+	mk("old-terminal", taskClassInteractive, tasks.TaskStatusCompleted, old)     // terminal -> kept
+
+	n, err := service.CancelStaleInteractiveTasks(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("CancelStaleInteractiveTasks: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("cancelled = %d, want 1 (only the old interactive task)", n)
+	}
+
+	assertStatus := func(id string, want tasks.TaskStatus) {
+		got, gerr := taskStore.GetTask(ctx, id)
+		if gerr != nil {
+			t.Fatalf("GetTask(%s): %v", id, gerr)
+		}
+		if got.Status != want {
+			t.Errorf("task %s status = %q, want %q", id, got.Status, want)
+		}
+	}
+	assertStatus("old-interactive", tasks.TaskStatusCancelled) // reaped
+	assertStatus("young-interactive", tasks.TaskStatusPending) // under TTL
+	assertStatus("old-background", tasks.TaskStatusPending)    // not interactive
+	assertStatus("old-terminal", tasks.TaskStatusCompleted)   // already terminal
+}
+
+// TestCancelTask_RetiresQueueRowDirectlyWithoutDispatcher is the root-cause
+// regression guard: CancelTask must retire the orchestrated_task_queue row
+// directly through the store even when tas.dispatcher is nil (the cleanup
+// service's TaskAssignmentService instance). Before the fix, the retire was
+// dispatcher-gated, so a nil dispatcher left the pending queue row orphaned and
+// the polling dispatcher polled it forever. Runs against the NATIVE SQLITE
+// backend so it is ALWAYS exercised (no external DB, never skipped).
+func TestCancelTask_RetiresQueueRowDirectlyWithoutDispatcher(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orch_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+
+	ctx := context.Background()
+	// No dispatcher wired — this mirrors the cleanup-service code path.
+	service := NewTaskAssignmentService(taskStore, nil, nil, nil, nil)
+
+	taskID := uuid.New().String()
+	if err := taskStore.CreateTask(ctx, &tasks.Task{
+		TaskID: taskID, TaskType: "agent_startup", Workspace: "ws-test",
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	queueID := uuid.New().String()
+	if err := taskStore.InsertQueueEntry(ctx, queueID, taskID, "impl-x", "ws-test", "local", nil, int(tasks.PriorityNormal)); err != nil {
+		t.Fatalf("InsertQueueEntry: %v", err)
+	}
+
+	// Sanity: the row polls before the cancel.
+	before, err := taskStore.PollPendingQueueEntries(ctx, 100)
+	if err != nil {
+		t.Fatalf("PollPendingQueueEntries(before): %v", err)
+	}
+	if !containsQueueID(before, queueID) {
+		t.Fatalf("queue row %s did not poll before cancel", queueID)
+	}
+
+	if err := service.CancelTask(ctx, taskID); err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+
+	// The queue row must be retired despite the nil dispatcher.
+	after, err := taskStore.PollPendingQueueEntries(ctx, 100)
+	if err != nil {
+		t.Fatalf("PollPendingQueueEntries(after): %v", err)
+	}
+	if containsQueueID(after, queueID) {
+		t.Errorf("queue row %s still polls after CancelTask with nil dispatcher (orphaned)", queueID)
+	}
+
+	got, err := taskStore.GetTask(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != tasks.TaskStatusCancelled {
+		t.Errorf("task status = %q, want %q", got.Status, tasks.TaskStatusCancelled)
+	}
+}
+
+// TestReconcileOrphanedQueueEntries_SkipsLiveRetiresTerminal verifies the store
+// sweep at the orchestration seam: a pending queue row whose task is still
+// non-terminal (running) is preserved, while one whose task is terminal
+// (cancelled) is retired. Runs against the NATIVE SQLITE backend.
+func TestReconcileOrphanedQueueEntries_SkipsLiveRetiresTerminal(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orch_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+	ctx := context.Background()
+
+	// Live task (running) with a pending queue row — must survive.
+	liveID := uuid.New().String()
+	if err := taskStore.CreateTask(ctx, &tasks.Task{TaskID: liveID, TaskType: "agent_startup", Workspace: "ws-test"}); err != nil {
+		t.Fatalf("CreateTask(live): %v", err)
+	}
+	if err := taskStore.AssignTask(ctx, liveID, "worker-1"); err != nil {
+		t.Fatalf("AssignTask: %v", err)
+	}
+	if err := taskStore.StartTask(ctx, liveID); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+	liveQueue := uuid.New().String()
+	if err := taskStore.InsertQueueEntry(ctx, liveQueue, liveID, "impl-live", "ws-test", "local", nil, int(tasks.PriorityNormal)); err != nil {
+		t.Fatalf("InsertQueueEntry(live): %v", err)
+	}
+
+	// Terminal task (cancelled) with a pending queue row — must be retired.
+	termID := uuid.New().String()
+	if err := taskStore.CreateTask(ctx, &tasks.Task{TaskID: termID, TaskType: "agent_startup", Workspace: "ws-test"}); err != nil {
+		t.Fatalf("CreateTask(term): %v", err)
+	}
+	if err := taskStore.CancelTask(ctx, termID); err != nil {
+		t.Fatalf("CancelTask(term): %v", err)
+	}
+	termQueue := uuid.New().String()
+	if err := taskStore.InsertQueueEntry(ctx, termQueue, termID, "impl-term", "ws-test", "local", nil, int(tasks.PriorityNormal)); err != nil {
+		t.Fatalf("InsertQueueEntry(term): %v", err)
+	}
+
+	retired, err := taskStore.ReconcileOrphanedQueueEntries(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileOrphanedQueueEntries: %v", err)
+	}
+	if retired != 1 {
+		t.Fatalf("retired %d rows, want 1 (only the cancelled-task row)", retired)
+	}
+
+	after, err := taskStore.PollPendingQueueEntries(ctx, 100)
+	if err != nil {
+		t.Fatalf("PollPendingQueueEntries: %v", err)
+	}
+	if !containsQueueID(after, liveQueue) {
+		t.Errorf("live (running-task) queue row %s was wrongly retired", liveQueue)
+	}
+	if containsQueueID(after, termQueue) {
+		t.Errorf("orphaned (cancelled-task) queue row %s still polls after reconcile", termQueue)
+	}
+}
+
+// containsQueueID reports whether the polled entries include the given queue_id.
+func containsQueueID(entries []*taskstore.QueueEntryNotification, queueID string) bool {
+	for _, e := range entries {
+		if e.QueueID == queueID {
+			return true
+		}
+	}
+	return false
+}
+
+// TestCancelStaleStartupTasks verifies the startup-task TTL sweep: only
+// UNCLAIMED (pending) agent_startup tasks older than the TTL are cancelled.
+// Runs against the NATIVE SQLITE backend (aetherlite path) so it is ALWAYS
+// exercised (no external DB, never skipped) AND proves the sweep's
+// TaskFilter{TaskType,Statuses} is honored on the sqlite store.
+func TestCancelStaleStartupTasks(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orch_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+
+	ctx := context.Background()
+	service := NewTaskAssignmentService(taskStore, nil, nil, nil, nil)
+
+	// Create a task with the given type, then force its status + created_at via
+	// SQL so age/state are fully controlled regardless of CreateTask defaults.
+	mk := func(id, taskType string, status tasks.TaskStatus, createdAt time.Time) {
+		if err := taskStore.CreateTask(ctx, &tasks.Task{
+			TaskID: id, TaskType: taskType, Workspace: "ws-test",
+		}); err != nil {
+			t.Fatalf("CreateTask(%s): %v", id, err)
+		}
+		if _, err := db.ExecContext(ctx,
+			"UPDATE tasks SET status = ?, created_at = ? WHERE task_id = ?",
+			string(status), createdAt.UTC().Format(time.RFC3339Nano), id); err != nil {
+			t.Fatalf("force status/created_at (%s): %v", id, err)
+		}
+	}
+
+	now := time.Now()
+	old := now.Add(-2 * time.Hour)
+	mk("old-startup", startupTaskType, tasks.TaskStatusPending, old)    // -> cancelled
+	mk("young-startup", startupTaskType, tasks.TaskStatusPending, now)  // too young -> kept
+	mk("old-other", "chat_message", tasks.TaskStatusPending, old)       // wrong type -> kept
+	mk("old-claimed", startupTaskType, tasks.TaskStatusAssigned, old)   // claimed (not pending) -> kept
+
+	n, err := service.CancelStaleStartupTasks(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("CancelStaleStartupTasks: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("cancelled = %d, want 1 (only the old pending startup task)", n)
+	}
+
+	assertStatus := func(id string, want tasks.TaskStatus) {
+		got, gerr := taskStore.GetTask(ctx, id)
+		if gerr != nil {
+			t.Fatalf("GetTask(%s): %v", id, gerr)
+		}
+		if got.Status != want {
+			t.Errorf("task %s status = %q, want %q", id, got.Status, want)
+		}
+	}
+	assertStatus("old-startup", tasks.TaskStatusCancelled) // reaped
+	assertStatus("young-startup", tasks.TaskStatusPending) // under TTL
+	assertStatus("old-other", tasks.TaskStatusPending)     // not a startup task
+	assertStatus("old-claimed", tasks.TaskStatusAssigned)  // already claimed
 }

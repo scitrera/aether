@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/rabbitmq/rabbitmq-stream-go-client/pkg/stream"
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/logging"
 )
 
 // ProducerPool manages a pool of RabbitMQ stream producers with health monitoring

@@ -10,7 +10,7 @@ AetherLite is a deployment mode for Aether that replaces all external services w
 | Single-node production | Supported | Overkill unless you need Redis/RabbitMQ for other reasons |
 | Edge or embedded deployments | Recommended | Usually impractical |
 | Prototyping / demos | Recommended | — |
-| Multi-node horizontal scaling | **Not supported** | Required |
+| Multi-node horizontal scaling | Experimental (see [Cluster Mode](#cluster-mode-experimental)) | Required |
 | High-throughput (thousands of msg/s) | Evaluate carefully | Preferred |
 
 AetherLite is production-ready for single-node workloads. It is **not** a development-only toy — data is durable on disk and message replay works correctly.
@@ -37,25 +37,23 @@ AETHER_ALLOW_DEV_MODE=true ./aetherlite --data-dir /var/lib/aether-lite --insecu
 | Flag | Default | Description |
 |---|---|---|
 | `--config <path>` | — | Optional YAML config file |
+| `--secrets-file <path>` | — | Optional generated-secrets.yaml merged into config (HMAC, admin key, TLS paths) |
 | `--data-dir <path>` | `./aether-lite-data` | Directory for SQLite and Badger storage |
 | `--port <n>` | `50051` | gRPC server port |
 | `--admin-port <n>` | `31880` | Admin UI port |
+| `--ops-port <n>` | `0` (use config default `9090`) | Override the ops/metrics server port |
 | `--dev` | `false` | Development mode (relaxed security) |
 | `--insecure-admin` | `false` | Allow admin API without auth key (requires `AETHER_ALLOW_DEV_MODE`) |
 | `--workflow` | `true` | Enable embedded workflow server |
+| `--workflow-config <path>` | — | Optional workflow config file (overrides auto-config) |
 | `--workflow-admin-port <n>` | `31881` | Workflow admin API port |
 | `--version` | — | Print version and exit |
+| `--help` | — | Print usage and exit |
 
-### Option 2: Individual binaries with `--lite` flag
-
-The `--lite` flag (or `mode: lite` in config) switches any standard binary to lite mode:
-
-```bash
-go build -o gateway ./cmd/gateway
-./gateway --lite --data-dir ./aether-lite-data --insecure-admin
-```
-
-This is useful when you want only the gateway component without the workflow server.
+> Lite mode is only available via the dedicated `cmd/aetherlite` binary. The
+> `cmd/gateway` binary no longer supports lite mode — it exits at startup if
+> `--lite` (or `mode: lite`) is set. Use `cmd/aetherlite` for embedded
+> single-binary deployments.
 
 ## Data Directory Layout
 
@@ -63,16 +61,26 @@ AetherLite stores all persistent state under a single directory:
 
 ```
 aether-lite-data/
-  aether.db       — SQLite: tasks, ACL rules, audit log, agent registry, orchestration profiles
-  badger/         — Badger: sessions, KV store, checkpoints, tokens, message log, consumer offsets
+  audit.db        — SQLite: comprehensive audit log (dedicated WAL writer lock)
+  acl.db          — SQLite: ACL rules, fallback policies, authority grants
+  registry.db     — SQLite: agent registry, orchestrator profiles
+  tasks.db        — SQLite: tasks, task audit events, timers, checkpoints, assignments, DLQ, orchestrated queue
+  tokens.db       — SQLite: API tokens
   workflow.db     — SQLite: workflow rules, definitions, executions, schedules, state machines
+  badger/         — Badger: sessions, KV store, checkpoints, tokens (Badger-backed), message log, consumer offsets
 ```
+
+Each domain owns its own SQLite file and runs its own migration set on
+construction — the historical single-file `aether.db` was retired (each
+store used to share one file via a compat layer). SQLite connections are
+pinned to a single connection per file (WAL mode, `busy_timeout=5000`) to
+serialize writes.
 
 The data directory is created automatically on first run. Back it up like any other database directory.
 
 ## Configuration
 
-AetherLite uses the same YAML configuration format as the full gateway. When using `./aetherlite`, `mode: lite` is always forced. When using `./gateway --lite`, add `mode: lite` to your YAML.
+AetherLite uses the same YAML configuration format as the full gateway. When using `./aetherlite`, `mode: lite` is always forced.
 
 Minimal production config example:
 
@@ -145,8 +153,8 @@ AetherLite uses the same gateway code as full Aether. The only difference is whi
 | Redis checkpoint store | `BadgerCheckpointStore` | `CheckpointManager` |
 | Redis token store | `BadgerTokenStore` | `state.TokenStore` |
 | RabbitMQ Streams router | `BadgerRouter` | `MessageRouter` |
-| PostgreSQL task store | SQLite task store | `*tasks.TaskStore` |
-| AMQP task dispatcher | `MemoryTaskDispatcher` | `TaskDispatcher` |
+| PostgreSQL task store | SQLite task store (`tasks.db`) | `tasks.Store` |
+| AMQP task dispatcher | `PollingTaskDispatcher` (`JetStreamTaskDispatcher` in cluster mode) | `TaskDispatcher` |
 | Redis quota counters | `MemoryQuotaManager` | `QuotaChecker` |
 
 The gateway server (`internal/gateway/server.go`) is identical in both modes.
@@ -156,13 +164,35 @@ The gateway server (`internal/gateway/server.go`) is identical in both modes.
 | Property | AetherLite | Full Aether |
 |---|---|---|
 | External dependencies | None | Redis, RabbitMQ, PostgreSQL |
-| Horizontal scaling | Single-node only | Multiple instances supported |
+| Horizontal scaling | Single-node by default; experimental multi-node via `AETHERLITE_CLUSTER_MODE` (see [Cluster Mode](#cluster-mode-experimental)) | Multiple instances supported |
 | Message durability | Durable (Badger on disk) | Durable (RabbitMQ Streams) |
 | Message replay on reconnect | Supported | Supported |
 | Quota persistence across restarts | No (in-memory) | Yes (Redis) |
 | Operational complexity | Low (one process, one dir) | Higher (3 external services) |
 | Throughput ceiling | Limited by local disk I/O | Higher (distributed) |
 | PostgreSQL features | Via SQLite (same schema) | Native PostgreSQL |
+
+## Cluster Mode (Experimental)
+
+Setting `AETHERLITE_CLUSTER_MODE=true` flips AetherLite from single-node
+Badger backends to an embedded-NATS/JetStream-backed cluster: the message
+router, session manager, KV store, and checkpoint store all become
+JetStream-backed, with an optional S3-or-local backup coordinator for cold-
+start restore. Peers are named via `AETHERLITE_CLUSTER_PEERS`, and
+`AETHERLITE_HA_MODE` selects `async`/`sync`/`auto` replication.
+
+The per-domain SQLite stores (`tasks.db`, `audit.db`, `acl.db`,
+`registry.db`, `tokens.db`) remain node-local even in cluster mode — they
+are not themselves replicated, though several of the stores they back
+(registry, ACL rules, authority-request lifecycle, API tokens) are mirrored
+to peers via JetStream KV watches on top of the local SQLite writes. The
+task dispatcher switches from `PollingTaskDispatcher` to
+`JetStreamTaskDispatcher` when `AETHER_DISPATCHER=jetstream` (the default
+once cluster mode is enabled).
+
+For the full list of `AETHERLITE_CLUSTER_*` / `AETHERLITE_NATS_*` /
+`AETHERLITE_S3_*` variables and their defaults, see
+[environment.md](environment.md#aetherlite-cluster-mode-jetstream).
 
 ## Upgrading from AetherLite to Full Mode
 
@@ -175,7 +205,7 @@ If you start with AetherLite and later need to scale horizontally, you can migra
 
 ## Limitations and Known Issues
 
-- **Single-node only.** Badger and SQLite are local files; they cannot be shared across multiple gateway processes.
+- **Single-node by default.** Badger and the per-domain SQLite files are local; they cannot be shared across multiple gateway processes unless `AETHERLITE_CLUSTER_MODE=true` is set (see [Cluster Mode](#cluster-mode-experimental)), which replicates the router/session/KV/checkpoint layer via embedded NATS/JetStream — the SQLite-backed stores themselves stay node-local.
 - **Quota counts reset on restart.** The in-memory quota manager does not persist connection counters across restarts. Workspace connection limits are re-enforced from zero after each restart.
 - **Back-pressure on message channels.** Under extreme back-pressure, the live subscriber delivery channel may drop messages. Those messages remain durably stored in Badger and are replayed on the subscriber's next reconnect.
 - **SQLite concurrency.** SQLite is configured in WAL mode with a 5-second busy timeout. Very high write concurrency may cause transient `SQLITE_BUSY` errors on the audit log or task store. If you hit this consistently, consider the full PostgreSQL deployment.

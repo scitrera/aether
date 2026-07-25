@@ -13,8 +13,8 @@ This project is made by scitrera.ai. Therefore, the naming involves "scitrera"; 
 ## Directory Structure (Monorepo)
 - api/ - Protobuf definitions and generated code (own Go module: `github.com/scitrera/aether/api`)
 - sdk/ - Client SDKs (Go, Python, TypeScript)
-- server/ - Go server (module: `github.com/scitrera/aether`)
-  - server/cmd/ - Main entry points (gateway, auth-proxy, migrate, cleanup, loadtest)
+- server/ - Go server (module: `github.com/scitrera/aether/server`)
+  - server/cmd/ - Main entry points (gateway, aetherlite, auth-proxy, proxy-sidecar, workflow, migrate, cleanup, init-secrets, readiness-check, loadtest)
   - server/configs/ - YAML configuration files (e.g., dev.yaml)
   - server/deployments/ - Kubernetes manifests and Docker Compose files
   - server/docs/ - Server documentation (quickstart, scaling, monitoring, admin API, error codes, etc.)
@@ -24,9 +24,9 @@ This project is made by scitrera.ai. Therefore, the naming involves "scitrera"; 
   - server/scripts/ - Server dev scripts (infra, test, certs, load test)
   - server/specification.md - Full system specification (v4.0, reflects actual implementation)
   - server/go.mod, server/go.sum - Go module files
-  - server/Dockerfile - Multi-stage build for gateway, cleanup, and migrate binaries
+  - server/Dockerfile - Multi-stage build for gateway, cleanup, migrate, auth-proxy, init-secrets, workflow, aetherlite, and proxy-sidecar binaries
   - server/Makefile - Build/test/run targets (run from server/ directory)
-- scripts/ - Repo-wide scripts (compile_protos.sh)
+- scripts/ - Repo-wide scripts (compile-protos.py, update-versions.py — thin shims over scitrera-repo-tools)
 - refs/ - Reference materials (external open source code; exclude from general scans)
 - .claude - Claude configuration files
 - .slop - Directory to store random markdown files and notes that may be relevant but not necessarily
@@ -67,11 +67,22 @@ go test -v ./internal/gateway    # Run specific package tests with verbose outpu
 ```
 
 ### Generate Protobuf Code
-# may require: activate a Python virtualenv with grpcio-tools / mypy-protobuf installed,
-# ensure protoc-gen-go and protoc-gen-go-grpc are on PATH, then run scripts/compile_protos.sh
+Driven by the `proto:` block in `versions.yaml`, which pins every compiler
+(`protoc`, the Go plugins, `grpcio-tools`, `@grpc/proto-loader`). Those pins are
+verified before anything is generated, so a toolchain mismatch fails with the
+exact install command instead of producing artifacts whose embedded version
+headers drift from CI. `--check` is what `proto-check.yml` runs on PRs.
+
 ```bash
-./scripts/compile_protos.sh
+python scripts/compile-protos.py            # regenerate Go + Python + TypeScript
+python scripts/compile-protos.py --check    # verify only; exit 1 on drift
+python scripts/compile-protos.py --lang go  # one language (repeatable)
 ```
+
+Requires `protoc` and the Go plugins on PATH (`gofmt` too, from the Go
+toolchain), plus a virtualenv with the pinned `grpcio-tools` and
+`npm install` in `sdk/typescript`. If repo-tools runs outside that virtualenv,
+point it at the right interpreter with `--python .venv/bin/python`.
 
 ### Docker Build
 ```bash
@@ -111,7 +122,7 @@ cd server
 | **Orchestration** | `server/internal/orchestration/` | Task dispatch via AMQP, claim-based delivery, profile management |
 | **Admin Server** | `server/internal/admin/server.go` | REST API + embedded UI; ops server for health probes + Prometheus metrics |
 | **Auth Proxy** | `server/cmd/auth-proxy/` + `server/internal/authproxy/` | Standalone auth gateway for external services (e.g., MemoryLayer) |
-| **Identity Model** | `server/pkg/models/identity.go` | Seven principal types (Agent, Task, User, Orchestrator, WorkflowEngine, MetricsBridge, Bridge), topic address derivation via `ToTopic()` |
+| **Identity Model** | `server/pkg/models/identity.go` | Eight principal types (Agent, Task, User, Service, Orchestrator, WorkflowEngine, MetricsBridge, Bridge), topic address derivation via `ToTopic()` |
 
 ### Topic Schema and Routing
 
@@ -123,11 +134,13 @@ cd server
 | `tb` | `tb::{workspace}::{impl}` | Task broadcast (load-balancing) |
 | `us` | `us::{user_id}::{window_id}` | User window-specific |
 | `uw` | `uw::{user_id}::{workspace}` | User workspace-scoped |
+| `uu` | `uu::{user_id}` | User broadcast — reaches all of a user's windows regardless of active workspace; workspace-agnostic, ordinary (non-progress) messages. Platform-principal senders only (see permission matrix). |
 | `ga` | `ga::{workspace}` | Global agent broadcast |
 | `gu` | `gu::{workspace}` | Global user broadcast |
 | `pg` | `pg::{workspace}` | Progress updates (server-side recipient filtering) |
-| `event.*` | Write: `event.{workspace}` (gateway rewrites to `event::receiver{shard}`); Subscribe (WE): `event::receiver0` | Workflow Engine fan-in; today 1 shard (`event::receiver0`) |
-| `metric.*` | Write: `metric.{workspace}` (gateway rewrites to `metric::receiver{shard}`); Subscribe (MB): `metric::receiver0` | Metrics Bridge fan-in; today 1 shard (`metric::receiver0`) |
+| `event::` | Write: `event::{workspace}` (gateway rewrites to `event::receiver{shard}`); Subscribe (WE): `event::receiver0` | Workflow Engine fan-in; today 1 shard (`event::receiver0`). A legacy `event.*` (dot) form is rejected as an invalid topic prefix. |
+| `metric::` | Write: `metric::{workspace}` (gateway rewrites to `metric::receiver{shard}`); Subscribe (MB): `metric::receiver0` | Metrics Bridge fan-in; today 1 shard (`metric::receiver0`) |
+| `tk` | `tk::{workspace}::{task_id}::events` (TaskEvent stream) and `tk::{workspace}::{task_id}::msg` (per-task chat) | Per-task lanes; SUBJECT sessions auto-subscribe for the task's lifetime. Task-message lane uses full replay; user broadcast lanes (`gu`/`uw`/`uu`) and `pg` use resume-or-tail. |
 | `br` | `br::{impl}::{spec}` | Bridge (cross-workspace messaging integration) |
 
 ### Connection Flow
@@ -185,7 +198,9 @@ An active gRPC stream connection represents both the distributed lock for that i
 
 Cross-workspace sends are blocked: workspace-scoped principals cannot target topics in other workspaces. Bridges are cross-workspace by design (no workspace component) and check ACL per-message against the target workspace.
 
-**Cross-workspace event/metric broadcast:** Sending to `event.*` or `metric.*` in another workspace requires `capability/event_broadcast` or `capability/metric_broadcast` ACL permission. Sending to the sender's own native workspace is implicitly permitted.
+**User-broadcast (`uu::{user_id}`):** A workspace-agnostic channel that reaches every one of a user's windows regardless of which workspace each window is viewing (the non-progress complement to `pg::us::{user}`). Because the topic carries no workspace segment, the workspace ACL cannot gate it, so authorization is by principal type: **only Service, WorkflowEngine, and Bridge principals may publish** (`enforceTopicPermissions`). Users, Agents, Tasks, and Orchestrators are denied and must reach a user via `us::`/`uw::`/progress or task ownership. Users subscribe to their own `uu::` topic on connect.
+
+**Cross-workspace event/metric broadcast:** Sending to `event::` or `metric::` topics in another workspace requires `capability/event_broadcast` or `capability/metric_broadcast` ACL permission. Sending to the sender's own native workspace is implicitly permitted.
 
 **Metric payloads are structured:** `METRIC` messages must carry a `Metric` proto payload (fields: `trace_id`, `entries` [{`name`, `kind`, `qty`}], `metadata`, `client_timestamp_ms`). All entries are additive deltas; negative `qty` requires the `capability/metric_credit` ACL permission. See spec Section 4.5 for details and error codes.
 
@@ -224,6 +239,12 @@ PostgreSQL is used for persistent features that gracefully degrade when unavaila
 
 Schema is managed by embedded migrations in `server/migrations/` that auto-run on startup.
 
+### Observability
+Both `gateway` and `aetherlite` export OpenTelemetry traces and metrics via OTLP gRPC (`internal/tracing/`: `InitTracer`, `InitMeter`, `NewLogBridge`), gated on the standard `OTEL_EXPORTER_OTLP_ENDPOINT` env var (no-op when unset; OTLP gRPC default port 4317). This is independent of the admin ops server's Prometheus `/metrics` endpoint (port 9090).
+
+### Background Cleanup / Reconcile
+The cleanup service (`internal/cleanup/`, wired in both `gateway` and `aetherlite`) runs periodic sweeps: orphaned `orchestrated_task_queue` reconciliation (`QueueReconcileInterval`, default 5m), audit-log retention sweep, stale `agent_startup` / interactive-task TTL reapers, and a stale regular pool-task sweep (`CancelStalePoolTasks`). On single-node AetherLite these run leader-gated/single-node-direct.
+
 ## Horizontal Scaling
 
 - **Stateless Design:** All state in Redis and PostgreSQL. Gateway instances share nothing.
@@ -235,7 +256,7 @@ Schema is managed by embedded migrations in `server/migrations/` that auto-run o
 ### Deployment Options
 - **Kubernetes:** `server/deployments/k8s/gateway/` — Deployment, Service, Ingress, ConfigMap, cert-manager
 - **Docker Compose:** `server/deployments/docker-compose/multi-instance.yaml` — 3 instances + nginx
-- **Dockerfile:** `server/Dockerfile` — Multi-stage build, non-root user, ports 50051/9090/31880 (build from repo root: `docker build -f server/Dockerfile .`)
+- **Dockerfile:** `server/Dockerfile` — Multi-stage build, non-root user, ports 50051/9090/31880/8080 (build from repo root: `docker build -f server/Dockerfile .`)
 
 ## Client SDKs
 

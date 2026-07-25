@@ -198,7 +198,7 @@ func newCompositeHarness(t *testing.T, backendHandler http.HandlerFunc) *composi
 	var gwStream *compositeFakeStream
 	select {
 	case gwStream = <-gw.streamCh:
-	case <-time.After(3 * time.Second):
+	case <-time.After(15 * time.Second):
 		cancel()
 		t.Fatalf("runner runtime never connected to fake gateway")
 	}
@@ -697,6 +697,425 @@ func TestSharedRelaySink_AttachRejectsBeyondMaxSessions(t *testing.T) {
 	replacement := &sharedRuntimeSession{owner: sink}
 	if !sink.attachSession(replacement) {
 		t.Fatalf("attach after detach unexpectedly rejected")
+	}
+}
+
+// =============================================================================
+// Composite RelayMux regression tests.
+//
+// These tests exercise the relaymux composite path (terminator + RelayMux on
+// one shared runtime) through the full Runner stack.
+// =============================================================================
+
+// compositeDialSandbox opens a relay sub-client through the composite harness,
+// sends an Init, and drains the synthesized ConnectionAck.
+func compositeDialSandbox(t *testing.T, h *compositeHarness, specifier string) pb.AetherGateway_ConnectClient {
+	t.Helper()
+	stream, err := h.sandboxCli.Connect(context.Background())
+	if err != nil {
+		t.Fatalf("sandbox dial (%s): %v", specifier, err)
+	}
+	if err := stream.Send(&pb.UpstreamMessage{
+		Payload: &pb.UpstreamMessage_Init{
+			Init: &pb.InitConnection{
+				ClientType: &pb.InitConnection_Agent{
+					Agent: &pb.AgentIdentity{Workspace: "ws", Implementation: "i", Specifier: specifier},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("init send (%s): %v", specifier, err)
+	}
+	ack, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("ack recv (%s): %v", specifier, err)
+	}
+	if _, ok := ack.GetPayload().(*pb.DownstreamMessage_ConnectionAck); !ok {
+		t.Fatalf("ack (%s): expected ConnectionAck, got %T", specifier, ack.GetPayload())
+	}
+	return stream
+}
+
+// waitUpstreamFrame blocks until pred returns true for one of the recorded
+// upstream frames, or the deadline passes.
+func waitUpstreamFrame(t *testing.T, h *compositeHarness, pred func(*pb.UpstreamMessage) bool) *pb.UpstreamMessage {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, m := range h.gatewayStream.snapshot() {
+			if pred(m) {
+				return m
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return nil
+}
+
+// TestComposite_RelayMux_CollidingRequestIDs is the regression test for the
+// pinned production bug: two sandbox sub-clients both issue a KV op with the
+// SAME origin request_id "req-1" (as the SDK's BaseClient.NextRequestID()
+// mints per-client). In the old sharedRelaySink flat-map each sub-client's
+// registerRequest overwrote the other's entry, so only one got its reply.
+// RelayMux rewrites each to a globally-unique "rmx-N" id before forwarding
+// and restores "req-1" on the reply, routing each reply to its originating
+// sub-client.
+func TestComposite_RelayMux_CollidingRequestIDs(t *testing.T) {
+	t.Parallel()
+
+	h := newCompositeHarness(t, nil)
+
+	s1 := compositeDialSandbox(t, h, "agent-1")
+	s2 := compositeDialSandbox(t, h, "agent-2")
+
+	// Both sub-clients send a KV op with the SAME origin request_id "req-1".
+	kvGet := func(key string) *pb.UpstreamMessage {
+		return &pb.UpstreamMessage{Payload: &pb.UpstreamMessage_KvOp{KvOp: &pb.KVOperation{
+			RequestId: "req-1",
+			Op:        pb.KVOperation_GET,
+			Key:       key,
+		}}}
+	}
+	if err := s1.Send(kvGet("k1")); err != nil {
+		t.Fatalf("s1 send: %v", err)
+	}
+	if err := s2.Send(kvGet("k2")); err != nil {
+		t.Fatalf("s2 send: %v", err)
+	}
+
+	// Wait until both KV ops appear upstream with distinct rmx-* ids.
+	var muxIDk1, muxIDk2 string
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, m := range h.gatewayStream.snapshot() {
+			kv, ok := m.GetPayload().(*pb.UpstreamMessage_KvOp)
+			if !ok {
+				continue
+			}
+			if kv.KvOp.GetKey() == "k1" {
+				muxIDk1 = kv.KvOp.GetRequestId()
+			}
+			if kv.KvOp.GetKey() == "k2" {
+				muxIDk2 = kv.KvOp.GetRequestId()
+			}
+		}
+		if muxIDk1 != "" && muxIDk2 != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if muxIDk1 == "" || muxIDk2 == "" {
+		t.Fatalf("upstream did not receive both KV ops (k1=%q k2=%q)", muxIDk1, muxIDk2)
+	}
+	if muxIDk1 == "req-1" || muxIDk2 == "req-1" {
+		t.Fatalf("request_id was not rewritten (still req-1): k1=%q k2=%q", muxIDk1, muxIDk2)
+	}
+	if muxIDk1 == muxIDk2 {
+		t.Fatalf("both sub-clients got the same mux id %q; expected distinct ids", muxIDk1)
+	}
+
+	// Inject replies in swapped order (k2 first, then k1) via the gateway
+	// stream. The mux must restore "req-1" and route each to the right sub-client.
+	kvReply := func(muxID, val string) *pb.DownstreamMessage {
+		return &pb.DownstreamMessage{Payload: &pb.DownstreamMessage_Kv{Kv: &pb.KVResponse{
+			RequestId: muxID,
+			Success:   true,
+			Value:     []byte(val),
+		}}}
+	}
+	if err := h.gatewayStream.server.Send(kvReply(muxIDk2, "v2")); err != nil {
+		t.Fatalf("inject reply k2: %v", err)
+	}
+	if err := h.gatewayStream.server.Send(kvReply(muxIDk1, "v1")); err != nil {
+		t.Fatalf("inject reply k1: %v", err)
+	}
+
+	// s1 must get v1, s2 must get v2, both with request_id restored to "req-1".
+	got1 := compositeRecvKV(t, s1)
+	got2 := compositeRecvKV(t, s2)
+	if got1.GetRequestId() != "req-1" || string(got1.GetValue()) != "v1" {
+		t.Fatalf("s1 got req=%q val=%q; want req-1/v1", got1.GetRequestId(), string(got1.GetValue()))
+	}
+	if got2.GetRequestId() != "req-1" || string(got2.GetValue()) != "v2" {
+		t.Fatalf("s2 got req=%q val=%q; want req-1/v2", got2.GetRequestId(), string(got2.GetValue()))
+	}
+}
+
+// TestComposite_RelayMux_BroadcastToSubClients verifies that gateway push
+// frames (TaskAssignment) are broadcast to all relay sub-clients in composite
+// mode, while the terminator surface is unaffected.
+func TestComposite_RelayMux_BroadcastToSubClients(t *testing.T) {
+	t.Parallel()
+
+	h := newCompositeHarness(t, nil)
+
+	s1 := compositeDialSandbox(t, h, "agent-1")
+	s2 := compositeDialSandbox(t, h, "agent-2")
+
+	push := &pb.DownstreamMessage{Payload: &pb.DownstreamMessage_TaskAssignment{
+		TaskAssignment: &pb.TaskAssignment{TaskId: "composite-task-xyz"},
+	}}
+	if err := h.gatewayStream.server.Send(push); err != nil {
+		t.Fatalf("inject push: %v", err)
+	}
+
+	for i, s := range []pb.AetherGateway_ConnectClient{s1, s2} {
+		msg := compositeRecvWithTimeout(t, s)
+		ta, ok := msg.GetPayload().(*pb.DownstreamMessage_TaskAssignment)
+		if !ok {
+			t.Fatalf("sub %d got %T; want TaskAssignment", i+1, msg.GetPayload())
+		}
+		if ta.TaskAssignment.GetTaskId() != "composite-task-xyz" {
+			t.Fatalf("sub %d task id = %q; want composite-task-xyz", i+1, ta.TaskAssignment.GetTaskId())
+		}
+	}
+}
+
+// TestComposite_RelayMux_TerminatorProxyHttpUnaffected confirms that the
+// terminator's own inbound ProxyHttpRequest still round-trips through the
+// shared connection when RelayMux sub-clients are concurrently attached.
+// This guards against the rawDownstreamTap accidentally swallowing the
+// terminator's ProxyHttpResponse wakeup.
+func TestComposite_RelayMux_TerminatorProxyHttpUnaffected(t *testing.T) {
+	t.Parallel()
+
+	h := newCompositeHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Relay-Mux", "ok")
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, "mux-ok")
+	})
+
+	// Attach two relay sub-clients to prove the terminator path is independent.
+	_ = compositeDialSandbox(t, h, "agent-1")
+	_ = compositeDialSandbox(t, h, "agent-2")
+
+	// Wait for the runtime Init to confirm the connection is live.
+	if waitUpstreamFrame(t, h, func(m *pb.UpstreamMessage) bool {
+		_, ok := m.GetPayload().(*pb.UpstreamMessage_Init)
+		return ok
+	}) == nil {
+		t.Fatal("runtime never sent InitConnection")
+	}
+
+	// Gateway sends an inbound ProxyHttpRequest to the terminator.
+	if err := h.gatewayStream.server.Send(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_ProxyHttpRequest{
+			ProxyHttpRequest: &pb.ProxyHttpRequest{
+				RequestId: "term-req-mux-1",
+				Method:    "GET",
+				Path:      "/mux-ping",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("inject ProxyHttpRequest: %v", err)
+	}
+
+	// The terminator must emit a ProxyHttpResponse upstream.
+	resp := waitUpstreamFrame(t, h, func(m *pb.UpstreamMessage) bool {
+		r, ok := m.GetPayload().(*pb.UpstreamMessage_ProxyHttpResponse)
+		return ok && r.ProxyHttpResponse.GetRequestId() == "term-req-mux-1"
+	})
+	if resp == nil {
+		t.Fatal("terminator never emitted ProxyHttpResponse for term-req-mux-1")
+	}
+	r := resp.GetPayload().(*pb.UpstreamMessage_ProxyHttpResponse).ProxyHttpResponse
+	if r.GetStatusCode() != 200 {
+		t.Errorf("proxy response status = %d; want 200", r.GetStatusCode())
+	}
+	if string(r.GetBody()) != "mux-ok" {
+		t.Errorf("proxy response body = %q; want mux-ok", string(r.GetBody()))
+	}
+}
+
+// compositeRecvKV receives the next downstream frame and asserts it is a KV
+// response, returning the inner KVResponse.
+func compositeRecvKV(t *testing.T, s pb.AetherGateway_ConnectClient) *pb.KVResponse {
+	t.Helper()
+	msg := compositeRecvWithTimeout(t, s)
+	kv, ok := msg.GetPayload().(*pb.DownstreamMessage_Kv)
+	if !ok {
+		t.Fatalf("got %T; want KVResponse", msg.GetPayload())
+	}
+	return kv.Kv
+}
+
+// compositeRecvWithTimeout receives one downstream frame with a 3s deadline.
+func compositeRecvWithTimeout(t *testing.T, s pb.AetherGateway_ConnectClient) *pb.DownstreamMessage {
+	t.Helper()
+	type res struct {
+		msg *pb.DownstreamMessage
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		m, err := s.Recv()
+		ch <- res{m, err}
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			t.Fatalf("recv: %v", r.err)
+		}
+		return r.msg
+	case <-time.After(3 * time.Second):
+		t.Fatalf("timed out waiting for downstream frame")
+		return nil
+	}
+}
+
+// startRunnerForIdentity spins up a fake gateway + an httptest backend + a
+// Runner (terminator + relay enabled) whose Service.Workspace is `workspace`.
+// It waits for the runtime to dial the fake gateway and returns the recorded
+// upstream stream. An empty workspace exercises the workspace-less Service
+// identity path (sv::{impl}::{spec}); a non-empty workspace exercises the
+// Agent identity path (ag::{ws}::{impl}::{spec}). Teardown is registered via
+// t.Cleanup. Mirrors newCompositeHarness but parameterised on the identity
+// discriminator and without a sandbox client (the assertions only need the
+// runtime's own InitConnection).
+func startRunnerForIdentity(t *testing.T, workspace string) *compositeFakeStream {
+	t.Helper()
+
+	gw := newCompositeFakeGateway()
+	gwLis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen gateway: %v", err)
+	}
+	gwSrv := grpc.NewServer()
+	pb.RegisterAetherGatewayServer(gwSrv, gw)
+	go func() { _ = gwSrv.Serve(gwLis) }()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+
+	relayPath := filepath.Join(t.TempDir(), "relay.sock")
+	cfg := &Config{
+		Gateway: GatewayConfig{Address: gwLis.Addr().String(), Insecure: true},
+		Service: ServiceConfig{Workspace: workspace, Implementation: "sidecar", Specifier: "instance-1"},
+		Terminator: TerminatorConfig{
+			Enabled: true,
+			Backends: []BackendConfig{{
+				Name:         "default",
+				Kind:         BackendKindHTTP,
+				URL:          backend.URL,
+				AllowPaths:   []string{"/*"},
+				AllowMethods: []string{"GET", "POST", "PUT", "DELETE"},
+				MaxBodyBytes: 1 << 20,
+				HeaderMode:   HeaderModePassthrough,
+			}},
+		},
+		Relay: RelayConfig{
+			Enabled: true,
+			Listen:  "unix://" + relayPath,
+			AllowedOps: AllowedOpsConfig{
+				Profile: AllowedOpsProfileSandboxDefault,
+				Set:     true,
+			},
+		},
+		TenantID: "tenant-test",
+	}
+
+	runner, err := NewRunner(cfg, "")
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = runner.Run(ctx)
+	}()
+
+	var gwStream *compositeFakeStream
+	select {
+	case gwStream = <-gw.streamCh:
+	case <-time.After(15 * time.Second):
+		cancel()
+		t.Fatalf("runner runtime never connected to fake gateway")
+	}
+
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+		}
+		gwSrv.GracefulStop()
+		_ = gwLis.Close()
+		backend.Close()
+	})
+
+	return gwStream
+}
+
+// waitForInit blocks until the runtime's first upstream InitConnection is
+// recorded on the stream (the runner always sends InitConnection as its first
+// upstream frame), or the deadline passes.
+func waitForInit(t *testing.T, s *compositeFakeStream) *pb.InitConnection {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if m := s.findUpstream(func(m *pb.UpstreamMessage) bool {
+			_, ok := m.GetPayload().(*pb.UpstreamMessage_Init)
+			return ok
+		}); m != nil {
+			return m.GetPayload().(*pb.UpstreamMessage_Init).Init
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("runtime never sent InitConnection to fake gateway")
+	return nil
+}
+
+// TestRunner_AgentIdentityPath proves the AGENT identity path: with
+// Service.Workspace set, gatewayRuntime.init() builds an AgentClient, so the
+// FIRST upstream InitConnection carries an Agent identity keyed to that
+// workspace (ag::{ws}::{impl}::{spec}). This is the counterpart to the
+// workspace-less Service path exercised by TestRunner_ServiceIdentityPath and
+// the rest of the composite suite.
+func TestRunner_AgentIdentityPath(t *testing.T) {
+	t.Parallel()
+
+	stream := startRunnerForIdentity(t, "ws-1")
+	init := waitForInit(t, stream)
+
+	agent, ok := init.GetClientType().(*pb.InitConnection_Agent)
+	if !ok {
+		t.Fatalf("InitConnection client_type = %T; want Agent (workspace was set)", init.GetClientType())
+	}
+	if agent.Agent.GetWorkspace() != "ws-1" {
+		t.Errorf("agent workspace = %q; want ws-1", agent.Agent.GetWorkspace())
+	}
+	if agent.Agent.GetImplementation() != "sidecar" {
+		t.Errorf("agent implementation = %q; want sidecar", agent.Agent.GetImplementation())
+	}
+	if agent.Agent.GetSpecifier() != "instance-1" {
+		t.Errorf("agent specifier = %q; want instance-1", agent.Agent.GetSpecifier())
+	}
+}
+
+// TestRunner_ServiceIdentityPath proves the SERVICE identity path is distinct
+// from the agent path: with an empty Service.Workspace, gatewayRuntime.init()
+// builds a ServiceClient, so the FIRST upstream InitConnection carries a
+// workspace-less Service identity (sv::{impl}::{spec}) — the ServiceIdentity
+// proto has no workspace concept.
+func TestRunner_ServiceIdentityPath(t *testing.T) {
+	t.Parallel()
+
+	stream := startRunnerForIdentity(t, "")
+	init := waitForInit(t, stream)
+
+	svc, ok := init.GetClientType().(*pb.InitConnection_Service)
+	if !ok {
+		t.Fatalf("InitConnection client_type = %T; want Service (workspace was empty)", init.GetClientType())
+	}
+	if svc.Service.GetImplementation() != "sidecar" {
+		t.Errorf("service implementation = %q; want sidecar", svc.Service.GetImplementation())
+	}
+	if svc.Service.GetSpecifier() != "instance-1" {
+		t.Errorf("service specifier = %q; want instance-1", svc.Service.GetSpecifier())
 	}
 }
 

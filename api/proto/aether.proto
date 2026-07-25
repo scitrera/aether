@@ -269,6 +269,15 @@ message BridgeIdentity {
 message ServiceIdentity {
   string implementation = 1;  // e.g., "frontend-api", "platform-backend"
   string specifier = 2;       // Instance identifier for uniqueness (e.g., "pod-1", "default")
+  // When true, the gateway does NOT add this service connection to the
+  // pool-task worker index, so it is never targeted for POOL-mode task
+  // assignments for its implementation. Default false = pool consumer
+  // (back-compat: existing services keep receiving pool tasks). Serve-only
+  // instances that register no task handlers (e.g. a MemoryLayer server with
+  // its in-process worker disabled) set this so pool tasks are routed only to
+  // real workers instead of being claimed-and-dropped (and stuck until
+  // reconcile). Agents are always pool consumers regardless of this field.
+  bool no_pool_consumer = 3;
 }
 
 message AgentIdentity {
@@ -466,6 +475,31 @@ message KVOperation {
     DECREMENT = 5;
     INCREMENT_IF = 6;  // Atomic increment that succeeds only if result <= guard_value
     DECREMENT_IF = 7;  // Atomic decrement that succeeds only if result >= guard_value
+    // Atomic conditional writes — the building blocks for distributed
+    // coordination primitives (mutex, leader election, run-once). All three
+    // are backed across Redis / Badger / NATS-JetStream. KVResponse.applied
+    // reports whether the conditional mutation took effect.
+    SET_NX = 8;             // Set `value` only if the key is absent. applied=true iff written.
+    COMPARE_AND_SET = 9;    // Set `value` only if current == expected_value. applied=true iff swapped.
+    COMPARE_AND_DELETE = 10; // Delete only if current == expected_value. applied=true iff deleted.
+    // REMOVAL-ONLY purge of ANOTHER principal's KV namespace, for lifecycle
+    // managers reaping ephemeral principals (e.g. sandbox-provider clearing a
+    // destroyed sidecar's private state). Deletes every key in
+    // (target_identity, scope) optionally filtered by `key` as a prefix.
+    // Gated by the capability/kv_purge_identity ACL grant. By design it
+    // returns ONLY KVResponse.counter_value (count deleted) — never keys or
+    // values — so the grant cannot be used to exfiltrate another principal's
+    // data. Maintains component separation: the gateway has no sandbox-specific
+    // knowledge; the caller decides what to purge and when.
+    PURGE_IDENTITY = 11;
+    // Atomic set primitives backing fan-in joins (set-completeness) and
+    // at-most-once dedup ledgers, native across Redis / Badger / NATS-JetStream.
+    // SET_ADD adds `value` (the member) to the set at `key`, (re)setting `ttl`
+    // on a newly-added member: KVResponse.applied=true iff newly added,
+    // counter_value=cardinality after the add. SET_CARD returns
+    // counter_value=cardinality (0 if absent).
+    SET_ADD = 12;
+    SET_CARD = 13;
   }
   // Scope identifies the (identity x sharing) cell of the KV matrix.
   //
@@ -504,6 +538,23 @@ message KVOperation {
   // default of 1, matching unguarded INCREMENT/DECREMENT. Must be >= 0;
   // negative deltas are rejected by the server.
   int64 delta_value = 11;
+  // Expected current value for COMPARE_AND_SET / COMPARE_AND_DELETE. The
+  // mutation applies only when the stored value equals these bytes. Unused by
+  // other ops. For an empty/absent comparison use SET_NX instead.
+  bytes expected_value = 12;
+  // LIST pagination. limit caps the keys returned in one LIST response (<=0 →
+  // server default). cursor pages through results: pass the previous
+  // KVResponse.next_cursor to fetch the next page; empty starts from the
+  // beginning. For LIST, `key` (field 3) is the key prefix filter, applied
+  // server-side BEFORE the limit. Unused by non-LIST ops.
+  int32 limit = 13;
+  string cursor = 14;
+  // PURGE_IDENTITY only: the principal whose KV namespace to purge (e.g.
+  // "sv::sandbox-sidecar::<sandbox_id>"). The caller's OWN identity authorizes
+  // the op via capability/kv_purge_identity; this names the TARGET namespace.
+  // `key` (field 3) acts as an optional prefix filter; `scope` selects which
+  // scope to purge. Ignored by all other ops.
+  string target_identity = 15;
 }
 
 message KVResponse {
@@ -519,7 +570,17 @@ message KVResponse {
   map<string, bytes> kv_map = 4;
   string request_id = 5;  // Echoed from the originating KVOperation for correlation
   int64 counter_value = 6;  // Result of INCREMENT/DECREMENT (and INCREMENT_IF/DECREMENT_IF)
-  bool applied = 7;        // True iff INCREMENT_IF/DECREMENT_IF mutation was applied; for unguarded ops always true on success
+  // True iff a conditional mutation was applied. For INCREMENT_IF/DECREMENT_IF
+  // this is the guard result; for SET_NX/COMPARE_AND_SET/COMPARE_AND_DELETE it
+  // reports whether the write/delete took effect. For unguarded ops always
+  // true on success. On a failed COMPARE_AND_SET/COMPARE_AND_DELETE, `value`
+  // carries the live stored value so callers can observe the current holder.
+  bool applied = 7;
+  // LIST pagination. next_cursor is an opaque token to pass as
+  // KVOperation.cursor for the next page; empty when iteration is complete.
+  // has_more is true when more matching keys remain beyond this page.
+  string next_cursor = 8;
+  bool has_more = 9;
 }
 
 message IncomingMessage {
@@ -536,6 +597,14 @@ message IncomingMessage {
   // source_topic (which carries the sender's identity-topic, not the
   // declared event/metric workspace).
   string workspace = 4;
+
+  // Gateway-set, spoof-proof resolved on-behalf-of subject, mirrored from
+  // MessageEnvelope.on_behalf_subject at delivery time. Populated ONLY when the
+  // sender's SendMessage carried an AuthorizationContext the gateway resolved
+  // to an OBO subject. Lets a recipient identify the *user* a message was sent
+  // for, distinct from the sending identity in source_topic. Empty for direct
+  // (non-OBO) sends. See MessageEnvelope.on_behalf_subject.
+  PrincipalRef on_behalf_subject = 5;
 }
 
 message ConfigSnapshot {
@@ -601,6 +670,75 @@ enum TaskClass {
                                //   terminal state (completed / failed).
 }
 
+// TaskPriority orders task dispatch. Unlike TaskClass (a UI hint), the server
+// USES priority for scheduling: among pending tasks eligible for delivery,
+// higher priority is dispatched first; ties break FIFO (oldest created_at).
+// Underlying values are intentionally spaced so new levels can be inserted
+// later, and the numeric value is used directly as the descending sort key.
+enum TaskPriority {
+  TASK_PRIORITY_UNSPECIFIED = 0;   // Treated as NORMAL for back-compat.
+  TASK_PRIORITY_XLOW        = 10;  // Lowest; best-effort, yields to everything.
+  TASK_PRIORITY_LOW         = 20;  // Below normal.
+  TASK_PRIORITY_NORMAL      = 30;  // Default.
+  TASK_PRIORITY_HIGH        = 40;  // Above normal; jumps ahead of normal/low.
+  TASK_PRIORITY_PREEMPT     = 50;  // Highest; reserved for future true preemption.
+}
+
+// BackoffStrategy describes how the task store scales delays across retry
+// attempts when a RetryPolicy is attached to a task. Defaults to
+// EXPONENTIAL when unspecified (preserves current behavior).
+enum BackoffStrategy {
+  BACKOFF_STRATEGY_UNSPECIFIED = 0;
+  BACKOFF_STRATEGY_FIXED = 1;             // Same delay every attempt.
+  BACKOFF_STRATEGY_EXPONENTIAL = 2;       // delay = initial * 2^(n-1), capped at max_delay_ms.
+  BACKOFF_STRATEGY_EXPLICIT_SCHEDULE = 3; // Use schedule_ms[attempt-1]; clamp the last entry.
+}
+
+// RetryPolicy lifts retry scheduling out of individual workers and into the
+// task store. When a task carries a RetryPolicy and a worker calls FailTask
+// without an explicit reschedule, the store computes next_retry_at from
+// this policy and re-pends the task. The waker then picks it up at the
+// scheduled time. Workers can still call RescheduleTaskAt to override
+// (e.g., to honor a Retry-After header).
+message RetryPolicy {
+  // Total attempts allowed (1 = no retries). 0 means use server default (3).
+  int32 max_attempts = 1;
+  BackoffStrategy backoff = 2;
+  int64 initial_delay_ms = 3;
+  int64 max_delay_ms = 4;
+  // Multiplicative random jitter in [0,1]. Final delay = computed *
+  // (1 + uniform(-jitter, +jitter)).
+  double jitter_factor = 5;
+  // For BACKOFF_STRATEGY_EXPLICIT_SCHEDULE. Indexed by 0-based attempt
+  // number; the final entry is used for any subsequent attempt.
+  repeated int64 schedule_ms = 6;
+  // Optional worker convention: HTTP-style status codes that should
+  // trigger a retry. The task store does not inspect failure context;
+  // workers use this to decide whether to FailTask or CompleteTask with
+  // permanent-failure semantics.
+  repeated int32 retryable_status_codes = 7;
+  // Worker hint: prefer Retry-After (or analogous) over computed delay
+  // when set on the failure response.
+  bool honor_retry_after = 8;
+}
+
+// TaskCompletionEvent opts a task into "feed B": when it reaches a terminal
+// status the server publishes a domain event onto the event plane (event::*)
+// so a workflow join (or any rule) can gather over task completions without the
+// worker emitting its own event. The emitted payload carries
+// {task_id, status, workspace, correlation_id, metadata}.
+message TaskCompletionEvent {
+  // enabled turns the feature on. When false (default) no completion event is
+  // emitted (today's behavior).
+  bool enabled = 1;
+  // event_name is the event name to publish. Empty ⇒ derived as
+  // "task.completed" / "task.failed" / "task.cancelled" from the terminal status.
+  string event_name = 2;
+  // on_statuses restricts emission to these terminal statuses. Empty ⇒ all
+  // terminal statuses (completed, failed, cancelled).
+  repeated TaskStatus on_statuses = 3;
+}
+
 message CreateTaskRequest {
   string task_type = 1;
   string workspace = 2;
@@ -647,6 +785,37 @@ message CreateTaskRequest {
   // Persisted on Task.context_id and queryable via TaskFilter.context_id.
   // Empty = no session grouping.
   string context_id = 13;
+
+  // Optional. When set, the task store computes next_retry_at on FailTask
+  // according to this policy and re-pends the task automatically (up to
+  // max_attempts). Absent = legacy behavior (immediate re-pend, hardcoded
+  // max_retries=3).
+  RetryPolicy retry_policy = 14;
+
+  // Optional dispatch priority. Defaults to UNSPECIFIED ⇒ NORMAL. Higher
+  // priority pending tasks are delivered before lower ones (ties break FIFO).
+  TaskPriority priority = 15;
+
+  // Optional idempotency key for exactly-once task creation. When non-empty the
+  // gateway dedupes creation on this key: a duplicate request returns the
+  // existing task identity instead of creating a second task. Workflow joins
+  // set it to make an on_complete create_task fire exactly once under retries
+  // or engine restart.
+  string idempotency_key = 16;
+
+  // Optional fan-out/fan-in correlation identity, distinct from task_id. When
+  // non-empty it is persisted on the task and propagated to child spawns, and is
+  // queryable via TaskFilter.correlation_id. The barrier/group id a join matches.
+  string correlation_id = 17;
+
+  // Optional top-of-fan-out-tree identity (the flow / run id). Defaults to the
+  // task's own id when it is a root; inherited by descendants on spawn. Becomes
+  // the DAG run id when the join engine grows into full fan-out/fan-in.
+  string root_task_id = 18;
+
+  // Optional "feed B" config: emit a domain event onto event::* when this task
+  // reaches a (selected) terminal status. Absent/disabled = no emission.
+  TaskCompletionEvent completion_event = 19;
 }
 
 // CreateTaskResponse is sent in response to CreateTaskRequest when the
@@ -1050,6 +1219,18 @@ message TaskFilter {
   // not just direct children. Default false: direct children only, preserving
   // the existing parent_task_id behavior.
   bool include_descendants = 20;
+
+  // Exact dispatch-priority filter. UNSPECIFIED (0) = no filter; otherwise
+  // returns only tasks whose stored priority equals this level.
+  TaskPriority priority = 21;
+  // Minimum dispatch-priority threshold. UNSPECIFIED (0) = no filter;
+  // otherwise returns tasks whose priority is >= this level (e.g. pass HIGH
+  // to get everything HIGH and PREEMPT). Combinable with other filters.
+  TaskPriority min_priority = 22;
+
+  // Filter by fan-out/fan-in correlation identity / flow id. Empty = no filter.
+  string correlation_id = 23;
+  string root_task_id = 24;
 }
 
 // TaskInfo represents a task.
@@ -1105,6 +1286,20 @@ message TaskInfo {
   // Unix seconds when the task entered a WAITING_* / HIBERNATED state.
   // 0 means the task has never been paused.
   int64 paused_at = 30;
+
+  // Dispatch priority. UNSPECIFIED is normalized to NORMAL on creation, so
+  // persisted tasks always report a concrete level.
+  TaskPriority priority = 31;
+
+  // Fan-out/fan-in correlation identity (the barrier/group id a join matches),
+  // distinct from task_id and propagated to child spawns. Empty = none.
+  string correlation_id = 32;
+  // Top-of-fan-out-tree identity (flow / run id); defaults to the task's own id
+  // for a root, inherited by descendants. Empty = none.
+  string root_task_id = 33;
+  // "Feed B" config persisted on the task; read at the terminal transition to
+  // decide whether/what to emit onto event::*.
+  TaskCompletionEvent completion_event = 34;
 }
 
 // TaskQueryResponse is sent in response to TaskQuery operations.
@@ -1148,6 +1343,7 @@ message TaskOperation {
     WAIT_FOR = 5;   // Transition running -> WAITING_DEPENDENCY on specific task ids. Requires wait_spec.
     RESUME = 6;     // Force-resume a paused task (admin/manual; normally task_waker fires).
     REJECT = 7;     // Agent declines before processing -> REJECTED terminal state.
+    CLAIM = 8;      // Assignee transitions an assigned/pending task to RUNNING.
   }
   OpType op = 1;
 
@@ -1567,6 +1763,25 @@ message ACLOperation {
     // admin endpoints under /api/acl/authority-grants are unaffected.
     reserved 12, 13, 14, 15, 16;
     reserved "LIST_AUTHORITY_GRANTS", "GET_AUTHORITY_GRANT", "CREATE_AUTHORITY_GRANT", "RENEW_AUTHORITY_GRANT", "REVOKE_AUTHORITY_GRANT";
+    // Role/group authorization. REST equivalents under /api/acl/groups,
+    // /api/acl/roles, and /api/acl/principals/{type}/{id}/{groups,roles}.
+    CREATE_GROUP = 17;             // Create a group (group_request)
+    DELETE_GROUP = 18;             // Delete a group (name)
+    GET_GROUP = 19;                // Get a group (name)
+    LIST_GROUPS = 20;              // List all groups
+    ADD_GROUP_MEMBER = 21;         // Add a member to a group (name + member_request)
+    REMOVE_GROUP_MEMBER = 22;      // Remove a member from a group (name + principal)
+    LIST_GROUP_MEMBERS = 23;       // List members of a group (name)
+    CREATE_ROLE = 24;              // Create a role (role_request)
+    DELETE_ROLE = 25;              // Delete a role (name)
+    GET_ROLE = 26;                 // Get a role (name)
+    LIST_ROLES = 27;               // List all roles
+    ASSIGN_ROLE = 28;              // Assign a role (name + assignment_request)
+    UNASSIGN_ROLE = 29;            // Unassign a role (name + principal)
+    LIST_ROLE_ASSIGNMENTS = 30;    // List assignees of a role (name)
+    LIST_PRINCIPAL_GROUPS = 31;    // List groups a principal belongs to (principal)
+    LIST_PRINCIPAL_ROLES = 32;     // List roles assigned to a principal (principal)
+    EXPLAIN_ACCESS = 33;           // Explain effective access (principal + resource_type + resource_id [+ required_level])
   }
   OpType op = 1;
 
@@ -1605,6 +1820,29 @@ message ACLOperation {
 
   // Client-generated correlation ID for matching responses to requests
   string request_id = 19;
+
+  // Role/group fields.
+  // name: group/role name for GET/DELETE/LIST_*_MEMBERS/ASSIGNMENTS/ADD/ASSIGN.
+  string name = 20;
+  // principal: member/assignee for REMOVE_GROUP_MEMBER, UNASSIGN_ROLE, and
+  // the subject for LIST_PRINCIPAL_GROUPS / LIST_PRINCIPAL_ROLES.
+  PrincipalRef principal = 21;
+  ACLGroupRequest group_request = 22;             // CREATE_GROUP
+  ACLRoleRequest role_request = 23;               // CREATE_ROLE
+  ACLGroupMemberRequest member_request = 24;      // ADD_GROUP_MEMBER
+  ACLRoleAssignmentRequest assignment_request = 25; // ASSIGN_ROLE
+
+  // EXPLAIN_ACCESS: the resource to explain against (principal carries the
+  // subject; required_level is the threshold the decision is compared to).
+  string resource_type = 26;
+  string resource_id = 27;
+  int32 required_level = 28;
+
+  // Optional on-behalf-of authority context. When set, the gateway runs the
+  // admin ACL check against the subject (the user) rather than the actor
+  // (the platform-server). Mirrors SessionOperation.authorization (field 6)
+  // and AuditQuery.authorization (field 18).
+  AuthorizationContext authorization = 29;
 }
 
 // ACLRuleFilter specifies filtering parameters for listing ACL rules.
@@ -1789,6 +2027,102 @@ message ACLCleanupResult {
   string message = 2;                     // Human-readable result message
 }
 
+// ACLGroupRequest contains data for creating a group.
+message ACLGroupRequest {
+  string name = 1;
+  string description = 2;
+  string created_by = 3;
+  map<string, string> metadata = 4;
+}
+
+// ACLRoleRequest contains data for creating a role.
+message ACLRoleRequest {
+  string name = 1;
+  string description = 2;
+  string created_by = 3;
+  map<string, string> metadata = 4;
+}
+
+// ACLGroupMemberRequest contains data for adding a member to a group.
+message ACLGroupMemberRequest {
+  string member_type = 1;   // principal type or "group" (nesting)
+  string member_id = 2;
+  string granted_by = 3;
+  int64 expires_at = 4;     // Unix timestamp, 0 = no expiration
+}
+
+// ACLRoleAssignmentRequest contains data for assigning a role.
+message ACLRoleAssignmentRequest {
+  string assignee_type = 1; // principal type or "group"
+  string assignee_id = 2;
+  string granted_by = 3;
+  int64 expires_at = 4;     // Unix timestamp, 0 = no expiration
+}
+
+// ACLGroupInfo represents a group definition.
+message ACLGroupInfo {
+  string group_id = 1;
+  string group_name = 2;
+  string description = 3;
+  string created_by = 4;
+  int64 created_at = 5;
+  map<string, string> metadata = 6;
+}
+
+// ACLRoleInfo represents a role definition.
+message ACLRoleInfo {
+  string role_id = 1;
+  string role_name = 2;
+  string description = 3;
+  string created_by = 4;
+  int64 created_at = 5;
+  map<string, string> metadata = 6;
+}
+
+// ACLGroupMemberInfo represents a single group-membership edge.
+message ACLGroupMemberInfo {
+  string group_name = 1;
+  string member_type = 2;
+  string member_id = 3;
+  string granted_by = 4;
+  int64 granted_at = 5;
+  int64 expires_at = 6;
+}
+
+// ACLRoleAssignmentInfo represents a single role-assignment edge.
+message ACLRoleAssignmentInfo {
+  string role_name = 1;
+  string assignee_type = 2;
+  string assignee_id = 3;
+  string granted_by = 4;
+  int64 granted_at = 5;
+  int64 expires_at = 6;
+}
+
+// ACLAccessContributionInfo is one rule that matched a principal or one of its
+// groups/roles for an explained resource.
+message ACLAccessContributionInfo {
+  string subject = 1;       // granting subject, e.g. "role:wsadmin"
+  string rule_id = 2;
+  int32 access_level = 3;
+  string resource = 4;      // matched object pattern, e.g. "workspace:prod" or "workspace:*"
+  bool expired = 5;
+}
+
+// ACLAccessExplanationInfo explains how a principal's effective access to a
+// resource is decided (EXPLAIN_ACCESS). The gateway records an "explain_access"
+// audit event attributing the call to the connected principal.
+message ACLAccessExplanationInfo {
+  string principal = 1;                                // self subject "type:id"
+  repeated string subjects = 2;                        // self + transitive groups/roles
+  repeated ACLAccessContributionInfo contributions = 3;
+  bool allowed = 4;
+  string decision = 5;                                 // "ALLOW" / "DENY"
+  int32 effective_access_level = 6;
+  bool fallback_applied = 7;
+  string reason = 8;
+}
+
 // ACLResponse is sent in response to ACLOperation.
 // Contains data based on the operation type that was requested.
 message ACLResponse {
@@ -1836,6 +2170,15 @@ message ACLResponse {
 
   // Echoed from the originating ACLOperation for correlation
   string request_id = 12;
+
+  // Role/group results.
+  ACLGroupInfo group = 16;                          // GET_GROUP / CREATE_GROUP
+  repeated ACLGroupInfo groups = 17;                // LIST_GROUPS
+  ACLRoleInfo role = 18;                            // GET_ROLE / CREATE_ROLE
+  repeated ACLRoleInfo roles = 19;                  // LIST_ROLES
+  repeated ACLGroupMemberInfo group_members = 20;   // LIST_GROUP_MEMBERS / LIST_PRINCIPAL_GROUPS
+  repeated ACLRoleAssignmentInfo role_assignments = 21; // LIST_ROLE_ASSIGNMENTS / LIST_PRINCIPAL_ROLES
+  ACLAccessExplanationInfo explanation = 22;        // EXPLAIN_ACCESS
 }
 
 // ============================================================================
@@ -2475,6 +2818,10 @@ message WorkflowOperation {
     SEND_SM_EVENT = 22;
     // Schedule upsert (idempotent create-or-update)
     UPSERT_SCHEDULE = 23;
+    // Fan-in / barrier / coalesce join observability + operator control.
+    LIST_JOINS = 24;   // in-flight + recently-terminal join instances (workspace filter)
+    GET_JOIN = 25;     // inspect one instance: id=join_name, secondary_id=correlation_key
+    CANCEL_JOIN = 26;  // operator GC of a wedged instance
   }
   OpType op = 1;
   string id = 2;              // Entity ID for GET/UPDATE/DELETE
@@ -2534,6 +2881,21 @@ message MessageEnvelope {
   // metrics bridges (which subscribe to a workspace-agnostic fan-in shard)
   // can recover the originating workspace.
   string workspace = 6;
+
+  // Gateway-set, spoof-proof resolved on-behalf-of subject. Populated ONLY
+  // when the sender's SendMessage carried an AuthorizationContext that the
+  // gateway resolved to an OBO subject (valid grant, delegate + audience
+  // match) — set from the resolved authority in routeMessage, the same way
+  // `source` is set from the authenticated sender and ProxyHttp mints X-Auth-*
+  // identity headers. Empty for direct (non-OBO) sends and older gateways.
+  //
+  // Lets a recipient identify the *user* a message was sent for, distinct from
+  // the sending *identity* in `source`. Example: the agent-harness sends from
+  // its agent identity but acts for a user; platform-bridge reads this to scope
+  // the tool registry to that user. Subject identity only — recipients that
+  // need to *act for* the subject use the task authority-grant path
+  // (CreateTaskResponse.authority_grant_id), not this field.
+  PrincipalRef on_behalf_subject = 7;
 }
 
 // =========================================================================

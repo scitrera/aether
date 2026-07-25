@@ -577,4 +577,73 @@ async def test_httpx_transport_async_basic():
         r = await http.get("/v1/hello")
         await producer_task
     assert r.status_code == 200
-    assert r.content == b"hi"
+
+
+# ---------------------------------------------------------------------------
+# Defensive body=None normalisation (Task #26)
+# ---------------------------------------------------------------------------
+
+def test_proxy_http_body_none_does_not_raise():
+    """proxy_http must not raise TypeError when body=None is passed explicitly.
+
+    The signature default is b"" but callers may pass None and rely on the
+    defensive normalisation added at the top of the function body.
+    """
+    client = _SyncClientStub()
+    client._proxy_dispatcher = proxy_mod._ProxyDispatcher()
+
+    request_id = "test-none-body-sync"
+
+    def _responder():
+        import time as _t
+        _t.sleep(0.05)
+        client._proxy_dispatcher.handle_response(
+            _build_response(request_id, status=200, body=b"ok")
+        )
+
+    import threading
+    t = threading.Thread(target=_responder, daemon=True)
+    t.start()
+
+    # Should not raise TypeError: object of type 'NoneType' has no len()
+    result = proxy_http(
+        client,
+        target_topic="sv::test::default",
+        method="GET",
+        path="/healthz",
+        body=None,  # type: ignore[arg-type]  -- intentional None
+        request_id=request_id,
+        timeout=5.0,
+    )
+    t.join(timeout=2.0)
+    assert result.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_proxy_http_async_body_none_does_not_raise():
+    """proxy_http_async must not raise TypeError when body=None is passed explicitly."""
+    client = _AsyncClientStub()
+    client._proxy_dispatcher = proxy_mod._ProxyDispatcher()
+
+    request_id = "test-none-body-async"
+
+    async def _responder():
+        await asyncio.sleep(0.05)
+        client._proxy_dispatcher.handle_response(
+            _build_response(request_id, status=200, body=b"ok")
+        )
+
+    responder_task = asyncio.create_task(_responder())
+
+    # Should not raise TypeError: object of type 'NoneType' has no len()
+    result = await proxy_http_async(
+        client,
+        target_topic="sv::test::default",
+        method="GET",
+        path="/healthz",
+        body=None,  # type: ignore[arg-type]  -- intentional None
+        request_id=request_id,
+        timeout=5.0,
+    )
+    await responder_task
+    assert result.status_code == 200

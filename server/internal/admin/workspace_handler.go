@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
-	"github.com/scitrera/aether/internal/identval"
+	"github.com/scitrera/aether/server/internal/identval"
 )
 
 // =============================================================================

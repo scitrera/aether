@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/logging"
 )
 
 // CompositeAuthenticator tries multiple authenticators in order

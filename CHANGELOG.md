@@ -6,9 +6,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Aet
 
 ---
 
-## [Unreleased]
+## [0.2.2] - Unreleased
 
-Internal builds carry a **v0.2.1** gateway/SDK version stamp; no v0.2.1 tag is published yet.
+Work landed since the **v0.2.1** release (2026-05-22); not yet tagged.
+
+### Added
+
+- **[GATEWAY / SDK] `uu::` user-broadcast topic** for cross-window user targeting (`uu::{user_id}`). A platform→user channel carrying ordinary `MessageEnvelope` protos; only Service, WorkflowEngine, and Bridge principals may publish (`routing.go` enforces the sender-type gate). SDKs gain user-broadcast send helpers and the channel is documented.
+- **[GATEWAY / AETHERLITE] OpenTelemetry OTLP metrics + Go runtime metrics** (`internal/tracing/meter.go`), gated on the same `OTEL_EXPORTER_OTLP_ENDPOINT` env var as tracing — when unset, metrics are a no-op. Both the gateway and aetherlite binaries initialize the OTLP gRPC meter alongside the existing tracer.
+- **[GATEWAY] `ServiceIdentity.no_pool_consumer`** proto field lets a Service principal opt OUT of pool-task consumer routing (serve-only), so a service can connect without being enrolled as a POOL task consumer.
+- **[AUTHPROXY] Internal-only `/auth/verify-optional` endpoint** — an optional-auth variant of `/auth/verify` for `ext_authz` optional-auth flows. With no credential present it passes through anonymously and emits EMPTY identity headers; a present-but-invalid credential still fails closed.
+- **[PROXY SIDECAR] Tenant-relay and aggregator service-tunnel modes** for relaying sandbox tunnels through a tenant boundary, plus a `WatchTenants` `snapshot_complete` sentinel and support for dialing `unix://` terminator backends.
+- **[GATEWAY / CLEANUP] Stale-task TTL sweeps.** A stale `agent_startup` pool-task reaper and a stale-interactive-task sweep (`InteractiveTaskTTL` / `InteractiveTaskCancelInterval`) auto-cancel non-terminal tasks left behind by disconnected clients; sweeps run single-node-direct so aetherlite (no leader election) reaps reliably.
+- **[GATEWAY] Task COMPLETE/FAIL outcome logging.** The gateway now logs every task-op outcome — success and each rejection reason (not found, unauthorized, completeFn error) — for the COMPLETE/FAIL branches.
+- **[GO SDK] `ServiceTopic` helper** for workspace-less service principals.
+
+### Changed
+
+- **[AETHERLITE / BADGER ROUTER] Badger message + offset retention TTLs.** The single-node Badger router now expires stored messages (default 24h, override via `AETHER_MESSAGE_RETENTION_TTL`) and orphaned per-consumer offset keys (default 7d, override via `AETHER_OFFSET_RETENTION_TTL`). Active consumers keep re-saving their offset so the TTL refreshes and the key never expires while in use; an offset for a consumer that never returns (e.g. a closed browser tab) is eventually reclaimed instead of growing without bound.
+- **[GATEWAY] Broadcast/progress subscriptions use resume-or-tail semantics.** Global-user (`gu::`), user-workspace (`uw::`), user-broadcast (`uu::`), and per-user progress (`pg::`) lanes now subscribe as named resume-or-tail (exclusive) consumers, so a reconnect replays only the missed gap instead of re-delivering the whole lane; the task-message lane does a full replay on (re)connect.
+- **[GATEWAY / SDK] Resolved OBO subject propagated on delivered messages** so downstream consumers can attribute a delivered message to the on-behalf-of subject rather than only the system actor.
+- **[AUDIT] High-volume proxy-route event coalescing.** A bounded, sharded coalescer collapses repetitive `proxy_http_routed`-class events (e.g. per-token chat streaming) while never coalescing failures, denials, or auth/task/kv/control events, which are always audited individually. Complements the new scheduled audit-retention sweep.
+
+### Fixed
+
+- **[GO SDK] Metric/event topic helpers now use the `::` separator.** `MetricTopic`/`MetricWildcardTopic` and `EventTopic`/`EventWildcardTopic` emitted the legacy dot form (`metric.*` / `event.*`), which the gateway's `validateTopicFormat` rejects as `ERR_INVALID_TOPIC` — so every `SendMetric`/`SendEvent` publish was silently dropped. They now emit the `::` identity separator.
+- **[GATEWAY] Agent principals can publish their own metrics without workspace WRITE.** `checkMessageSend` gated metric publishes on a per-workspace WRITE grant, so intentionally READ-only agents (e.g. sandbox agents seeded READ on their home workspace) could never emit their own token/usage metrics. An agent targeting the metric fan-in plane (`metric::*`) is now additively granted ReadWrite, realizing the "same-workspace publish is implicit" contract; cross-workspace, topic-eligibility, and negative-delta checks are unaffected.
+- **[WORKFLOW] Event dispatch moved off the receive loop (`AsyncMessageHandler`).** Handling events inline on the receive loop let a synchronous KV-coordination call self-deadlock (the response needed the blocked loop), surfacing as `coalesce gate: DEADLINE_EXCEEDED`; event handling now runs asynchronously.
+- **[BADGER ROUTER] Consumer-offset durability.** The router persists a consumer's offset after a replay and retries `saveOffset` on an optimistic-concurrency conflict, so offsets survive reconnects instead of being lost under contention.
+- **[AETHERLITE] Connection-storm write-contention hardening** for the Badger and SQLite lite stores, reducing write contention when many clients connect at once.
+- **[ORCHESTRATION / CLEANUP] `orchestrated_task_queue` retirement.** Queue rows whose task is terminal or missing are now retired reliably and orphans reconciled on a schedule (`QueueReconcileInterval`, default 5m; 0 disables).
+
+---
+
+## [0.2.1] - 2026-05-22
+
+The accumulated work that shipped in the **v0.2.1** SDK/gateway version bump (Go / Python / TypeScript).
 
 ### Added
 

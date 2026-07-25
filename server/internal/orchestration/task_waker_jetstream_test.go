@@ -24,9 +24,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go/jetstream"
 
-	"github.com/scitrera/aether/internal/acl"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/acl"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // ---------------------------------------------------------------------------

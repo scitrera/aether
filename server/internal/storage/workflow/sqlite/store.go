@@ -30,8 +30,8 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	workflow "github.com/scitrera/aether/internal/storage/workflow"
-	migrations "github.com/scitrera/aether/migrations/sqlite_workflow"
+	workflow "github.com/scitrera/aether/server/internal/storage/workflow"
+	migrations "github.com/scitrera/aether/server/migrations/sqlite_workflow"
 
 	_ "modernc.org/sqlite" // registers bare "sqlite" driver
 )
@@ -811,6 +811,168 @@ func scanSchedules(rows *sql.Rows) ([]Schedule, error) {
 }
 
 // =============================================================================
+// Joins — workflow_joins table
+// =============================================================================
+
+func (s *Store) EnsureJoin(ctx context.Context, j *Join) (*Join, error) {
+	now := nowUTC()
+	query := `
+		INSERT INTO workflow_joins (join_name, workspace, correlation_key, mode,
+		                            expected_count, arrived_count, dirty, status,
+		                            on_complete, on_timeout, on_partial_failure,
+		                            deadline_at, linger_until, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (join_name, workspace, correlation_key) DO NOTHING
+	`
+	_, err := s.db.ExecContext(ctx, query,
+		j.JoinName, j.Workspace, j.CorrelationKey, j.Mode,
+		j.ExpectedCount, j.ArrivedCount, boolToInt(j.Dirty), j.Status,
+		nullableText(j.OnComplete), nullableText(j.OnTimeout), nullableText(j.OnPartialFailure),
+		formatTimePtr(j.DeadlineAt), formatTimePtr(j.LingerUntil), now, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ensure join: %w", err)
+	}
+	return s.GetJoin(ctx, j.JoinName, j.Workspace, j.CorrelationKey)
+}
+
+func (s *Store) GetJoin(ctx context.Context, joinName, workspace, correlationKey string) (*Join, error) {
+	query := `
+		SELECT id, join_name, workspace, correlation_key, mode, expected_count,
+		       arrived_count, dirty, status, on_complete, on_timeout, on_partial_failure,
+		       deadline_at, linger_until, created_at, updated_at
+		FROM workflow_joins
+		WHERE join_name = ? AND workspace = ? AND correlation_key = ?
+	`
+	rows, err := s.db.QueryContext(ctx, query, joinName, workspace, correlationKey)
+	if err != nil {
+		return nil, fmt.Errorf("get join: %w", err)
+	}
+	defer rows.Close()
+
+	joins, err := scanJoins(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(joins) == 0 {
+		return nil, nil
+	}
+	return &joins[0], nil
+}
+
+func (s *Store) UpdateJoinArrived(ctx context.Context, id int64, arrivedCount int64) error {
+	query := `UPDATE workflow_joins SET arrived_count = ?, updated_at = ? WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, query, arrivedCount, nowUTC(), id)
+	return err
+}
+
+func (s *Store) SetJoinExpected(ctx context.Context, id int64, expected int64) error {
+	query := `UPDATE workflow_joins SET expected_count = ?, updated_at = ? WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, query, expected, nowUTC(), id)
+	return err
+}
+
+func (s *Store) SetJoinDirty(ctx context.Context, id int64, dirty bool) error {
+	query := `UPDATE workflow_joins SET dirty = ?, updated_at = ? WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, query, boolToInt(dirty), nowUTC(), id)
+	return err
+}
+
+func (s *Store) MarkJoinTerminal(ctx context.Context, id int64, status string, lingerUntil time.Time) error {
+	query := `UPDATE workflow_joins SET status = ?, linger_until = ?, updated_at = ? WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, query, status, formatTime(lingerUntil), nowUTC(), id)
+	return err
+}
+
+func (s *Store) GetDueJoinDeadlines(ctx context.Context, now time.Time) ([]Join, error) {
+	// No FOR UPDATE SKIP LOCKED — SQLite is single-writer; the join engine
+	// is the only consumer of due deadlines in lite mode.
+	query := `
+		SELECT id, join_name, workspace, correlation_key, mode, expected_count,
+		       arrived_count, dirty, status, on_complete, on_timeout, on_partial_failure,
+		       deadline_at, linger_until, created_at, updated_at
+		FROM workflow_joins
+		WHERE status = 'open' AND deadline_at IS NOT NULL AND deadline_at <= ?
+		ORDER BY deadline_at ASC
+	`
+	rows, err := s.db.QueryContext(ctx, query, formatTime(now))
+	if err != nil {
+		return nil, fmt.Errorf("get due join deadlines: %w", err)
+	}
+	defer rows.Close()
+	return scanJoins(rows)
+}
+
+func (s *Store) ListJoins(ctx context.Context, workspace string) ([]Join, error) {
+	query := `
+		SELECT id, join_name, workspace, correlation_key, mode, expected_count,
+		       arrived_count, dirty, status, on_complete, on_timeout, on_partial_failure,
+		       deadline_at, linger_until, created_at, updated_at
+		FROM workflow_joins
+	`
+	var rows *sql.Rows
+	var err error
+	if workspace == "" || workspace == "*" {
+		query += " ORDER BY created_at DESC"
+		rows, err = s.db.QueryContext(ctx, query)
+	} else {
+		query += " WHERE workspace = ? ORDER BY created_at DESC"
+		rows, err = s.db.QueryContext(ctx, query, workspace)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list joins: %w", err)
+	}
+	defer rows.Close()
+	return scanJoins(rows)
+}
+
+// scanJoins scans multiple join rows. Handles inline time.Time parsing for
+// the nullable deadline_at / linger_until columns, the INTEGER dirty flag,
+// and the nullable expected_count (*int64).
+func scanJoins(rows *sql.Rows) ([]Join, error) {
+	var joins []Join
+	for rows.Next() {
+		var j Join
+		var dirtyInt int
+		var expectedRaw sql.NullInt64
+		var onComplete, onTimeout, onPartialFailure sql.NullString
+		var deadlineAtRaw, lingerUntilRaw sql.NullString
+		var createdAtStr, updatedAtStr string
+		if err := rows.Scan(
+			&j.ID, &j.JoinName, &j.Workspace, &j.CorrelationKey, &j.Mode, &expectedRaw,
+			&j.ArrivedCount, &dirtyInt, &j.Status, &onComplete, &onTimeout, &onPartialFailure,
+			&deadlineAtRaw, &lingerUntilRaw, &createdAtStr, &updatedAtStr,
+		); err != nil {
+			return nil, fmt.Errorf("scan join: %w", err)
+		}
+		j.Dirty = dirtyInt != 0
+		j.OnComplete = onComplete.String
+		j.OnTimeout = onTimeout.String
+		j.OnPartialFailure = onPartialFailure.String
+		if expectedRaw.Valid {
+			v := expectedRaw.Int64
+			j.ExpectedCount = &v
+		}
+		j.CreatedAt, _ = parseTime(createdAtStr)
+		j.UpdatedAt, _ = parseTime(updatedAtStr)
+		if deadlineAtRaw.Valid {
+			t, parseErr := parseTime(deadlineAtRaw.String)
+			if parseErr == nil {
+				j.DeadlineAt = &t
+			}
+		}
+		if lingerUntilRaw.Valid {
+			t, parseErr := parseTime(lingerUntilRaw.String)
+			if parseErr == nil {
+				j.LingerUntil = &t
+			}
+		}
+		joins = append(joins, j)
+	}
+	return joins, rows.Err()
+}
+
+// =============================================================================
 // State machines — workflow_state_machines + workflow_state_machine_instances
 // =============================================================================
 
@@ -1208,6 +1370,15 @@ func isDuplicateColumnError(err error) bool {
 // Helpers
 // =============================================================================
 
+// nullableText stores an empty string as SQL NULL so optional TEXT columns
+// (on_complete/on_timeout/on_partial_failure) stay NULL rather than '' when unset.
+func nullableText(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 // boolToInt converts a Go bool to a SQLite INTEGER (0/1).
 func boolToInt(b bool) int {
 	if b {
@@ -1225,6 +1396,7 @@ type (
 	WorkflowExecution    = workflow.WorkflowExecution
 	StepState            = workflow.StepState
 	Schedule             = workflow.Schedule
+	Join                 = workflow.Join
 	StateMachineDef      = workflow.StateMachineDef
 	StateMachineInstance = workflow.StateMachineInstance
 )

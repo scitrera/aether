@@ -3,8 +3,8 @@ package gateway
 import (
 	"context"
 
-	"github.com/scitrera/aether/internal/admin"
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/admin"
+	"github.com/scitrera/aether/server/internal/logging"
 )
 
 // =============================================================================

@@ -56,12 +56,27 @@ All messages are wrapped in a server-stamped `MessageEnvelope` before publishing
 
 ```protobuf
 message MessageEnvelope {
-  string source = 1;          // Server-verified sender topic (cannot be spoofed)
+  string source = 1;                    // Server-verified sender topic (cannot be spoofed)
   bytes payload = 2;
   MessageType message_type = 3;
-  int64 timestamp_ms = 4;     // Server-assigned timestamp
+  int64 timestamp_ms = 4;               // Server-assigned timestamp
+  map<string, string> metadata = 5;     // Optional extensibility metadata
+  string workspace = 6;                 // Sender-declared, gateway-verified workspace context
+  PrincipalRef on_behalf_subject = 7;   // Gateway-resolved OBO subject (see below)
 }
 ```
+
+**On-behalf-of (OBO) subject propagation.** When a sender's `SendMessage`
+carries an `AuthorizationContext` that the gateway resolves to a valid OBO
+subject, the gateway stamps the resolved subject onto
+`MessageEnvelope.on_behalf_subject` — set from the resolved authority the same
+spoof-proof way `source` is set from the authenticated sender. It is mirrored
+onto `IncomingMessage.on_behalf_subject` at delivery time so a recipient can
+identify the *user* a message was sent for, distinct from the sending
+*identity* in `source`. Empty for direct (non-OBO) sends. `workspace` is
+likewise propagated onto `IncomingMessage.workspace` so consumers of the
+workspace-agnostic event/metric fan-in shards can recover the originating
+workspace.
 
 ---
 
@@ -95,7 +110,7 @@ message MessageEnvelope {
 
 ### 2.3a AetherLite Mode
 
-AetherLite is an alternative deployment mode that eliminates all external service dependencies by substituting in-process backends. It is activated via the `--lite` flag on any binary, or via `mode: lite` in the YAML config. The `cmd/aetherlite` binary always runs in lite mode.
+AetherLite is an alternative deployment mode that eliminates all external service dependencies by substituting in-process backends. It runs as the dedicated `cmd/aetherlite` binary, which always operates in lite mode. The `cmd/gateway` binary no longer supports lite mode (it exits at startup if `--lite` or `mode: lite` is set).
 
 **Backend substitutions:**
 
@@ -191,11 +206,12 @@ Authentication methods are configured via `auth.modes` in the YAML config. Multi
 | `tb` | Task Broadcast | `tb::{workspace}::{impl}` | Load-balancing topic; workers compete/round-robin |
 | `us` | User (Window) | `us::{user_id}::{window_id}` | Specific browser window |
 | `uw` | User (Workspace) | `uw::{user_id}::{workspace}` | User scoped to a workspace |
+| `uu` | User (Broadcast) | `uu::{user_id}` | All of a user's windows regardless of active workspace; workspace-agnostic, ordinary (non-progress) messages. Platform-principal senders only. |
 | `ga` | Global Agents | `ga::{workspace}` | Broadcast to all agents in a workspace |
 | `gu` | Global Users | `gu::{workspace}` | Broadcast to all users in a workspace |
 | `pg` | Progress | `pg::{workspace}` | Progress updates with server-side recipient filtering |
-| `event.*` | Workflow Engine | **Write (senders):** `event.{workspace}` or `event::*` — gateway rewrites to `event::receiver{shard}`. **Subscribe (WE):** `event::receiver{shard}` (today: always `event::receiver0`). Workspace attribution surfaced via `IncomingMessage.workspace`. | Fan-in event routing; Workflow Engine is the sole subscriber per shard. |
-| `metric.*` | Metrics Bridge | **Write (senders):** `metric.{workspace}` or `metric::*` — gateway rewrites to `metric::receiver{shard}`. **Subscribe (MB):** `metric::receiver{shard}` (today: always `metric::receiver0`). Workspace attribution surfaced via `IncomingMessage.workspace`. | Fan-in metric routing; Metrics Bridge is the sole subscriber per shard. |
+| `event::*` | Workflow Engine | **Write (senders):** `event::{workspace}` or `event::*` — gateway rewrites to `event::receiver{shard}`. **Subscribe (WE):** `event::receiver{shard}` (today: always `event::receiver0`). Workspace attribution surfaced via `IncomingMessage.workspace`. | Fan-in event routing; Workflow Engine is the sole subscriber per shard. |
+| `metric::*` | Metrics Bridge | **Write (senders):** `metric::{workspace}` or `metric::*` — gateway rewrites to `metric::receiver{shard}`. **Subscribe (MB):** `metric::receiver{shard}` (today: always `metric::receiver0`). Workspace attribution surfaced via `IncomingMessage.workspace`. | Fan-in metric routing; Metrics Bridge is the sole subscriber per shard. |
 | `sv` | Service | `sv::{impl}::{spec}` | Cross-workspace service proxy endpoint (no workspace component) |
 | `br` | Bridge | `br::{impl}::{spec}` | Cross-workspace messaging bridge endpoint (no workspace component) |
 
@@ -205,36 +221,44 @@ Topic names are validated against allowed prefixes and must be 1-256 characters.
 
 Each principal type automatically subscribes to specific topics on connection:
 
-| Principal | Exclusive (offset-tracked) | Shared (no offset) |
-|---|---|---|
-| **Agent** | `ag::{ws}::{impl}::{spec}` | `ga::{ws}`, `pg::{ws}` |
-| **Task (Unique)** | `tu::{ws}::{impl}::{spec}` | — |
-| **Task (Non-Unique)** | `ta::{ws}::{impl}::{id}` | `tb::{ws}::{impl}` |
-| **User** | `us::{uid}::{wid}` | `gu::{ws}`, `uw::{uid}::{ws}`, `pg::{ws}` |
-| **Workflow Engine** | `event::receiver{shard}` (today: `event::receiver0`) | — |
-| **Metrics Bridge** | `metric::receiver{shard}` (today: `metric::receiver0`) | — |
-| **Orchestrator** | — | — (receives tasks via direct gRPC stream) |
+| Principal | Exclusive durable (offset-tracked) | Resume-or-tail (durable) | Anonymous tail (no offset) |
+|---|---|---|---|
+| **Agent** | `ag::{ws}::{impl}::{spec}` | `pg::{ws}` | `ga::{ws}` |
+| **Task (Unique)** | `tu::{ws}::{impl}::{spec}` | — | — |
+| **Task (Non-Unique)** | `ta::{ws}::{impl}::{id}` | — | `tb::{ws}::{impl}` |
+| **User** | `us::{uid}::{wid}` | `uu::{uid}`, `pg::us::{uid}`, `gu::{ws}`, `uw::{uid}::{ws}`, `pg::{ws}` | — |
+| **Workflow Engine** | `event::receiver{shard}` (today: `event::receiver0`) | — | — |
+| **Metrics Bridge** | `metric::receiver{shard}` (today: `metric::receiver0`) | — | — |
+| **Orchestrator** | — | — | — (receives tasks via direct gRPC stream) |
 
-**Exclusive subscriptions** use RabbitMQ consumer offset tracking so messages are replayed from the last committed position on reconnection. **Shared subscriptions** fan out locally from a single RabbitMQ consumer.
+Three subscription modes back these lanes (`internal/gateway/interfaces.go`, `internal/router`):
+
+- **Exclusive durable (offset-tracked)** — identity topics use a named durable consumer that resumes from its last committed offset, so messages published while the client was away are replayed on reconnect. Agent/Task identity topics additionally accept a timestamp hint (`SubscribeExclusiveFromTimestamp`) so a cold-started, pool-dispatched worker can replay from the message that triggered it.
+- **Resume-or-tail** (`SubscribeExclusiveResumeOrTail`) — the user broadcast / progress lanes (`gu`, `uw`, `uu`, `pg::{ws}`, `pg::us::{uid}`) use a per-window named durable that starts at the *tail* on a first-ever subscribe (no full-history dump) and replays only the gap on reconnect.
+- **Anonymous tail** (`Subscribe`) — `ga::{ws}` and `tb::{ws}::{impl}` use an ephemeral consumer delivered from the current tail with no offset persistence.
+
+The per-task chat lane `tk::{ws}::{task_id}::msg` uses an anonymous tail for the live path plus a cold named consumer at connect time that replays the in-flight turn **in full** (the reloaded window needs every already-emitted token to re-render). All lanes fan out locally from a single shared consumer per gateway.
 
 ### 4.3 Permission Matrix
 
 | Sender | Can Send To | Cannot Send To |
 |---|---|---|
-| **Agent** | Agents, Tasks, Users, Events, Metrics | Orchestrators, Progress |
-| **Task** | Agents, Tasks, Users, Events, Metrics | Orchestrators, Progress |
-| **User** | Agents, Tasks, Users | Events, Metrics, Progress |
-| **Workflow Engine** | Agents, Tasks, Users, Events, Metrics | — |
+| **Agent** | Agents, Tasks, Users, Events, Metrics | Orchestrators, Progress, User-Broadcast |
+| **Task** | Agents, Tasks, Users, Events, Metrics | Orchestrators, Progress, User-Broadcast |
+| **User** | Agents, Tasks, Users | Events, Metrics, Progress, User-Broadcast |
+| **Workflow Engine** | Agents, Tasks, Users, Events, Metrics, User-Broadcast | — |
 | **Metrics Bridge** | *None (receive only)* | All |
-| **Orchestrator** | Agent/Task topics only (status updates) | Events, Metrics |
-| **Service** | Any topic (cross-workspace); per-message ACL checked against target workspace | — |
-| **Bridge** | Any topic in any workspace; per-message ACL checked against target workspace | — |
+| **Orchestrator** | Agent/Task topics only (status updates) | Events, Metrics, User-Broadcast |
+| **Service** | Any topic (cross-workspace), incl. User-Broadcast; per-message ACL checked against target workspace | — |
+| **Bridge** | Any topic in any workspace, incl. User-Broadcast; per-message ACL checked against target workspace | — |
 
 **Cross-workspace enforcement:** Workspace-scoped principals cannot send to topics in other workspaces. The workspace component of the target topic must match the sender's workspace.
 
-**Cross-workspace event/metric broadcast:** Sending to `event.*` or `metric.*` topics in a workspace other than the sender's own native workspace requires the `capability/event_broadcast` or `capability/metric_broadcast` ACL permission respectively. Sending to the sender's own workspace is implicitly permitted.
+**Cross-workspace event/metric broadcast:** Sending to `event::*` or `metric::*` topics in a workspace other than the sender's own native workspace requires the `capability/event_broadcast` or `capability/metric_broadcast` ACL permission respectively. Sending to the sender's own workspace is implicitly permitted.
 
-**Metric payload enforcement:** Messages with type `METRIC` sent to `metric.*` topics must carry a valid `Metric` proto as their payload (see [Section 4.5](#45-metric-payload-schema)). The gateway validates and rejects malformed metric messages before they reach the Metrics Bridge.
+**User-broadcast (`uu::{user_id}`):** A workspace-agnostic channel that reaches every one of a user's open windows regardless of which workspace each window is viewing — the non-progress complement to the per-user progress topic `pg::us::{user_id}`. It carries ordinary `MessageEnvelope` protos (delivered as `IncomingMessage`), so it participates fully in the message-type system, audit, and metrics. Because the topic has no workspace component, the per-message workspace ACL cannot gate it; authorization is instead by principal type: **only Service, WorkflowEngine, and Bridge principals may publish.** All workspace-scoped principals (Users, Agents, Tasks, Orchestrators) are denied and must reach a user via `us::`/`uw::`/progress or task ownership. Users subscribe to their own `uu::{user_id}` topic on connect.
+
+**Metric payload enforcement:** Messages with type `METRIC` sent to `metric::*` topics must carry a valid `Metric` proto as their payload (see [Section 4.5](#45-metric-payload-schema)). The gateway validates and rejects malformed metric messages before they reach the Metrics Bridge.
 
 ### 4.4 Progress Reports
 
@@ -307,7 +331,7 @@ Events and metrics are routed through a **fan-in** layer that decouples workspac
 
 #### Design
 
-- **Sender write API is unchanged.** Agents, tasks, and workflow engines send to `event.{workspace}` or `metric.{workspace}` exactly as before. The gateway rewrites the destination to the appropriate receiver shard before publishing to RabbitMQ Streams.
+- **Sender write API is unchanged.** Agents, tasks, and workflow engines send to `event::{workspace}` or `metric::{workspace}` (or the legacy wildcard `event::*` / `metric::*`) exactly as before. The gateway rewrites the destination to the appropriate receiver shard before publishing to the message log.
 - **Receiver topics** follow the pattern `event::receiver{N}` and `metric::receiver{N}`. Today only shard 0 exists.
 - **Shard assignment** (`ShardForWorkspace`) is a stub that always returns 0. A future release will use fnv64 hashing to distribute workspaces across N shards, enabling N parallel Workflow Engine and Metrics Bridge instances.
 - **Exclusive offset-tracked subscriptions** are used for all receiver topics. Both the Workflow Engine and Metrics Bridge reconnect to the last committed offset, providing replay-on-reconnect and at-least-once delivery semantics.
@@ -386,7 +410,7 @@ The `ProgressUpdate` fields are populated as follows:
 | `task_id` | The task that changed state |
 | `state` | New status: `running`, `completed`, `failed`, `cancelled`, `pending` |
 | `summary` | Human-readable description (includes error message for failures) |
-| `recipient` | Parent agent's topic (e.g., `ag.default.orchestrator.main`) |
+| `recipient` | Parent agent's topic (e.g., `ag::default::orchestrator::main`) |
 | `workspace` | Task's workspace |
 
 Notifications are sent at these transition points:
@@ -587,7 +611,7 @@ service AetherGateway {
 |---|---|
 | `ConnectionAck` | Session ID for reconnection; `resumed` flag |
 | `ConfigSnapshot` | Workspace KV + global KV + task context on connect |
-| `IncomingMessage` | Routed message with server-verified source topic |
+| `IncomingMessage` | Routed message with server-verified source topic, declared `workspace`, and (for OBO sends) the gateway-resolved `on_behalf_subject` |
 | `KVResponse` | KV operation result with request ID correlation |
 | `CheckpointResponse` | Checkpoint operation result |
 | `TaskAssignment` | Orchestrator: task to execute with launch params and auth token |
@@ -673,8 +697,8 @@ Configuration is loaded from a YAML file with environment variable overrides and
 
 ### 14.1 Go SDK (`sdk/go/`)
 
-Full-featured SDK with typed clients for all six principal types. Features:
-- `AgentClient`, `TaskClient`, `UserClient`, `OrchestratorClient`, `WorkflowEngineClient`, `MetricsBridgeClient`
+Full-featured SDK with typed clients for all eight principal types. Features:
+- `AgentClient`, `TaskClient`, `UserClient`, `OrchestratorClient`, `WorkflowEngineClient`, `MetricsBridgeClient`, `ServiceClient`, `BridgeClient`
 - Synchronous and asynchronous KV and checkpoint operations
 - Auto-reconnection with exponential backoff and jitter
 - Task creation with targeted, broadcast, and auto assignment modes
@@ -701,39 +725,39 @@ Agent and User clients with gRPC transport:
 
 ### 15.1 Cold Start Agent
 
-1. User sends message to `ag.default.gpu-worker.01`.
+1. User sends message to `ag::default::gpu-worker::01`.
 2. Gateway checks `identityIndex` — not locally connected.
 3. Gateway checks Redis — no active lock.
-4. Gateway publishes message to `ag.default.gpu-worker.01` stream (persisted).
+4. Gateway publishes message to `ag::default::gpu-worker::01` stream (persisted).
 5. Gateway creates orchestration task for `gpu-worker` implementation.
 6. Dispatcher publishes task notification to AMQP queue.
 7. A gateway with a connected orchestrator claims the task.
 8. `TaskAssignment` + auth token sent to orchestrator via gRPC stream.
 9. Orchestrator spins up a container with the token.
-10. Container connects as `ag.default.gpu-worker.01` with the token.
+10. Container connects as `ag::default::gpu-worker::01` with the token.
 11. Gateway validates token, acquires lock, subscribes to topic.
 12. Agent receives the persisted message from RabbitMQ stream (offset replay).
 
 ### 15.2 User Workspace Switch
 
-1. Alice is in `Finance` workspace, receiving on `gu.finance`, `uw.alice.finance`, `pg.finance`.
+1. Alice is in `Finance` workspace, receiving on `gu::finance`, `uw::alice::finance`, `pg::finance`.
 2. Alice clicks "HR" in the UI.
 3. Client sends `SwitchWorkspace("HR")`.
 4. Gateway checks ACL for Alice's access to workspace "HR".
 5. If denied, sends `ERR_PERMISSION_DENIED` to client.
-6. If allowed, unsubscribes from `gu.finance`, `uw.alice.finance`, `pg.finance`.
+6. If allowed, unsubscribes from `gu::finance`, `uw::alice::finance`, `pg::finance`.
 7. Updates Alice's identity workspace under write lock.
-8. Subscribes to `gu.hr`, `uw.alice.hr`, `pg.hr`.
-9. Alice's `us.alice.browser1` subscription remains active (window-scoped, independent of workspace).
+8. Subscribes to `gu::hr`, `uw::alice::hr`, `pg::hr`.
+9. Alice's `us::alice::browser1` subscription remains active (window-scoped, independent of workspace).
 
 ### 15.3 Workflow Trigger
 
-1. `ag.finance.payroll.01` finishes processing.
-2. Agent sends a message with type `EVENT` to `event.finance`.
+1. `ag::finance::payroll::01` finishes processing.
+2. Agent sends a message with type `EVENT` to `event::finance`.
 3. Gateway verifies the sender is allowed to publish events (agents can).
-4. Message is published to the `event.finance` RabbitMQ stream.
-5. The Workflow Engine (sole subscriber to `event.finance`) receives it.
-6. Workflow Engine evaluates rules and sends a command to `ag.default.email-sender.01`.
+4. Message is published to the `event::finance` RabbitMQ stream.
+5. The Workflow Engine (sole subscriber to `event::finance`) receives it.
+6. Workflow Engine evaluates rules and sends a command to `ag::default::email-sender::01`.
 
 ---
 

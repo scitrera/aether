@@ -7,8 +7,8 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
-	"github.com/scitrera/aether/internal/testutil"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/testutil"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // setupPollerTestDB creates a database connection using dev infrastructure

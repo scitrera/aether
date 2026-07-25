@@ -6,15 +6,15 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/registry"
-	"github.com/scitrera/aether/internal/state"
-	regpg "github.com/scitrera/aether/internal/storage/registry/postgres"
-	tasks "github.com/scitrera/aether/internal/storage/tasks"
-	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
-	"github.com/scitrera/aether/internal/testutil"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/registry"
+	"github.com/scitrera/aether/server/internal/state"
+	regpg "github.com/scitrera/aether/server/internal/storage/registry/postgres"
+	tasks "github.com/scitrera/aether/server/internal/storage/tasks"
+	taskpg "github.com/scitrera/aether/server/internal/storage/tasks/postgres"
+	"github.com/scitrera/aether/server/internal/testutil"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // TestTriggerOrchestrationPropagatesSenderToStartupTask is the gateway-side

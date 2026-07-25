@@ -3,7 +3,7 @@ package state
 import (
 	"context"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // acquireLegacy adapts the new ConnectMeta/ConnectResult signature to the

@@ -20,7 +20,7 @@ package acl
 import (
 	"time"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // AuthorityRequestStatus is the lifecycle state of an AuthorityRequest row.

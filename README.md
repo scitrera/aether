@@ -125,6 +125,9 @@ AETHER_ALLOW_DEV_MODE=true ./aetherlite --dev --insecure-admin
 State is persisted in `./aether-lite-data/`. gRPC on `:50051`, admin UI on `:31880`. See
 [`./docs/aetherlite.md`](./docs/aetherlite.md) for details.
 
+Badger-backed messages and consumer offsets are retention-capped (env `AETHER_MESSAGE_RETENTION_TTL`,
+default `24h`; `AETHER_OFFSET_RETENTION_TTL`, default `168h`) so the embedded log does not grow without bound.
+
 > Production-ready for single-node deployments. No horizontal scaling, no cross-node messaging — data loss on
 > hardware failure unless S3 backups are configured.
 
@@ -179,6 +182,8 @@ RabbitMQ Streams.
 #### Start Development Dependencies
 
 ```bash
+cd server   # scripts, configs, and cmd/ all live under server/
+
 # RabbitMQ Streams (ports 55552 stream, 55672 AMQP, management UI on 15672)
 ./scripts/docker_rmq_test.sh
 
@@ -189,14 +194,16 @@ RabbitMQ Streams.
 #### Build and Run
 
 ```bash
+cd server   # if not already there
+
 # Build
 go build -o gateway ./cmd/gateway
 
-# Run with the default dev config
+# Run with the dev config
 ./gateway --config configs/dev.yaml
 
-# Or run directly
-go run ./cmd/gateway
+# Or run directly with dev defaults (no config file required)
+go run ./cmd/gateway --dev
 ```
 
 #### Run Tests
@@ -257,11 +264,12 @@ log_level: "info"
 
 | Flag                                                                | Description                                            |
 |---------------------------------------------------------------------|--------------------------------------------------------|
-| `--config <path>`                                                   | Path to YAML config file (default: `configs/dev.yaml`) |
+| `--config <path>`                                                   | Path to YAML config file (required unless `--dev`)     |
+| `--dev`                                                             | Start with hardcoded dev defaults when no config file  |
 | `--port <n>`                                                        | gRPC server port (overrides config)                    |
 | `--tls`                                                             | Enable mTLS                                            |
 | `--cert-file`, `--key-file`, `--ca-file`                            | mTLS certificate paths                                 |
-| `--db-host`, `--db-port`, `--db-user`, `--db-password`, `--db-name` | PostgreSQL overrides                                   |
+| `--db-host`, `--db-port`, `--db-user`, `--db-name`                  | PostgreSQL overrides                                   |
 | `--redis <host:port>`                                               | Redis address override                                 |
 | `--stream-url`                                                      | RabbitMQ Stream URL override                           |
 | `--amqp-url`                                                        | RabbitMQ AMQP URL override                             |
@@ -277,8 +285,8 @@ Every connection authenticates as exactly one of eight principal types.
 | **Unique Task**     | One connection per identity | `workspace` + `implementation` + `unique_specifier` | Named finite unit of work                                                    |
 | **Non-Unique Task** | Many connections allowed    | `workspace` + `implementation` (server assigns ID)  | Workers competing for tasks on a shared broadcast topic                      |
 | **User**            | One connection per window   | `user_id` + `window_id`                             | Multiple browser tabs allowed                                                |
-| **Workflow Engine** | One active connection       | N/A (Future: sharding)                              | Sole subscriber to `event.*` topics                                          |
-| **Metrics Bridge**  | One active connection       | N/A (Future: sharding)                              | Sole subscriber to `metric.*` topics; receive-only                           |
+| **Workflow Engine** | One active connection       | N/A (Future: sharding)                              | Sole subscriber to `event::` topics                                          |
+| **Metrics Bridge**  | One active connection       | N/A (Future: sharding)                              | Sole subscriber to `metric::` topics; receive-only                           |
 | **Orchestrator**    | One per specifier           | `implementation` + `specifier`                      | Receives `TaskAssignment` messages to spin up compute                        |
 | **Service**         | One per specifier           | `implementation` + `specifier`                      | Cross-workspace HTTP-over-Aether proxy; addressable via `sv::{impl}::{spec}`   |
 | **Bridge**          | One per specifier           | `implementation` + `specifier`                      | Cross-workspace messaging integration; sends to any workspace subject to ACL |
@@ -295,11 +303,12 @@ Messages are routed by a structured topic prefix.
 | `tb`       | Task Broadcast   | `tb::{workspace}::{impl}`               | Load-balancing topic; all workers of a type compete   |
 | `us`       | User (Window)    | `us::{user_id}::{window_id}`            | Specific browser window                               |
 | `uw`       | User (Workspace) | `uw::{user_id}::{workspace}`            | User scoped to a workspace                            |
+| `uu`       | User (Broadcast) | `uu::{user_id}`                        | Reaches all of a user's windows regardless of active workspace; platform-principal senders only |
 | `ga`       | Global Agents    | `ga::{workspace}`                      | Broadcast to all agents in a workspace                |
 | `gu`       | Global Users     | `gu::{workspace}`                      | Broadcast to all users in a workspace                 |
 | `pg`       | Progress         | `pg::{workspace}`                      | Progress updates with server-side recipient filtering |
-| `event.*`  | Workflow Engine  | `event.{workspace}`                   | Workflow Engine is the sole subscriber                |
-| `metric.*` | Metrics Bridge   | `metric.{workspace}`                  | Metrics Bridge is the sole subscriber                 |
+| `event::`  | Workflow Engine  | `event::{workspace}`                  | Workflow Engine is the sole subscriber                |
+| `metric::` | Metrics Bridge   | `metric::{workspace}`                 | Metrics Bridge is the sole subscriber                 |
 | `sv`       | Service          | `sv::{impl}::{spec}`                    | Cross-workspace service proxy endpoint                |
 | `br`       | Bridge           | `br::{impl}::{spec}`                    | Cross-workspace messaging bridge endpoint             |
 

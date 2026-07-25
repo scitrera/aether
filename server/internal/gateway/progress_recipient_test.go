@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/circuitbreaker"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/circuitbreaker"
+	"github.com/scitrera/aether/server/pkg/models"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -89,6 +89,107 @@ func TestHandleProgressReport_RoutesToUserProgressTopic(t *testing.T) {
 	}
 	if update.Metadata["thread_id"] != "chat-t1" {
 		t.Errorf("metadata.thread_id = %q, want chat-t1", update.Metadata["thread_id"])
+	}
+}
+
+// TestHandleProgressReport_ServiceSenderAccepted verifies that a service
+// principal (e.g. a sandbox sidecar bridge, identity sv::sandbox-sidecar::<id>)
+// is permitted to report progress. The bridge relays chat-lifecycle progress
+// (task_done) on behalf of the agent harness running inside the sandbox,
+// targeting a bare user recipient just like an agent would. Before this was
+// allowed the report was dropped with ERR_INVALID_PRINCIPAL and the frontend
+// never cleared its in-flight indicator.
+func TestHandleProgressReport_ServiceSenderAccepted(t *testing.T) {
+	router := newMockMessageRouter()
+	s := newProgressTestServer(router)
+
+	sender := models.Identity{
+		Type:           models.PrincipalService,
+		Implementation: "sandbox-sidecar",
+		Specifier:      "sandbox-abc",
+	}
+	client := newProgressTestClient(sender)
+
+	report := &pb.ProgressReport{
+		TaskId:    "task-svc-1",
+		State:     "running",
+		Recipient: "us::dev@example.com", // bare user, multi-tab broadcast
+		Kind:      pb.ProgressKind_PROGRESS_KIND_CHAT,
+		Step:      &pb.ProgressStep{Name: "task_done"},
+		Metadata:  map[string]string{"thread_id": "chat-t1", "status": "completed"},
+	}
+
+	s.handleProgressReport(context.Background(), client, report)
+
+	router.mu.Lock()
+	published := append([]publishedMsg(nil), router.publishedMessages...)
+	router.mu.Unlock()
+
+	if len(published) != 1 {
+		t.Fatalf("expected 1 published message from service sender, got %d", len(published))
+	}
+	wantTopic := "pg::us::dev@example.com"
+	if published[0].topic != wantTopic {
+		t.Errorf("publish topic = %q, want %q", published[0].topic, wantTopic)
+	}
+
+	var update pb.ProgressUpdate
+	if err := proto.Unmarshal(published[0].payload, &update); err != nil {
+		t.Fatalf("unmarshal ProgressUpdate: %v", err)
+	}
+	if update.Step == nil || update.Step.Name != "task_done" {
+		t.Errorf("update.Step.Name = %v, want task_done", update.Step)
+	}
+}
+
+// TestHandleProgressReport_UserSenderRejected verifies that principals outside
+// the allowed set (agents, tasks, services) — here a user principal — are still
+// rejected with ERR_INVALID_PRINCIPAL and the updated message wording, and that
+// no progress update is published. This guards both the principal-type gate and
+// the error message that was widened to include services.
+func TestHandleProgressReport_UserSenderRejected(t *testing.T) {
+	router := newMockMessageRouter()
+	s := newProgressTestServer(router)
+
+	stream := &mockStream{}
+	sender := models.Identity{
+		Type: models.PrincipalUser,
+		ID:   "dev@example.com",
+	}
+	client := newProgressTestClient(sender)
+	client.Stream = stream
+
+	report := &pb.ProgressReport{
+		TaskId:    "task-user-1",
+		State:     "running",
+		Recipient: "us::dev@example.com",
+		Kind:      pb.ProgressKind_PROGRESS_KIND_CHAT,
+	}
+
+	s.handleProgressReport(context.Background(), client, report)
+
+	router.mu.Lock()
+	published := len(router.publishedMessages)
+	router.mu.Unlock()
+	if published != 0 {
+		t.Fatalf("expected 0 published messages for rejected user sender, got %d", published)
+	}
+
+	if stream.sentCount() != 1 {
+		t.Fatalf("expected 1 error response, got %d", stream.sentCount())
+	}
+	stream.mu.Lock()
+	errResp := stream.sent[0].GetError()
+	stream.mu.Unlock()
+	if errResp == nil {
+		t.Fatal("expected DownstreamMessage_Error payload")
+	}
+	if errResp.Code != "ERR_INVALID_PRINCIPAL" {
+		t.Errorf("error code = %q, want ERR_INVALID_PRINCIPAL", errResp.Code)
+	}
+	if errResp.Message != "only agents, tasks, and services can report progress" {
+		t.Errorf("error message = %q, want %q", errResp.Message,
+			"only agents, tasks, and services can report progress")
 	}
 }
 

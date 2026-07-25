@@ -7,7 +7,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // makeUnsignedJWT builds a JWT with the given claims, signed with "none".

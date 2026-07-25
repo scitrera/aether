@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
@@ -824,7 +825,7 @@ func (o *DockerOrchestrator) initDockerClient(ctx context.Context) error {
 // The ContainerInfo is updated with the ContainerID on success.
 func (o *DockerOrchestrator) CreateContainer(ctx context.Context, info *ContainerInfo, config *ContainerConfig) error {
 	if o.docker == nil {
-		return fmt.Errorf("Docker client not initialized")
+		return fmt.Errorf("docker client not initialized")
 	}
 
 	// Pull image if not available locally (best effort)
@@ -950,7 +951,7 @@ func (o *DockerOrchestrator) CreateContainer(ctx context.Context, info *Containe
 // On success, updates the ContainerInfo state to Running.
 func (o *DockerOrchestrator) StartContainer(ctx context.Context, info *ContainerInfo) error {
 	if o.docker == nil {
-		return fmt.Errorf("Docker client not initialized")
+		return fmt.Errorf("docker client not initialized")
 	}
 
 	if info.ContainerID == "" {
@@ -987,7 +988,7 @@ func (o *DockerOrchestrator) StartContainer(ctx context.Context, info *Container
 // doesn't stop within the configured timeout, it's forcefully killed.
 func (o *DockerOrchestrator) StopContainer(ctx context.Context, info *ContainerInfo) error {
 	if o.docker == nil {
-		return fmt.Errorf("Docker client not initialized")
+		return fmt.Errorf("docker client not initialized")
 	}
 
 	if info.ContainerID == "" {
@@ -1005,7 +1006,7 @@ func (o *DockerOrchestrator) StopContainer(ctx context.Context, info *ContainerI
 	timeout := o.opts.StopTimeout
 	if err := o.docker.ContainerStop(ctx, info.ContainerID, container.StopOptions{Timeout: &timeout}); err != nil {
 		// Check if container is already stopped
-		if client.IsErrNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			info.State = ContainerStateExited
 			return nil
 		}
@@ -1021,7 +1022,7 @@ func (o *DockerOrchestrator) StopContainer(ctx context.Context, info *ContainerI
 		info.ExitedAt = time.Now()
 		o.log("Container %s stopped with exit code %d", truncateID(info.ContainerID), info.ExitCode)
 	case err := <-errCh:
-		if !client.IsErrNotFound(err) {
+		if !cerrdefs.IsNotFound(err) {
 			return fmt.Errorf("failed waiting for container to stop: %w", err)
 		}
 		info.State = ContainerStateExited
@@ -1038,7 +1039,7 @@ func (o *DockerOrchestrator) StopContainer(ctx context.Context, info *ContainerI
 // If force is true, the container will be killed first if still running.
 func (o *DockerOrchestrator) RemoveContainer(ctx context.Context, info *ContainerInfo, force bool) error {
 	if o.docker == nil {
-		return fmt.Errorf("Docker client not initialized")
+		return fmt.Errorf("docker client not initialized")
 	}
 
 	if info.ContainerID == "" {
@@ -1051,7 +1052,7 @@ func (o *DockerOrchestrator) RemoveContainer(ctx context.Context, info *Containe
 		Force:         force,
 		RemoveVolumes: true,
 	}); err != nil {
-		if client.IsErrNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			// Container already removed
 			info.State = ContainerStateRemoving
 			o.emitEvent(info, ContainerEventRemoved)
@@ -1072,7 +1073,7 @@ func (o *DockerOrchestrator) RemoveContainer(ctx context.Context, info *Containe
 // For real-time streaming, use StreamLogs instead.
 func (o *DockerOrchestrator) GetContainerLogs(ctx context.Context, info *ContainerInfo, tail string) (string, error) {
 	if o.docker == nil {
-		return "", fmt.Errorf("Docker client not initialized")
+		return "", fmt.Errorf("docker client not initialized")
 	}
 
 	if info.ContainerID == "" {
@@ -1118,7 +1119,7 @@ func (o *DockerOrchestrator) GetContainerLogs(ctx context.Context, info *Contain
 // stdout and stderr streams.
 func (o *DockerOrchestrator) StreamLogs(ctx context.Context, info *ContainerInfo, stdout, stderr io.Writer) error {
 	if o.docker == nil {
-		return fmt.Errorf("Docker client not initialized")
+		return fmt.Errorf("docker client not initialized")
 	}
 
 	if info.ContainerID == "" {
@@ -1181,7 +1182,9 @@ func (o *DockerOrchestrator) streamContainerLogs(info *ContainerInfo) {
 	pr, pw := io.Pipe()
 	go func() {
 		defer pw.Close()
-		stdcopy.StdCopy(pw, pw, reader)
+		// Best-effort log demux into the pipe; the reader side surfaces any
+		// failure and there is nothing actionable to do from this goroutine.
+		_, _ = stdcopy.StdCopy(pw, pw, reader)
 	}()
 
 	// Read and log each line
@@ -1213,7 +1216,7 @@ func (o *DockerOrchestrator) streamContainerLogs(info *ContainerInfo) {
 // ensureImage pulls the image if it doesn't exist locally.
 func (o *DockerOrchestrator) ensureImage(ctx context.Context, imageName string) error {
 	// Check if image exists locally
-	_, _, err := o.docker.ImageInspectWithRaw(ctx, imageName)
+	_, err := o.docker.ImageInspect(ctx, imageName)
 	if err == nil {
 		return nil // Image exists
 	}
@@ -1238,7 +1241,7 @@ func (o *DockerOrchestrator) ensureImage(ctx context.Context, imageName string) 
 // WaitForContainer waits for a container to exit and returns the exit code.
 func (o *DockerOrchestrator) WaitForContainer(ctx context.Context, info *ContainerInfo) (int, error) {
 	if o.docker == nil {
-		return -1, fmt.Errorf("Docker client not initialized")
+		return -1, fmt.Errorf("docker client not initialized")
 	}
 
 	if info.ContainerID == "" {
@@ -1262,7 +1265,7 @@ func (o *DockerOrchestrator) WaitForContainer(ctx context.Context, info *Contain
 		return info.ExitCode, nil
 
 	case err := <-errCh:
-		if client.IsErrNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			info.State = ContainerStateExited
 			return info.ExitCode, nil
 		}
@@ -1276,7 +1279,7 @@ func (o *DockerOrchestrator) WaitForContainer(ctx context.Context, info *Contain
 // InspectContainer updates ContainerInfo with current container state from Docker.
 func (o *DockerOrchestrator) InspectContainer(ctx context.Context, info *ContainerInfo) error {
 	if o.docker == nil {
-		return fmt.Errorf("Docker client not initialized")
+		return fmt.Errorf("docker client not initialized")
 	}
 
 	if info.ContainerID == "" {
@@ -1285,7 +1288,7 @@ func (o *DockerOrchestrator) InspectContainer(ctx context.Context, info *Contain
 
 	inspectData, err := o.docker.ContainerInspect(ctx, info.ContainerID)
 	if err != nil {
-		if client.IsErrNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			info.State = ContainerStateRemoving
 			return nil
 		}
@@ -1349,7 +1352,9 @@ func (o *DockerOrchestrator) CreateAndStartContainer(ctx context.Context, info *
 		// Try to clean up the created container
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		o.RemoveContainer(cleanupCtx, info, true)
+		// Best-effort cleanup on a failure path; the original error is the one
+		// worth returning.
+		_ = o.RemoveContainer(cleanupCtx, info, true)
 		return err
 	}
 

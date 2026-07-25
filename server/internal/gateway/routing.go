@@ -10,17 +10,17 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/audit"
-	"github.com/scitrera/aether/internal/circuitbreaker"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/metering"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/tracing"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/sharding"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/internal/circuitbreaker"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/metering"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/tracing"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/sharding"
+	"github.com/scitrera/aether/server/pkg/tasks"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"google.golang.org/protobuf/proto"
@@ -33,8 +33,8 @@ const offlineCacheTTL = 5 * time.Second
 // validTopicPrefixSet is a map for O(1) topic prefix validation.
 var validTopicPrefixSet = map[string]bool{
 	"ag": true, "tu": true, "ta": true, "tb": true,
-	"us": true, "uw": true, "ga": true, "gu": true,
-	"pg": true, "event": true, "metric": true, "br": true, "sv": true,
+	"us": true, "uw": true, "uu": true, "ga": true, "gu": true,
+	"pg": true, "tk": true, "event": true, "metric": true, "br": true, "sv": true,
 }
 
 func validateTopicFormat(topic string) error {
@@ -74,8 +74,9 @@ func workspaceFromTopic(topic string) string {
 			return ""
 		}
 		return parts[1]
-	case "ag", "tu", "ta", "tb", "ga", "gu", "pg":
+	case "ag", "tu", "ta", "tb", "ga", "gu", "pg", "tk":
 		// workspace is the next component: prefix::{workspace}[::rest]
+		// tk::{workspace}::{task_id}::{events,msg} → parts[1] = workspace.
 		return parts[1]
 	case "uw":
 		// uw::{user_id}::{workspace} — workspace is the third component
@@ -84,7 +85,9 @@ func workspaceFromTopic(topic string) string {
 		}
 		return parts[2]
 	}
-	// us, br, sv — no workspace component
+	// us, uu, br, sv — no workspace component. uu::{user_id} is deliberately
+	// workspace-agnostic (see UserBroadcastTopic); its authorization is enforced
+	// by principal type in enforceTopicPermissions, not by workspace ACL.
 	return ""
 }
 
@@ -337,11 +340,13 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 		Str("associated_task_id", associatedTaskID).
 		Msg("message send authority resolution outcome")
 
-	// 0b. ACL Check - verify message send permission
+	// 0b. ACL Check - verify message send permission. The effective access
+	// level is consumed only on the proxy path (header minting); plain
+	// SendMessage routing ignores it here.
 	if resolvedAuthority != nil {
-		err = s.checkMessageSendWithAuthority(ctx, sender, msg.TargetTopic, sessionUUID, resolvedAuthority)
+		_, err = s.checkMessageSendWithAuthority(ctx, sender, msg.TargetTopic, sessionUUID, resolvedAuthority)
 	} else {
-		err = s.checkMessageSend(ctx, sender, msg.TargetTopic)
+		_, err = s.checkMessageSend(ctx, sender, msg.TargetTopic)
 	}
 	if err != nil {
 		logging.Logger.Warn().Str("from", sender.ToTopic()).Str("to", msg.TargetTopic).Err(err).Msg("message denied by ACL")
@@ -478,6 +483,23 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 		// the envelope size for the common no-workspace bridge case.
 		envelope.Metadata = map[string]string{"workspace": effectiveWorkspace}
 	}
+	// Propagate the resolved on-behalf-of subject to the recipient, gateway-set
+	// and spoof-proof (like Source). This is the message-bus analog of the
+	// X-Auth-* identity headers ProxyHttp mints from the same resolved
+	// authority: it lets a recipient (e.g. platform-bridge) identify the user a
+	// message was sent for, distinct from the sending identity. Covers both the
+	// explicit SendMessage.authorization path and the auto task-authority
+	// fallback above. Subject identity only — acting-for uses the task
+	// authority-grant path, not this field.
+	if resolvedAuthority != nil && resolvedAuthority.Grant != nil {
+		g := resolvedAuthority.Grant
+		if g.SubjectType != "" && g.SubjectID != "" {
+			envelope.OnBehalfSubject = &pb.PrincipalRef{
+				PrincipalType: g.SubjectType,
+				PrincipalId:   g.SubjectID,
+			}
+		}
+	}
 
 	envelopeBytes, err := proto.Marshal(envelope)
 	if err != nil {
@@ -528,13 +550,143 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 	}
 }
 
+// parseTaskMsgTopic reports whether topic is a task message-lane topic of the
+// exact shape tk::{workspace}::{task_id}::msg and, if so, returns the workspace
+// and task_id. The trailing segment must be EXACTLY "msg" — the task events
+// lane (tk::{ws}::{task}::events) and any other shape return isTaskMsg=false so
+// the caller falls through to the ordinary workspace-ACL path. This is a pure
+// function (no store access) so the parse + shape rules are unit-testable.
+func parseTaskMsgTopic(topic string) (workspace, taskID string, isTaskMsg bool) {
+	parts := strings.Split(topic, models.IdentitySep)
+	if len(parts) != 4 || parts[0] != "tk" || parts[3] != "msg" {
+		return "", "", false
+	}
+	if parts[1] == "" || parts[2] == "" {
+		return "", "", false
+	}
+	return parts[1], parts[2], true
+}
+
+// taskPartyAuthorized mirrors authorizeTaskOp's party predicate (creator,
+// assignee, OBO subject) over a sender Identity rather than a *ClientSession,
+// plus the same workspace tenancy guard. It is pure (no store/ACL access) so it
+// can be unit-tested directly. Workspace-less senders (services) skip the
+// tenancy guard exactly as authorizeTaskOp treats the empty-workspace caller.
+func taskPartyAuthorized(sender models.Identity, task *tasks.Task) bool {
+	if task == nil {
+		return false
+	}
+	callerTopic := sender.ToTopic()
+	// Creator-match (task.ParentAgentID backs the proto creator_actor_id) and
+	// assignee-match are EXACT identity-topic matches — the sender IS the task's
+	// creator or assigned worker — so they authorize regardless of workspace: a
+	// task may be legitimately targeted ACROSS the workspace boundary (a
+	// per-sandbox sahara agent in _sandbox serving a chat task in the user's app
+	// workspace). Checked BEFORE the tenancy guard, which otherwise blocks a
+	// cross-workspace assignee from its own task's msg lane. (Mirrors the same
+	// reorder in authorizeTaskOp.)
+	if task.ParentAgentID != "" && task.ParentAgentID == callerTopic {
+		return true
+	}
+	if task.AssignedTo != "" && task.AssignedTo == callerTopic {
+		return true
+	}
+	// Tenancy guard for the weaker OBO-subject path below: a workspace-scoped
+	// principal must not claim subject party-ship on a task in a different
+	// workspace. Workspace-less senders (services) skip it entirely.
+	if sender.Workspace != "" && task.Workspace != sender.Workspace {
+		return false
+	}
+	// OBO subject-match: the end user the task acts on behalf of (match by
+	// ID+type since a connected user topic carries a window specifier the
+	// stored subject id does not).
+	if sender.Type == models.PrincipalUser &&
+		task.Authority.SubjectType == string(models.PrincipalUser) &&
+		sender.ID != "" &&
+		sender.ID == task.Authority.SubjectID {
+		return true
+	}
+	return false
+}
+
+// taskMsgSenderIsTaskParty authorizes sends to a task's own message lane
+// (tk::{workspace}::{task_id}::msg) when the sender is a party to that task —
+// the SAME predicate as authorizeTaskOp (assignee, creator, or OBO subject).
+// This is purely additive: it grants a task party (notably a workspace-less
+// Service principal that is the task's AssignedTo) the ability to send to the
+// task's msg lane, which the plain workspace-ACL check denies via the
+// read-only service fallback. It never newly denies — non-parties fall through
+// to the existing workspace-ACL logic unchanged.
+//
+// Returns (authorized, isTaskMsg). isTaskMsg is true whenever the topic has the
+// task-msg shape, even when not authorizable here (no store, missing task,
+// cross-workspace), so the caller can decide to fall through. The grant fires
+// only when both are true. Fail-closed: a missing taskStore, a load error, or
+// an absent task yields (false, true) — the caller falls through to the
+// existing ACL path rather than granting blindly.
+func (s *GatewayServer) taskMsgSenderIsTaskParty(ctx context.Context, sender models.Identity, targetTopic string) (authorized bool, isTaskMsg bool) {
+	workspace, taskID, ok := parseTaskMsgTopic(targetTopic)
+	if !ok {
+		return false, false
+	}
+	_ = workspace // workspace is re-derived from the loaded task for the tenancy guard
+	if s.taskStore == nil {
+		return false, true
+	}
+	task, err := s.taskStore.GetTask(ctx, taskID)
+	if err != nil || task == nil {
+		return false, true
+	}
+	if taskPartyAuthorized(sender, task) {
+		return true, true
+	}
+	return false, true
+}
+
 // checkMessageSend checks whether a sender is allowed to publish to a target topic via the ACL
 // service. It preserves the workspace-derivation logic: bridges/services with no home workspace
 // check ACL against the target workspace; workspace-scoped senders check against the target
 // workspace when it differs from their own (cross-workspace), or their own workspace otherwise.
-func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Identity, targetTopic string) error {
+// checkMessageSend returns the effective access level granted by the ACL
+// decision alongside the error. The level is the EffectiveAccessLevel the
+// gateway mints into X-Auth-Workspace-Access; callers that only care about
+// the allow/deny outcome may ignore it. When ACL is disabled or no workspace
+// check applies, the level is acl.AccessNone (0).
+func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Identity, targetTopic string) (int, error) {
 	if s.acl == nil {
-		return nil // ACL not enabled
+		return acl.AccessNone, nil // ACL not enabled
+	}
+
+	// Additive task-party grant: a task's own party (assignee/creator/OBO
+	// subject) may send to the task's msg lane even without a workspace send
+	// grant. Non-parties / non-task-msg topics fall through unchanged.
+	if ok, isTaskMsg := s.taskMsgSenderIsTaskParty(ctx, sender, targetTopic); isTaskMsg && ok {
+		logging.Logger.Info().
+			Str("from", sender.ToTopic()).
+			Str("target", targetTopic).
+			Msg("task-msg send authorized via task-party match")
+		return acl.AccessReadWrite, nil
+	}
+
+	// Additive metric-publish grant: an agent principal may publish to the
+	// metric fan-in plane (post-rewrite metric::receiver{N}) without a
+	// per-workspace WRITE grant. This realizes the "same-workspace publish is
+	// implicit" contract (see routeMessage) for least-privilege agents — e.g.
+	// sahara sandbox agents, deliberately READ-only on _sandbox — that emit
+	// their own usage/token metrics. Safe because the other metric authz layers
+	// have already run or run independently: cross-workspace publishes were
+	// gated up-front by checkCrossWorkspaceBroadcast (capability/metric_broadcast),
+	// the topic permission matrix gated type eligibility, and negative-delta
+	// metrics are gated afterward by checkMetricCredit. Scoped to agent
+	// principals and the metric plane only (NOT event::, which drives the
+	// workflow engine) so it doesn't broaden other senders. OBO-carried metric
+	// sends (checkMessageSendWithAuthority) are not a current path.
+	if sender.Type == models.PrincipalAgent && strings.HasPrefix(targetTopic, "metric"+models.IdentitySep) {
+		logging.Logger.Info().
+			Str("from", sender.ToTopic()).
+			Str("target", targetTopic).
+			Msg("metric publish authorized via agent additive grant")
+		return acl.AccessReadWrite, nil
 	}
 
 	// System principals with no workspace (bridges/services) check ACL against the target workspace.
@@ -543,7 +695,7 @@ func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Iden
 		if targetWorkspace != "" {
 			decision, err := s.acl.CanSendMessage(ctx, sender, acl.ResourceTypeWorkspace, targetWorkspace, targetWorkspace, uuid.Nil)
 			if err != nil {
-				return fmt.Errorf("ACL check failed: %w", err)
+				return acl.AccessNone, fmt.Errorf("ACL check failed: %w", err)
 			}
 			if decision.Denied() {
 				logging.Logger.Info().
@@ -552,10 +704,11 @@ func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Iden
 					Str("workspace_checked", targetWorkspace).
 					Str("reason", decision.Reason).
 					Msg("checkMessageSend denial")
-				return fmt.Errorf("access denied: %s", decision.Reason)
+				return acl.AccessNone, fmt.Errorf("access denied: %s", decision.Reason)
 			}
+			return decision.EffectiveAccessLevel, nil
 		}
-		return nil
+		return acl.AccessNone, nil
 	}
 
 	// Workspace-scoped senders: gate on TARGET workspace when it differs
@@ -568,7 +721,7 @@ func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Iden
 
 	decision, err := s.acl.CanSendMessage(ctx, sender, acl.ResourceTypeWorkspace, checkWorkspace, checkWorkspace, uuid.Nil)
 	if err != nil {
-		return fmt.Errorf("ACL check failed: %w", err)
+		return acl.AccessNone, fmt.Errorf("ACL check failed: %w", err)
 	}
 	if decision.Denied() {
 		logging.Logger.Info().
@@ -577,9 +730,9 @@ func (s *GatewayServer) checkMessageSend(ctx context.Context, sender models.Iden
 			Str("workspace_checked", checkWorkspace).
 			Str("reason", decision.Reason).
 			Msg("checkMessageSend denial")
-		return fmt.Errorf("access denied: %s", decision.Reason)
+		return acl.AccessNone, fmt.Errorf("access denied: %s", decision.Reason)
 	}
-	return nil
+	return decision.EffectiveAccessLevel, nil
 }
 
 // checkCrossWorkspaceBroadcast enforces the cross-workspace capability gate
@@ -631,6 +784,22 @@ var hasCrossWorkspaceBroadcastPermission = func(ctx context.Context, s *GatewayS
 // enforceTopicPermissions checks spec Section 3.2.2 permission matrix.
 // Returns an error if the sender's principal type is not allowed to publish to the target topic.
 func enforceTopicPermissions(sender models.Identity, targetTopic string) error {
+	// User-broadcast (uu::{user_id}) is a platform→user channel: it reaches
+	// every one of a user's windows regardless of active workspace and carries
+	// no workspace segment, so the downstream workspace ACL cannot gate it
+	// (workspaceFromTopic returns ""). The principal-type policy here is
+	// therefore the sole authorization check. Only platform principals may
+	// publish; workspace-scoped principals (users, agents, tasks, orchestrators)
+	// must reach a user via us::/uw::/pg:: or task ownership instead.
+	if strings.HasPrefix(targetTopic, "uu"+models.IdentitySep) {
+		switch sender.Type {
+		case models.PrincipalService, models.PrincipalWorkflowEngine, models.PrincipalBridge:
+			return nil
+		default:
+			return fmt.Errorf("only service, workflow-engine, and bridge principals may publish to user-broadcast (uu::) topics")
+		}
+	}
+
 	switch sender.Type {
 	case models.PrincipalUser:
 		// Users cannot send to event.*, metric.*, or pg.* topics
@@ -956,6 +1125,15 @@ func (s *GatewayServer) handleKVOp(ctx context.Context, client *ClientSession, o
 	resolvedAuthority, err := s.resolveAuthorizationContext(ctx, client, ident, op.GetAuthorization())
 	if err != nil {
 		sendClientError(client, "ERR_PERMISSION_DENIED", "invalid authorization context", withRequestID(op.GetRequestId()))
+		// Resolve the matching pending sync KV request so the client doesn't
+		// time out waiting for a KVResponse alongside this ErrorResponse.
+		if reqID := op.GetRequestId(); reqID != "" {
+			sendResponse(&pb.DownstreamMessage{
+				Payload: &pb.DownstreamMessage_Kv{
+					Kv: &pb.KVResponse{Success: false, RequestId: reqID},
+				},
+			})
+		}
 		return
 	}
 
@@ -1000,7 +1178,10 @@ func (s *GatewayServer) handleKVOp(ctx context.Context, client *ClientSession, o
 	err = handler.HandleKVOperation(ctx, ident, sessionUUID, resolvedAuthority, op, sendResponse)
 	if err != nil {
 		logging.Logger.Error().Err(err).Msg("KV operation failed")
-		// Send generic error to avoid leaking internal details (e.g. Redis internals) to clients.
+		// Send generic error for OnError consumers; the typed KVResponse
+		// (Success=false, RequestId=…) that resolves any pending sync
+		// waiter is already emitted by HandleKVOperation before it
+		// returns the error.
 		sendClientError(client, "KV_ERROR", "internal error processing KV operation", withRequestID(op.GetRequestId()))
 	} else {
 		workspace := op.Workspace
@@ -1352,6 +1533,26 @@ func protoTaskStatusToTasks(s pb.TaskStatus) tasks.TaskStatus {
 	}
 }
 
+// completionConfigFromProto converts the proto TaskCompletionEvent into the
+// persisted model config. nil ⇒ nil (task did not opt into feed B). OnStatuses
+// are mapped through the canonical proto↔model status converter.
+func completionConfigFromProto(p *pb.TaskCompletionEvent) *tasks.TaskCompletionConfig {
+	if p == nil {
+		return nil
+	}
+	cfg := &tasks.TaskCompletionConfig{
+		Enabled:   p.GetEnabled(),
+		EventName: p.GetEventName(),
+	}
+	if len(p.GetOnStatuses()) > 0 {
+		cfg.OnStatuses = make([]tasks.TaskStatus, 0, len(p.GetOnStatuses()))
+		for _, s := range p.GetOnStatuses() {
+			cfg.OnStatuses = append(cfg.OnStatuses, protoTaskStatusToTasks(s))
+		}
+	}
+	return cfg
+}
+
 // unixOrZero returns the unix-seconds timestamp of t, or 0 when t is nil.
 // Used in proto conversions where 0 sentinels "absent" for time fields.
 func unixOrZero(t *time.Time) int64 {
@@ -1367,6 +1568,7 @@ func taskToProto(t *tasks.Task) *pb.TaskInfo {
 		TaskId:                 t.TaskID,
 		TaskType:               t.TaskType,
 		TaskClass:              pb.TaskClass(t.TaskClass),
+		Priority:               pb.TaskPriority(t.Priority),
 		DisconnectedAt:         unixOrZero(t.DisconnectedAt),
 		GraceWindowMs:          t.GraceWindowMs,
 		Status:                 taskStatusToProto(t.Status),
@@ -1438,6 +1640,21 @@ func taskToProto(t *tasks.Task) *pb.TaskInfo {
 	}
 	info.ContextId = t.ContextID
 	info.PausedAt = unixOrZero(t.PausedAt)
+	info.CorrelationId = t.CorrelationID
+	info.RootTaskId = t.RootTaskID
+	if t.CompletionEvent != nil {
+		ce := &pb.TaskCompletionEvent{
+			Enabled:   t.CompletionEvent.Enabled,
+			EventName: t.CompletionEvent.EventName,
+		}
+		if len(t.CompletionEvent.OnStatuses) > 0 {
+			ce.OnStatuses = make([]pb.TaskStatus, 0, len(t.CompletionEvent.OnStatuses))
+			for _, s := range t.CompletionEvent.OnStatuses {
+				ce.OnStatuses = append(ce.OnStatuses, taskStatusToProto(s))
+			}
+		}
+		info.CompletionEvent = ce
+	}
 	return info
 }
 
@@ -1474,21 +1691,57 @@ func (s *GatewayServer) authorizeTaskOp(ctx context.Context, client *ClientSessi
 	sessionUUID := client.SessionUUID
 	client.identityMu.RUnlock()
 
-	// Workspace mismatch is an immediate deny — even a creator/assignee
-	// match across workspaces should not be honored, since workspace is
-	// the strong tenancy boundary.
-	if callerWorkspace != "" && task.Workspace != callerWorkspace {
-		return false
-	}
-
-	// Creator-match (cheapest): task.ParentAgentID is the storage column
-	// that backs the proto creator_actor_id field.
+	// Creator-match (cheapest): task.ParentAgentID is the storage column that
+	// backs the proto creator_actor_id field. This is an EXACT identity-topic
+	// match (the sender IS the creator), so it authorizes regardless of
+	// workspace: a task may be legitimately created/targeted ACROSS the
+	// workspace boundary — e.g. a per-sandbox sahara agent in `_sandbox` serving
+	// a chat task in the user's app workspace. Checked before the tenancy guard.
 	if task.ParentAgentID != "" && task.ParentAgentID == callerTopic {
 		return true
 	}
 
-	// Assignee-match: the worker assigned to the task may always act on it.
+	// Assignee-match: the worker assigned to the task may always act on it,
+	// regardless of workspace (same exact-identity, creator-authorized
+	// cross-workspace-assignment rationale as creator-match).
 	if task.AssignedTo != "" && task.AssignedTo == callerTopic {
+		return true
+	}
+
+	// Workspace mismatch is a deny for the WEAKER party paths below (OBO
+	// subject-match, workspace-admin): a workspace-scoped principal must not
+	// claim subject/admin party-ship on a task in a different workspace. The
+	// exact creator/assignee identity matches above are exempt (the sender IS
+	// that party); workspace-less senders (services) skip the guard entirely.
+	if callerWorkspace != "" && task.Workspace != callerWorkspace {
+		logging.Logger.Info().
+			Str("identity", callerIdentity.String()).
+			Str("task_id", task.TaskID).
+			Str("reason", "workspace mismatch").
+			Msg("task op authorization denied")
+		s.auditLog(ctx, audit.NewTaskEvent(
+			string(callerIdentity.Type),
+			callerIdentity.String(),
+			audit.OpTaskAuthzDenied,
+			task.TaskID,
+			task.Workspace,
+			sessionUUID,
+			false,
+			"workspace mismatch",
+			nil,
+		))
+		return false
+	}
+
+	// OBO subject-match: the end user the task acts on behalf of may operate
+	// on its own task (e.g. CLAIM a per-turn chat_message task from any of
+	// their browser tabs). Match by identity ID+type rather than topic string,
+	// since a connected user topic carries a window specifier the stored
+	// subject id does not.
+	if callerIdentity.Type == models.PrincipalUser &&
+		task.Authority.SubjectType == string(models.PrincipalUser) &&
+		callerIdentity.ID != "" &&
+		callerIdentity.ID == task.Authority.SubjectID {
 		return true
 	}
 
@@ -1501,7 +1754,41 @@ func (s *GatewayServer) authorizeTaskOp(ctx context.Context, client *ClientSessi
 	}
 	decision, err := s.acl.CanManageWorkspace(ctx, callerIdentity, task.Workspace, sessionUUID)
 	if err != nil || decision == nil {
+		logging.Logger.Info().
+			Str("identity", callerIdentity.String()).
+			Str("task_id", task.TaskID).
+			Str("reason", "not creator/assignee/subject and workspace-admin check failed").
+			Msg("task op authorization denied")
+		s.auditLog(ctx, audit.NewTaskEvent(
+			string(callerIdentity.Type),
+			callerIdentity.String(),
+			audit.OpTaskAuthzDenied,
+			task.TaskID,
+			task.Workspace,
+			sessionUUID,
+			false,
+			"not creator/assignee/subject and workspace-admin check failed",
+			nil,
+		))
 		return false
+	}
+	if !decision.Allowed {
+		logging.Logger.Info().
+			Str("identity", callerIdentity.String()).
+			Str("task_id", task.TaskID).
+			Str("reason", decision.Reason).
+			Msg("task op authorization denied")
+		s.auditLog(ctx, audit.NewTaskEvent(
+			string(callerIdentity.Type),
+			callerIdentity.String(),
+			audit.OpTaskAuthzDenied,
+			task.TaskID,
+			task.Workspace,
+			sessionUUID,
+			false,
+			decision.Reason,
+			nil,
+		))
 	}
 	return decision.Allowed
 }
@@ -1581,6 +1868,8 @@ func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSessi
 			filter.ParentTaskID = query.Filter.ParentTaskId
 			// Phase 1: A2A filter fields.
 			filter.ContextID = query.Filter.ContextId
+			filter.CorrelationID = query.Filter.GetCorrelationId()
+			filter.RootTaskID = query.Filter.GetRootTaskId()
 			if len(query.Filter.ExcludeStatuses) > 0 {
 				filter.ExcludeStatuses = make([]tasks.TaskStatus, 0, len(query.Filter.ExcludeStatuses))
 				for _, s := range query.Filter.ExcludeStatuses {
@@ -1595,6 +1884,8 @@ func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSessi
 			filter.StatusTimestampAfterUnixMs = query.Filter.StatusTimestampAfterUnixMs
 			filter.PageToken = query.Filter.PageToken
 			filter.IncludeDescendants = query.Filter.IncludeDescendants
+			filter.Priority = int32(query.Filter.Priority)
+			filter.MinPriority = int32(query.Filter.MinPriority)
 			if query.Filter.Limit > 0 {
 				filter.Limit = int(query.Filter.Limit)
 				if filter.Limit > 1000 {
@@ -1679,6 +1970,14 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 
 	var response *pb.TaskOperationResponse
 
+	// Caller identity for task-op audit logging. The COMPLETE/FAIL branches log
+	// success + every failure reason so a silently-swallowed rejection — e.g. a
+	// sahara CompleteTask the SDK returns as Success=false without an error, the
+	// cause of chat tasks never leaving RUNNING — is diagnosable gateway-side.
+	client.identityMu.RLock()
+	callerTopic := client.Identity.ToTopic()
+	client.identityMu.RUnlock()
+
 	switch op.Op {
 	case pb.TaskOperation_CANCEL:
 		// Authorization: creator / assignee / workspace-admin (info-hiding).
@@ -1758,6 +2057,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		// Authorization: creator / assignee / workspace-admin (info-hiding).
 		task, err := s.taskStore.GetTask(ctx, op.TaskId)
 		if err != nil || task == nil {
+			logging.Logger.Warn().Str("from", callerTopic).Str("task_id", op.TaskId).Err(err).Msg("task COMPLETE rejected: task not found")
 			response = &pb.TaskOperationResponse{
 				Success: false,
 				Error:   ErrTaskNotFoundOrUnauthorized,
@@ -1765,6 +2065,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 			break
 		}
 		if !s.authorizeTaskOp(ctx, client, task) {
+			logging.Logger.Warn().Str("from", callerTopic).Str("task_id", op.TaskId).Str("assigned_to", task.AssignedTo).Msg("task COMPLETE rejected: unauthorized")
 			response = &pb.TaskOperationResponse{
 				Success: false,
 				Error:   ErrTaskNotFoundOrUnauthorized,
@@ -1776,6 +2077,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 			completeFn = s.orchestration.TaskService.CompleteTask
 		}
 		if err := completeFn(ctx, op.TaskId); err != nil {
+			logging.Logger.Warn().Str("from", callerTopic).Str("task_id", op.TaskId).Str("prior_status", string(task.Status)).Err(err).Msg("task COMPLETE rejected: completeFn error")
 			response = &pb.TaskOperationResponse{
 				Success: false,
 				Error:   err.Error(),
@@ -1783,6 +2085,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		} else {
 			// Re-fetch to get updated state
 			updated, _ := s.taskStore.GetTask(ctx, op.TaskId)
+			logging.Logger.Info().Str("from", callerTopic).Str("task_id", op.TaskId).Msg("task COMPLETE succeeded")
 			response = &pb.TaskOperationResponse{
 				Success: true,
 				Message: "task completed",
@@ -1801,6 +2104,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 		// Authorization: creator / assignee / workspace-admin (info-hiding).
 		task, err := s.taskStore.GetTask(ctx, op.TaskId)
 		if err != nil || task == nil {
+			logging.Logger.Warn().Str("from", callerTopic).Str("task_id", op.TaskId).Err(err).Msg("task FAIL rejected: task not found")
 			response = &pb.TaskOperationResponse{
 				Success: false,
 				Error:   ErrTaskNotFoundOrUnauthorized,
@@ -1808,6 +2112,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 			break
 		}
 		if !s.authorizeTaskOp(ctx, client, task) {
+			logging.Logger.Warn().Str("from", callerTopic).Str("task_id", op.TaskId).Str("assigned_to", task.AssignedTo).Msg("task FAIL rejected: unauthorized")
 			response = &pb.TaskOperationResponse{
 				Success: false,
 				Error:   ErrTaskNotFoundOrUnauthorized,
@@ -1819,12 +2124,14 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 			failFn = s.orchestration.TaskService.FailTask
 		}
 		if err := failFn(ctx, op.TaskId, errMsg); err != nil {
+			logging.Logger.Warn().Str("from", callerTopic).Str("task_id", op.TaskId).Str("prior_status", string(task.Status)).Err(err).Msg("task FAIL rejected: failFn error")
 			response = &pb.TaskOperationResponse{
 				Success: false,
 				Error:   err.Error(),
 			}
 		} else {
 			updated, _ := s.taskStore.GetTask(ctx, op.TaskId)
+			logging.Logger.Info().Str("from", callerTopic).Str("task_id", op.TaskId).Str("reason", errMsg).Msg("task FAIL succeeded")
 			response = &pb.TaskOperationResponse{
 				Success: true,
 				Message: "task marked as failed",
@@ -2082,6 +2389,46 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 				response.Task = taskToProto(updated)
 			}
 			s.notifyTaskStatusChangeFromTaskID(ctx, op.TaskId, string(tasks.TaskStatusRejected), reason)
+		}
+
+	case pb.TaskOperation_CLAIM:
+		// CLAIM: the assignee (or OBO subject) transitions a pending/assigned
+		// task to RUNNING. Mirrors CANCEL structurally: GetTask (info-hiding on
+		// miss) → authorize → claim store fn → notify on success.
+		claimTask, err := s.taskStore.GetTask(ctx, op.TaskId)
+		if err != nil || claimTask == nil {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   ErrTaskNotFoundOrUnauthorized,
+			}
+			break
+		}
+		if !s.authorizeTaskOp(ctx, client, claimTask) {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   ErrTaskNotFoundOrUnauthorized,
+			}
+			break
+		}
+		claimFn := s.taskStore.ClaimTask
+		if s.orchestration != nil && s.orchestration.TaskService != nil {
+			claimFn = s.orchestration.TaskService.ClaimTask
+		}
+		if err := claimFn(ctx, op.TaskId); err != nil {
+			response = &pb.TaskOperationResponse{
+				Success: false,
+				Error:   err.Error(),
+			}
+		} else {
+			updated, _ := s.taskStore.GetTask(ctx, op.TaskId)
+			response = &pb.TaskOperationResponse{
+				Success: true,
+				Message: "task claimed",
+			}
+			if updated != nil {
+				response.Task = taskToProto(updated)
+			}
+			s.notifyTaskStatusChangeFromTaskID(ctx, op.TaskId, "running", "")
 		}
 
 	default:

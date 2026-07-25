@@ -3,6 +3,8 @@
 import type { TaskStatus as _aether_v1_TaskStatus, TaskStatus__Output as _aether_v1_TaskStatus__Output } from '../../aether/v1/TaskStatus';
 import type { TaskClass as _aether_v1_TaskClass, TaskClass__Output as _aether_v1_TaskClass__Output } from '../../aether/v1/TaskClass';
 import type { WaitSpec as _aether_v1_WaitSpec, WaitSpec__Output as _aether_v1_WaitSpec__Output } from '../../aether/v1/WaitSpec';
+import type { TaskPriority as _aether_v1_TaskPriority, TaskPriority__Output as _aether_v1_TaskPriority__Output } from '../../aether/v1/TaskPriority';
+import type { TaskCompletionEvent as _aether_v1_TaskCompletionEvent, TaskCompletionEvent__Output as _aether_v1_TaskCompletionEvent__Output } from '../../aether/v1/TaskCompletionEvent';
 import type { Long } from '@grpc/proto-loader';
 
 /**
@@ -138,6 +140,26 @@ export interface TaskInfo {
    * 0 means the task has never been paused.
    */
   'pausedAt'?: (number | string | Long);
+  /**
+   * Dispatch priority. UNSPECIFIED is normalized to NORMAL on creation, so
+   * persisted tasks always report a concrete level.
+   */
+  'priority'?: (_aether_v1_TaskPriority);
+  /**
+   * Fan-out/fan-in correlation identity (the barrier/group id a join matches),
+   * distinct from task_id and propagated to child spawns. Empty = none.
+   */
+  'correlationId'?: (string);
+  /**
+   * Top-of-fan-out-tree identity (flow / run id); defaults to the task's own id
+   * for a root, inherited by descendants. Empty = none.
+   */
+  'rootTaskId'?: (string);
+  /**
+   * "Feed B" config persisted on the task; read at the terminal transition to
+   * decide whether/what to emit onto event::*.
+   */
+  'completionEvent'?: (_aether_v1_TaskCompletionEvent | null);
 }
 
 /**
@@ -273,4 +295,24 @@ export interface TaskInfo__Output {
    * 0 means the task has never been paused.
    */
   'pausedAt': (string);
+  /**
+   * Dispatch priority. UNSPECIFIED is normalized to NORMAL on creation, so
+   * persisted tasks always report a concrete level.
+   */
+  'priority': (_aether_v1_TaskPriority__Output);
+  /**
+   * Fan-out/fan-in correlation identity (the barrier/group id a join matches),
+   * distinct from task_id and propagated to child spawns. Empty = none.
+   */
+  'correlationId': (string);
+  /**
+   * Top-of-fan-out-tree identity (flow / run id); defaults to the task's own id
+   * for a root, inherited by descendants. Empty = none.
+   */
+  'rootTaskId': (string);
+  /**
+   * "Feed B" config persisted on the task; read at the terminal transition to
+   * decide whether/what to emit onto event::*.
+   */
+  'completionEvent': (_aether_v1_TaskCompletionEvent__Output | null);
 }

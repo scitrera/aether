@@ -8,9 +8,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
-	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
-	"github.com/scitrera/aether/internal/testutil"
-	"github.com/scitrera/aether/pkg/tasks"
+	taskpg "github.com/scitrera/aether/server/internal/storage/tasks/postgres"
+	"github.com/scitrera/aether/server/internal/testutil"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // TestOrchestrationRetryIntegration verifies the complete retry→DLQ flow

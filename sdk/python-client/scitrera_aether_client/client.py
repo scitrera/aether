@@ -25,6 +25,7 @@ from ._common import (
     create_topic_global_agents,
     create_topic_global_users,
     create_topic_user_workspace,
+    create_topic_user_broadcast,
     SELF_ASSIGN,
     TARGETED,
     POOL,
@@ -1162,7 +1163,6 @@ class BaseAetherClient:
             op=aether_pb2.KVOperation.INCREMENT_IF,
             scope=_scope_to_proto(scope),
             key=key,
-            int_value=delta,
             delta_value=int(delta),
             guard_value=ceiling,
             user_id=user_id,
@@ -1189,7 +1189,6 @@ class BaseAetherClient:
             op=aether_pb2.KVOperation.DECREMENT_IF,
             scope=_scope_to_proto(scope),
             key=key,
-            int_value=delta,
             delta_value=int(delta),
             guard_value=floor,
             user_id=user_id,
@@ -1208,7 +1207,9 @@ class BaseAetherClient:
                     metadata: Optional[Dict[str, str]] = None,
                     payload: Optional[bytes] = None,
                     assignment_mode: int = SELF_ASSIGN,
-                    context_id: str = "") -> None:
+                    context_id: str = "",
+                    priority: int = 0,
+                    retry_policy: Optional[aether_pb2.RetryPolicy] = None) -> None:
         """
         Create a new task.
 
@@ -1223,6 +1224,9 @@ class BaseAetherClient:
             assignment_mode: SELF_ASSIGN (0), TARGETED (1), or POOL (2) [automatically handled in most cases]
             context_id: Optional client-minted session identifier (A2A contextId). Tasks
                 sharing a context_id are groupable via TaskFilter.context_id.
+            priority: Optional dispatch priority (TaskPriority enum value). Higher
+                priority pending tasks are delivered before lower ones. 0 (UNSPECIFIED)
+                is normalized to NORMAL by the server.
         """
         if target_agent_id and assignment_mode == SELF_ASSIGN:
             assignment_mode = TARGETED
@@ -1238,6 +1242,8 @@ class BaseAetherClient:
             metadata=metadata or {},
             payload=payload or b"",
             context_id=context_id,
+            priority=priority,  # type: ignore[arg-type]
+            retry_policy=retry_policy,
         )
         self.request_queue.put(aether_pb2.UpstreamMessage(create_task=req))
 
@@ -1250,6 +1256,8 @@ class BaseAetherClient:
                          assignment_mode: int = SELF_ASSIGN,
                          authorization: Optional[aether_pb2.AuthorizationContext] = None,
                          context_id: str = "",
+                         priority: int = 0,
+                         retry_policy: Optional[aether_pb2.RetryPolicy] = None,
                          timeout: float = 10.0) -> Optional[aether_pb2.CreateTaskResponse]:
         """
         Create a new task and wait for the server's response containing the task_id.
@@ -1295,6 +1303,8 @@ class BaseAetherClient:
             authorization=authorization,
             context_id=context_id,
             request_id=request_id,
+            priority=priority,  # type: ignore[arg-type]
+            retry_policy=retry_policy,
         )
         return self._send_sync_op(
             aether_pb2.UpstreamMessage(create_task=req), request_id, timeout,
@@ -3712,6 +3722,16 @@ class WorkflowEngineClient(BaseAetherClient):
         """Send a message to a user's workspace-scoped topic."""
         return self._send_message(create_topic_user_workspace(user_id, workspace), payload, message_type=message_type)
 
+    def send_message_to_user_broadcast(self, user_id: str, payload: bytes,
+                                        message_type: int = aether_pb2.OPAQUE):
+        """Send a message to every one of a user's windows (uu::{user_id}).
+
+        Workspace-agnostic, non-progress channel for platform->user
+        notifications; reaches all of the user's windows regardless of the
+        workspace each is viewing.
+        """
+        return self._send_message(create_topic_user_broadcast(user_id), payload, message_type=message_type)
+
     def send_metric(self, metric):
         """Send a metric to the metrics bridge.
 
@@ -3816,7 +3836,8 @@ class ServiceClient(BaseAetherClient):
                  tls_client_cert_path: Optional[str] = None,
                  tls_client_key: Optional[bytes] = None,
                  tls_client_key_path: Optional[str] = None,
-                 extensions: Optional[List[aether_pb2.ExtensionDeclaration]] = None):
+                 extensions: Optional[List[aether_pb2.ExtensionDeclaration]] = None,
+                 consumes_pool_tasks: bool = True):
         if not implementation:
             raise InvalidArgumentError(
                 message="Service principal requires an implementation identifier",
@@ -3840,7 +3861,8 @@ class ServiceClient(BaseAetherClient):
         self.implementation = implementation
         self.specifier = specifier
         self.init = create_service_init(implementation, specifier, credentials,
-                                        extensions=extensions)
+                                        extensions=extensions,
+                                        no_pool_consumer=not consumes_pool_tasks)
 
     def connect(self, target: str = "localhost:50051"):
         super()._connect(self.init, target)
@@ -3879,5 +3901,18 @@ class ServiceClient(BaseAetherClient):
         """Send a message to a user's workspace-scoped topic."""
         self._send_message(
             create_topic_user_workspace(user_id, workspace),
+            payload, message_type=message_type,
+        )
+
+    def send_message_to_user_broadcast(self, user_id: str, payload: bytes,
+                                       message_type: int = aether_pb2.OPAQUE):
+        """Send a message to every one of a user's windows (uu::{user_id}).
+
+        Workspace-agnostic, non-progress channel for platform->user
+        notifications; the intended way for a service principal to push an
+        opaque update to a user without abusing the progress channel.
+        """
+        self._send_message(
+            create_topic_user_broadcast(user_id),
             payload, message_type=message_type,
         )

@@ -69,7 +69,7 @@ func (r *routerWithStore) HandleEvent(ctx context.Context, sourceTopic string, p
 	for _, eventName := range event.EventNames {
 		rules, _ := r.store.GetMatchingRules(ctx, event.SourceAgent, eventName, event.Workspace)
 		for _, rule := range rules {
-			router.processRule(ctx, rule, &event)
+			router.processRule(ctx, rule, &event, eventName)
 		}
 	}
 	return nil
@@ -241,7 +241,7 @@ func TestRouter_HandleEvent_invalidJSONPayloadIsIgnored(t *testing.T) {
 // ---- Router cache tests ----
 
 func TestRouter_InvalidateCache_emptiesCache(t *testing.T) {
-	router := NewRouter(nil, NewExprEngine(10), NewTemplateEngine(10), nil, time.Minute)
+	router := NewRouter(nil, NewExprEngine(10), NewTemplateEngine(10), nil, nil, time.Minute)
 
 	// Seed the internal cache directly
 	router.cacheMu.Lock()

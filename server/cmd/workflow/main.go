@@ -14,11 +14,11 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/rs/zerolog"
-	wfpg "github.com/scitrera/aether/internal/storage/workflow/postgres"
-	wfsqlite "github.com/scitrera/aether/internal/storage/workflow/sqlite"
-	versionpkg "github.com/scitrera/aether/internal/version"
-	"github.com/scitrera/aether/internal/workflow"
-	wfmigrations "github.com/scitrera/aether/internal/workflow/migrations"
+	wfpg "github.com/scitrera/aether/server/internal/storage/workflow/postgres"
+	wfsqlite "github.com/scitrera/aether/server/internal/storage/workflow/sqlite"
+	versionpkg "github.com/scitrera/aether/server/internal/version"
+	"github.com/scitrera/aether/server/internal/workflow"
+	wfmigrations "github.com/scitrera/aether/server/internal/workflow/migrations"
 
 	// Register the bare "sqlite" driver for SQLite mode.
 	_ "modernc.org/sqlite"

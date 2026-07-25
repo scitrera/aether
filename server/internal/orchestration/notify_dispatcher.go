@@ -11,8 +11,8 @@ import (
 	"github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/scitrera/aether/internal/logging"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
+	"github.com/scitrera/aether/server/internal/logging"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
 )
 
 // NotifyTaskDispatcher listens for orchestration tasks via PostgreSQL NOTIFY

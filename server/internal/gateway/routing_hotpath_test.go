@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/circuitbreaker"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/circuitbreaker"
+	"github.com/scitrera/aether/server/pkg/models"
 	"golang.org/x/time/rate"
 )
 
@@ -416,6 +416,10 @@ func (r *errorPublishRouter) SubscribeExclusiveFromNow(topic string, consumer st
 }
 
 func (r *errorPublishRouter) SubscribeExclusiveFromTimestamp(topic string, consumer string, _ int64, h func([]byte)) (func(), error) {
+	return r.SubscribeExclusive(topic, consumer, h)
+}
+
+func (r *errorPublishRouter) SubscribeExclusiveResumeOrTail(topic string, consumer string, h func([]byte)) (func(), error) {
 	return r.SubscribeExclusive(topic, consumer, h)
 }
 

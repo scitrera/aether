@@ -7,7 +7,7 @@ package tasks
 // and may eventually let us collapse the legacy package into this one. For
 // now, downstream callers can
 //
-//	import "github.com/scitrera/aether/internal/storage/tasks"
+//	import "github.com/scitrera/aether/server/internal/storage/tasks"
 //
 // and find every type, constant, and helper they need to construct, mutate,
 // and query tasks — no double-import of the legacy package required.
@@ -15,7 +15,7 @@ package tasks
 import (
 	"time"
 
-	legacy "github.com/scitrera/aether/pkg/tasks"
+	legacy "github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // QueueEntryNotification is the minimal projection of an
@@ -97,7 +97,51 @@ type (
 
 	// WaitSpec describes why a task was paused and what conditions will wake it.
 	WaitSpec = legacy.WaitSpec
+
+	// RetryPolicy mirrors the proto pb.RetryPolicy message, persisted on
+	// the task row via retry_policy_json and consumed by FailTask to
+	// compute next_retry_at when set.
+	RetryPolicy = legacy.RetryPolicy
+
+	// TaskCompletionConfig is the "feed B" config: emit a domain event when
+	// the task reaches a terminal status. Persisted as JSON in
+	// completion_event.
+	TaskCompletionConfig = legacy.TaskCompletionConfig
+
+	// BackoffStrategy enumerates the retry-delay shapes consumed by
+	// ComputeNextRetryAt.
+	BackoffStrategy = legacy.BackoffStrategy
+
+	// TaskPriority is the dispatch-priority weight stored in tasks.priority
+	// and orchestrated_task_queue.priority.
+	TaskPriority = legacy.TaskPriority
 )
+
+// Dispatch-priority levels — re-exported so storage-layer code can normalize
+// and order by priority without a second import on pkg/tasks.
+const (
+	PriorityUnspecified = legacy.PriorityUnspecified
+	PriorityXLow        = legacy.PriorityXLow
+	PriorityLow         = legacy.PriorityLow
+	PriorityNormal      = legacy.PriorityNormal
+	PriorityHigh        = legacy.PriorityHigh
+	PriorityPreempt     = legacy.PriorityPreempt
+)
+
+// BackoffStrategy enum values — re-exported so callers depending only on
+// the storage/tasks package can construct a RetryPolicy without taking a
+// second import on pkg/tasks.
+const (
+	BackoffStrategyUnspecified      = legacy.BackoffStrategyUnspecified
+	BackoffStrategyFixed            = legacy.BackoffStrategyFixed
+	BackoffStrategyExponential      = legacy.BackoffStrategyExponential
+	BackoffStrategyExplicitSchedule = legacy.BackoffStrategyExplicitSchedule
+)
+
+// ComputeNextRetryAt is re-exported so the native sqlite store and other
+// in-tree consumers of the tasks package can compute the policy-driven
+// next_retry_at without a second import.
+var ComputeNextRetryAt = legacy.ComputeNextRetryAt
 
 // Task lifecycle statuses — values stored in tasks.status.
 const (
@@ -128,9 +172,10 @@ const (
 
 // Phase 1: task lifecycle helpers — re-exported from legacy package.
 var (
-	IsTerminal         = legacy.IsTerminal
-	IsWaiting          = legacy.IsWaiting
-	ValidateTransition = legacy.ValidateTransition
+	IsTerminal          = legacy.IsTerminal
+	IsWaiting           = legacy.IsWaiting
+	ValidateTransition  = legacy.ValidateTransition
+	NonTerminalStatuses = legacy.NonTerminalStatuses
 )
 
 // Phase 4: cursor pagination helpers re-exported from the legacy package so

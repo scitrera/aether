@@ -99,6 +99,55 @@ workspace: "{{ .source.workspace }}"`,
 	}
 }
 
+// TestTemplateEngine_Transform_CreateTask validates that a create_task
+// destination template (as registered by the platform's kb-update-on-ingest
+// rule) parses into a TransformResult carrying the create_task fields, so the
+// router can dispatch an Aether POOL task in response to an event.
+func TestTemplateEngine_Transform_CreateTask(t *testing.T) {
+	eng := NewTemplateEngine(100)
+
+	tmpl := "type: create_task\n" +
+		"task_type: memorylayer-task.kb_update\n" +
+		"target_implementation: memorylayer-worker\n" +
+		"workspace: \"{{ .source.workspace }}\"\n" +
+		"payload:\n" +
+		"  workspace_id: \"{{ .source.workspace }}\"\n" +
+		"metadata:\n" +
+		"  bg_kind: kb\n" +
+		"  visibility: workspace\n" +
+		"  title: \"Updating knowledge base\"\n"
+
+	r, err := eng.Transform(tmpl, map[string]any{
+		"source": map[string]any{"workspace": "ws-default"},
+		"input":  map[string]any{"workspace_id": "ws-default"},
+	})
+	if err != nil {
+		t.Fatalf("Transform() error = %v", err)
+	}
+	if r.Type != "create_task" {
+		t.Errorf("Type = %q, want %q", r.Type, "create_task")
+	}
+	if r.TaskType != "memorylayer-task.kb_update" {
+		t.Errorf("TaskType = %q, want %q", r.TaskType, "memorylayer-task.kb_update")
+	}
+	if r.TargetImplementation != "memorylayer-worker" {
+		t.Errorf("TargetImplementation = %q, want %q", r.TargetImplementation, "memorylayer-worker")
+	}
+	if r.Workspace != "ws-default" {
+		t.Errorf("Workspace = %q, want %q", r.Workspace, "ws-default")
+	}
+	if r.Metadata["bg_kind"] != "kb" {
+		t.Errorf("Metadata[bg_kind] = %q, want %q", r.Metadata["bg_kind"], "kb")
+	}
+	payload, ok := r.Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("Payload type = %T, want map[string]any", r.Payload)
+	}
+	if payload["workspace_id"] != "ws-default" {
+		t.Errorf("Payload[workspace_id] = %v, want %q", payload["workspace_id"], "ws-default")
+	}
+}
+
 func TestTemplateEngine_Caching(t *testing.T) {
 	eng := NewTemplateEngine(100)
 

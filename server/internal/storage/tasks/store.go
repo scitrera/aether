@@ -32,6 +32,11 @@ import (
 	"time"
 )
 
+// ReconcileErrorMessage is the error_message stamped on orchestrated_task_queue
+// rows retired by ReconcileOrphanedQueueEntries. Exported so the reconcile sweep
+// and its tests share a single canonical string.
+const ReconcileErrorMessage = "reconciled: task terminal or missing"
+
 // StoreTx is a backend-agnostic transaction handle for the tasks domain.
 // Each implementation (postgres, sqlite) returns its own concrete type from
 // BeginTx; the concrete type wraps a *sql.Tx internally and is recovered via
@@ -112,6 +117,13 @@ type Store interface {
 	// StartTaskWithAgent is StartTask plus a write to target_agent_id so the
 	// task can be reconciled if the orchestrated agent disconnects later.
 	StartTaskWithAgent(ctx context.Context, taskID, agentIdentity string) error
+
+	// ClaimTask transitions a task into running when claimed by its assignee.
+	// Unlike StartTask, it additionally accepts a pending source state so a
+	// per-turn task can be claimed straight out of the queue. Only stamps
+	// started_at on the first transition; running → running is a no-op for
+	// that timestamp (idempotent for re-claim / multi-tab scenarios).
+	ClaimTask(ctx context.Context, taskID string) error
 
 	// CompleteTask marks a task as completed and stamps completed_at.
 	CompleteTask(ctx context.Context, taskID string) error
@@ -332,7 +344,7 @@ type Store interface {
 	// postgres, the row INSERT fires a LISTEN/NOTIFY trigger that wakes
 	// orchestrators immediately; on sqlite, the polling dispatcher picks
 	// the row up on its next scan.
-	InsertQueueEntry(ctx context.Context, queueID, taskID, targetImplementation, workspace, profile string, launchParamsJSON []byte) error
+	InsertQueueEntry(ctx context.Context, queueID, taskID, targetImplementation, workspace, profile string, launchParamsJSON []byte, priority int) error
 
 	// PollPendingQueueEntries returns up to limit orchestrated_task_queue
 	// rows that are pending and eligible for dispatch (next_retry_at is
@@ -378,6 +390,19 @@ type Store interface {
 	// the given taskID as failed. Only transitions pending/claimed rows.
 	// Idempotent.
 	FailQueueEntryByTaskID(ctx context.Context, taskID, errorMsg string) error
+
+	// ReconcileOrphanedQueueEntries retires (status='failed', error_message=
+	// ReconcileErrorMessage, completed_at stamped) every orchestrated_task_queue
+	// row still in pending/claimed status whose task_id is NOT present in the
+	// tasks table with a NON-terminal status (i.e. the task is terminal —
+	// cancelled/completed/failed/rejected/dlq — or has been purged). This is the
+	// dispatcher-independent sweep that clears queue rows orphaned when a task
+	// went terminal (or was purged) without its best-effort, dispatcher-gated
+	// retire firing, so the polling dispatcher stops polling ghosts forever.
+	// Returns the number of rows retired. No-op-safe in clustered/JetStream mode
+	// (the SQL orchestrated_task_queue holds no rows there). The canonical
+	// non-terminal status set is derived from NonTerminalStatuses().
+	ReconcileOrphanedQueueEntries(ctx context.Context) (int64, error)
 
 	// =========================================================================
 	// Disconnect tracking

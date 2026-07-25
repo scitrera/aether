@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
-	"github.com/scitrera/aether/internal/testutil"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/testutil"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 func setupTestDB(t *testing.T) (*sql.DB, func()) {

@@ -5,7 +5,9 @@ This module provides async versions of all client types for use in asyncio appli
 """
 import asyncio
 import logging
+import os
 import random
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Callable, Optional, Dict, List, Awaitable, Union
@@ -25,11 +27,13 @@ from ._common import (
     create_service_init,
     create_topic_agent,
     create_topic_service,
+    SERVICE_WILDCARD,
     create_topic_task,
     create_topic_user,
     create_topic_global_agents,
     create_topic_global_users,
     create_topic_user_workspace,
+    create_topic_user_broadcast,
     SELF_ASSIGN,
     TARGETED,
     POOL,
@@ -73,6 +77,88 @@ ProgressCallback = Union[Callable[[aether_pb2.ProgressUpdate], None],
 Callable[[aether_pb2.ProgressUpdate], Awaitable[None]]]
 ConnectCallback = Union[Callable[[], None], Callable[[], Awaitable[None]]]
 DisconnectCallback = Union[Callable[[str], None], Callable[[str], Awaitable[None]]]
+
+
+# ---------------------------------------------------------------------------
+# gRPC keepalive (silent-drop detection)
+# ---------------------------------------------------------------------------
+# Without keepalive, a SILENT TCP drop (e.g. a hard gateway pod kill that never
+# sends RST/FIN, or a stateful firewall/LB that forgets the connection) is never
+# observed by the client: the bidi receive loop blocks forever on a half-open
+# socket and ``auto_reconnect`` never fires because no error is ever raised.
+# HTTP/2 PING keepalive forces the transport to probe the peer on an interval;
+# if no PING ACK arrives within the timeout, grpc fails the call with
+# UNAVAILABLE, which surfaces as a recoverable error and lets the reconnect
+# loop re-establish the stream.
+#
+# Server policy (gateway/aetherlite KeepaliveEnforcementPolicy): MinTime=10s,
+# PermitWithoutStream=false. We MUST NOT ping faster than the server's MinTime
+# or it will GOAWAY us with "too_many_pings". The defaults below match the
+# server's own ServerParameters cadence (Time=30s / Timeout=10s) with a 30s
+# minimum ping floor, leaving comfortable headroom above the 10s MinTime.
+#
+# All values are env-overridable so they can be tuned per-deployment without a
+# code change (e.g. tighten for flaky networks). Env vars take precedence over
+# the constructor default only when the constructor kwarg is left at its
+# sentinel; see ``_resolve_keepalive_options``.
+_DEFAULT_KEEPALIVE_TIME_MS = 30000
+_DEFAULT_KEEPALIVE_TIMEOUT_MS = 10000
+_DEFAULT_KEEPALIVE_PERMIT_WITHOUT_CALLS = 1
+_DEFAULT_HTTP2_MAX_PINGS_WITHOUT_DATA = 0  # 0 = unlimited (long-lived idle stream)
+_DEFAULT_HTTP2_MIN_PING_INTERVAL_WITHOUT_DATA_MS = 30000
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an int from the environment, falling back to ``default``."""
+    import os
+
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid int for %s=%r; using default %d", name, raw, default)
+        return default
+
+
+def _resolve_keepalive_options(
+        keepalive_time_ms: Optional[int] = None,
+        keepalive_timeout_ms: Optional[int] = None,
+        keepalive_permit_without_calls: Optional[int] = None,
+        http2_max_pings_without_data: Optional[int] = None,
+        http2_min_ping_interval_without_data_ms: Optional[int] = None,
+) -> list:
+    """Build the gRPC channel ``options`` list for keepalive.
+
+    Resolution order per option: explicit constructor arg (non-None) >
+    environment variable (``AETHER_GRPC_KEEPALIVE_*``) > module default.
+
+    Returns a list of (key, value) tuples suitable for ``options=`` on both
+    ``grpc.aio.secure_channel`` and ``grpc.aio.insecure_channel``.
+    """
+    time_ms = keepalive_time_ms if keepalive_time_ms is not None else _env_int(
+        "AETHER_GRPC_KEEPALIVE_TIME_MS", _DEFAULT_KEEPALIVE_TIME_MS)
+    timeout_ms = keepalive_timeout_ms if keepalive_timeout_ms is not None else _env_int(
+        "AETHER_GRPC_KEEPALIVE_TIMEOUT_MS", _DEFAULT_KEEPALIVE_TIMEOUT_MS)
+    permit = keepalive_permit_without_calls if keepalive_permit_without_calls is not None else _env_int(
+        "AETHER_GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS", _DEFAULT_KEEPALIVE_PERMIT_WITHOUT_CALLS)
+    max_pings = http2_max_pings_without_data if http2_max_pings_without_data is not None else _env_int(
+        "AETHER_GRPC_HTTP2_MAX_PINGS_WITHOUT_DATA", _DEFAULT_HTTP2_MAX_PINGS_WITHOUT_DATA)
+    min_ping_ms = (http2_min_ping_interval_without_data_ms
+                   if http2_min_ping_interval_without_data_ms is not None
+                   else _env_int("AETHER_GRPC_HTTP2_MIN_PING_INTERVAL_WITHOUT_DATA_MS",
+                                 _DEFAULT_HTTP2_MIN_PING_INTERVAL_WITHOUT_DATA_MS))
+    return [
+        ("grpc.keepalive_time_ms", time_ms),
+        ("grpc.keepalive_timeout_ms", timeout_ms),
+        ("grpc.keepalive_permit_without_calls", permit),
+        ("grpc.http2.max_pings_without_data", max_pings),
+        # Client-side floor between pings when the stream has no in-flight data.
+        # Kept >= the server's MinTime (10s) so we never trip "too_many_pings".
+        ("grpc.http2.min_time_between_pings_ms", min_ping_ms),
+        ("grpc.http2.min_ping_interval_without_data_ms", min_ping_ms),
+    ]
 
 
 def _principal_ref(principal_type: str, principal_id: str) -> aether_pb2.PrincipalRef:
@@ -119,10 +205,11 @@ _PRINCIPAL_TYPE_FROM_STRING = {
 
 def _principal_type_from_string(t: str) -> "aether_pb2.PrincipalType":
     return _PRINCIPAL_TYPE_FROM_STRING.get((t or "").lower(),
-                                            aether_pb2.PrincipalType.PRINCIPAL_TYPE_UNSPECIFIED)
+                                           aether_pb2.PrincipalType.PRINCIPAL_TYPE_UNSPECIFIED)
 
 
-def _authority_resource_scope_entries(resource_scope: Optional[Dict[str, List[str]]]) -> List[aether_pb2.ACLAuthorityGrantResourceScopeEntry]:
+def _authority_resource_scope_entries(resource_scope: Optional[Dict[str, List[str]]]) -> List[
+    aether_pb2.ACLAuthorityGrantResourceScopeEntry]:
     if not resource_scope:
         return []
 
@@ -173,7 +260,12 @@ class BaseAsyncAetherClient:
                  tls_client_cert: Optional[bytes] = None,
                  tls_client_cert_path: Optional[str] = None,
                  tls_client_key: Optional[bytes] = None,
-                 tls_client_key_path: Optional[str] = None):
+                 tls_client_key_path: Optional[str] = None,
+                 keepalive_time_ms: Optional[int] = None,
+                 keepalive_timeout_ms: Optional[int] = None,
+                 keepalive_permit_without_calls: Optional[int] = None,
+                 http2_max_pings_without_data: Optional[int] = None,
+                 http2_min_ping_interval_without_data_ms: Optional[int] = None):
         """
         Initialize the base async client.
 
@@ -190,6 +282,17 @@ class BaseAsyncAetherClient:
             tls_client_cert_path: Path to client certificate file (alternative to tls_client_cert)
             tls_client_key: Client private key bytes for mTLS (optional)
             tls_client_key_path: Path to client private key file (alternative to tls_client_key)
+            keepalive_time_ms: HTTP/2 PING interval in ms (default env/30000). Drives
+                silent-drop detection — see ``_resolve_keepalive_options``.
+            keepalive_timeout_ms: Time to wait for a PING ACK before failing the
+                connection (default env/10000).
+            keepalive_permit_without_calls: 1 to keep pinging when no RPC is in
+                flight, 0 to only ping during active calls (default env/1).
+            http2_max_pings_without_data: Max pings allowed without sending data;
+                0 = unlimited (default env/0).
+            http2_min_ping_interval_without_data_ms: Client-side floor between
+                pings when no data is in flight; kept >= the gateway's 10s MinTime
+                to avoid "too_many_pings" GOAWAY (default env/30000).
         """
         self.target: Optional[str] = None
         self.channel: Optional[grpc_aio.Channel] = None
@@ -216,10 +319,35 @@ class BaseAsyncAetherClient:
 
         # Retry configuration
         self.max_retries = max_retries
+        # AETHER_MAX_RECONNECT_ATTEMPTS overrides the reconnect cap fleet-wide via
+        # env (gitops-friendly, no per-call-site change): 0 = retry forever so a
+        # long-lived service survives an Aether-gateway roll without a manual
+        # rollout-restart. Capped exponential backoff (max_backoff) still applies,
+        # and the initial connect() is unaffected (it fails fast at startup).
+        _env_max_retries = os.environ.get("AETHER_MAX_RECONNECT_ATTEMPTS")
+        if _env_max_retries:
+            try:
+                self.max_retries = int(_env_max_retries)
+            except ValueError:
+                logger.warning(
+                    "ignoring non-integer AETHER_MAX_RECONNECT_ATTEMPTS=%r",
+                    _env_max_retries,
+                )
         self.initial_backoff = initial_backoff
         self.max_backoff = max_backoff
         self.backoff_multiplier = backoff_multiplier
         self.auto_reconnect = auto_reconnect
+
+        # gRPC keepalive options (silent-drop detection). Resolved once here so
+        # every (re)connect — secure or insecure — uses the same channel
+        # options. See _resolve_keepalive_options for the resolution order.
+        self._channel_options = _resolve_keepalive_options(
+            keepalive_time_ms=keepalive_time_ms,
+            keepalive_timeout_ms=keepalive_timeout_ms,
+            keepalive_permit_without_calls=keepalive_permit_without_calls,
+            http2_max_pings_without_data=http2_max_pings_without_data,
+            http2_min_ping_interval_without_data_ms=http2_min_ping_interval_without_data_ms,
+        )
 
         # Message callbacks (can be sync or async functions)
         self.on_message: Optional[MessageCallback] = None
@@ -257,6 +385,10 @@ class BaseAsyncAetherClient:
         self._reconnecting = False
         self._reconnect_attempt = 0
         self._connection_confirmed = False
+        # Monotonic timestamp of the last CONFIRMED connect (set on every
+        # (re)connect). Powers connection_healthy() for a lenient, connection-
+        # gated liveness probe: live now, or down-but-recently-up within grace.
+        self._last_connected_at: Optional[float] = None
         self._connection_generation: int = 0
         self._session_id: Optional[str] = None
         self._init_msg: Optional[aether_pb2.InitConnection] = None
@@ -310,6 +442,29 @@ class BaseAsyncAetherClient:
     @property
     def is_running(self) -> bool:
         return not self._stop_event.is_set() or self._reconnecting
+
+    @property
+    def is_connected(self) -> bool:
+        """True while a CONFIRMED gateway stream is live (False during the gap
+        between a drop and a successful reconnect, and after close())."""
+        return self._connection_confirmed
+
+    def connection_healthy(self, grace_seconds: float = 90.0) -> bool:
+        """Lenient, connection-gated health signal for a k8s liveness probe.
+
+        Returns True when the gateway stream is live now, OR when it dropped but
+        was confirmed-up within ``grace_seconds`` (a reconnect is in flight —
+        max_retries=0 retries forever with capped backoff, so a normal gateway
+        roll heals well inside the grace and never trips the probe). Returns
+        False only when the connection has been down longer than the grace
+        (a genuinely stuck/unreachable gateway), so the probe restarts the pod.
+        Before the first successful connect it returns True (startup grace; the
+        initial connect()'s own failure path governs boot)."""
+        if self._connection_confirmed:
+            return True
+        if self._last_connected_at is None:
+            return True
+        return (time.monotonic() - self._last_connected_at) < grace_seconds
 
     def negotiated_extensions(self) -> List[str]:
         """
@@ -483,6 +638,7 @@ class BaseAsyncAetherClient:
                 # Connection confirmed when we receive first response from server
                 if not self._connection_confirmed:
                     self._connection_confirmed = True
+                    self._last_connected_at = time.monotonic()
                     if self._reconnecting:
                         logger.info("Reconnected to %s", self.target)
                     else:
@@ -923,11 +1079,14 @@ class BaseAsyncAetherClient:
 
     async def _do_connect(self, init_msg: aether_pb2.InitConnection, target: str):
         """Internal method to establish connection (no retry logic)."""
+        # Pass keepalive options to BOTH channel builders so silent TCP drops
+        # are detected regardless of TLS. self._channel_options is resolved in
+        # __init__ (env-overridable).
         if self.tls_enabled:
             credentials = self._build_tls_credentials()
-            self.channel = grpc_aio.secure_channel(target, credentials)
+            self.channel = grpc_aio.secure_channel(target, credentials, options=self._channel_options)
         else:
-            self.channel = grpc_aio.insecure_channel(target)
+            self.channel = grpc_aio.insecure_channel(target, options=self._channel_options)
         self.stub = aether_pb2_grpc.AetherGatewayStub(self.channel)
 
         # Fresh event for this connection's request generator. Must be
@@ -1388,7 +1547,6 @@ class BaseAsyncAetherClient:
             op=aether_pb2.KVOperation.INCREMENT_IF,
             scope=_scope_to_proto(scope),
             key=key,
-            int_value=delta,
             delta_value=int(delta),
             guard_value=ceiling,
             user_id=user_id,
@@ -1431,7 +1589,6 @@ class BaseAsyncAetherClient:
             op=aether_pb2.KVOperation.DECREMENT_IF,
             scope=_scope_to_proto(scope),
             key=key,
-            int_value=delta,
             delta_value=int(delta),
             guard_value=floor,
             user_id=user_id,
@@ -1460,7 +1617,9 @@ class BaseAsyncAetherClient:
                           assignment_mode: int = SELF_ASSIGN,
                           authorization: Optional[aether_pb2.AuthorizationContext] = None,
                           task_class: int = 0,
-                          context_id: str = "") -> None:
+                          context_id: str = "",
+                          priority: int = 0,
+                          retry_policy: Optional[aether_pb2.RetryPolicy] = None) -> None:
         """
         Create a new task.
 
@@ -1495,6 +1654,8 @@ class BaseAsyncAetherClient:
             authorization=authorization,
             task_class=task_class,  # type: ignore[arg-type]
             context_id=context_id,
+            priority=priority,  # type: ignore[arg-type]
+            retry_policy=retry_policy,
         )
         await self._request_queue.put(aether_pb2.UpstreamMessage(create_task=req))
 
@@ -1509,6 +1670,8 @@ class BaseAsyncAetherClient:
                                target_identity: str = "",
                                task_class: int = 0,
                                context_id: str = "",
+                               priority: int = 0,
+                               retry_policy: Optional[aether_pb2.RetryPolicy] = None,
                                timeout: float = 10.0) -> Optional[aether_pb2.CreateTaskResponse]:
         """
         Create a new task and wait for the server's response containing the task_id.
@@ -1558,6 +1721,8 @@ class BaseAsyncAetherClient:
             task_class=task_class,  # type: ignore[arg-type]
             context_id=context_id,
             request_id=request_id,
+            priority=priority,  # type: ignore[arg-type]
+            retry_policy=retry_policy,
         )
         return await self._send_sync_op(
             aether_pb2.UpstreamMessage(create_task=req), request_id, timeout,
@@ -1996,6 +2161,33 @@ class BaseAsyncAetherClient:
             op=aether_pb2.TaskOperation.CANCEL,
             task_id=task_id,
             reason=reason,
+            request_id=request_id,
+        )
+        return await self._send_sync_op(
+            aether_pb2.UpstreamMessage(task_op=op),
+            request_id, timeout,
+        )
+
+    async def claim_task(self, task_id: str, *,
+                         timeout: float = 5.0) -> Optional[aether_pb2.TaskOperationResponse]:
+        """
+        Claim a pending/assigned task, transitioning it to RUNNING.
+
+        Used by the assignee (or the task's on-behalf-of subject) to start a
+        task — e.g. a per-turn chat_message task claimed straight out of the
+        queue. Idempotent: re-claiming a running task succeeds without error.
+
+        Args:
+            task_id: The task ID to claim
+            timeout: Timeout in seconds
+
+        Returns:
+            TaskOperationResponse or None if timeout
+        """
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.TaskOperation(
+            op=aether_pb2.TaskOperation.CLAIM,
+            task_id=task_id,
             request_id=request_id,
         )
         return await self._send_sync_op(
@@ -3209,17 +3401,17 @@ class BaseAsyncAetherClient:
     # =========================================================================
 
     async def resolve_authority(
-        self,
-        grant_id: str,
-        subject_type: str,
-        subject_id: str,
-        *,
-        actor_type: Optional[str] = None,
-        actor_id: Optional[str] = None,
-        audience_type: str = "",
-        audience_id: str = "",
-        request_id: Optional[str] = None,
-        timeout: Optional[float] = None,
+            self,
+            grant_id: str,
+            subject_type: str,
+            subject_id: str,
+            *,
+            actor_type: Optional[str] = None,
+            actor_id: Optional[str] = None,
+            audience_type: str = "",
+            audience_id: str = "",
+            request_id: Optional[str] = None,
+            timeout: Optional[float] = None,
     ) -> Optional[aether_pb2.ResolveAuthorityResponse]:
         """Resolve a runtime authority grant for a (subject, actor) pair.
 
@@ -3262,12 +3454,12 @@ class BaseAsyncAetherClient:
         )
 
     async def connection_status(
-        self,
-        principal_type: str,
-        principal_id: str,
-        *,
-        request_id: Optional[str] = None,
-        timeout: Optional[float] = None,
+            self,
+            principal_type: str,
+            principal_id: str,
+            *,
+            request_id: Optional[str] = None,
+            timeout: Optional[float] = None,
     ) -> Optional[aether_pb2.ConnectionStatusResponse]:
         """Query connection status for a principal.
 
@@ -3851,7 +4043,7 @@ class AsyncAgentClient(BaseAsyncAetherClient):
             payload, message_type=message_type, authorization=authorization,
         )
 
-    async def send_message_to_service(self, implementation: str, specifier: str,
+    async def send_message_to_service(self, implementation: str, specifier,
                                       payload: bytes, message_type: int = aether_pb2.OPAQUE,
                                       authorization: Optional[aether_pb2.AuthorizationContext] = None):
         """Send a message to a service principal (``sv::{impl}::{specifier}``).
@@ -3860,6 +4052,12 @@ class AsyncAgentClient(BaseAsyncAetherClient):
         traffic on the service topic to the registered service connection
         (typically a proxy-sidecar relay+terminator). Useful when an agent
         replies to an RPC originated from a service identity.
+
+        ``specifier`` accepts a concrete ``str`` (canonical 3-segment
+        target; an empty string stays concrete as ``sv::{impl}::``) or the
+        :data:`SERVICE_WILDCARD` sentinel for the bare 2-segment
+        ``sv::{impl}`` wildcard the gateway resolves to any registered
+        instance of that implementation.
         """
         await self._send_message(
             create_topic_service(implementation, specifier),
@@ -3977,7 +4175,8 @@ class AsyncServiceClient(BaseAsyncAetherClient):
                  tls_client_cert_path: Optional[str] = None,
                  tls_client_key: Optional[bytes] = None,
                  tls_client_key_path: Optional[str] = None,
-                 extensions: Optional[List[aether_pb2.ExtensionDeclaration]] = None):
+                 extensions: Optional[List[aether_pb2.ExtensionDeclaration]] = None,
+                 consumes_pool_tasks: bool = True):
         if not implementation:
             raise InvalidArgumentError(
                 message="Service principal requires an implementation identifier",
@@ -4001,7 +4200,8 @@ class AsyncServiceClient(BaseAsyncAetherClient):
         self.implementation = implementation
         self.specifier = specifier
         self.init = create_service_init(implementation, specifier, credentials,
-                                        extensions=extensions)
+                                        extensions=extensions,
+                                        no_pool_consumer=not consumes_pool_tasks)
 
     async def connect(self, target: str = "localhost:50051"):
         await self._connect(self.init, target)
@@ -4019,10 +4219,17 @@ class AsyncServiceClient(BaseAsyncAetherClient):
             payload, message_type=message_type, authorization=authorization,
         )
 
-    async def send_message_to_service(self, implementation: str, specifier: str,
+    async def send_message_to_service(self, implementation: str, specifier,
                                       payload: bytes, message_type: int = aether_pb2.OPAQUE,
                                       authorization: Optional[aether_pb2.AuthorizationContext] = None):
-        """Send a message to another service principal."""
+        """Send a message to another service principal.
+
+        ``specifier`` accepts a concrete ``str`` (canonical 3-segment
+        target; an empty string stays concrete as ``sv::{impl}::``) or the
+        :data:`SERVICE_WILDCARD` sentinel for the bare 2-segment
+        ``sv::{impl}`` wildcard the gateway resolves to any registered
+        instance of that implementation.
+        """
         await self._send_message(
             create_topic_service(implementation, specifier),
             payload, message_type=message_type, authorization=authorization,
@@ -4051,6 +4258,24 @@ class AsyncServiceClient(BaseAsyncAetherClient):
             create_topic_user_workspace(user_id, workspace),
             payload, message_type=message_type, authorization=authorization,
         )
+
+    async def send_message_to_user_broadcast(self, user_id: str, payload: bytes,
+                                             message_type: int = aether_pb2.OPAQUE,
+                                             authorization: Optional[aether_pb2.AuthorizationContext] = None):
+        """Send a message to every one of a user's windows (uu::{user_id}).
+
+        Workspace-agnostic, non-progress channel for platform->user
+        notifications; the intended way for a service principal to push an
+        opaque update to a user without abusing the progress channel.
+        """
+        await self._send_message(
+            create_topic_user_broadcast(user_id),
+            payload, message_type=message_type, authorization=authorization,
+        )
+
+    async def send_event(self, payload: bytes):
+        """Send an event to the workflow engine (``event::*`` plane)."""
+        await self._send_message("event::*", payload, message_type=aether_pb2.EVENT)
 
     async def send_metric(self, metric):
         """Send a metric to the metrics bridge.
@@ -4432,6 +4657,20 @@ class AsyncWorkflowEngineClient(BaseAsyncAetherClient):
         """Send a message to a user's workspace-scoped topic."""
         await self._send_message(
             create_topic_user_workspace(user_id, workspace),
+            payload, message_type=message_type, authorization=authorization,
+        )
+
+    async def send_message_to_user_broadcast(self, user_id: str, payload: bytes,
+                                             message_type: int = aether_pb2.OPAQUE,
+                                             authorization: Optional[aether_pb2.AuthorizationContext] = None):
+        """Send a message to every one of a user's windows (uu::{user_id}).
+
+        Workspace-agnostic, non-progress channel for platform->user
+        notifications; reaches all of the user's windows regardless of the
+        workspace each is viewing.
+        """
+        await self._send_message(
+            create_topic_user_broadcast(user_id),
             payload, message_type=message_type, authorization=authorization,
         )
 

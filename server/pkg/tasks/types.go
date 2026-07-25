@@ -100,6 +100,52 @@ const (
 	AssignmentModeBroadcast  AssignmentMode = "broadcast"   // Sent to all matching agents
 )
 
+// TaskPriority is the dispatch-priority weight stored in the tasks.priority
+// column. It mirrors the proto TaskPriority enum: the numeric value doubles as
+// the descending sort key, so higher = dispatched first. Values are spaced so
+// new levels can be inserted later without a data migration.
+type TaskPriority int
+
+const (
+	PriorityUnspecified TaskPriority = 0  // Normalized to PriorityNormal on write.
+	PriorityXLow        TaskPriority = 10 // Lowest; best-effort.
+	PriorityLow         TaskPriority = 20 // Below normal.
+	PriorityNormal      TaskPriority = 30 // Default.
+	PriorityHigh        TaskPriority = 40 // Above normal.
+	PriorityPreempt     TaskPriority = 50 // Highest; reserved for future preemption.
+)
+
+// Normalize maps the zero/UNSPECIFIED value to PriorityNormal so persisted and
+// compared priorities are always concrete. Other values pass through unchanged
+// (including future unspaced values), preserving forward compatibility.
+func (p TaskPriority) Normalize() TaskPriority {
+	if p == PriorityUnspecified {
+		return PriorityNormal
+	}
+	return p
+}
+
+// String renders the canonical level name, falling back to the numeric weight
+// for any value that is not one of the named levels.
+func (p TaskPriority) String() string {
+	switch p {
+	case PriorityUnspecified:
+		return "unspecified"
+	case PriorityXLow:
+		return "xlow"
+	case PriorityLow:
+		return "low"
+	case PriorityNormal:
+		return "normal"
+	case PriorityHigh:
+		return "high"
+	case PriorityPreempt:
+		return "preempt"
+	default:
+		return fmt.Sprintf("priority(%d)", int(p))
+	}
+}
+
 // TaskAuthorityInfo captures the on-behalf-of authority lineage currently bound
 // to a task. These fields mirror the persisted grant lineage needed for
 // renewal, reassignment, audit correlation, and lifecycle cleanup.
@@ -128,6 +174,14 @@ const (
 	TimerTypeScheduleToClose TimerType = "schedule_to_close"
 	TimerTypeRetry           TimerType = "retry"
 )
+
+// TaskCompletionConfig is the persisted "feed B" config: emit a domain event
+// onto event::* when the task reaches a (selected) terminal status.
+type TaskCompletionConfig struct {
+	Enabled    bool         `json:"enabled"`
+	EventName  string       `json:"event_name,omitempty"`
+	OnStatuses []TaskStatus `json:"on_statuses,omitempty"`
+}
 
 // Task represents a unified task record in the database
 // This type supports both messaging delivery and orchestration patterns
@@ -173,6 +227,12 @@ type Task struct {
 	MaxRetries  int        `json:"max_retries"`
 	NextRetryAt *time.Time `json:"next_retry_at,omitempty"`
 
+	// RetryPolicy, when non-nil, is honored by FailTask: the store computes
+	// next_retry_at from the policy and re-pends the task (up to
+	// MaxAttempts). Persisted as JSON in retry_policy_json. Workers that
+	// need different semantics call RescheduleTaskAt explicitly.
+	RetryPolicy *RetryPolicy `json:"retry_policy,omitempty"`
+
 	// Error tracking
 	ErrorMessage string `json:"error_message,omitempty"`
 	ErrorType    string `json:"error_type,omitempty"`
@@ -211,6 +271,17 @@ type Task struct {
 	ContextID string `json:"context_id,omitempty"`
 	// PausedAt records when the task entered a waiting/hibernated state.
 	PausedAt *time.Time `json:"paused_at,omitempty"`
+
+	// CorrelationID is the fan-out/fan-in correlation identity (distinct from
+	// TaskID): the barrier/group id a workflow join matches against.
+	CorrelationID string `json:"correlation_id,omitempty"`
+	// RootTaskID is the flow-root task id propagated from a task's spawner. A
+	// task created without a provided root is its own flow root.
+	RootTaskID string `json:"root_task_id,omitempty"`
+	// CompletionEvent, when non-nil, opts the task into "feed B": the server
+	// emits a domain event onto event::* when the task reaches a (selected)
+	// terminal status.
+	CompletionEvent *TaskCompletionConfig `json:"completion_event,omitempty"`
 
 	// Messaging support (for delivery tasks)
 	TargetTopic string `json:"target_topic,omitempty"`
@@ -332,6 +403,8 @@ type TaskFilter struct {
 	ExcludeTaskClasses   []int32 // any task whose TaskClass is in this list is omitted
 	// Phase 1: A2A-aligned filter fields.
 	ContextID       string       // Filter by client-minted session identifier; empty = no filter
+	CorrelationID   string       // Filter by fan-out/fan-in correlation identity; empty = no filter
+	RootTaskID      string       // Filter by flow-root task id; empty = no filter
 	ExcludeStatuses []TaskStatus // Omit tasks whose status is in this list
 	Limit           int
 	Offset          int
@@ -359,6 +432,18 @@ type TaskFilter struct {
 	// task tree below the named parent. False (default) preserves the
 	// existing direct-children-only behavior.
 	IncludeDescendants bool
+
+	// Priority filters to tasks whose stored priority equals this exact level.
+	// 0 (UNSPECIFIED) = no filter.
+	Priority int32
+	// MinPriority filters to tasks whose stored priority is >= this level
+	// (e.g. PriorityHigh returns HIGH and PREEMPT). 0 = no filter.
+	MinPriority int32
+	// OrderByPriority, when true, orders results by priority DESC, created_at
+	// ASC (highest priority first, FIFO within a level) instead of the default
+	// created_at DESC. Used by the dispatch-selection paths; general listings
+	// keep newest-first.
+	OrderByPriority bool
 }
 
 // =============================================================================
@@ -372,6 +457,27 @@ var terminalStatuses = map[TaskStatus]bool{
 	TaskStatusCancelled: true,
 	TaskStatusDLQ:       true,
 	TaskStatusRejected:  true,
+}
+
+// allStatuses enumerates every defined TaskStatus in declaration order. It is
+// the single master list from which the non-terminal set is derived, so adding
+// a new status constant only requires appending it here (and to terminalStatuses
+// if it is terminal) — the reconcile sweeps that key off NonTerminalStatuses
+// then stay correct automatically.
+var allStatuses = []TaskStatus{
+	TaskStatusPending,
+	TaskStatusAssigned,
+	TaskStatusStarting,
+	TaskStatusRunning,
+	TaskStatusCompleted,
+	TaskStatusFailed,
+	TaskStatusCancelled,
+	TaskStatusDLQ,
+	TaskStatusWaitingInput,
+	TaskStatusWaitingAuthority,
+	TaskStatusWaitingDependency,
+	TaskStatusHibernated,
+	TaskStatusRejected,
 }
 
 // waitingStatuses is the set of paused states.
@@ -390,6 +496,22 @@ func IsTerminal(status TaskStatus) bool {
 // IsWaiting reports whether status is a paused/waiting state.
 func IsWaiting(status TaskStatus) bool {
 	return waitingStatuses[status]
+}
+
+// NonTerminalStatuses returns every status for which IsTerminal is false, in
+// declaration order. This is the canonical "task is still live" set — a task in
+// any of these states may yet transition, so anything keyed off it (e.g. the
+// orphaned orchestrated_task_queue reconcile sweep, which retires queue rows
+// whose task is terminal or missing) stays consistent with the transition
+// model. Derived from terminalStatuses so it cannot drift.
+func NonTerminalStatuses() []TaskStatus {
+	out := make([]TaskStatus, 0, len(allStatuses))
+	for _, s := range allStatuses {
+		if !terminalStatuses[s] {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // validTransitions defines the allowed from→to status transitions.

@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // AnonymousCertCN is the CN used for anonymous mTLS certificates that provide
@@ -51,6 +51,22 @@ func (m MTLSMode) IsValid() bool {
 // String returns the string representation of the MTLSMode
 func (m MTLSMode) String() string {
 	return string(m)
+}
+
+// ParseMTLSMode converts a config string into an MTLSMode, defaulting to
+// MTLSModeStrict when the string is empty and rejecting unrecognized values.
+// Both the production gateway (cmd/gateway) and aetherlite (cmd/aetherlite)
+// route their config through this helper so the two binaries interpret the
+// same config identically (notably honouring "semi-strict").
+func ParseMTLSMode(s string) (MTLSMode, error) {
+	if s == "" {
+		return MTLSModeStrict, nil
+	}
+	mode := MTLSMode(s)
+	if !mode.IsValid() {
+		return "", fmt.Errorf("invalid mTLS mode %q (expected: strict, semi-strict, relaxed)", s)
+	}
+	return mode, nil
 }
 
 // ExtractIdentityFromCertificate extracts identity from client certificate CN.

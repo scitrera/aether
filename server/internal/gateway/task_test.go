@@ -18,10 +18,10 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/circuitbreaker"
-	taskssqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/circuitbreaker"
+	taskssqlite "github.com/scitrera/aether/server/internal/storage/tasks/sqlite"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/tasks"
 
 	_ "modernc.org/sqlite"
 )

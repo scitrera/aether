@@ -55,6 +55,8 @@ The following vulnerabilities are tracked but unresolved at the time of the curr
 |---|---|---|
 | [GO-2026-4887](https://pkg.go.dev/vuln/GO-2026-4887) | `github.com/docker/docker` ≤ v28.5.2 | No upstream fix released. Tracking. |
 | [GO-2026-4883](https://pkg.go.dev/vuln/GO-2026-4883) | `github.com/docker/docker` ≤ v28.5.2 | No upstream fix released. Tracking. |
+| [GO-2026-5617](https://pkg.go.dev/vuln/GO-2026-5617) | `github.com/docker/docker` ≤ v28.5.2 | `docker cp` bind-mount redirection race. No upstream fix released. Tracking. |
+| [GO-2026-5668](https://pkg.go.dev/vuln/GO-2026-5668) | `github.com/docker/docker` ≤ v28.5.2 | `docker cp` symlink-swap arbitrary-empty-file race. No upstream fix released. Tracking. |
 
 Mitigation: callers that don't need the Docker orchestrator can build their applications without importing `sdk/go/orchestrators/docker`. We will bump the dependency immediately when upstream ships fixed releases.
 

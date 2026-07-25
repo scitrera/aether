@@ -6,8 +6,9 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/admin"
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/admin"
+	"github.com/scitrera/aether/server/internal/logging"
 )
 
 // handleACLOp processes an ACLOperation from a connected client.
@@ -100,6 +101,23 @@ func (s *GatewayServer) handleACLOp(ctx context.Context, client *ClientSession, 
 			principalID = op.RuleFilter.PrincipalId
 			resourceType = op.RuleFilter.ResourceType
 			resourceID = op.RuleFilter.ResourceId
+		}
+		// RevokeACLAccess deletes by composite (principal+resource) key, but
+		// clients may target a rule by its rule_id (UUID) instead. When a
+		// rule_id is supplied and the RuleFilter is empty, resolve the rule's
+		// composite key from the store first; an explicit, fully-specified
+		// RuleFilter always wins (so callers can override resolution).
+		if op.RuleId != "" && principalType == "" && principalID == "" && resourceType == "" && resourceID == "" {
+			rule, err := s.adminProvider.GetACLRuleByID(ctx, op.RuleId)
+			if err != nil {
+				logging.Logger.Error().Err(err).Str("rule_id", op.RuleId).Msg("handleACLOp: revoke by rule_id lookup failed")
+				sendACLError(client, fmt.Sprintf("ACL rule not found for rule_id %q: %v", op.RuleId, err))
+				return
+			}
+			principalType = rule.PrincipalType
+			principalID = rule.PrincipalID
+			resourceType = rule.ResourceType
+			resourceID = rule.ResourceID
 		}
 		if err := s.adminProvider.RevokeACLAccess(ctx, principalType, principalID, resourceType, resourceID); err != nil {
 			logging.Logger.Error().Err(err).Str("rule_id", op.RuleId).Msg("handleACLOp: revoke access failed")
@@ -238,9 +256,342 @@ func (s *GatewayServer) handleACLOp(ctx context.Context, client *ClientSession, 
 			},
 		})
 
+	case pb.ACLOperation_CREATE_GROUP:
+		if op.GroupRequest == nil {
+			sendACLError(client, "group_request required for CREATE_GROUP")
+			return
+		}
+		g, err := s.adminProvider.CreateACLGroup(ctx, &admin.CreateACLGroupRequest{
+			Name:        op.GroupRequest.Name,
+			Description: op.GroupRequest.Description,
+			CreatedBy:   op.GroupRequest.CreatedBy,
+			Metadata:    protoStringMapToMetadata(op.GroupRequest.Metadata),
+		})
+		if err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, Message: "group created", Group: adminACLGroupToProto(g)})
+
+	case pb.ACLOperation_GET_GROUP:
+		g, err := s.adminProvider.GetACLGroup(ctx, op.Name)
+		if err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, Group: adminACLGroupToProto(g)})
+
+	case pb.ACLOperation_DELETE_GROUP:
+		if err := s.adminProvider.DeleteACLGroup(ctx, op.Name); err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, Message: "group deleted"})
+
+	case pb.ACLOperation_LIST_GROUPS:
+		groups, err := s.adminProvider.ListACLGroups(ctx)
+		if err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		out := make([]*pb.ACLGroupInfo, 0, len(groups))
+		for _, g := range groups {
+			out = append(out, adminACLGroupToProto(g))
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, Groups: out})
+
+	case pb.ACLOperation_ADD_GROUP_MEMBER:
+		if op.MemberRequest == nil {
+			sendACLError(client, "member_request required for ADD_GROUP_MEMBER")
+			return
+		}
+		m, err := s.adminProvider.AddACLGroupMember(ctx, op.Name, &admin.AddACLGroupMemberRequest{
+			MemberType: op.MemberRequest.MemberType,
+			MemberID:   op.MemberRequest.MemberId,
+			GrantedBy:  op.MemberRequest.GrantedBy,
+			ExpiresAt:  unixToTimePtr(op.MemberRequest.ExpiresAt),
+		})
+		if err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, Message: "member added", GroupMembers: []*pb.ACLGroupMemberInfo{adminACLGroupMemberToProto(m)}})
+
+	case pb.ACLOperation_REMOVE_GROUP_MEMBER:
+		if op.Principal == nil {
+			sendACLError(client, "principal required for REMOVE_GROUP_MEMBER")
+			return
+		}
+		if err := s.adminProvider.RemoveACLGroupMember(ctx, op.Name, op.Principal.PrincipalType, op.Principal.PrincipalId); err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, Message: "member removed"})
+
+	case pb.ACLOperation_LIST_GROUP_MEMBERS:
+		members, err := s.adminProvider.ListACLGroupMembers(ctx, op.Name)
+		if err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, GroupMembers: adminACLGroupMembersToProto(members)})
+
+	case pb.ACLOperation_CREATE_ROLE:
+		if op.RoleRequest == nil {
+			sendACLError(client, "role_request required for CREATE_ROLE")
+			return
+		}
+		r, err := s.adminProvider.CreateACLRole(ctx, &admin.CreateACLRoleRequest{
+			Name:        op.RoleRequest.Name,
+			Description: op.RoleRequest.Description,
+			CreatedBy:   op.RoleRequest.CreatedBy,
+			Metadata:    protoStringMapToMetadata(op.RoleRequest.Metadata),
+		})
+		if err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, Message: "role created", Role: adminACLRoleToProto(r)})
+
+	case pb.ACLOperation_GET_ROLE:
+		r, err := s.adminProvider.GetACLRole(ctx, op.Name)
+		if err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, Role: adminACLRoleToProto(r)})
+
+	case pb.ACLOperation_DELETE_ROLE:
+		if err := s.adminProvider.DeleteACLRole(ctx, op.Name); err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, Message: "role deleted"})
+
+	case pb.ACLOperation_LIST_ROLES:
+		roles, err := s.adminProvider.ListACLRoles(ctx)
+		if err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		out := make([]*pb.ACLRoleInfo, 0, len(roles))
+		for _, r := range roles {
+			out = append(out, adminACLRoleToProto(r))
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, Roles: out})
+
+	case pb.ACLOperation_ASSIGN_ROLE:
+		if op.AssignmentRequest == nil {
+			sendACLError(client, "assignment_request required for ASSIGN_ROLE")
+			return
+		}
+		a, err := s.adminProvider.AssignACLRole(ctx, op.Name, &admin.AssignACLRoleRequest{
+			AssigneeType: op.AssignmentRequest.AssigneeType,
+			AssigneeID:   op.AssignmentRequest.AssigneeId,
+			GrantedBy:    op.AssignmentRequest.GrantedBy,
+			ExpiresAt:    unixToTimePtr(op.AssignmentRequest.ExpiresAt),
+		})
+		if err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, Message: "role assigned", RoleAssignments: []*pb.ACLRoleAssignmentInfo{adminACLRoleAssignmentToProto(a)}})
+
+	case pb.ACLOperation_UNASSIGN_ROLE:
+		if op.Principal == nil {
+			sendACLError(client, "principal required for UNASSIGN_ROLE")
+			return
+		}
+		if err := s.adminProvider.UnassignACLRole(ctx, op.Name, op.Principal.PrincipalType, op.Principal.PrincipalId); err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, Message: "role unassigned"})
+
+	case pb.ACLOperation_LIST_ROLE_ASSIGNMENTS:
+		assignments, err := s.adminProvider.ListACLRoleAssignments(ctx, op.Name)
+		if err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, RoleAssignments: adminACLRoleAssignmentsToProto(assignments)})
+
+	case pb.ACLOperation_LIST_PRINCIPAL_GROUPS:
+		if op.Principal == nil {
+			sendACLError(client, "principal required for LIST_PRINCIPAL_GROUPS")
+			return
+		}
+		members, err := s.adminProvider.ListACLPrincipalGroups(ctx, op.Principal.PrincipalType, op.Principal.PrincipalId)
+		if err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, GroupMembers: adminACLGroupMembersToProto(members)})
+
+	case pb.ACLOperation_LIST_PRINCIPAL_ROLES:
+		if op.Principal == nil {
+			sendACLError(client, "principal required for LIST_PRINCIPAL_ROLES")
+			return
+		}
+		assignments, err := s.adminProvider.ListACLPrincipalRoles(ctx, op.Principal.PrincipalType, op.Principal.PrincipalId)
+		if err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, RoleAssignments: adminACLRoleAssignmentsToProto(assignments)})
+
+	case pb.ACLOperation_EXPLAIN_ACCESS:
+		if op.Principal == nil {
+			sendACLError(client, "principal required for EXPLAIN_ACCESS")
+			return
+		}
+		callerType := acl.PrincipalTypeForModel(client.Identity.Type)
+		callerID := client.Identity.CanonicalPrincipalID()
+		exp, err := s.adminProvider.ExplainACLAccess(ctx, op.Principal.PrincipalType, op.Principal.PrincipalId, op.ResourceType, op.ResourceId, int(op.RequiredLevel), callerType, callerID)
+		if err != nil {
+			sendACLError(client, err.Error())
+			return
+		}
+		sendACLResponse(client, &pb.ACLResponse{Success: true, Explanation: adminACLExplanationToProto(exp)})
+
 	default:
 		sendACLError(client, "unknown ACL operation")
 	}
+}
+
+func adminACLExplanationToProto(e *admin.ACLAccessExplanationInfo) *pb.ACLAccessExplanationInfo {
+	if e == nil {
+		return nil
+	}
+	out := &pb.ACLAccessExplanationInfo{
+		Principal:            e.Principal,
+		Subjects:             e.Subjects,
+		Allowed:              e.Allowed,
+		Decision:             e.Decision,
+		EffectiveAccessLevel: int32(e.EffectiveLevel),
+		FallbackApplied:      e.FallbackApplied,
+		Reason:               e.Reason,
+	}
+	for _, c := range e.Contributions {
+		out.Contributions = append(out.Contributions, &pb.ACLAccessContributionInfo{
+			Subject:     c.Subject,
+			RuleId:      c.RuleID,
+			AccessLevel: int32(c.AccessLevel),
+			Resource:    c.Resource,
+			Expired:     c.Expired,
+		})
+	}
+	return out
+}
+
+// sendACLResponse sends a successful ACL response wrapped in a DownstreamMessage.
+func sendACLResponse(client *ClientSession, resp *pb.ACLResponse) {
+	_ = client.SafeSend(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Acl{Acl: resp},
+	})
+}
+
+func unixToTimePtr(ts int64) *time.Time {
+	if ts == 0 {
+		return nil
+	}
+	t := time.Unix(ts, 0)
+	return &t
+}
+
+func unixOf(t *time.Time) int64 {
+	if t == nil || t.IsZero() {
+		return 0
+	}
+	return t.Unix()
+}
+
+func adminACLGroupToProto(g *admin.ACLGroupInfo) *pb.ACLGroupInfo {
+	if g == nil {
+		return nil
+	}
+	var createdAt int64
+	if !g.CreatedAt.IsZero() {
+		createdAt = g.CreatedAt.Unix()
+	}
+	return &pb.ACLGroupInfo{
+		GroupId:     g.GroupID,
+		GroupName:   g.GroupName,
+		Description: g.Description,
+		CreatedBy:   g.CreatedBy,
+		CreatedAt:   createdAt,
+		Metadata:    metadataToProtoStringMap(g.Metadata),
+	}
+}
+
+func adminACLRoleToProto(r *admin.ACLRoleInfo) *pb.ACLRoleInfo {
+	if r == nil {
+		return nil
+	}
+	var createdAt int64
+	if !r.CreatedAt.IsZero() {
+		createdAt = r.CreatedAt.Unix()
+	}
+	return &pb.ACLRoleInfo{
+		RoleId:      r.RoleID,
+		RoleName:    r.RoleName,
+		Description: r.Description,
+		CreatedBy:   r.CreatedBy,
+		CreatedAt:   createdAt,
+		Metadata:    metadataToProtoStringMap(r.Metadata),
+	}
+}
+
+func adminACLGroupMemberToProto(m *admin.ACLGroupMemberInfo) *pb.ACLGroupMemberInfo {
+	if m == nil {
+		return nil
+	}
+	var grantedAt int64
+	if !m.GrantedAt.IsZero() {
+		grantedAt = m.GrantedAt.Unix()
+	}
+	return &pb.ACLGroupMemberInfo{
+		GroupName:  m.GroupName,
+		MemberType: m.MemberType,
+		MemberId:   m.MemberID,
+		GrantedBy:  m.GrantedBy,
+		GrantedAt:  grantedAt,
+		ExpiresAt:  unixOf(m.ExpiresAt),
+	}
+}
+
+func adminACLGroupMembersToProto(members []*admin.ACLGroupMemberInfo) []*pb.ACLGroupMemberInfo {
+	out := make([]*pb.ACLGroupMemberInfo, 0, len(members))
+	for _, m := range members {
+		out = append(out, adminACLGroupMemberToProto(m))
+	}
+	return out
+}
+
+func adminACLRoleAssignmentToProto(a *admin.ACLRoleAssignmentInfo) *pb.ACLRoleAssignmentInfo {
+	if a == nil {
+		return nil
+	}
+	var grantedAt int64
+	if !a.GrantedAt.IsZero() {
+		grantedAt = a.GrantedAt.Unix()
+	}
+	return &pb.ACLRoleAssignmentInfo{
+		RoleName:     a.RoleName,
+		AssigneeType: a.AssigneeType,
+		AssigneeId:   a.AssigneeID,
+		GrantedBy:    a.GrantedBy,
+		GrantedAt:    grantedAt,
+		ExpiresAt:    unixOf(a.ExpiresAt),
+	}
+}
+
+func adminACLRoleAssignmentsToProto(assignments []*admin.ACLRoleAssignmentInfo) []*pb.ACLRoleAssignmentInfo {
+	out := make([]*pb.ACLRoleAssignmentInfo, 0, len(assignments))
+	for _, a := range assignments {
+		out = append(out, adminACLRoleAssignmentToProto(a))
+	}
+	return out
 }
 
 func sendACLError(client *ClientSession, msg string) {

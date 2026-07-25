@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/router"
+	"github.com/scitrera/aether/server/internal/router"
 )
 
 // TestClusterIntegration_MessageRouting_CrossNode publishes a message via the
@@ -78,14 +78,14 @@ func TestClusterIntegration_MessageRouting_CrossNode(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	payload := []byte("cross-node-ping")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scaled(5*time.Second))
 	defer cancel()
 	if err := rA.Publish(ctx, topic, payload); err != nil {
 		t.Fatalf("publish on A: %v", err)
 	}
 
 	// Both subscribers must receive within a generous timeout.
-	timeout := time.After(3 * time.Second)
+	timeout := time.After(scaled(3 * time.Second))
 	receivedB, receivedC := false, false
 	for !receivedB || !receivedC {
 		select {
@@ -137,7 +137,7 @@ func TestClusterIntegration_MessageRouting_OffsetAdvance(t *testing.T) {
 	const secondBatch = 20
 	const durableName = "ag-cluster-offset-test"
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scaled(30*time.Second))
 	defer cancel()
 
 	// Phase 1: publish first batch.
@@ -155,7 +155,7 @@ func TestClusterIntegration_MessageRouting_OffsetAdvance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first subscribe: %v", err)
 	}
-	if !firstMsgs.waitForN(firstBatch, 15*time.Second) {
+	if !firstMsgs.waitForN(firstBatch, scaled(15*time.Second)) {
 		cancelB1()
 		t.Fatalf("phase-1 timeout: received %d of %d", firstMsgs.received(), firstBatch)
 	}
@@ -185,7 +185,7 @@ func TestClusterIntegration_MessageRouting_OffsetAdvance(t *testing.T) {
 	}
 	defer cancelB2()
 
-	if !secondMsgs.waitForN(secondBatch, 10*time.Second) {
+	if !secondMsgs.waitForN(secondBatch, scaled(10*time.Second)) {
 		t.Fatalf("phase-2 timeout: received %d of %d", secondMsgs.received(), secondBatch)
 	}
 

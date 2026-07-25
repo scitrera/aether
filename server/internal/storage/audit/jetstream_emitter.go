@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/scitrera/aether/internal/router/natscodec"
+	"github.com/scitrera/aether/server/internal/router/natscodec"
 )
 
 // auditStreamName is the JetStream stream name for audit events.

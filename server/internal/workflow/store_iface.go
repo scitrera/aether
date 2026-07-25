@@ -71,6 +71,16 @@ type WorkflowStore interface {
 	UpdateScheduleAfterFire(ctx context.Context, id string, lastFired time.Time, nextFire *time.Time) error
 	SetScheduleActiveTask(ctx context.Context, scheduleID, taskID string) error
 
+	// Joins
+	EnsureJoin(ctx context.Context, j *Join) (*Join, error)
+	GetJoin(ctx context.Context, joinName, workspace, correlationKey string) (*Join, error)
+	UpdateJoinArrived(ctx context.Context, id int64, arrivedCount int64) error
+	SetJoinExpected(ctx context.Context, id int64, expected int64) error
+	SetJoinDirty(ctx context.Context, id int64, dirty bool) error
+	MarkJoinTerminal(ctx context.Context, id int64, status string, lingerUntil time.Time) error
+	GetDueJoinDeadlines(ctx context.Context, now time.Time) ([]Join, error)
+	ListJoins(ctx context.Context, workspace string) ([]Join, error)
+
 	// State machines
 	CreateStateMachine(ctx context.Context, sm *StateMachineDef) error
 	GetStateMachine(ctx context.Context, id string) (*StateMachineDef, error)

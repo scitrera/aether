@@ -19,10 +19,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/scitrera/aether/internal/storage/tasks"
-	taskspg "github.com/scitrera/aether/internal/storage/tasks/postgres"
-	taskssqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
-	"github.com/scitrera/aether/internal/testutil"
+	"github.com/scitrera/aether/server/internal/storage/tasks"
+	taskspg "github.com/scitrera/aether/server/internal/storage/tasks/postgres"
+	taskssqlite "github.com/scitrera/aether/server/internal/storage/tasks/sqlite"
+	"github.com/scitrera/aether/server/internal/testutil"
 
 	// Register bare "sqlite" driver for the native sqlite backend.
 	_ "modernc.org/sqlite"
@@ -66,6 +66,11 @@ func TestStoreConformance(t *testing.T) {
 				defer cleanup()
 				runPoolClaim(t, store)
 			})
+			t.Run("PoolCrossWorkspace", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runPoolCrossWorkspace(t, store)
+			})
 			t.Run("AuditEvents", func(t *testing.T) {
 				store, _, cleanup := b.factory(t)
 				defer cleanup()
@@ -101,6 +106,11 @@ func TestStoreConformance(t *testing.T) {
 				defer cleanup()
 				runQueueByTaskID(t, store, db)
 			})
+			t.Run("QueueReconcileOrphaned", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runQueueReconcileOrphaned(t, store)
+			})
 			t.Run("QueueEntryDetails", func(t *testing.T) {
 				store, db, cleanup := b.factory(t)
 				defer cleanup()
@@ -131,6 +141,11 @@ func TestStoreConformance(t *testing.T) {
 				defer cleanup()
 				runNewFilters(t, store)
 			})
+			t.Run("TaskClassFilter", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runTaskClassFilter(t, store)
+			})
 			t.Run("Descendants", func(t *testing.T) {
 				store, _, cleanup := b.factory(t)
 				defer cleanup()
@@ -140,6 +155,11 @@ func TestStoreConformance(t *testing.T) {
 				store, _, cleanup := b.factory(t)
 				defer cleanup()
 				runCursorPagination(t, store)
+			})
+			t.Run("CorrelationAndCompletion", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runCorrelationAndCompletion(t, store)
 			})
 		})
 	}
@@ -275,6 +295,82 @@ func runPoolClaim(t *testing.T, store tasks.Store) {
 	if claimedAgain {
 		t.Fatalf("ClaimPoolTask second call: expected claimed=false (already claimed)")
 	}
+}
+
+// runPoolCrossWorkspace verifies the workspace="" path of GetPendingPoolTasks
+// returns rows from every workspace for the given implementation. This is the
+// service-principal lookup mode: cross-workspace services (webhookservice,
+// proxy-sidecar) register with an empty workspace, and DeliverPoolTasks
+// passes that empty workspace through so the service sees every pending pool
+// task targeting its implementation. A concrete-workspace lookup still
+// returns only that workspace's rows.
+func runPoolCrossWorkspace(t *testing.T, store tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	impl := "conf-cross-ws-impl"
+
+	taskA := newTestTask(t, "cross-ws-A")
+	taskA.AssignmentMode = tasks.AssignmentModePool
+	taskA.TargetImplementation = impl
+	taskA.QueuedForStartup = true
+	taskA.Workspace = "ws-alpha"
+	if err := store.CreateTask(ctx, taskA); err != nil {
+		t.Fatalf("CreateTask(ws-alpha): %v", err)
+	}
+
+	taskB := newTestTask(t, "cross-ws-B")
+	taskB.AssignmentMode = tasks.AssignmentModePool
+	taskB.TargetImplementation = impl
+	taskB.QueuedForStartup = true
+	taskB.Workspace = "ws-beta"
+	if err := store.CreateTask(ctx, taskB); err != nil {
+		t.Fatalf("CreateTask(ws-beta): %v", err)
+	}
+
+	// Concrete-workspace lookup returns only the matching task.
+	gotAlpha, err := store.GetPendingPoolTasks(ctx, impl, "ws-alpha")
+	if err != nil {
+		t.Fatalf("GetPendingPoolTasks(ws-alpha): %v", err)
+	}
+	if !containsTaskID(gotAlpha, taskA.TaskID) {
+		t.Fatalf("ws-alpha lookup: expected to contain %s, got %v", taskA.TaskID, taskIDs(gotAlpha))
+	}
+	if containsTaskID(gotAlpha, taskB.TaskID) {
+		t.Fatalf("ws-alpha lookup: must NOT include ws-beta task %s", taskB.TaskID)
+	}
+
+	// Service lookup (workspace="") returns every workspace's pending pool
+	// task for the implementation.
+	gotAll, err := store.GetPendingPoolTasks(ctx, impl, "")
+	if err != nil {
+		t.Fatalf("GetPendingPoolTasks(workspace=\"\"): %v", err)
+	}
+	if !containsTaskID(gotAll, taskA.TaskID) {
+		t.Fatalf("cross-workspace lookup: missing ws-alpha task %s, got %v", taskA.TaskID, taskIDs(gotAll))
+	}
+	if !containsTaskID(gotAll, taskB.TaskID) {
+		t.Fatalf("cross-workspace lookup: missing ws-beta task %s, got %v", taskB.TaskID, taskIDs(gotAll))
+	}
+}
+
+func containsTaskID(list []*tasks.Task, id string) bool {
+	for _, t := range list {
+		if t != nil && t.TaskID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func taskIDs(list []*tasks.Task) []string {
+	out := make([]string, 0, len(list))
+	for _, t := range list {
+		if t != nil {
+			out = append(out, t.TaskID)
+		}
+	}
+	return out
 }
 
 // runAuditEvents: RecordAuditEvent then GetTaskAuditEvents returns it.
@@ -590,6 +686,92 @@ func runQueueByTaskID(t *testing.T, store tasks.Store, db *sql.DB) {
 	}
 }
 
+// runQueueReconcileOrphaned: ReconcileOrphanedQueueEntries retires pending/
+// claimed queue rows whose task is terminal (cancelled) or purged (missing),
+// while leaving rows whose task is still non-terminal (pending/running) alone.
+// This is the sweep that clears the orphaned pending rows the polling
+// dispatcher would otherwise poll forever.
+func runQueueReconcileOrphaned(t *testing.T, store tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	// A: task cancelled (terminal) -> its pending queue row must be retired.
+	taskCancelled := newTestTask(t, "reconcile-cancelled")
+	if err := store.CreateTask(ctx, taskCancelled); err != nil {
+		t.Fatalf("CreateTask(cancelled): %v", err)
+	}
+	if err := store.CancelTask(ctx, taskCancelled.TaskID); err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+	qCancelled := uuid.New().String()
+	insertQueueEntry(t, store, qCancelled, taskCancelled.TaskID, "impl-a", "_test", "local")
+
+	// B: task purged/missing (no tasks row) -> its pending queue row must be retired.
+	qPurged := uuid.New().String()
+	insertQueueEntry(t, store, qPurged, "purged-"+uuid.New().String(), "impl-b", "_test", "local")
+
+	// C: task still pending (non-terminal) -> its queue row must be preserved.
+	taskPending := newTestTask(t, "reconcile-pending")
+	if err := store.CreateTask(ctx, taskPending); err != nil {
+		t.Fatalf("CreateTask(pending): %v", err)
+	}
+	qPending := uuid.New().String()
+	insertQueueEntry(t, store, qPending, taskPending.TaskID, "impl-c", "_test", "local")
+
+	// D: task running (non-terminal) -> its queue row must be preserved.
+	taskRunning := newTestTask(t, "reconcile-running")
+	if err := store.CreateTask(ctx, taskRunning); err != nil {
+		t.Fatalf("CreateTask(running): %v", err)
+	}
+	if err := store.AssignTask(ctx, taskRunning.TaskID, "worker-1"); err != nil {
+		t.Fatalf("AssignTask: %v", err)
+	}
+	if err := store.StartTask(ctx, taskRunning.TaskID); err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+	qRunning := uuid.New().String()
+	insertQueueEntry(t, store, qRunning, taskRunning.TaskID, "impl-d", "_test", "local")
+
+	retired, err := store.ReconcileOrphanedQueueEntries(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileOrphanedQueueEntries: %v", err)
+	}
+	if retired != 2 {
+		t.Fatalf("ReconcileOrphanedQueueEntries retired %d rows, want 2 (cancelled + purged)", retired)
+	}
+
+	// The orphaned rows must no longer poll; the live rows must still poll.
+	entries, err := store.PollPendingQueueEntries(ctx, 100)
+	if err != nil {
+		t.Fatalf("PollPendingQueueEntries: %v", err)
+	}
+	polled := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		polled[e.QueueID] = true
+	}
+	if polled[qCancelled] {
+		t.Errorf("orphaned (cancelled-task) queue row %s still polls after reconcile", qCancelled)
+	}
+	if polled[qPurged] {
+		t.Errorf("orphaned (purged-task) queue row %s still polls after reconcile", qPurged)
+	}
+	if !polled[qPending] {
+		t.Errorf("live (pending-task) queue row %s was wrongly retired by reconcile", qPending)
+	}
+	if !polled[qRunning] {
+		t.Errorf("live (running-task) queue row %s was wrongly retired by reconcile", qRunning)
+	}
+
+	// Idempotent: a second sweep retires nothing (the orphans are already terminal).
+	retired2, err := store.ReconcileOrphanedQueueEntries(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileOrphanedQueueEntries(2): %v", err)
+	}
+	if retired2 != 0 {
+		t.Errorf("second ReconcileOrphanedQueueEntries retired %d rows, want 0 (idempotent)", retired2)
+	}
+}
+
 // runQueueEntryDetails: insert a queue entry with launch_params, verify
 // GetQueueEntryDetails returns them correctly.
 func runQueueEntryDetails(t *testing.T, store tasks.Store, db *sql.DB) {
@@ -792,7 +974,7 @@ func insertQueueEntryWithParams(t *testing.T, store tasks.Store, queueID, taskID
 	if launchParamsJSON != "" {
 		lp = []byte(launchParamsJSON)
 	}
-	if err := store.InsertQueueEntry(context.Background(), queueID, taskID, impl, workspace, profile, lp); err != nil {
+	if err := store.InsertQueueEntry(context.Background(), queueID, taskID, impl, workspace, profile, lp, int(tasks.PriorityNormal)); err != nil {
 		t.Fatalf("insert queue entry: %v", err)
 	}
 }
@@ -830,6 +1012,63 @@ func postgresFactory(t *testing.T) (tasks.Store, *sql.DB, func()) {
 // which runs its own migrations, and returns the store. This factory
 // exercises the Stage 2 native implementation that will replace the
 // dbcompat path in AetherLite.
+// runTaskClassFilter: ListTasks must honor TaskFilter.TaskClass (positive) and
+// ExcludeTaskClasses identically on every backend. This is the invariant the
+// interactive-task TTL sweep (orchestration.CancelStaleInteractiveTasks) and the
+// frontend background-operations panel filter rely on — a divergence would make
+// the sweep cancel the wrong task classes, or leak chat turns into the panel.
+func runTaskClassFilter(t *testing.T, store tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+	const ws = "_taskclass"
+	const (
+		classInteractive int32 = 1 // proto TASK_CLASS_INTERACTIVE
+		classBackground  int32 = 2 // proto TASK_CLASS_BACKGROUND
+	)
+
+	mk := func(class int32) string {
+		task := newTestTask(t, "class")
+		task.Workspace = ws
+		task.TaskClass = class
+		if err := store.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask(class=%d): %v", class, err)
+		}
+		return task.TaskID
+	}
+	interactive := mk(classInteractive)
+	background := mk(classBackground)
+
+	// Positive TaskClass filter → only the interactive task.
+	got, err := store.ListTasks(ctx, &tasks.TaskFilter{Workspace: ws, TaskClass: classInteractive, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListTasks(task_class=interactive): %v", err)
+	}
+	if len(got) != 1 || got[0].TaskID != interactive {
+		t.Fatalf("TaskClass=interactive returned %d rows, want exactly [%s]", len(got), interactive)
+	}
+
+	// ExcludeTaskClasses → interactive omitted, background retained.
+	gotEx, err := store.ListTasks(ctx, &tasks.TaskFilter{Workspace: ws, ExcludeTaskClasses: []int32{classInteractive}, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListTasks(exclude interactive): %v", err)
+	}
+	var sawInteractive, sawBackground bool
+	for _, task := range gotEx {
+		switch task.TaskID {
+		case interactive:
+			sawInteractive = true
+		case background:
+			sawBackground = true
+		}
+	}
+	if sawInteractive {
+		t.Errorf("ExcludeTaskClasses=[interactive] still returned the interactive task")
+	}
+	if !sawBackground {
+		t.Errorf("ExcludeTaskClasses=[interactive] dropped the background task")
+	}
+}
+
 func sqliteNativeFactory(t *testing.T) (tasks.Store, *sql.DB, func()) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "tasks_native.db")
@@ -1301,4 +1540,102 @@ func containsTimer(timers []*tasks.TimerRecord, timerID string) bool {
 		}
 	}
 	return false
+}
+
+// runCorrelationAndCompletion verifies that CorrelationID, RootTaskID, and
+// CompletionEvent round-trip through CreateTask/GetTask and that the
+// CorrelationID and RootTaskID filter predicates work correctly.
+func runCorrelationAndCompletion(t *testing.T, store tasks.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	const corrID = "corr-group-abc"
+	const rootID = "root-task-xyz"
+
+	// Task with all three new fields populated.
+	task := newTestTask(t, "corr-full")
+	task.CorrelationID = corrID
+	task.RootTaskID = rootID
+	task.CompletionEvent = &tasks.TaskCompletionConfig{
+		Enabled:    true,
+		EventName:  "task.done",
+		OnStatuses: []tasks.TaskStatus{tasks.TaskStatusCompleted, tasks.TaskStatusFailed},
+	}
+	if err := store.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask (full): %v", err)
+	}
+
+	// Second task: same correlation group, no CompletionEvent.
+	task2 := newTestTask(t, "corr-sibling")
+	task2.CorrelationID = corrID
+	task2.RootTaskID = rootID
+	if err := store.CreateTask(ctx, task2); err != nil {
+		t.Fatalf("CreateTask (sibling): %v", err)
+	}
+
+	// Task outside the correlation group.
+	taskOther := newTestTask(t, "corr-other")
+	if err := store.CreateTask(ctx, taskOther); err != nil {
+		t.Fatalf("CreateTask (other): %v", err)
+	}
+
+	// --- GetTask round-trip for all three fields ---
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.CorrelationID != corrID {
+		t.Errorf("CorrelationID: got %q, want %q", got.CorrelationID, corrID)
+	}
+	if got.RootTaskID != rootID {
+		t.Errorf("RootTaskID: got %q, want %q", got.RootTaskID, rootID)
+	}
+	if got.CompletionEvent == nil {
+		t.Fatal("CompletionEvent: got nil, want non-nil")
+	}
+	if !got.CompletionEvent.Enabled {
+		t.Error("CompletionEvent.Enabled: got false, want true")
+	}
+	if got.CompletionEvent.EventName != "task.done" {
+		t.Errorf("CompletionEvent.EventName: got %q, want %q", got.CompletionEvent.EventName, "task.done")
+	}
+	if len(got.CompletionEvent.OnStatuses) != 2 {
+		t.Errorf("CompletionEvent.OnStatuses len: got %d, want 2", len(got.CompletionEvent.OnStatuses))
+	}
+
+	// Task without CompletionEvent must come back nil.
+	got2, err := store.GetTask(ctx, task2.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask (sibling): %v", err)
+	}
+	if got2.CompletionEvent != nil {
+		t.Errorf("CompletionEvent: got non-nil for task without completion_event")
+	}
+
+	// --- CorrelationID filter ---
+	listed, err := store.ListTasks(ctx, &tasks.TaskFilter{CorrelationID: corrID, Limit: 100})
+	if err != nil {
+		t.Fatalf("ListTasks(CorrelationID): %v", err)
+	}
+	if !containsTask(listed, task.TaskID) {
+		t.Errorf("CorrelationID filter: missing task %s", task.TaskID)
+	}
+	if !containsTask(listed, task2.TaskID) {
+		t.Errorf("CorrelationID filter: missing sibling %s", task2.TaskID)
+	}
+	if containsTask(listed, taskOther.TaskID) {
+		t.Errorf("CorrelationID filter: unexpectedly includes other task %s", taskOther.TaskID)
+	}
+
+	// --- RootTaskID filter ---
+	listedRoot, err := store.ListTasks(ctx, &tasks.TaskFilter{RootTaskID: rootID, Limit: 100})
+	if err != nil {
+		t.Fatalf("ListTasks(RootTaskID): %v", err)
+	}
+	if !containsTask(listedRoot, task.TaskID) {
+		t.Errorf("RootTaskID filter: missing task %s", task.TaskID)
+	}
+	if containsTask(listedRoot, taskOther.TaskID) {
+		t.Errorf("RootTaskID filter: unexpectedly includes other task %s", taskOther.TaskID)
+	}
 }

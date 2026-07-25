@@ -40,7 +40,9 @@ const taskSelectColumns = `
 	authority_audience_type, authority_audience_id, authority_delegate_type, authority_delegate_id,
 	task_class,
 	disconnected_at, grace_window_ms,
-	wait_spec, depends_on, context_id, paused_at
+	wait_spec, depends_on, context_id, paused_at,
+	retry_policy_json,
+	correlation_id, root_task_id, completion_event
 `
 
 // =============================================================================
@@ -64,6 +66,11 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 	}
 	if task.MaxRetries == 0 {
 		task.MaxRetries = 3
+	}
+	// Normalize unspecified priority to NORMAL so the stored weight is always
+	// a concrete dispatch level and ORDER BY priority needs no COALESCE.
+	if task.Priority == 0 {
+		task.Priority = int(PriorityNormal)
 	}
 
 	// Marshal JSONB fields
@@ -97,6 +104,20 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 			return fmt.Errorf("failed to marshal depends_on: %w", err)
 		}
 	}
+	var retryPolicyJSON []byte
+	if task.RetryPolicy != nil {
+		retryPolicyJSON, err = json.Marshal(task.RetryPolicy)
+		if err != nil {
+			return fmt.Errorf("failed to marshal retry_policy: %w", err)
+		}
+	}
+	var completionEventJSON []byte
+	if task.CompletionEvent != nil {
+		completionEventJSON, err = json.Marshal(task.CompletionEvent)
+		if err != nil {
+			return fmt.Errorf("failed to marshal completion_event: %w", err)
+		}
+	}
 
 	query := `
 		INSERT INTO tasks (
@@ -111,13 +132,17 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 			authority_grant_id, root_authority_grant_id, parent_authority_grant_id,
 			authority_audience_type, authority_audience_id, authority_delegate_type, authority_delegate_id,
 			task_class, grace_window_ms,
-			wait_spec, depends_on, context_id, paused_at
+			wait_spec, depends_on, context_id, paused_at,
+			retry_policy_json,
+			correlation_id, root_task_id, completion_event
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
 			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28,
 			$29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41,
 			$42, $43,
-			$44, $45, $46, $47
+			$44, $45, $46, $47,
+			$48,
+			$49, $50, $51
 		)
 	`
 
@@ -169,6 +194,10 @@ func (s *TaskStore) CreateTask(ctx context.Context, task *Task) error {
 		dependsOnJSON,
 		nullString(task.ContextID),
 		nullTime(task.PausedAt),
+		retryPolicyJSON,
+		nullString(task.CorrelationID),
+		nullString(task.RootTaskID),
+		completionEventJSON,
 	)
 
 	return err
@@ -375,6 +404,29 @@ func (s *TaskStore) StartTaskWithAgent(ctx context.Context, taskID, agentIdentit
 	return nil
 }
 
+// ClaimTask transitions a task into running when claimed by its assignee.
+// Unlike StartTask it also accepts a pending source state so a per-turn task
+// can be claimed straight out of the queue. Only stamps started_at on the
+// first transition; running -> running is a no-op for that timestamp
+// (idempotent for re-claim / multi-tab scenarios).
+func (s *TaskStore) ClaimTask(ctx context.Context, taskID string) error {
+	now := time.Now()
+	query := `
+		UPDATE tasks
+		SET status = 'running', started_at = COALESCE(started_at, $1)
+		WHERE task_id = $2 AND status IN ('pending', 'assigned', 'starting', 'running')
+	`
+	result, err := s.db.ExecContext(ctx, query, now, taskID)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("task %s not in a claimable state (pending, assigned, starting, or running)", taskID)
+	}
+	return nil
+}
+
 // CompleteTask marks a task as completed
 func (s *TaskStore) CompleteTask(ctx context.Context, taskID string) error {
 	now := time.Now()
@@ -397,9 +449,53 @@ func (s *TaskStore) CompleteTask(ctx context.Context, taskID string) error {
 	return nil
 }
 
-// FailTask marks a task as failed
+// FailTask marks a task as failed and increments retry_count. When the task
+// carries a RetryPolicy AND the post-increment retry_count is still below
+// the policy's effective max attempts, FailTask also stamps next_retry_at
+// from ComputeNextRetryAt — the task waker will then re-pend the row at
+// that time. Tasks without a policy keep legacy behavior (no next_retry_at;
+// the existing gateway retry sweeper handles backoff separately).
 func (s *TaskStore) FailTask(ctx context.Context, taskID, errorMsg string) error {
 	now := time.Now()
+
+	// Best-effort lookup of an attached RetryPolicy. If GetTask fails, fall
+	// back to the legacy update — losing the policy-driven reschedule is
+	// preferable to losing the FailTask transition itself.
+	var nextRetryAt *time.Time
+	if task, getErr := s.GetTask(ctx, taskID); getErr == nil && task != nil && task.RetryPolicy != nil {
+		// task.RetryCount is the count BEFORE this failure. The new count
+		// after this update is RetryCount + 1.
+		newCount := int32(task.RetryCount + 1)
+		if newCount < task.RetryPolicy.EffectiveMaxAttempts() {
+			t := ComputeNextRetryAt(task.RetryPolicy, int(newCount), nil)
+			nextRetryAt = &t
+		}
+	}
+
+	if nextRetryAt != nil {
+		query := `
+			UPDATE tasks
+			SET status = 'failed',
+			    failed_at = $1,
+			    error_message = $2,
+			    next_retry_at = $3,
+			    retry_count = retry_count + 1
+			WHERE task_id = $4
+		`
+		result, err := s.db.ExecContext(ctx, query, now, errorMsg, nullTime(nextRetryAt), taskID)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return fmt.Errorf("task %s not found or not in a failable state", taskID)
+		}
+		return nil
+	}
+
 	query := `
 		UPDATE tasks
 		SET status = 'failed', failed_at = $1, error_message = $2, retry_count = retry_count + 1
@@ -829,6 +925,16 @@ func buildTaskFilterClauses(filter *TaskFilter, argNum int, args []interface{}, 
 		args = append(args, filter.ContextID)
 		argNum++
 	}
+	if filter.CorrelationID != "" {
+		query += fmt.Sprintf(" AND correlation_id = $%d", argNum)
+		args = append(args, filter.CorrelationID)
+		argNum++
+	}
+	if filter.RootTaskID != "" {
+		query += fmt.Sprintf(" AND root_task_id = $%d", argNum)
+		args = append(args, filter.RootTaskID)
+		argNum++
+	}
 	if len(filter.ExcludeStatuses) > 0 {
 		placeholders := make([]string, len(filter.ExcludeStatuses))
 		for i, s := range filter.ExcludeStatuses {
@@ -850,6 +956,16 @@ func buildTaskFilterClauses(filter *TaskFilter, argNum int, args []interface{}, 
 	if filter.StatusTimestampAfterUnixMs > 0 {
 		query += fmt.Sprintf(" AND updated_at >= to_timestamp($%d / 1000.0)", argNum)
 		args = append(args, filter.StatusTimestampAfterUnixMs)
+		argNum++
+	}
+	if filter.Priority != 0 {
+		query += fmt.Sprintf(" AND priority = $%d", argNum)
+		args = append(args, filter.Priority)
+		argNum++
+	}
+	if filter.MinPriority != 0 {
+		query += fmt.Sprintf(" AND priority >= $%d", argNum)
+		args = append(args, filter.MinPriority)
 		argNum++
 	}
 	return query, argNum, args
@@ -876,7 +992,12 @@ func (s *TaskStore) ListTasks(ctx context.Context, filter *TaskFilter) ([]*Task,
 	clauses, argNum, args := buildTaskFilterClauses(filter, argNum, args, false)
 	query += clauses
 
-	query += " ORDER BY created_at DESC"
+	if filter.OrderByPriority {
+		// Dispatch-selection order: highest priority first, FIFO within a level.
+		query += " ORDER BY priority DESC, created_at ASC"
+	} else {
+		query += " ORDER BY created_at DESC"
+	}
 	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argNum, argNum+1)
 	args = append(args, filter.Limit, filter.Offset)
 
@@ -1105,6 +1226,7 @@ func (s *TaskStore) GetPendingPoolTasks(ctx context.Context, implementation, wor
 		TargetImplementation: implementation,
 		Workspace:            workspace,
 		QueuedForStartup:     &queuedTrue,
+		OrderByPriority:      true, // highest-priority pending task first
 		Limit:                100,
 	})
 }
@@ -1597,10 +1719,10 @@ func scanTaskInto(s taskScanner) (*Task, error) {
 	var authorityMode, subjectType, subjectID, rootSubjectType, rootSubjectID sql.NullString
 	var authorityGrantID, rootAuthorityGrantID, parentAuthorityGrantID sql.NullString
 	var authorityAudienceType, authorityAudienceID, authorityDelegateType, authorityDelegateID sql.NullString
-	var contextID sql.NullString
+	var contextID, correlationID, rootTaskID sql.NullString
 	var scheduledFor, startedAt, completedAt, failedAt, assignedAt, nextRetryAt, lastHeartbeat, disconnectedAt, pausedAt sql.NullTime
 	var scheduleToStart, startToClose, heartbeatTimeout, scheduleToClose sql.NullInt64
-	var launchParamsJSON, metadataJSON, checkpointJSON, heartbeatJSON, waitSpecJSON, dependsOnJSON []byte
+	var launchParamsJSON, metadataJSON, checkpointJSON, heartbeatJSON, waitSpecJSON, dependsOnJSON, retryPolicyJSON, completionEventJSON []byte
 
 	err := s.Scan(
 		&task.TaskID, &task.TaskType, &task.Workspace, &implementation, &specifier,
@@ -1621,6 +1743,8 @@ func scanTaskInto(s taskScanner) (*Task, error) {
 		&task.TaskClass,
 		&disconnectedAt, &task.GraceWindowMs,
 		&waitSpecJSON, &dependsOnJSON, &contextID, &pausedAt,
+		&retryPolicyJSON,
+		&correlationID, &rootTaskID, &completionEventJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -1776,11 +1900,31 @@ func scanTaskInto(s taskScanner) (*Task, error) {
 			return nil, fmt.Errorf("failed to unmarshal depends_on: %w", err)
 		}
 	}
+	if len(retryPolicyJSON) > 0 {
+		var rp RetryPolicy
+		if err := json.Unmarshal(retryPolicyJSON, &rp); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal retry_policy: %w", err)
+		}
+		task.RetryPolicy = &rp
+	}
 	if contextID.Valid {
 		task.ContextID = contextID.String
 	}
 	if pausedAt.Valid {
 		task.PausedAt = &pausedAt.Time
+	}
+	if correlationID.Valid {
+		task.CorrelationID = correlationID.String
+	}
+	if rootTaskID.Valid {
+		task.RootTaskID = rootTaskID.String
+	}
+	if len(completionEventJSON) > 0 {
+		var ce TaskCompletionConfig
+		if err := json.Unmarshal(completionEventJSON, &ce); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal completion_event: %w", err)
+		}
+		task.CompletionEvent = &ce
 	}
 
 	return &task, nil

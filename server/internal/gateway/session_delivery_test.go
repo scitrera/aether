@@ -15,7 +15,7 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 	"github.com/scitrera/aether/sdk/go/aether"
 	bp "github.com/scitrera/go-backpressure"
 )

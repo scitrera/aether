@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/pkg/authproxy/login"
+	"github.com/scitrera/aether/server/pkg/authproxy/login"
 )
 
 // fakeStore is an in-memory SessionStore for unit tests.

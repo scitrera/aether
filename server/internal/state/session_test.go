@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/scitrera/aether/internal/testutil"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/testutil"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // TestSessionRegistryIntegration tests the session registry against a real Redis instance

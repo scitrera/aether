@@ -11,11 +11,12 @@ package orchestration
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // TaskEventPublisher publishes task-scoped events to the per-task topic.
@@ -25,10 +26,23 @@ type TaskEventPublisher interface {
 	PublishTaskEvent(ctx context.Context, workspace, taskID string, event *pb.TaskEvent) error
 }
 
+// DomainEventPublisher publishes a raw EventPayload (JSON bytes) onto the
+// event plane (event::*). A nil publisher disables feed-B emission.
+type DomainEventPublisher interface {
+	PublishDomainEvent(ctx context.Context, workspace string, payload []byte) error
+}
+
 // SetEventPublisher injects a TaskEventPublisher. Pass nil to disable (the
 // default). Idempotent — last writer wins.
 func (tas *TaskAssignmentService) SetEventPublisher(p TaskEventPublisher) {
 	tas.eventPub = p
+}
+
+// SetDomainEventPublisher injects a DomainEventPublisher used for "feed B"
+// domain event emission onto the event plane (event::*). Pass nil to disable
+// (the default). Idempotent — last writer wins.
+func (tas *TaskAssignmentService) SetDomainEventPublisher(p DomainEventPublisher) {
+	tas.domainEventPub = p
 }
 
 // taskStatusToProto maps the Go-side TaskStatus to the wire enum. The Go-side
@@ -121,19 +135,96 @@ func (tas *TaskAssignmentService) publishChildLifecycle(ctx context.Context, par
 // child-lifecycle event so the parent's subscriber learns of the child's
 // terminal state without needing to subscribe to every potential child.
 func (tas *TaskAssignmentService) emitTransitionEvent(ctx context.Context, pre *tasks.ExtendedTask, taskID string, to tasks.TaskStatus, reason string) {
-	if pre == nil || tas.eventPub == nil {
+	if pre == nil {
 		return
 	}
-	tas.publishStatusChange(ctx, taskID, pre.Workspace, pre.ParentTaskID, pre.Status, to, reason)
-	// Child-lifecycle relay: terminal transitions surface to the parent's
-	// per-task subscription so a recursive subscriber sees child completion
-	// without depending on a separate child subscription.
-	if pre.ParentTaskID != "" && (tasks.IsTerminal(to) || tasks.IsWaiting(to)) {
-		classifier := "transitioned"
-		if tasks.IsTerminal(to) {
-			classifier = "completed"
+	if tas.eventPub != nil {
+		tas.publishStatusChange(ctx, taskID, pre.Workspace, pre.ParentTaskID, pre.Status, to, reason)
+		// Child-lifecycle relay: terminal transitions surface to the parent's
+		// per-task subscription so a recursive subscriber sees child completion
+		// without depending on a separate child subscription.
+		if pre.ParentTaskID != "" && (tasks.IsTerminal(to) || tasks.IsWaiting(to)) {
+			classifier := "transitioned"
+			if tasks.IsTerminal(to) {
+				classifier = "completed"
+			}
+			tas.publishChildLifecycle(ctx, pre.ParentTaskID, pre.Workspace, taskID, to, classifier)
 		}
-		tas.publishChildLifecycle(ctx, pre.ParentTaskID, pre.Workspace, taskID, to, classifier)
+	}
+	// Feed B: domain event emission onto the event plane (event::*) when the
+	// task opted into completion_event and reaches a selected terminal status.
+	tas.publishCompletionEvent(ctx, pre, taskID, to)
+}
+
+// terminalStatusString returns the lowercase wire string for a terminal status
+// (completed / failed / cancelled), used both for the default event name and
+// the event data's "status" field. Non-terminal statuses return the raw
+// TaskStatus string.
+func terminalStatusString(s tasks.TaskStatus) string {
+	return string(s)
+}
+
+// publishCompletionEvent emits a "feed B" domain event onto the event plane
+// (event::*) when the just-completed task opted into completion_event and the
+// terminal status passes the on_statuses filter. The payload is the raw JSON
+// bytes of an EventPayload (source_agent/event_names/data/workspace), matching
+// what a client's SendEvent publishes so the workflow engine's Router can
+// json.Unmarshal it. Best-effort: a publish failure never blocks the
+// transition (which has already committed to the store), matching
+// publishStatusChange's non-fatal error style.
+func (tas *TaskAssignmentService) publishCompletionEvent(ctx context.Context, pre *tasks.ExtendedTask, taskID string, to tasks.TaskStatus) {
+	if pre == nil || tas.domainEventPub == nil || !tasks.IsTerminal(to) {
+		return
+	}
+	cfg := pre.CompletionEvent
+	if cfg == nil || !cfg.Enabled {
+		return
+	}
+	// Status filter: if OnStatuses is set, emit only when `to` is listed;
+	// empty ⇒ all terminal statuses emit.
+	if len(cfg.OnStatuses) > 0 {
+		match := false
+		for _, s := range cfg.OnStatuses {
+			if s == to {
+				match = true
+				break
+			}
+		}
+		if !match {
+			return
+		}
+	}
+
+	statusStr := terminalStatusString(to)
+	eventName := cfg.EventName
+	if eventName == "" {
+		eventName = "task." + statusStr
+	}
+
+	// Build the EventPayload as a plain map so the JSON keys are exact and
+	// match the workflow engine's EventPayload struct tags.
+	payload := map[string]any{
+		"source_agent": "orchestrator",
+		"workspace":    pre.Workspace,
+		"event_names":  []string{eventName},
+		"data": map[string]any{
+			"task_id":        taskID,
+			"status":         statusStr,
+			"task_type":      pre.TaskType,
+			"correlation_id": pre.CorrelationID,
+			"root_task_id":   pre.RootTaskID,
+			"metadata":       pre.Metadata,
+		},
+	}
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		logging.Logger.Debug().Err(err).Str("task_id", taskID).Str("workspace", pre.Workspace).
+			Msg("publishCompletionEvent: marshal failed (non-fatal)")
+		return
+	}
+	if err := tas.domainEventPub.PublishDomainEvent(ctx, pre.Workspace, bytes); err != nil {
+		logging.Logger.Debug().Err(err).Str("task_id", taskID).Str("workspace", pre.Workspace).
+			Str("event_name", eventName).Msg("publishCompletionEvent: domain event publish failed (non-fatal)")
 	}
 }
 

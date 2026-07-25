@@ -14,6 +14,7 @@ import {
   taskBroadcastTopic,
   userTopic,
   userWorkspaceTopic,
+  userBroadcastTopic,
   globalUsersTopic,
   eventTopic,
   eventWildcardTopic,
@@ -25,6 +26,7 @@ import {
   TOPIC_PREFIX_TASK_BROADCAST,
   TOPIC_PREFIX_USER,
   TOPIC_PREFIX_USER_WORKSPACE,
+  TOPIC_PREFIX_USER_BROADCAST,
   TOPIC_PREFIX_GLOBAL_AGENTS,
   TOPIC_PREFIX_GLOBAL_USERS,
   TOPIC_PREFIX_EVENT,
@@ -144,6 +146,7 @@ describe("Topic Construction", () => {
       expect(TOPIC_PREFIX_TASK_BROADCAST).toBe("tb");
       expect(TOPIC_PREFIX_USER).toBe("us");
       expect(TOPIC_PREFIX_USER_WORKSPACE).toBe("uw");
+      expect(TOPIC_PREFIX_USER_BROADCAST).toBe("uu");
       expect(TOPIC_PREFIX_GLOBAL_AGENTS).toBe("ga");
       expect(TOPIC_PREFIX_GLOBAL_USERS).toBe("gu");
       expect(TOPIC_PREFIX_EVENT).toBe("event");
@@ -197,6 +200,12 @@ describe("Topic Construction", () => {
   describe("userWorkspaceTopic", () => {
     it("creates correct user workspace topic", () => {
       expect(userWorkspaceTopic("alice", "prod")).toBe("uw::alice::prod");
+    });
+  });
+
+  describe("userBroadcastTopic", () => {
+    it("creates correct user broadcast topic", () => {
+      expect(userBroadcastTopic("alice")).toBe("uu::alice");
     });
   });
 

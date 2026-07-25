@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/config"
-	"github.com/scitrera/aether/pkg/crypto"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/config"
+	"github.com/scitrera/aether/server/pkg/crypto"
 )
 
 // CheckResult holds the outcome of a single readiness check.

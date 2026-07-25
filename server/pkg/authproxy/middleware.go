@@ -11,11 +11,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/auth"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/pkg/identityheaders"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/auth"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/pkg/identityheaders"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // Trusted header constants injected after successful authentication. These
@@ -102,6 +102,37 @@ type AuthMiddleware struct {
 // wired in.
 func (m *AuthMiddleware) SetSessionCookieName(name string) {
 	m.sessionCookieName = name
+}
+
+// SessionCookieName returns the cookie name the middleware reads to derive a
+// session_token credential, or "" when session-cookie auth is disabled. This
+// exposes the same source Authenticate consults so callers (notably the
+// optional-auth verify handler) can perform a credential-presence pre-check
+// without duplicating the cookie-name wiring.
+func (m *AuthMiddleware) SessionCookieName() string {
+	return m.sessionCookieName
+}
+
+// HasCredentials reports whether the request carries ANY credential the
+// middleware would attempt to authenticate: a non-empty Authorization-derived
+// credential, or (when a session cookie name is configured) a non-empty
+// session cookie of that name. It mirrors the credential-selection logic in
+// Authenticate but performs no validation and writes nothing to the response.
+//
+// This is used by the optional-auth verify path to decide, BEFORE calling
+// Authenticate, whether a request should be treated as an anonymous
+// passthrough (no credential) or fail-closed authenticated (credential
+// present).
+func (m *AuthMiddleware) HasCredentials(r *http.Request) bool {
+	if len(extractCredentials(r)) > 0 {
+		return true
+	}
+	if m.sessionCookieName != "" {
+		if c, err := r.Cookie(m.sessionCookieName); err == nil && c.Value != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // NewAuthMiddleware creates a new AuthMiddleware with the given authenticator,
@@ -664,6 +695,39 @@ func (m *AuthMiddleware) SetResponseHeaders(w http.ResponseWriter, authed *Authe
 	identityheaders.MintInto(w.Header(), m.effectiveTenantID(authed), authedToIdentity(authed))
 	if authed != nil && authed.Resolved != nil {
 		applyExtraHeaders(w.Header(), authed.Resolved.ExtraHeaders)
+	}
+}
+
+// ClearResponseIdentityHeaders emits EVERY identity header the authenticated
+// SetResponseHeaders path could stamp — the canonical X-Auth-* / X-Aether-* set
+// plus any resolver-declared ExtraHeaders (e.g. X-Scitrera-*) — with an EMPTY
+// value on the response.
+//
+// This exists for the anonymous ext_authz passthrough (verify-optional with no
+// credential). Envoy's ext_authz copies the authz-response identity headers
+// onto the upstream request, OVERRIDING client-supplied ones, but ONLY for the
+// headers auth-go actually emits. If auth-go emits none on the anonymous path, a
+// client-supplied/spoofed X-Auth-Tenant-ID / X-Scitrera-User survives to the
+// backend. Emitting each identity header with an empty value forces Envoy to
+// overwrite the spoof with empty, so the backend sees no principal and denies.
+//
+// The extra-header names are sourced from the resolver via the optional
+// ExtraHeaderNaming interface so the cleared set can't drift from what the
+// resolver emits on the authenticated path.
+func (m *AuthMiddleware) ClearResponseIdentityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	for _, name := range identityheaders.CanonicalHeaderNames() {
+		h.Set(name, "")
+	}
+	if namer, ok := m.identityResolver.(ExtraHeaderNaming); ok {
+		for _, name := range namer.ExtraHeaderNames() {
+			if isReservedHeader(name) {
+				// Reserved X-Auth-* / X-Aether-* names are already cleared above
+				// and can never be resolver ExtraHeaders; skip to avoid churn.
+				continue
+			}
+			h.Set(name, "")
+		}
 	}
 }
 

@@ -36,9 +36,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/scitrera/aether/internal/auth"
-	sqlitetokenmigrations "github.com/scitrera/aether/migrations/sqlite_tokens"
-	"github.com/scitrera/aether/pkg/crypto"
+	"github.com/scitrera/aether/server/internal/auth"
+	sqlitetokenmigrations "github.com/scitrera/aether/server/migrations/sqlite_tokens"
+	"github.com/scitrera/aether/server/pkg/crypto"
 
 	_ "modernc.org/sqlite" // register bare "sqlite" driver
 )

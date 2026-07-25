@@ -80,10 +80,14 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 # Define tags for Go multi-module repo
+# Go resolves a nested module by its directory, so each module's tag is
+# "<dir>/vX.Y.Z". The bare "vX.Y.Z" tag is the release signal the CI workflows
+# trigger on — it is not itself a Go module tag.
 TAGS=(
-    "v${VERSION}"           # root/server module: github.com/scitrera/aether
-    "api/v${VERSION}"       # api module: github.com/scitrera/aether/api
-    "sdk/go/v${VERSION}"    # go sdk module: github.com/scitrera/aether/sdk/go
+    "v${VERSION}"            # release signal (all workflows trigger on this)
+    "api/v${VERSION}"        # api module:    github.com/scitrera/aether/api
+    "sdk/go/v${VERSION}"     # go sdk module: github.com/scitrera/aether/sdk/go
+    "server/v${VERSION}"     # server module: github.com/scitrera/aether/server
 )
 
 # Check for existing tags

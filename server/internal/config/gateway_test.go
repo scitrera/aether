@@ -1101,3 +1101,65 @@ func TestIsAuthModeEnabled(t *testing.T) {
 		})
 	}
 }
+
+func TestCleanupConfig_GetAuditRetentionDays(t *testing.T) {
+	tests := []struct {
+		name   string
+		config CleanupConfig
+		want   int
+	}{
+		{name: "explicit 30", config: CleanupConfig{AuditRetentionDays: 30}, want: 30},
+		{name: "zero defaults to 90", config: CleanupConfig{AuditRetentionDays: 0}, want: 90},
+		{name: "negative defaults to 90", config: CleanupConfig{AuditRetentionDays: -5}, want: 90},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.config.GetAuditRetentionDays(); got != tt.want {
+				t.Errorf("GetAuditRetentionDays() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCleanupConfig_GetAuditCleanupInterval(t *testing.T) {
+	tests := []struct {
+		name   string
+		config CleanupConfig
+		want   time.Duration
+	}{
+		{name: "explicit 12h", config: CleanupConfig{AuditCleanupInterval: "12h"}, want: 12 * time.Hour},
+		{name: "empty defaults to 24h", config: CleanupConfig{AuditCleanupInterval: ""}, want: 24 * time.Hour},
+		{name: "invalid defaults to 24h", config: CleanupConfig{AuditCleanupInterval: "nope"}, want: 24 * time.Hour},
+		{name: "zero disables", config: CleanupConfig{AuditCleanupInterval: "0"}, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.config.GetAuditCleanupInterval(); got != tt.want {
+				t.Errorf("GetAuditCleanupInterval() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAuditConfig_GetCoalesceWindow(t *testing.T) {
+	tests := []struct {
+		name   string
+		config AuditConfig
+		want   time.Duration
+	}{
+		{name: "explicit 30s", config: AuditConfig{CoalesceWindow: "30s"}, want: 30 * time.Second},
+		{name: "empty defaults to 60s", config: AuditConfig{CoalesceWindow: ""}, want: 60 * time.Second},
+		{name: "invalid defaults to 60s", config: AuditConfig{CoalesceWindow: "bad"}, want: 60 * time.Second},
+		{name: "zero disables", config: AuditConfig{CoalesceWindow: "0"}, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.config.GetCoalesceWindow(); got != tt.want {
+				t.Errorf("GetCoalesceWindow() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

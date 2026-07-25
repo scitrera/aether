@@ -39,12 +39,12 @@ import (
 
 	"github.com/google/uuid"
 
-	legacyaudit "github.com/scitrera/aether/internal/audit"
-	"github.com/scitrera/aether/internal/storage/acl"
-	aclpg "github.com/scitrera/aether/internal/storage/acl/postgres"
-	aclsqlite "github.com/scitrera/aether/internal/storage/acl/sqlite"
-	"github.com/scitrera/aether/internal/testutil"
-	"github.com/scitrera/aether/pkg/models"
+	legacyaudit "github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/internal/storage/acl"
+	aclpg "github.com/scitrera/aether/server/internal/storage/acl/postgres"
+	aclsqlite "github.com/scitrera/aether/server/internal/storage/acl/sqlite"
+	"github.com/scitrera/aether/server/internal/testutil"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // storeFactory builds a Store and returns flags describing backend
@@ -111,6 +111,11 @@ func TestStoreConformance(t *testing.T) {
 				defer cleanup()
 				runAuthorityRequestLifecycle(t, store)
 			})
+			t.Run("GetRuleByIDAndRevokeByID", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runGetRuleByIDAndRevokeByID(t, store)
+			})
 		})
 	}
 }
@@ -159,6 +164,74 @@ func runGrantRevokeRoundTrip(t *testing.T, store acl.Store) {
 	_, err = store.GetRule(ctx, acl.PrincipalTypeUser, principalID, acl.ResourceTypeWorkspace, resourceID)
 	if err != acl.ErrRuleNotFound {
 		t.Fatalf("GetRule after revoke: expected ErrRuleNotFound, got %v", err)
+	}
+}
+
+// runGetRuleByIDAndRevokeByID verifies:
+//  1. GetRuleByID retrieves the correct rule by its UUID.
+//  2. GetRuleByID returns ErrRuleNotFound for an unknown UUID.
+//  3. A rule can be revoked using the principal+resource resolved from GetRuleByID
+//     (the same path the gateway REVOKE-by-rule_id handler takes).
+func runGetRuleByIDAndRevokeByID(t *testing.T, store acl.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	principalID := uniqueID(t, "user")
+	resourceID := uniqueID(t, "ws")
+
+	// Grant a rule and capture its UUID.
+	rule, err := store.GrantAccess(ctx,
+		acl.PrincipalTypeUser, principalID,
+		acl.ResourceTypeWorkspace, resourceID,
+		acl.AccessRead, "_system", "revoke-by-id conformance", nil,
+	)
+	if err != nil {
+		t.Fatalf("GrantAccess: %v", err)
+	}
+	if rule.RuleID == "" {
+		t.Fatal("GrantAccess returned rule with empty RuleID")
+	}
+
+	// GetRuleByID should find the rule and return matching fields.
+	got, err := store.GetRuleByID(ctx, rule.RuleID)
+	if err != nil {
+		t.Fatalf("GetRuleByID: %v", err)
+	}
+	if got.RuleID != rule.RuleID {
+		t.Errorf("GetRuleByID RuleID mismatch: want %q got %q", rule.RuleID, got.RuleID)
+	}
+	if got.PrincipalType != acl.PrincipalTypeUser {
+		t.Errorf("GetRuleByID PrincipalType: want %q got %q", acl.PrincipalTypeUser, got.PrincipalType)
+	}
+	if got.PrincipalID != principalID {
+		t.Errorf("GetRuleByID PrincipalID: want %q got %q", principalID, got.PrincipalID)
+	}
+	if got.ResourceType != acl.ResourceTypeWorkspace {
+		t.Errorf("GetRuleByID ResourceType: want %q got %q", acl.ResourceTypeWorkspace, got.ResourceType)
+	}
+	if got.ResourceID != resourceID {
+		t.Errorf("GetRuleByID ResourceID: want %q got %q", resourceID, got.ResourceID)
+	}
+
+	// Not-found case: a random UUID should return ErrRuleNotFound.
+	_, err = store.GetRuleByID(ctx, "00000000-0000-0000-0000-000000000000")
+	if err != acl.ErrRuleNotFound {
+		t.Fatalf("GetRuleByID unknown UUID: want ErrRuleNotFound, got %v", err)
+	}
+
+	// Revoke using the composite key resolved from GetRuleByID (gateway REVOKE-by-rule_id path).
+	if err := store.RevokeAccess(ctx, got.PrincipalType, got.PrincipalID, got.ResourceType, got.ResourceID); err != nil {
+		t.Fatalf("RevokeAccess after GetRuleByID: %v", err)
+	}
+
+	// Rule must be gone: GetRuleByID and GetRule should both return ErrRuleNotFound.
+	_, err = store.GetRuleByID(ctx, rule.RuleID)
+	if err != acl.ErrRuleNotFound {
+		t.Fatalf("GetRuleByID after revoke: want ErrRuleNotFound, got %v", err)
+	}
+	_, err = store.GetRule(ctx, acl.PrincipalTypeUser, principalID, acl.ResourceTypeWorkspace, resourceID)
+	if err != acl.ErrRuleNotFound {
+		t.Fatalf("GetRule after revoke: want ErrRuleNotFound, got %v", err)
 	}
 }
 

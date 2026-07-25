@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	pkgerrors "github.com/scitrera/aether/pkg/errors"
+	pkgerrors "github.com/scitrera/aether/server/pkg/errors"
 )
 
 // rateLimiter is a simple sliding window counter for per-identity message rate limiting.

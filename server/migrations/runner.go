@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/logging"
 	"strings"
 )
 

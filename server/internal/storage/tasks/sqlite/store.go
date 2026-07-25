@@ -27,8 +27,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/scitrera/aether/internal/storage/tasks"
-	migrations "github.com/scitrera/aether/migrations/sqlite_tasks"
+	"github.com/scitrera/aether/server/internal/storage/tasks"
+	migrations "github.com/scitrera/aether/server/migrations/sqlite_tasks"
 
 	// Register the bare "sqlite" driver (modernc.org/sqlite). This is the
 	// same underlying driver that pkg/dbcompat wraps as "sqlite_compat",
@@ -128,6 +128,22 @@ func (s *Store) CreateTask(ctx context.Context, task *tasks.Task) error {
 	if task.PausedAt != nil {
 		pausedAtMs = sql.NullInt64{Int64: task.PausedAt.UnixMilli(), Valid: true}
 	}
+	var retryPolicyStr sql.NullString
+	if task.RetryPolicy != nil {
+		b, merr := json.Marshal(task.RetryPolicy)
+		if merr != nil {
+			return fmt.Errorf("failed to marshal retry_policy: %w", merr)
+		}
+		retryPolicyStr = sql.NullString{String: string(b), Valid: true}
+	}
+	var completionEventStr sql.NullString
+	if task.CompletionEvent != nil {
+		b, merr := json.Marshal(task.CompletionEvent)
+		if merr != nil {
+			return fmt.Errorf("failed to marshal completion_event: %w", merr)
+		}
+		completionEventStr = sql.NullString{String: string(b), Valid: true}
+	}
 
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO tasks (
@@ -142,13 +158,17 @@ func (s *Store) CreateTask(ctx context.Context, task *tasks.Task) error {
 			authority_grant_id, root_authority_grant_id, parent_authority_grant_id,
 			authority_audience_type, authority_audience_id, authority_delegate_type, authority_delegate_id,
 			task_class, grace_window_ms,
-			wait_spec, depends_on, context_id, paused_at
+			wait_spec, depends_on, context_id, paused_at,
+			retry_policy_json,
+			correlation_id, root_task_id, completion_event
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?,
-			?, ?, ?, ?
+			?, ?, ?, ?,
+			?,
+			?, ?, ?
 		)
 	`,
 		task.TaskID,
@@ -198,6 +218,10 @@ func (s *Store) CreateTask(ctx context.Context, task *tasks.Task) error {
 		dependsOnStr,
 		nullStr(task.ContextID),
 		pausedAtMs,
+		retryPolicyStr,
+		nullStr(task.CorrelationID),
+		nullStr(task.RootTaskID),
+		completionEventStr,
 	)
 	return err
 }
@@ -364,6 +388,28 @@ func (s *Store) StartTaskWithAgent(ctx context.Context, taskID, agentIdentity st
 	return nil
 }
 
+// ClaimTask transitions a task into running when claimed by its assignee.
+// Unlike StartTask it also accepts a pending source state so a per-turn task
+// can be claimed straight out of the queue. Only stamps started_at on the
+// first transition; running -> running is a no-op for that timestamp
+// (idempotent for re-claim / multi-tab scenarios).
+func (s *Store) ClaimTask(ctx context.Context, taskID string) error {
+	nowStr := now()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'running', started_at = COALESCE(started_at, ?)
+		WHERE task_id = ? AND status IN ('pending', 'assigned', 'starting', 'running')
+	`, nowStr, taskID)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("task %s not in a claimable state (pending, assigned, starting, or running)", taskID)
+	}
+	return nil
+}
+
 func (s *Store) CompleteTask(ctx context.Context, taskID string) error {
 	nowStr := now()
 	result, err := s.db.ExecContext(ctx, `
@@ -384,6 +430,39 @@ func (s *Store) CompleteTask(ctx context.Context, taskID string) error {
 
 func (s *Store) FailTask(ctx context.Context, taskID, errorMsg string) error {
 	nowStr := now()
+
+	// Best-effort lookup of an attached RetryPolicy. If GetTask fails, fall
+	// back to the legacy update — losing the policy-driven reschedule is
+	// preferable to losing the FailTask transition itself.
+	var nextRetryAt *time.Time
+	if task, getErr := s.GetTask(ctx, taskID); getErr == nil && task != nil && task.RetryPolicy != nil {
+		newCount := int32(task.RetryCount + 1)
+		if newCount < task.RetryPolicy.EffectiveMaxAttempts() {
+			t := tasks.ComputeNextRetryAt(task.RetryPolicy, int(newCount), nil)
+			nextRetryAt = &t
+		}
+	}
+
+	if nextRetryAt != nil {
+		result, err := s.db.ExecContext(ctx, `
+			UPDATE tasks
+			SET status = 'failed', failed_at = ?, error_message = ?,
+			    next_retry_at = ?, retry_count = retry_count + 1
+			WHERE task_id = ?
+		`, nowStr, errorMsg, nullTimeStr(nextRetryAt), taskID)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return fmt.Errorf("task %s not found or not in a failable state", taskID)
+		}
+		return nil
+	}
+
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = 'failed', failed_at = ?, error_message = ?, retry_count = retry_count + 1
@@ -553,6 +632,14 @@ func buildFilterClausesSQLite(filter *tasks.TaskFilter, args []interface{}, skip
 	if filter.ContextID != "" {
 		query += " AND context_id = ?"
 		args = append(args, filter.ContextID)
+	}
+	if filter.CorrelationID != "" {
+		query += " AND correlation_id = ?"
+		args = append(args, filter.CorrelationID)
+	}
+	if filter.RootTaskID != "" {
+		query += " AND root_task_id = ?"
+		args = append(args, filter.RootTaskID)
 	}
 	if len(filter.ExcludeStatuses) > 0 {
 		placeholders := make([]string, len(filter.ExcludeStatuses))
@@ -1182,12 +1269,15 @@ func (s *Store) InsertDLQEntryTx(ctx context.Context, tx tasks.StoreTx, taskID, 
 // Non-transactional queue operations (orchestrated_task_queue)
 // =============================================================================
 
-func (s *Store) InsertQueueEntry(ctx context.Context, queueID, taskID, targetImplementation, workspace, profile string, launchParamsJSON []byte) error {
+func (s *Store) InsertQueueEntry(ctx context.Context, queueID, taskID, targetImplementation, workspace, profile string, launchParamsJSON []byte, priority int) error {
+	if priority == 0 {
+		priority = int(tasks.PriorityNormal)
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO orchestrated_task_queue
-		(queue_id, task_id, target_implementation, workspace, profile, launch_params, status)
-		VALUES (?, ?, ?, ?, ?, ?, 'pending')
-	`, queueID, taskID, targetImplementation, workspace, profile, launchParamsJSON)
+		(queue_id, task_id, target_implementation, workspace, profile, launch_params, status, priority)
+		VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+	`, queueID, taskID, targetImplementation, workspace, profile, launchParamsJSON, priority)
 	return err
 }
 
@@ -1200,7 +1290,7 @@ func (s *Store) PollPendingQueueEntries(ctx context.Context, limit int) ([]*task
 		SELECT queue_id, task_id, profile, workspace, target_implementation
 		FROM orchestrated_task_queue
 		WHERE status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= ?)
-		ORDER BY created_at ASC
+		ORDER BY priority DESC, created_at ASC
 		LIMIT ?
 	`, nowStr, limit)
 	if err != nil {
@@ -1333,6 +1423,38 @@ func (s *Store) FailQueueEntryByTaskID(ctx context.Context, taskID, errorMsg str
 		WHERE task_id = ? AND status IN ('pending', 'claimed')
 	`, errorMsg, nowStr, taskID)
 	return err
+}
+
+// ReconcileOrphanedQueueEntries retires every pending/claimed queue row whose
+// task is no longer live (terminal or purged) in one statement. Liveness is a
+// correlated NOT EXISTS against the tasks table restricted to the canonical
+// non-terminal status set, so a purged task (no row) and a terminal task (row
+// present but terminal status) are both treated as orphaned. See the
+// tasks.Store interface doc for the full contract.
+func (s *Store) ReconcileOrphanedQueueEntries(ctx context.Context) (int64, error) {
+	statuses := tasks.NonTerminalStatuses()
+	placeholders := make([]string, len(statuses))
+	args := make([]interface{}, 0, len(statuses)+2)
+	args = append(args, tasks.ReconcileErrorMessage, now())
+	for i, st := range statuses {
+		placeholders[i] = "?"
+		args = append(args, string(st))
+	}
+	query := fmt.Sprintf(`
+		UPDATE orchestrated_task_queue
+		SET status = 'failed', error_message = ?, completed_at = ?
+		WHERE status IN ('pending', 'claimed')
+		  AND NOT EXISTS (
+			SELECT 1 FROM tasks t
+			WHERE t.task_id = orchestrated_task_queue.task_id
+			  AND t.status IN (%s)
+		  )
+	`, strings.Join(placeholders, ", "))
+	res, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // =============================================================================
@@ -1505,7 +1627,9 @@ const taskSelectColumns = `
 	authority_audience_type, authority_audience_id, authority_delegate_type, authority_delegate_id,
 	task_class,
 	disconnected_at, grace_window_ms,
-	wait_spec, depends_on, context_id, paused_at
+	wait_spec, depends_on, context_id, paused_at,
+	retry_policy_json,
+	correlation_id, root_task_id, completion_event
 `
 
 // taskScanner is satisfied by both *sql.Row and *sql.Rows.
@@ -1521,12 +1645,13 @@ func scanTaskInto(s taskScanner) (*tasks.Task, error) {
 	var authorityGrantID, rootAuthorityGrantID, parentAuthorityGrantID sql.NullString
 	var authorityAudienceType, authorityAudienceID, authorityDelegateType, authorityDelegateID sql.NullString
 	var contextID sql.NullString
+	var correlationID, rootTaskID, completionEventJSON sql.NullString
 	var createdAtStr, updatedAtStr string
 	var scheduledForStr, startedAtStr, completedAtStr, failedAtStr, assignedAtStr, nextRetryAtStr, lastHeartbeatStr, disconnectedAtStr sql.NullString
 	var pausedAtMs sql.NullInt64
 	var scheduleToStart, startToClose, heartbeatTimeout, scheduleToClose sql.NullInt64
 	var launchParamsJSON, metadataJSON, checkpointJSON, heartbeatJSON []byte
-	var waitSpecJSON, dependsOnJSON sql.NullString
+	var waitSpecJSON, dependsOnJSON, retryPolicyJSON sql.NullString
 	var queuedForStartup int
 
 	err := s.Scan(
@@ -1548,6 +1673,8 @@ func scanTaskInto(s taskScanner) (*tasks.Task, error) {
 		&task.TaskClass,
 		&disconnectedAtStr, &task.GraceWindowMs,
 		&waitSpecJSON, &dependsOnJSON, &contextID, &pausedAtMs,
+		&retryPolicyJSON,
+		&correlationID, &rootTaskID, &completionEventJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -1749,12 +1876,32 @@ func scanTaskInto(s taskScanner) (*tasks.Task, error) {
 			return nil, fmt.Errorf("failed to unmarshal depends_on: %w", err)
 		}
 	}
+	if retryPolicyJSON.Valid && len(retryPolicyJSON.String) > 0 {
+		var rp tasks.RetryPolicy
+		if err := json.Unmarshal([]byte(retryPolicyJSON.String), &rp); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal retry_policy: %w", err)
+		}
+		task.RetryPolicy = &rp
+	}
 	if contextID.Valid {
 		task.ContextID = contextID.String
 	}
 	if pausedAtMs.Valid {
 		t := time.UnixMilli(pausedAtMs.Int64).UTC()
 		task.PausedAt = &t
+	}
+	if correlationID.Valid {
+		task.CorrelationID = correlationID.String
+	}
+	if rootTaskID.Valid {
+		task.RootTaskID = rootTaskID.String
+	}
+	if completionEventJSON.Valid && len(completionEventJSON.String) > 0 {
+		var ce tasks.TaskCompletionConfig
+		if err := json.Unmarshal([]byte(completionEventJSON.String), &ce); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal completion_event: %w", err)
+		}
+		task.CompletionEvent = &ce
 	}
 
 	return &task, nil

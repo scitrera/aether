@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // ---------------------------------------------------------------------------
@@ -50,6 +50,10 @@ func (m *mockRouter) SubscribeExclusiveFromNow(topic string, consumerName string
 }
 
 func (m *mockRouter) SubscribeExclusiveFromTimestamp(topic string, consumerName string, _ int64, _ func([]byte)) (func(), error) {
+	return m.SubscribeExclusive(topic, consumerName, nil)
+}
+
+func (m *mockRouter) SubscribeExclusiveResumeOrTail(topic string, consumerName string, _ func([]byte)) (func(), error) {
 	return m.SubscribeExclusive(topic, consumerName, nil)
 }
 
@@ -417,6 +421,54 @@ func TestEnforceTopicPermissions(t *testing.T) {
 			targetTopic: "ag::ws2::impl::spec",
 			wantErr:     false,
 		},
+
+		// ----- User-broadcast (uu::): platform principals only -----
+		{
+			name:        "service can send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalService},
+			targetTopic: "uu::user1",
+			wantErr:     false,
+		},
+		{
+			name:        "workflow engine can send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalWorkflowEngine},
+			targetTopic: "uu::user1",
+			wantErr:     false,
+		},
+		{
+			name:        "bridge can send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalBridge},
+			targetTopic: "uu::user1",
+			wantErr:     false,
+		},
+		{
+			name:        "agent cannot send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"},
+			targetTopic: "uu::user1",
+			wantErr:     true,
+			errContains: "user-broadcast",
+		},
+		{
+			name:        "task cannot send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalTask, Workspace: "ws1"},
+			targetTopic: "uu::user1",
+			wantErr:     true,
+			errContains: "user-broadcast",
+		},
+		{
+			name:        "user cannot send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalUser, Workspace: "ws1"},
+			targetTopic: "uu::user1",
+			wantErr:     true,
+			errContains: "user-broadcast",
+		},
+		{
+			name:        "orchestrator cannot send to user-broadcast topic",
+			sender:      models.Identity{Type: models.PrincipalOrchestrator, Workspace: "ws1"},
+			targetTopic: "uu::user1",
+			wantErr:     true,
+			errContains: "user-broadcast",
+		},
 	}
 
 	for _, tt := range tests {
@@ -486,6 +538,11 @@ func TestExtractWorkspaceFromTopic(t *testing.T) {
 		{
 			name:  "user window topic returns empty (no workspace)",
 			topic: "us::alice::window1",
+			want:  "",
+		},
+		{
+			name:  "user-broadcast topic returns empty (workspace-agnostic)",
+			topic: "uu::alice",
 			want:  "",
 		},
 		{
@@ -593,6 +650,11 @@ func TestValidateTopicFormat(t *testing.T) {
 		{
 			name:    "valid uw prefix",
 			topic:   "uw::user1::ws1",
+			wantErr: false,
+		},
+		{
+			name:    "valid uu prefix",
+			topic:   "uu::user1",
 			wantErr: false,
 		},
 		{
@@ -709,33 +771,38 @@ func TestSetupClientSubscriptions(t *testing.T) {
 			wantSharedTopics:    []string{"tb::prod::stream-proc"},
 		},
 		{
-			name: "user with workspace subscribes to window topic exclusively and workspace + per-user progress topics shared",
+			name: "user with workspace subscribes to window topic exclusively; broadcast lanes resume-or-tail (exclusive), progress shared",
 			identity: models.Identity{
 				Type:      models.PrincipalUser,
 				ID:        "alice",
 				Specifier: "win-1",
 				Workspace: "prod",
 			},
-			wantExclusiveTopics: []string{"us::alice::win-1"},
-			// pg::us::alice is the per-user progress topic shared by all of
-			// alice's open windows. Window-level filtering happens at delivery
-			// time via the recipient field, not at the topic level. See
-			// UserProgressTopic + isBareUserRecipientMatch.
-			wantSharedTopics: []string{"gu::prod", "uw::alice::prod", "pg::us::alice"},
+			// Broadcast lanes (gu/uw/uu) and progress lanes (pg::us::alice, and
+			// the workspace pg::prod) now use per-window named consumers with
+			// resume-or-tail semantics so a reconnect replays only the gap instead
+			// of re-dumping the whole retained history from seq 0. Window-level
+			// progress filtering still happens at delivery time via the recipient
+			// field (see UserProgressTopic + isBareUserRecipientMatch). A user
+			// therefore has no shared (anonymous) subscriptions.
+			wantExclusiveTopics: []string{"us::alice::win-1", "gu::prod", "uw::alice::prod", "uu::alice", "pg::us::alice"},
+			wantSharedTopics:    []string{},
 		},
 		{
-			name: "user without workspace subscribes to window topic exclusively and per-user progress topic shared",
+			name: "user without workspace subscribes to window topic exclusively; broadcast lane resume-or-tail (exclusive), progress shared",
 			identity: models.Identity{
 				Type:      models.PrincipalUser,
 				ID:        "bob",
 				Specifier: "win-2",
 				Workspace: "", // no workspace
 			},
-			wantExclusiveTopics: []string{"us::bob::win-2"},
-			// Even without a workspace, users still subscribe to their
-			// per-user progress topic so targeted progress from agents in
-			// any workspace can reach them.
-			wantSharedTopics: []string{"pg::us::bob"},
+			// uu (per-user broadcast) and pg::us::bob (per-user progress) now use
+			// per-window named resume-or-tail consumers; the mock records them on
+			// the exclusive path. Even without a workspace the user still
+			// subscribes to their per-user progress topic so targeted progress
+			// from agents in any workspace can reach them.
+			wantExclusiveTopics: []string{"us::bob::win-2", "uu::bob", "pg::us::bob"},
+			wantSharedTopics:    []string{},
 		},
 		{
 			name: "workflow engine subscribes to event::receiver0 fan-in shard regardless of workspace",
@@ -895,13 +962,16 @@ func TestSetupClientSubscriptions_DuplicateSubscriptionIgnored(t *testing.T) {
 	sharedCount := len(router.subscribedTopics)
 	router.mu.Unlock()
 
-	if exclusiveCount != 1 {
-		t.Errorf("expected 1 exclusive subscription after duplicate call, got %d", exclusiveCount)
+	// The agent gets 2 exclusive subscriptions: its identity topic
+	// (ag::{ws}::{impl}::{spec}) and the workspace progress topic pg::{ws}, which
+	// now uses a resume-or-tail named consumer. Both are recorded once despite the
+	// duplicate setup call (ClientSession HasSubscription guard).
+	if exclusiveCount != 2 {
+		t.Errorf("expected 2 exclusive subscriptions after duplicate call, got %d", exclusiveCount)
 	}
-	// The shared Subscribe call may be deduplicated at the ClientSession level
-	// (HasSubscription guard). Agents get ga::{workspace} + pg::{workspace} = 2 shared.
-	if sharedCount != 2 {
-		t.Errorf("expected 2 shared subscriptions after duplicate call, got %d", sharedCount)
+	// Only ga::{workspace} remains on the shared (anonymous) path.
+	if sharedCount != 1 {
+		t.Errorf("expected 1 shared subscription after duplicate call, got %d", sharedCount)
 	}
 }
 

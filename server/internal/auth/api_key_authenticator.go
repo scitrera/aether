@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // APIKeyAuthenticator validates API keys against an APITokenStore implementation.

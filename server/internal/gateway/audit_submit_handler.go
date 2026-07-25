@@ -4,10 +4,10 @@ import (
 	"context"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/audit"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // Foreign audit-event error codes returned via SubmitAuditEventResponse.

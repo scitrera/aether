@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/scitrera/aether/internal/checkpoint"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/internal/state"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/checkpoint"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/internal/state"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // SessionManager abstracts session registry operations used by the gateway.
@@ -72,6 +72,12 @@ type MessageRouter interface {
 	// the router backend), falls back to existing replay semantics. Used for cold-starting
 	// pool-dispatched agents.
 	SubscribeExclusiveFromTimestamp(topic string, consumerName string, startTimestampMs int64, handler func([]byte)) (func(), error)
+	// SubscribeExclusiveResumeOrTail creates a named exclusive subscription that
+	// resumes from the consumer's committed offset when one exists, and otherwise
+	// starts at the current tail (NOT the beginning of the log). Use it for
+	// shared/broadcast lanes a client re-subscribes on every (re)connect so a
+	// first connect gets no full-history dump and a reconnect replays only the gap.
+	SubscribeExclusiveResumeOrTail(topic string, consumerName string, handler func([]byte)) (func(), error)
 }
 
 // KVReadWriter abstracts KV store operations used by the gateway and KVHandler.
@@ -85,6 +91,39 @@ type KVReadWriter interface {
 	Decrement(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, userID string, workspace string) (int64, error)
 	IncrementIf(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, userID string, workspace string, delta int64, ceiling int64) (int64, bool, error)
 	DecrementIf(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, userID string, workspace string, delta int64, floor int64) (int64, bool, error)
+
+	// Atomic conditional writes — the building blocks for distributed
+	// coordination primitives (mutex, leader election, run-once). Each is
+	// implemented natively across all three backends (Redis / Badger /
+	// NATS-JetStream). A TTL lease lock is expressed as: acquire = SetNX,
+	// refresh = CompareAndSet(token→token), release = CompareAndDelete(token).
+
+	// SetNX sets key=value only if the key is currently absent. Returns true
+	// iff the value was written.
+	SetNX(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, value string, userID string, workspace string, ttl time.Duration) (bool, error)
+	// CompareAndSet sets key=value only if the current stored value equals
+	// expected. Returns true iff the swap was applied. A non-existent key never
+	// matches a non-empty expected (use SetNX for the absent case).
+	CompareAndSet(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, expected string, value string, userID string, workspace string, ttl time.Duration) (bool, error)
+	// CompareAndDelete deletes key only if the current stored value equals
+	// expected. Returns true iff the delete was applied.
+	CompareAndDelete(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, expected string, userID string, workspace string) (bool, error)
+
+	// Atomic set primitives — the building block for fan-in joins (set-based
+	// completeness) and at-most-once dedup ledgers. Implemented natively across
+	// all three backends (Redis SADD/SCARD; Badger / NATS-JetStream emulate a
+	// JSON-encoded member set under optimistic concurrency).
+
+	// SetAdd atomically adds member to the set stored at key, returning whether
+	// the member was newly added (false if it was already present) together with
+	// the set's cardinality after the add. When ttl > 0 the key's expiry is
+	// (re)set on a newly-added member. This is the set analogue of IncrementIf:
+	// the unique caller that observes added==true && cardinality==N is the one
+	// whose add completed an N-member set (exactly-once fan-in firing for set
+	// joins), while added==false flags a duplicate arrival for dedup ledgers.
+	SetAdd(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, member string, userID string, workspace string, ttl time.Duration) (bool, int64, error)
+	// SetCard returns the cardinality of the set stored at key (0 if absent).
+	SetCard(ctx context.Context, agent models.Identity, scope kv.KVScope, key string, userID string, workspace string) (int64, error)
 }
 
 // CheckpointManager abstracts checkpoint store operations used by the gateway.

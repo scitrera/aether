@@ -1,6 +1,7 @@
 // Original file: aether.proto
 
 import type { MessageType as _aether_v1_MessageType, MessageType__Output as _aether_v1_MessageType__Output } from '../../aether/v1/MessageType';
+import type { PrincipalRef as _aether_v1_PrincipalRef, PrincipalRef__Output as _aether_v1_PrincipalRef__Output } from '../../aether/v1/PrincipalRef';
 
 export interface IncomingMessage {
   'sourceTopic'?: (string);
@@ -18,6 +19,15 @@ export interface IncomingMessage {
    * declared event/metric workspace).
    */
   'workspace'?: (string);
+  /**
+   * Gateway-set, spoof-proof resolved on-behalf-of subject, mirrored from
+   * MessageEnvelope.on_behalf_subject at delivery time. Populated ONLY when the
+   * sender's SendMessage carried an AuthorizationContext the gateway resolved
+   * to an OBO subject. Lets a recipient identify the *user* a message was sent
+   * for, distinct from the sending identity in source_topic. Empty for direct
+   * (non-OBO) sends. See MessageEnvelope.on_behalf_subject.
+   */
+  'onBehalfSubject'?: (_aether_v1_PrincipalRef | null);
 }
 
 export interface IncomingMessage__Output {
@@ -36,4 +46,13 @@ export interface IncomingMessage__Output {
    * declared event/metric workspace).
    */
   'workspace': (string);
+  /**
+   * Gateway-set, spoof-proof resolved on-behalf-of subject, mirrored from
+   * MessageEnvelope.on_behalf_subject at delivery time. Populated ONLY when the
+   * sender's SendMessage carried an AuthorizationContext the gateway resolved
+   * to an OBO subject. Lets a recipient identify the *user* a message was sent
+   * for, distinct from the sending identity in source_topic. Empty for direct
+   * (non-OBO) sends. See MessageEnvelope.on_behalf_subject.
+   */
+  'onBehalfSubject': (_aether_v1_PrincipalRef__Output | null);
 }

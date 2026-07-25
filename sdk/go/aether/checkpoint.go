@@ -341,24 +341,6 @@ func (cp *Checkpoint) drainResponseQueue() {
 	}
 }
 
-// waitForResponse waits for a checkpoint response with timeout (legacy queue-based).
-func (cp *Checkpoint) waitForResponse(ctx context.Context, timeout time.Duration) (*CheckpointResponse, error) {
-	// Create a timer for the timeout
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	queue := cp.client.CheckpointResponseQueue()
-
-	select {
-	case <-ctx.Done():
-		return nil, NewTimeoutError("context canceled", timeout.Seconds())
-	case <-timer.C:
-		return nil, NewTimeoutError("checkpoint operation timed out", timeout.Seconds())
-	case resp := <-queue:
-		return resp, nil
-	}
-}
-
 // waitForCorrelatedResponse waits for a checkpoint response on a correlated channel with timeout.
 func (cp *Checkpoint) waitForCorrelatedResponse(ctx context.Context, ch chan *CheckpointResponse, timeout time.Duration) (*CheckpointResponse, error) {
 	timer := time.NewTimer(timeout)

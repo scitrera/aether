@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 func mustParseSpec(t *testing.T, s string) AuthRuleSpec {

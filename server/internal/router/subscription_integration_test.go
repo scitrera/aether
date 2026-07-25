@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/testutil"
+	"github.com/scitrera/aether/server/internal/testutil"
 )
 
 // These tests exercise the real RabbitMQ Streams cold-start replay path used

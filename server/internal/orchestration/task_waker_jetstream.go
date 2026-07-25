@@ -63,10 +63,10 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/logging"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/logging"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // JetStream stream names + subject filters used by the waker. The "authreq"

@@ -61,6 +61,8 @@ For setup walkthroughs, see `docs/quickstart.md`,
 | [Gateway — Tracing & Logging](#gateway-tracing--logging) | `gateway` / `all` | OpenTelemetry, log level/format |
 | [Gateway — Proxy data plane](#gateway-proxy-data-plane) | `gateway` | Proxy bypass kill switch |
 | [AetherLite](#aetherlite-cmdaetherlite) | `aetherlite` | Embedded single-binary flag overrides |
+| [AetherLite — Badger retention](#aetherlite-badger-retention-single-node-mode) | `aetherlite` | Message / consumer-offset TTL (single-node Badger) |
+| [AetherLite — Cluster mode](#aetherlite-cluster-mode-jetstream) | `aetherlite` | Embedded NATS/JetStream clustering + S3 backup |
 | [Migrate](#migrate-cmdmigrate) | `migrate` | Standalone DB migration tool |
 | [Auth Proxy](#auth-proxy-cmdauth-proxy) | `auth-proxy` | Reverse-proxy auth gateway |
 | [Auth Proxy — Login flow](#auth-proxy-browser-login-flow) | `auth-proxy` | Browser OIDC login + session cookies |
@@ -87,7 +89,8 @@ section.
 | `PORT` | int | `50051` | gRPC listen port. Unprefixed by design for PaaS compatibility. |
 | `AETHER_DEV_MODE` | bool | `false` | Gates several "fail-closed" validations: allows missing token HMAC key, allows `verify_signature:false`, allows plaintext gRPC with credential auth. **NOT FOR PRODUCTION.** |
 | `AETHER_ALLOW_DEV_MODE` | bool | `false` | Required opt-in for `--insecure-admin` and for `admin.cors_origin="*"` to be accepted by the config validator. **NOT FOR PRODUCTION.** |
-| `AETHER_AUTO_TLS` | bool | `false` | When `true`, the gateway auto-generates a self-signed CA + server cert into `secrets-dir/tls/` if no TLS files are configured. Dev convenience; **NOT FOR PRODUCTION** unless the generated CA is trust-rooted externally. |
+| `AETHER_AUTO_TLS` | bool | `false` | When `true`, the gateway auto-generates a self-signed CA + server cert into `secrets-dir/tls/` if no TLS files are configured. Dev convenience; **NOT FOR PRODUCTION** unless the generated CA is trust-rooted externally. Read directly by `cmd/gateway`'s startup flow, not by `ApplyEnvOverrides()` — **not honoured by `cmd/aetherlite`**. |
+| `AETHER_TENANT_ID` | string | (none) | Names this gateway instance's own tenant scope; minted into `X-Auth-Tenant-ID` on proxied requests. Read directly by both `cmd/gateway` and `cmd/aetherlite`. When unset, the proxy path falls back to the sender's workspace as the tenant scope. Also read by `proxy-sidecar` (see [Proxy Sidecar](#proxy-sidecar-cmdproxy-sidecar)) to propagate the same identifier in identity headers. |
 
 ### Gateway — Admin API
 
@@ -131,6 +134,8 @@ come from `internal/audit/types.go`.
 | `AETHER_AUDIT_FLUSH_PERIOD` | duration | `5s` | Maximum interval between flushes when the batch is not full. Renamed from `AUDIT_FLUSH_PERIOD`. |
 | `AETHER_AUDIT_RETENTION_DAYS` | int > 0 | `90` | Retention window for batched writes. Renamed from `AUDIT_RETENTION_DAYS`. |
 | `AETHER_AUDIT_CHANNEL_BUFFER` | int > 0 | `1000` | Size of the async event channel buffer. Renamed from `AUDIT_CHANNEL_BUFFER`. |
+| `AETHER_AUDIT_COALESCE_WINDOW` | duration | `60s` | Window over which a burst of identical successful audit events (e.g. chat-streaming chatter) is coalesced into one record. Read by the unified config loader only (no legacy unprefixed name). |
+| `AETHER_AUDIT_FOREIGN_RATE_PER_SEC` | float | `100` | Per-principal rate limit (events/sec) for foreign `SubmitAuditEvent` submissions. Read directly by both `cmd/gateway` and `cmd/aetherlite` (not via `ApplyEnvOverrides()`). |
 
 ### Gateway — Storage (PostgreSQL, Redis, RabbitMQ)
 
@@ -149,7 +154,7 @@ gateway image can drop straight into PaaS targets that inject
 | `REDIS_PASSWORD` | string | (none) | Redis password. |
 | `STREAM_URL` | URL (`rabbitmq-stream://`) | `rabbitmq-stream://guest:guest@localhost:55552` (dev) | RabbitMQ Streams endpoint. |
 | `AMQP_URL` | URL (`amqp://` or `amqps://`) | `amqp://guest:guest@localhost:55672/` (dev) | RabbitMQ AMQP endpoint (used for delayed-exchange orchestration). |
-| `AETHER_FANIN_SHARDS` | int ≥ 1 | `1` | Number of fan-in shards for `event::receiver{N}` and `metric::receiver{N}` topics. Today only shard 0 is used (stub always returns 0). Future releases will use fnv64 hashing to distribute workspaces across N shards, enabling N parallel Workflow Engine and Metrics Bridge instances. |
+| `AETHER_FANIN_SHARDS` | int ≥ 1 | `1` | **Reserved, not yet read from the environment.** `pkg/sharding.TotalShards()` is a stub that always returns `1` regardless of any env var; only `event::receiver0` / `metric::receiver0` are used today. This name is reserved for the future fnv64-hashing fan-in sharding scheme (`pkg/sharding`) that will distribute workspaces across N shards for parallel Workflow Engine / Metrics Bridge instances. |
 
 ### Gateway — Tracing & Logging
 
@@ -189,6 +194,44 @@ Precedence at the call site is:
 | `AETHERLITE_WORKFLOW` | bool | `true` | `--workflow` (toggles embedded workflow server) | lite-only |
 | `AETHERLITE_WORKFLOW_CONFIG` | path | (empty) | `--workflow-config` | lite-only |
 | `AETHERLITE_WORKFLOW_ADMIN_PORT` | int | `31881` | `--workflow-admin-port` | lite-only |
+
+### AetherLite — Badger retention (single-node mode)
+
+These apply only when AetherLite is running single-node (Badger) backends —
+i.e. `AETHERLITE_CLUSTER_MODE` is not enabled. They are read directly via
+`os.Getenv` (not via `config.EnvStr`/`EnvInt`, so there is no matching CLI
+flag) and applied to the `BadgerRouter` at startup.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `AETHER_MESSAGE_RETENTION_TTL` | Go duration string | `24h` | Badger per-message retention (native per-entry expiry) to bound topic log growth. Set to `"0"` to retain forever. An invalid duration string is ignored with a warning (falls back to the 24h default). |
+| `AETHER_OFFSET_RETENTION_TTL` | Go duration string | `168h` (7d) | Badger per-consumer-offset retention, decoupled from message retention. Set to `"0"` to retain forever. An invalid duration string is ignored with a warning (falls back to the 7d default). |
+
+### AetherLite — Cluster mode (JetStream)
+
+`AETHERLITE_CLUSTER_MODE=true` flips AetherLite from single-node Badger
+backends to an embedded-NATS/JetStream-backed cluster (router, session, KV,
+checkpoint, dispatcher, and an S3-or-local backup coordinator). These
+variables are parsed once at startup by `readClusterEnv()` in
+`cmd/aetherlite/cluster_wiring.go`; all are `AETHERLITE_*`-prefixed except
+the shared `AETHER_DISPATCHER` toggle.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `AETHERLITE_CLUSTER_MODE` | bool | `false` | Master switch. Enables the embedded NATS server + JetStream-backed router/session/KV/checkpoint/dispatcher and the backup coordinator. |
+| `AETHERLITE_CLUSTER_PEERS` | comma-list | (empty) | NATS route URLs of peer nodes. Empty means single-node JetStream (no cluster route listener). |
+| `AETHERLITE_HA_MODE` | enum (`auto`/`async`/`sync`) | `auto` | Replication mode once peers are configured. Unknown values fall back to `auto` with a warning. |
+| `AETHERLITE_NATS_CLIENT_PORT` | int | `0` (ephemeral) | Embedded NATS client port. |
+| `AETHERLITE_NATS_CLUSTER_PORT` | int | `6222` | Embedded NATS peer-routing port. |
+| `AETHERLITE_S3_BUCKET` | string | (empty) | S3 bucket for the backup coordinator. Empty falls back to `LocalFileStorage` rooted under `{data-dir}/backups`. |
+| `AETHERLITE_S3_PREFIX` | string | `aetherlite/` | Key prefix for S3-stored backups. |
+| `AETHERLITE_S3_REGION` | string | `us-east-1` | AWS region for the S3 backup bucket. |
+| `AETHERLITE_S3_ENDPOINT` | string | (empty) | Optional custom S3 endpoint (MinIO, R2, etc.). |
+| `AETHERLITE_S3_ACCESS_KEY` | string | (empty) | Optional static S3 access key (falls back to the default AWS credential chain when unset). |
+| `AETHERLITE_S3_SECRET_KEY` | string | (empty) | Optional static S3 secret key. |
+| `AETHERLITE_S3_FORCE_PATH_STYLE` | bool | `false` | Forces path-style S3 URLs (required by most MinIO deployments). |
+| `AETHERLITE_RESTORE_FROM_S3` | bool | `false` | On startup, restores JetStream state from the configured backup storage before constructing cluster-mode backends. Destructive of any current state for the restored domains — only runs when explicitly requested. |
+| `AETHER_DISPATCHER` | enum (`polling`/`jetstream`) | `jetstream` when `AETHERLITE_CLUSTER_MODE=true`, otherwise `polling` | Task dispatcher backend. Shared name with no `AETHERLITE_*` prefix because the concept (polling vs. event-driven dispatch) isn't cluster-specific, even though only `cmd/aetherlite` reads it today. |
 
 ## Migrate (`cmd/migrate`)
 

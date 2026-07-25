@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/logging"
 )
 
 // SingleTenantResolver is the OSS-default IdentityResolver.

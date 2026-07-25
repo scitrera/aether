@@ -9,14 +9,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/registry"
-	"github.com/scitrera/aether/internal/state"
-	regstore "github.com/scitrera/aether/internal/storage/registry"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	"github.com/scitrera/aether/pkg/errors"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/registry"
+	"github.com/scitrera/aether/server/internal/state"
+	regstore "github.com/scitrera/aether/server/internal/storage/registry"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	"github.com/scitrera/aether/server/pkg/errors"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // SessionLivenessRegistry is the narrow surface TaskAssignmentService needs
@@ -65,6 +65,11 @@ type TaskAssignmentService struct {
 	// (tk::{workspace}::{task_id}::events). Phase 4 Stage B. Nil = disabled, every
 	// publish call becomes a no-op. Injected via SetEventPublisher.
 	eventPub TaskEventPublisher
+	// domainEventPub publishes "feed B" domain events (raw EventPayload JSON
+	// bytes) onto the event plane (event::*) when a task with a completion_event
+	// config reaches a selected terminal status. Nil = disabled. Injected via
+	// SetDomainEventPublisher.
+	domainEventPub DomainEventPublisher
 }
 
 // queueRetirementDispatcher is the narrow interface TaskAssignmentService needs
@@ -170,6 +175,28 @@ type CreateTaskRequest struct {
 	// route responses back to the originating user. Leave zero-value for internal/
 	// service-initiated tasks that have no OBO subject.
 	SubjectIdentity models.Identity
+
+	// RetryPolicy, when non-nil, is persisted on the created task and
+	// honored by the store's FailTask: the store computes next_retry_at
+	// from this policy and re-pends the task automatically (up to
+	// MaxAttempts). Absent = legacy behavior (immediate re-pend,
+	// hardcoded max_retries=3).
+	RetryPolicy *tasks.RetryPolicy
+
+	// Priority is the dispatch-priority weight (mirrors proto TaskPriority;
+	// 0 = UNSPECIFIED, normalized to NORMAL by the store on create). Higher
+	// priority pending tasks are delivered before lower ones.
+	Priority int32
+
+	// CorrelationID is the fan-out/fan-in correlation identity (the barrier/group
+	// id a workflow join matches against), distinct from the task id.
+	CorrelationID string
+	// RootTaskID is the flow-root task id. Children carry it from their spawner;
+	// a task with no provided root becomes its own flow root (set in the handlers).
+	RootTaskID string
+	// CompletionEvent, when non-nil, opts the task into "feed B": the server emits
+	// a domain event onto event::* when the task reaches a selected terminal status.
+	CompletionEvent *tasks.TaskCompletionConfig
 }
 
 // principalTypeStringForTask maps a models.PrincipalType to the lowercase
@@ -225,6 +252,34 @@ func applySubjectIdentityToAuthority(task *tasks.ExtendedTask, subject models.Id
 	}
 }
 
+// applyRetryPolicyToTask reconciles task.MaxRetries with the attached
+// RetryPolicy. When a policy is present we prefer its MaxAttempts so the
+// store's legacy "retry_count < max_retries" guards stay consistent with
+// the policy-driven scheduling. EffectiveMaxAttempts handles the
+// "0 = server default" rule.
+func applyRetryPolicyToTask(task *tasks.ExtendedTask) {
+	if task == nil || task.RetryPolicy == nil {
+		return
+	}
+	task.MaxRetries = int(task.RetryPolicy.EffectiveMaxAttempts())
+}
+
+// applyCorrelationToTask copies the correlation/feed-B fields from the request
+// onto the task and resolves root_task_id propagation: children carry the root
+// from their spawner, while a task created with no provided root becomes its own
+// flow root. Must run after task.TaskID is set.
+func applyCorrelationToTask(task *tasks.ExtendedTask, req *CreateTaskRequest) {
+	if task == nil || req == nil {
+		return
+	}
+	task.CorrelationID = req.CorrelationID
+	task.CompletionEvent = req.CompletionEvent
+	task.RootTaskID = req.RootTaskID
+	if task.RootTaskID == "" {
+		task.RootTaskID = task.TaskID // a task with no provided root is its own flow root
+	}
+}
+
 // CreateTaskResponse represents the result of task creation
 type CreateTaskResponse struct {
 	TaskID     string
@@ -265,6 +320,7 @@ func (tas *TaskAssignmentService) handleSelfAssign(ctx context.Context, req *Cre
 		TaskClass:      req.TaskClass,
 		GraceWindowMs:  DefaultGraceWindowMs(req.TaskClass),
 		Workspace:      req.Workspace,
+		Priority:       int(req.Priority),
 		AssignmentMode: tasks.AssignmentModeSelfAssign,
 		TaskCategory:   tasks.TaskCategoryRegular,
 		Status:         tasks.TaskStatusPending,
@@ -273,8 +329,11 @@ func (tas *TaskAssignmentService) handleSelfAssign(ctx context.Context, req *Cre
 		Metadata:       req.Metadata,
 		Payload:        req.Payload,
 		MaxRetries:     3,
+		RetryPolicy:    req.RetryPolicy,
 	}
 	applySubjectIdentityToAuthority(task, req.SubjectIdentity)
+	applyRetryPolicyToTask(task)
+	applyCorrelationToTask(task, req)
 
 	// Create task in database as pending
 	if err := tas.taskStore.CreateTask(ctx, task); err != nil {
@@ -327,6 +386,7 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 		TaskClass:      req.TaskClass,
 		GraceWindowMs:  DefaultGraceWindowMs(req.TaskClass),
 		Workspace:      req.Workspace,
+		Priority:       int(req.Priority),
 		AssignmentMode: tasks.AssignmentModeTargeted,
 		TaskCategory:   tasks.TaskCategoryRegular,
 		TargetAgentID:  req.TargetAgentID,
@@ -336,8 +396,11 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 		Metadata:       req.Metadata,
 		Payload:        req.Payload,
 		MaxRetries:     3,
+		RetryPolicy:    req.RetryPolicy,
 	}
 	applySubjectIdentityToAuthority(task, req.SubjectIdentity)
+	applyRetryPolicyToTask(task)
+	applyCorrelationToTask(task, req)
 
 	// Special case: if this IS a startup task (e.g., from admin API), go directly to
 	// createOrchestratedStartupTask which handles all duplicate prevention:
@@ -534,7 +597,7 @@ func (tas *TaskAssignmentService) createOrchestratedStartupTask(
 		return "", fmt.Errorf("failed to marshal launch params: %w", err)
 	}
 
-	if err := tas.taskStore.InsertQueueEntry(ctx, queueID, startupTaskID, targetIdentity.Implementation, workspace, profile, launchParamsJSON); err != nil {
+	if err := tas.taskStore.InsertQueueEntry(ctx, queueID, startupTaskID, targetIdentity.Implementation, workspace, profile, launchParamsJSON, task.Priority); err != nil {
 		return "", fmt.Errorf("failed to insert orchestrated task into queue: %w", err)
 	}
 
@@ -628,6 +691,7 @@ func (tas *TaskAssignmentService) handlePool(ctx context.Context, req *CreateTas
 		TaskClass:            req.TaskClass,
 		GraceWindowMs:        DefaultGraceWindowMs(req.TaskClass),
 		Workspace:            req.Workspace,
+		Priority:             int(req.Priority),
 		AssignmentMode:       tasks.AssignmentModePool,
 		TaskCategory:         tasks.TaskCategoryRegular,
 		TargetImplementation: req.TargetImplementation,
@@ -638,8 +702,11 @@ func (tas *TaskAssignmentService) handlePool(ctx context.Context, req *CreateTas
 		Metadata:             req.Metadata,
 		Payload:              req.Payload,
 		MaxRetries:           3,
+		RetryPolicy:          req.RetryPolicy,
 	}
 	applySubjectIdentityToAuthority(task, req.SubjectIdentity)
+	applyRetryPolicyToTask(task)
+	applyCorrelationToTask(task, req)
 
 	if err := tas.taskStore.CreateTask(ctx, task); err != nil {
 		return nil, fmt.Errorf("failed to create pool task: %w", err)
@@ -654,7 +721,18 @@ func (tas *TaskAssignmentService) handlePool(ctx context.Context, req *CreateTas
 	}, nil
 }
 
-// DeliverPoolTasks claims and returns pending pool tasks for a connecting agent.
+// DeliverPoolTasks claims and returns pending pool tasks for a connecting
+// worker (agent or service).
+//
+// Workspace handling: agents register with a concrete workspace and only
+// see their own. Services have an empty workspace (system principals) and
+// intentionally see pool tasks across all workspaces for their
+// implementation — `GetPendingPoolTasks` treats an empty workspace as
+// "no workspace filter" via `ListTasks`. This matches the cross-workspace
+// design of `PrincipalService` (proxy-sidecar, webhookservice, etc.):
+// services connect once and serve every workspace in the deployment. The
+// per-workspace creator already passed CreateTask ACL on each pending row,
+// so no further ACL check is layered here.
 func (tas *TaskAssignmentService) DeliverPoolTasks(ctx context.Context, agentIdentity models.Identity) ([]*tasks.ExtendedTask, error) {
 	pendingTasks, err := tas.taskStore.GetPendingPoolTasks(ctx, agentIdentity.Implementation, agentIdentity.Workspace)
 	if err != nil {
@@ -753,6 +831,34 @@ func DefaultGraceWindowMs(class int32) int64 {
 	}
 }
 
+// retireQueueRowFailedDirect retires (status='failed') the SQL
+// orchestrated_task_queue row(s) for a task directly via the store, independent
+// of whether tas.dispatcher is wired. This is the reliable retire path that
+// prevents orphaned pending/claimed queue rows when the TaskAssignmentService
+// driving a terminal transition has no dispatcher (e.g. the cleanup service).
+// Idempotent and a no-op when no SQL row exists (clustered/JetStream mode uses a
+// NATS WorkQueue, not this table). Non-fatal: the reconcile sweep is the backstop.
+func (tas *TaskAssignmentService) retireQueueRowFailedDirect(ctx context.Context, taskID, reason string) {
+	if tas.taskStore == nil {
+		return
+	}
+	if err := tas.taskStore.FailQueueEntryByTaskID(ctx, taskID, reason); err != nil {
+		logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row directly (non-fatal)")
+	}
+}
+
+// retireQueueRowCompletedDirect is retireQueueRowFailedDirect's success twin:
+// it retires the queue row(s) as 'completed'. Same dispatcher-independent,
+// idempotent, no-op-in-JetStream semantics.
+func (tas *TaskAssignmentService) retireQueueRowCompletedDirect(ctx context.Context, taskID string) {
+	if tas.taskStore == nil {
+		return
+	}
+	if err := tas.taskStore.CompleteQueueEntryByTaskID(ctx, taskID); err != nil {
+		logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row directly (non-fatal)")
+	}
+}
+
 // CompleteTask marks a task as completed and revokes associated tokens
 func (tas *TaskAssignmentService) CompleteTask(ctx context.Context, taskID string) error {
 	// Phase 4 Stage B: snapshot pre-transition state so publishStatusChange
@@ -773,6 +879,13 @@ func (tas *TaskAssignmentService) CompleteTask(ctx context.Context, taskID strin
 	if err := tas.taskStore.CompleteTask(ctx, taskID); err != nil {
 		return err
 	}
+	// Retire the SQL orchestrated_task_queue row directly via the store so it no
+	// longer depends on tas.dispatcher being wired — the cleanup service's
+	// TaskAssignmentService instance has no dispatcher, which is exactly how
+	// terminal tasks left pending queue rows to be polled forever. The dispatcher
+	// block below is now redundant (it calls the same idempotent store method)
+	// but is retained for backward compatibility.
+	tas.retireQueueRowCompletedDirect(ctx, taskID)
 	if tas.dispatcher != nil {
 		if err := tas.dispatcher.CompleteTaskByTaskID(ctx, taskID); err != nil {
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task complete (non-fatal)")
@@ -800,6 +913,10 @@ func (tas *TaskAssignmentService) FailTask(ctx context.Context, taskID, errorMsg
 	if err := tas.taskStore.FailTask(ctx, taskID, errorMsg); err != nil {
 		return err
 	}
+	// Retire the SQL orchestrated_task_queue row directly (dispatcher-independent).
+	// See CompleteTask for the full rationale. The dispatcher block below is
+	// redundant but retained for backward compatibility.
+	tas.retireQueueRowFailedDirect(ctx, taskID, errorMsg)
 	if tas.dispatcher != nil {
 		if err := tas.dispatcher.FailTaskByTaskID(ctx, taskID, errorMsg); err != nil {
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task fail (non-fatal)")
@@ -825,6 +942,13 @@ func (tas *TaskAssignmentService) CancelTask(ctx context.Context, taskID string)
 	if err := tas.taskStore.CancelTask(ctx, taskID); err != nil {
 		return err
 	}
+	// Retire the SQL orchestrated_task_queue row directly (dispatcher-independent).
+	// This is the root-cause fix for orphaned pending queue rows: the cleanup
+	// service cancels tasks through a TaskAssignmentService whose dispatcher is
+	// nil, so the dispatcher-gated retire below never ran and the row was polled
+	// forever. See CompleteTask for the full rationale. The dispatcher block is
+	// redundant but retained for backward compatibility.
+	tas.retireQueueRowFailedDirect(ctx, taskID, "task cancelled")
 	if tas.dispatcher != nil {
 		if err := tas.dispatcher.FailTaskByTaskID(ctx, taskID, "task cancelled"); err != nil {
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task cancel (non-fatal)")
@@ -871,6 +995,23 @@ func (tas *TaskAssignmentService) ResumeTask(ctx context.Context, taskID string,
 		Str("to_status", string(to)).
 		Msg("task resumed")
 	tas.emitTransitionEvent(ctx, pre, taskID, to, "")
+	return nil
+}
+
+// ClaimTask transitions a task into running when claimed by its assignee
+// (e.g. a per-turn chat_message task claimed straight out of the queue).
+// Side effects: log only — tokens and grants are retained for the run.
+// Idempotent: re-claiming a running task is a no-op on started_at.
+func (tas *TaskAssignmentService) ClaimTask(ctx context.Context, taskID string) error {
+	pre := tas.loadTransitionMetadata(ctx, taskID)
+	if err := tas.taskStore.ClaimTask(ctx, taskID); err != nil {
+		return err
+	}
+	logging.Logger.Info().
+		Str("task_id", taskID).
+		Str("to_status", string(tasks.TaskStatusRunning)).
+		Msg("task claimed")
+	tas.emitTransitionEvent(ctx, pre, taskID, tasks.TaskStatusRunning, "")
 	return nil
 }
 
@@ -968,7 +1109,7 @@ func (tas *TaskAssignmentService) WakeHibernatedTask(ctx context.Context, taskID
 	if err != nil {
 		return fmt.Errorf("WakeHibernatedTask: marshal launch params for %s: %w", taskID, err)
 	}
-	if err := tas.taskStore.InsertQueueEntry(ctx, queueID, taskID, task.TargetImplementation, task.Workspace, profile, launchParamsJSON); err != nil {
+	if err := tas.taskStore.InsertQueueEntry(ctx, queueID, taskID, task.TargetImplementation, task.Workspace, profile, launchParamsJSON, task.Priority); err != nil {
 		return fmt.Errorf("WakeHibernatedTask: insert queue entry for %s: %w", taskID, err)
 	}
 
@@ -1030,6 +1171,10 @@ func (tas *TaskAssignmentService) RejectTask(ctx context.Context, taskID, reason
 	if err := tas.taskStore.RejectTask(ctx, taskID, reason); err != nil {
 		return err
 	}
+	// Retire the SQL orchestrated_task_queue row directly (dispatcher-independent).
+	// See CompleteTask for the full rationale. The dispatcher block below is
+	// redundant but retained for backward compatibility.
+	tas.retireQueueRowFailedDirect(ctx, taskID, reason)
 	if tas.dispatcher != nil {
 		if err := tas.dispatcher.FailTaskByTaskID(ctx, taskID, reason); err != nil {
 			logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to retire orchestrated_task_queue row on task reject (non-fatal)")
@@ -1350,4 +1495,173 @@ func (tas *TaskAssignmentService) ReconcileOrphanedTasks(ctx context.Context) (i
 	}
 
 	return reconciled, nil
+}
+
+// taskClassInteractive mirrors the proto TaskClass enum value for INTERACTIVE
+// (see DefaultGraceWindowMs). Chat-message turns are minted with this class.
+const taskClassInteractive int32 = 1
+
+// staleInteractiveActiveStatuses is the pre-run + running set of statuses an
+// INTERACTIVE task moves through before reaching a terminal state. It
+// deliberately EXCLUDES the waiting_*/hibernated paused states so a turn that
+// is legitimately awaiting user input, an authority grant, an upstream
+// dependency, or a scheduled wake is never cancelled by the TTL sweep.
+var staleInteractiveActiveStatuses = []tasks.TaskStatus{
+	tasks.TaskStatusPending,
+	tasks.TaskStatusAssigned,
+	tasks.TaskStatusStarting,
+	tasks.TaskStatusRunning,
+}
+
+// CancelStaleInteractiveTasks cancels INTERACTIVE (chat_message turn) tasks that
+// have been sitting in a non-terminal, non-waiting state longer than ttl. These
+// are foreground turns that should complete in minutes; when the target sandbox
+// was offline/dead at mint or the harness crashed, they never reach a terminal
+// state and linger forever (12hr-old QUEUED chat tasks were observed). Unlike
+// ReconcileOrphanedTasks, this does not probe session liveness — an INTERACTIVE
+// turn older than the TTL is dead by definition.
+//
+// Cancellation goes through CancelTask so the queue row is retired and the
+// task's authority grant is revoked (never a raw status write). Errors are
+// best-effort (logged and skipped) so one bad task does not abort the sweep.
+// Returns the number of tasks cancelled.
+func (tas *TaskAssignmentService) CancelStaleInteractiveTasks(ctx context.Context, ttl time.Duration) (int, error) {
+	if ttl <= 0 {
+		return 0, nil
+	}
+
+	taskList, err := tas.taskStore.ListTasks(ctx, &tasks.TaskFilter{
+		TaskClass: taskClassInteractive,
+		Statuses:  staleInteractiveActiveStatuses,
+		Limit:     1000,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list interactive tasks: %w", err)
+	}
+
+	cutoff := time.Now().Add(-ttl)
+	cancelled := 0
+	for _, task := range taskList {
+		if !task.CreatedAt.Before(cutoff) {
+			continue
+		}
+		if err := tas.CancelTask(ctx, task.TaskID); err != nil {
+			logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Msg("stale interactive cancel: failed to cancel task")
+			continue
+		}
+		logging.Logger.Info().Str("task_id", task.TaskID).Time("created_at", task.CreatedAt).Msg("stale interactive cancel: cancelled stale interactive task")
+		cancelled++
+	}
+	return cancelled, nil
+}
+
+// startupTaskType is the task_type of the pool-dispatched orchestration task
+// minted by triggerOrchestration to spin up an offline agent (see
+// HasActiveStartupTask / createOrchestratedStartupTask).
+const startupTaskType = "agent_startup"
+
+// CancelStaleStartupTasks cancels agent_startup orchestration tasks that have
+// sat UNCLAIMED (pending) longer than ttl. These are the pool tasks
+// triggerOrchestration mints when a message routes to an OFFLINE agent
+// (e.g. an offline sahara sandbox now registered as ag::_sandbox::sahara::<id>).
+// Registering the sandbox in the agent registry makes it technically
+// orchestratable, so an offline route creates a pending agent_startup task —
+// but with no sandbox orchestrator claiming them (orchestrator=0) and no
+// existing sweep collecting them (they are BACKGROUND/orchestrated, and
+// PurgeTasks only reaps terminal tasks), they linger forever.
+//
+// Cancelling an unclaimed startup task is self-healing: the next message to the
+// same offline target re-triggers a fresh startup task (HasActiveStartupTask
+// sees none once this one is cancelled), so nothing is permanently lost. The
+// TTL is deliberately GENEROUS: a legitimately-orchestratable agent whose
+// orchestrator is briefly unavailable must never have its pending startup task
+// cancelled out from under it. When a real sandbox orchestrator lands later, it
+// claims these (moving them out of pending) well before the sweeper's cutoff.
+//
+// The filter is Statuses:[pending] (pending == unclaimed) — once an
+// orchestrator claims a startup task it leaves the pending state and is no
+// longer eligible for this sweep. Cancellation goes through CancelTask so the
+// queue row is retired and any authority grant is revoked (never a raw status
+// write). Errors are best-effort (logged and skipped) so one bad task does not
+// abort the sweep. Returns the number of tasks cancelled.
+func (tas *TaskAssignmentService) CancelStaleStartupTasks(ctx context.Context, ttl time.Duration) (int, error) {
+	if ttl <= 0 {
+		return 0, nil
+	}
+
+	taskList, err := tas.taskStore.ListTasks(ctx, &tasks.TaskFilter{
+		TaskType: startupTaskType,
+		Statuses: []tasks.TaskStatus{tasks.TaskStatusPending},
+		Limit:    1000,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list startup tasks: %w", err)
+	}
+
+	cutoff := time.Now().Add(-ttl)
+	cancelled := 0
+	for _, task := range taskList {
+		if !task.CreatedAt.Before(cutoff) {
+			continue
+		}
+		if err := tas.CancelTask(ctx, task.TaskID); err != nil {
+			logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Str("target_implementation", task.TargetImplementation).Msg("stale startup cancel: failed to cancel task")
+			continue
+		}
+		logging.Logger.Info().Str("task_id", task.TaskID).Str("target_implementation", task.TargetImplementation).Time("created_at", task.CreatedAt).Msg("stale startup cancel: cancelled stale startup task")
+		cancelled++
+	}
+	return cancelled, nil
+}
+
+// CancelStalePoolTasks cancels regular POOL tasks that have sat UNCLAIMED
+// (pending) longer than ttl. A pool task is claimed by any matching worker when
+// it connects (DeliverPoolTasks); when no worker for its target implementation
+// ever connects, the pending row lingers forever. No existing sweep collects it:
+// agent_startup pool tasks are handled by CancelStaleStartupTasks, active
+// INTERACTIVE turns by CancelStaleInteractiveTasks, and PurgeTasks only reaps
+// terminal rows.
+//
+// The filter is AssignmentMode=pool + TaskCategory=regular + Statuses:[pending].
+// TaskCategory=regular deliberately EXCLUDES orchestrated agent_startup pool
+// tasks (TaskCategory=orchestrated), which CancelStaleStartupTasks owns, so the
+// two sweeps never double-cancel the same row. Once a worker claims a pool task
+// it leaves the pending state and is no longer eligible.
+//
+// Cancellation goes through CancelTask so the queue row is retired and any
+// authority grant is revoked (never a raw status write). The TTL is deliberately
+// GENEROUS: a legitimate pool task whose worker is briefly absent must never be
+// cancelled out from under it. Errors are best-effort (logged and skipped) so one
+// bad task does not abort the sweep. Returns the number of tasks cancelled.
+func (tas *TaskAssignmentService) CancelStalePoolTasks(ctx context.Context, ttl time.Duration) (int, error) {
+	if ttl <= 0 {
+		return 0, nil
+	}
+
+	poolMode := tasks.AssignmentModePool
+	regularCategory := tasks.TaskCategoryRegular
+	taskList, err := tas.taskStore.ListTasks(ctx, &tasks.TaskFilter{
+		AssignmentMode: &poolMode,
+		TaskCategory:   &regularCategory,
+		Statuses:       []tasks.TaskStatus{tasks.TaskStatusPending},
+		Limit:          1000,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list pool tasks: %w", err)
+	}
+
+	cutoff := time.Now().Add(-ttl)
+	cancelled := 0
+	for _, task := range taskList {
+		if !task.CreatedAt.Before(cutoff) {
+			continue
+		}
+		if err := tas.CancelTask(ctx, task.TaskID); err != nil {
+			logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Str("target_implementation", task.TargetImplementation).Msg("stale pool cancel: failed to cancel task")
+			continue
+		}
+		logging.Logger.Info().Str("task_id", task.TaskID).Str("target_implementation", task.TargetImplementation).Time("created_at", task.CreatedAt).Msg("stale pool cancel: cancelled stale pool task")
+		cancelled++
+	}
+	return cancelled, nil
 }

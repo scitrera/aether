@@ -69,7 +69,7 @@ All three SDKs expose ACL admin operations on the standard client. The caller pr
 ```go
 import (
     pb "github.com/scitrera/aether/api/proto"
-    "github.com/scitrera/aether/internal/acl"
+    "github.com/scitrera/aether/server/internal/acl"
 )
 
 // Read the current fallback for agents accessing kv_scope resources.
@@ -361,7 +361,7 @@ This asymmetry is intentional: changing tag numbers or default semantics would b
 ### Go SDK
 
 ```go
-import "github.com/scitrera/aether/internal/kv"
+import "github.com/scitrera/aether/server/internal/kv"
 
 // Shared workspace config (read by any agent)
 config, err := store.Get(ctx, agent, kv.ScopeWorkspace, "app-config", "", "ws-prod")

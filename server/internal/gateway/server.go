@@ -11,18 +11,18 @@ import (
 	// AccessReadWrite, SystemPrincipal) that aclstore re-exports but the legacy
 	// import path is unchanged across the rest of the package — keeping both keeps
 	// the import graph flat. Stage 1 is mechanical; Stage 2 can prune.
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/admin"
-	"github.com/scitrera/aether/internal/auth"
-	"github.com/scitrera/aether/internal/circuitbreaker"
-	"github.com/scitrera/aether/internal/cleanup"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/quota"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	auditstore "github.com/scitrera/aether/internal/storage/audit"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	"github.com/scitrera/aether/internal/timer"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/admin"
+	"github.com/scitrera/aether/server/internal/auth"
+	"github.com/scitrera/aether/server/internal/circuitbreaker"
+	"github.com/scitrera/aether/server/internal/cleanup"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/quota"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	auditstore "github.com/scitrera/aether/server/internal/storage/audit"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	"github.com/scitrera/aether/server/internal/timer"
 )
 
 // GatewayServer implements the Aether gateway gRPC service.
@@ -41,13 +41,29 @@ type GatewayServer struct {
 	acl aclstore.Store
 	// auditLogger is the audit domain Store (internal/storage/audit).
 	auditLogger auditstore.Store
-	gatewayID   string
+	// auditCoalescer suppresses within-window bursts of identical successful
+	// message-route / proxy-route audit events (the chat-streaming chatter
+	// trim). Nil when coalescing is disabled (audit_coalesce_window = 0), in
+	// which case auditLog is a zero-overhead passthrough.
+	auditCoalescer *auditCoalescer
+	gatewayID      string
+	// tenantID is the tenant this gateway serves (the gateway is per-tenant).
+	// Minted into X-Auth-Tenant-ID on every ProxyHttpRequest so passthrough
+	// terminators (e.g. MemoryLayer's in-process terminator) receive a
+	// non-empty tenant for fail-closed authz. Configured via
+	// WithGatewayTenantID (env AETHER_TENANT_ID); when empty the proxy path
+	// falls back to the sender's workspace as the tenant scope.
+	tenantID string
 	// Map of active streams by session ID
 	activeStreams sync.Map
 	// Secondary index: identity string -> sessionID for O(1) lookup
 	identityIndex sync.Map
-	// implementationIndex maps "workspace:implementation" -> []*ClientSession (agents only).
-	// Used for O(1) pool task worker lookup with power-of-two-choices load balancing.
+	// implementationIndex maps "workspace:implementation" -> []*ClientSession.
+	// Indexed clients include connected agents AND connected services. Used for
+	// O(1) pool task worker lookup with power-of-two-choices load balancing.
+	// Services have no workspace component, so they are registered under the
+	// empty workspace key (e.g. ":webhook"); findWorkerByImplementation falls
+	// back to the empty workspace if no workspace-scoped match exists.
 	implIndexMu         sync.RWMutex
 	implementationIndex map[string][]*ClientSession
 	// orchestratorIndex maps "workspace:profile" -> []*ClientSession (orchestrators only).
@@ -173,6 +189,25 @@ func WithCleanupService(cleanupConfig *cleanup.Config) GatewayOption {
 func WithCheckpointDefaultTTL(ttl time.Duration) GatewayOption {
 	return func(s *GatewayServer) {
 		s.checkpointDefaultTTL = ttl
+	}
+}
+
+// WithGatewayTenantID sets the tenant id this gateway serves. It is minted
+// into X-Auth-Tenant-ID on every ProxyHttpRequest. Leave unset to fall back to
+// the sender's workspace as the tenant scope on the proxy path.
+func WithGatewayTenantID(tenantID string) GatewayOption {
+	return func(s *GatewayServer) {
+		s.tenantID = tenantID
+	}
+}
+
+// WithAuditCoalesceWindow enables coalescing of high-volume repetitive audit
+// events (successful message-route / proxy-route) so a burst from the same
+// sender→target is recorded once per window. A window of 0 (or negative)
+// disables coalescing entirely — every event is audited as before.
+func WithAuditCoalesceWindow(window time.Duration) GatewayOption {
+	return func(s *GatewayServer) {
+		s.auditCoalescer = newAuditCoalescer(window)
 	}
 }
 
@@ -341,7 +376,11 @@ func WithACLService(svc aclstore.Store) GatewayOption {
 func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVReadWriter, checkpointStore CheckpointManager, taskStore taskstore.Store, gatewayID string, auditLogger auditstore.Store, mtlsConfig MTLSConfig, opts ...GatewayOption) *GatewayServer {
 	ts := timer.NewTimerSequence()
 
-	// Implement actual reschedule function that persists retry timing
+	// Implement actual reschedule function that persists retry timing.
+	// When the task carries a RetryPolicy, prefer the policy-computed delay
+	// over the caller-supplied one — the caller's value becomes the
+	// fallback for tasks without a policy. This delegates retry scheduling
+	// to the policy primitive without changing the timer's outer cadence.
 	rescheduleFn := func(taskID string, delay time.Duration) {
 		if taskStore == nil {
 			logging.Logger.Warn().Str("task_id", taskID).Msg("cannot reschedule task, no taskStore")
@@ -350,6 +389,12 @@ func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVR
 
 		ctx := context.Background()
 		retryAt := time.Now().Add(delay)
+		if task, err := taskStore.GetTask(ctx, taskID); err == nil && task != nil && task.RetryPolicy != nil {
+			// task.RetryCount is the post-failure count (FailTask already
+			// incremented). The next attempt index passed to
+			// ComputeNextRetryAt is therefore RetryCount.
+			retryAt = taskstore.ComputeNextRetryAt(task.RetryPolicy, task.RetryCount, nil)
+		}
 		err := taskStore.RescheduleTaskAt(ctx, taskID, retryAt)
 		if err != nil {
 			logging.Logger.Error().Err(err).Str("task_id", taskID).Msg("failed to reschedule task")
@@ -413,6 +458,9 @@ func NewGatewayServer(sessions SessionManager, router MessageRouter, kvStore KVR
 	// logged at debug inside the helpers; no callers observe the error.
 	if s.orchestration != nil && s.orchestration.TaskService != nil {
 		s.orchestration.TaskService.SetEventPublisher(s)
+		// Feed B: the gateway is also the domain event publisher, emitting
+		// completion_event domain events onto the event plane (event::*).
+		s.orchestration.TaskService.SetDomainEventPublisher(s)
 	}
 
 	// Seed default-allow fallback for KV scope permissions (agent + task).
@@ -620,6 +668,9 @@ func (s *GatewayServer) SetOrchestrationServices(orchestration *OrchestrationSer
 	// lifecycle transitions fan onto tk::{workspace}::{task_id}::events.
 	if orchestration.TaskService != nil {
 		orchestration.TaskService.SetEventPublisher(s)
+		// Feed B: the gateway is also the domain event publisher, emitting
+		// completion_event domain events onto the event plane (event::*).
+		orchestration.TaskService.SetDomainEventPublisher(s)
 	}
 
 	// Configure dispatcher callback to route tasks to connected orchestrators
@@ -671,6 +722,11 @@ func (s *GatewayServer) SetCleanupService(cleanupConfig *cleanup.Config) {
 			cleanupSvc.SetDispatcher(s.orchestration.Dispatcher)
 		}
 	}
+
+	// Give the cleanup service the audit store so the scheduled audit-retention
+	// job can prune comprehensive_audit_log. The store is the same handle the
+	// gateway writes through; nil-tolerant on the cleanup side (job skips).
+	cleanupSvc.SetAuditStore(s.auditLogger)
 
 	// Run startup cleanup jobs (stale locks + stale claims + orphaned task reconciliation)
 	go func() {

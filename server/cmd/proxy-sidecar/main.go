@@ -18,8 +18,8 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/scitrera/aether/internal/proxysidecar"
-	versionpkg "github.com/scitrera/aether/internal/version"
+	"github.com/scitrera/aether/server/internal/proxysidecar"
+	versionpkg "github.com/scitrera/aether/server/internal/version"
 )
 
 var (
@@ -200,6 +200,7 @@ func devDefaults() *proxysidecar.Config {
 			Insecure: true,
 		},
 		Service: proxysidecar.ServiceConfig{
+			Workspace:      "_sandbox",
 			Implementation: "proxy-sidecar",
 			Specifier:      "instance-1",
 		},

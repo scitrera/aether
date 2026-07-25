@@ -12,7 +12,7 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/server"
 	natsgo "github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
 )
 
 // ---------------------------------------------------------------------------
@@ -188,10 +188,13 @@ func (f *fakeTaskStore) CompleteQueueEntryByTaskID(ctx context.Context, taskID s
 func (f *fakeTaskStore) FailQueueEntryByTaskID(ctx context.Context, taskID, errorMsg string) error {
 	return nil
 }
+func (f *fakeTaskStore) ReconcileOrphanedQueueEntries(ctx context.Context) (int64, error) {
+	return 0, nil
+}
 
 // --- Unused methods (panic to surface unexpected calls) ---
 
-func (f *fakeTaskStore) InsertQueueEntry(_ context.Context, _, _, _, _, _ string, _ []byte) error {
+func (f *fakeTaskStore) InsertQueueEntry(_ context.Context, _, _, _, _, _ string, _ []byte, _ int) error {
 	panic("InsertQueueEntry unexpected in jetstream dispatcher tests")
 }
 func (f *fakeTaskStore) PollPendingQueueEntries(_ context.Context, _ int) ([]*taskstore.QueueEntryNotification, error) {
@@ -216,6 +219,7 @@ func (f *fakeTaskStore) StartTask(_ context.Context, _ string) error     { panic
 func (f *fakeTaskStore) StartTaskWithAgent(_ context.Context, _, _ string) error {
 	panic("unexpected")
 }
+func (f *fakeTaskStore) ClaimTask(_ context.Context, _ string) error    { panic("unexpected") }
 func (f *fakeTaskStore) CompleteTask(_ context.Context, _ string) error { panic("unexpected") }
 func (f *fakeTaskStore) FailTask(_ context.Context, _, _ string) error  { panic("unexpected") }
 func (f *fakeTaskStore) FailTaskWithRetry(_ context.Context, _, _, _ string, _ *time.Time) error {

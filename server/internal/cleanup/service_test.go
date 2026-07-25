@@ -2,8 +2,18 @@ package cleanup
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	taskssqlite "github.com/scitrera/aether/server/internal/storage/tasks/sqlite"
+
+	// Register the bare "sqlite" driver so the reconcile-job wiring test can run
+	// against the native sqlite store (always available, never skipped).
+	_ "modernc.org/sqlite"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -24,6 +34,18 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if config.ReconciliationInterval != 1*time.Minute {
 		t.Errorf("ReconciliationInterval = %v, want %v", config.ReconciliationInterval, 1*time.Minute)
+	}
+	if config.StartupTaskTTL != 30*time.Minute {
+		t.Errorf("StartupTaskTTL = %v, want %v", config.StartupTaskTTL, 30*time.Minute)
+	}
+	if config.StartupTaskCancelInterval != 15*time.Minute {
+		t.Errorf("StartupTaskCancelInterval = %v, want %v", config.StartupTaskCancelInterval, 15*time.Minute)
+	}
+	if config.PoolTaskTTL != 1*time.Hour {
+		t.Errorf("PoolTaskTTL = %v, want %v", config.PoolTaskTTL, 1*time.Hour)
+	}
+	if config.PoolTaskCancelInterval != 15*time.Minute {
+		t.Errorf("PoolTaskCancelInterval = %v, want %v", config.PoolTaskCancelInterval, 15*time.Minute)
 	}
 	if config.StaleClaimTimeout != 5*time.Minute {
 		t.Errorf("StaleClaimTimeout = %v, want %v", config.StaleClaimTimeout, 5*time.Minute)
@@ -153,15 +175,17 @@ func TestRunAllJobs_NilDependencies(t *testing.T) {
 
 	results := service.RunAllJobs(ctx)
 
-	// Should return 4 results (stale locks, stale claims, orphaned tasks, task purge)
-	if len(results) != 4 {
-		t.Fatalf("RunAllJobs() returned %d results, want 4", len(results))
+	// Should return 9 results (stale locks, stale claims, orphaned tasks,
+	// orphaned queue entries, interactive-task TTL cancel, startup-task TTL
+	// cancel, pool-task TTL cancel, task purge, audit-log cleanup)
+	if len(results) != 9 {
+		t.Fatalf("RunAllJobs() returned %d results, want 9", len(results))
 	}
 
 	// All should fail or skip due to nil dependencies
 	for _, result := range results {
 		// These jobs gracefully skip when their dependency is nil
-		if result.JobName == "stale_claim_recovery" || result.JobName == "stale_lock_cleanup" {
+		if result.JobName == "stale_claim_recovery" || result.JobName == "stale_lock_cleanup" || result.JobName == "audit_log_cleanup" {
 			if !result.Success {
 				t.Errorf("Job %q should succeed (skip) when dependencies are nil", result.JobName)
 			}
@@ -266,5 +290,59 @@ func TestConfig_ZeroValues(t *testing.T) {
 	}
 	if service.config.ReconciliationInterval != 0 {
 		t.Error("ReconciliationInterval should be 0")
+	}
+}
+
+// TestReconcileOrphanedQueueEntries_Job verifies the cleanup-service wiring:
+// the ReconcileOrphanedQueueEntries JobResult retires orphaned queue rows via
+// the store and reports the count. Runs against the native sqlite store.
+func TestReconcileOrphanedQueueEntries_Job(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cleanup_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+	ctx := context.Background()
+
+	// One cancelled (terminal) task with a pending queue row -> orphaned.
+	termID := uuid.New().String()
+	if err := store.CreateTask(ctx, &taskstore.Task{TaskID: termID, TaskType: "agent_startup", Workspace: "ws"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := store.CancelTask(ctx, termID); err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+	if err := store.InsertQueueEntry(ctx, uuid.New().String(), termID, "impl", "ws", "local", nil, int(taskstore.PriorityNormal)); err != nil {
+		t.Fatalf("InsertQueueEntry: %v", err)
+	}
+
+	service := NewService(store, nil, nil, nil)
+	result := service.ReconcileOrphanedQueueEntries(ctx)
+
+	if result.JobName != "orphaned_queue_entry_reconciliation" {
+		t.Errorf("JobName = %q, want %q", result.JobName, "orphaned_queue_entry_reconciliation")
+	}
+	if !result.Success {
+		t.Errorf("Success = false, err = %v", result.Error)
+	}
+	if result.ItemCount != 1 {
+		t.Errorf("ItemCount = %d, want 1", result.ItemCount)
+	}
+}
+
+// TestReconcileOrphanedQueueEntries_NilTaskStore guards the nil-store branch.
+func TestReconcileOrphanedQueueEntries_NilTaskStore(t *testing.T) {
+	service := NewService(nil, nil, nil, nil)
+	result := service.ReconcileOrphanedQueueEntries(context.Background())
+	if result.Success {
+		t.Error("Success should be false when task store is nil")
+	}
+	if result.Error == nil {
+		t.Error("Error should not be nil when task store is nil")
 	}
 }

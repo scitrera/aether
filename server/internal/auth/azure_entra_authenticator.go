@@ -9,8 +9,8 @@ import (
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 const (

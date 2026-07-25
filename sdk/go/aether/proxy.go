@@ -258,11 +258,6 @@ func (c *BaseClient) appendProxyChunk(requestID string, data []byte, fin bool) {
 // dispatchResponse handlers (called from client.go's dispatchResponse switch)
 // =============================================================================
 
-// handleProxyHttpResponse processes a ProxyHttpResponse from the gateway.
-func (c *BaseClient) handleProxyHttpResponse(resp *pb.ProxyHttpResponse) {
-	c.resolveProxyResponse(resp.GetRequestId(), resp)
-}
-
 // handleProxyHttpBodyChunk processes a ProxyHttpBodyChunk from the gateway.
 func (c *BaseClient) handleProxyHttpBodyChunk(chunk *pb.ProxyHttpBodyChunk) {
 	if chunk.GetIsRequest() {
@@ -606,6 +601,15 @@ type oboContextKey struct{}
 // that ProxyHTTP will inject into outgoing proxy requests.
 func WithOBOAuthorization(ctx context.Context, auth *pb.AuthorizationContext) context.Context {
 	return context.WithValue(ctx, oboContextKey{}, auth)
+}
+
+// OBOAuthorizationFromContext returns the OBO AuthorizationContext carried by
+// ctx (set via WithOBOAuthorization), or nil. It is the public, opt-in helper
+// for populating SendMessageOptions.Authorization from a context, pairing with
+// WithOBOAuthorization. Explicit by design: callers choose to forward the OBO
+// onto a send rather than having every send under an OBO context assume it.
+func OBOAuthorizationFromContext(ctx context.Context) *pb.AuthorizationContext {
+	return oboFromContext(ctx)
 }
 
 // oboFromContext retrieves an OBO AuthorizationContext from the context, or nil.

@@ -3,6 +3,9 @@
 import type { TaskAssignmentMode as _aether_v1_TaskAssignmentMode, TaskAssignmentMode__Output as _aether_v1_TaskAssignmentMode__Output } from '../../aether/v1/TaskAssignmentMode';
 import type { AuthorizationContext as _aether_v1_AuthorizationContext, AuthorizationContext__Output as _aether_v1_AuthorizationContext__Output } from '../../aether/v1/AuthorizationContext';
 import type { TaskClass as _aether_v1_TaskClass, TaskClass__Output as _aether_v1_TaskClass__Output } from '../../aether/v1/TaskClass';
+import type { RetryPolicy as _aether_v1_RetryPolicy, RetryPolicy__Output as _aether_v1_RetryPolicy__Output } from '../../aether/v1/RetryPolicy';
+import type { TaskPriority as _aether_v1_TaskPriority, TaskPriority__Output as _aether_v1_TaskPriority__Output } from '../../aether/v1/TaskPriority';
+import type { TaskCompletionEvent as _aether_v1_TaskCompletionEvent, TaskCompletionEvent__Output as _aether_v1_TaskCompletionEvent__Output } from '../../aether/v1/TaskCompletionEvent';
 
 export interface CreateTaskRequest {
   'taskType'?: (string);
@@ -55,6 +58,43 @@ export interface CreateTaskRequest {
    * Empty = no session grouping.
    */
   'contextId'?: (string);
+  /**
+   * Optional. When set, the task store computes next_retry_at on FailTask
+   * according to this policy and re-pends the task automatically (up to
+   * max_attempts). Absent = legacy behavior (immediate re-pend, hardcoded
+   * max_retries=3).
+   */
+  'retryPolicy'?: (_aether_v1_RetryPolicy | null);
+  /**
+   * Optional dispatch priority. Defaults to UNSPECIFIED ⇒ NORMAL. Higher
+   * priority pending tasks are delivered before lower ones (ties break FIFO).
+   */
+  'priority'?: (_aether_v1_TaskPriority);
+  /**
+   * Optional idempotency key for exactly-once task creation. When non-empty the
+   * gateway dedupes creation on this key: a duplicate request returns the
+   * existing task identity instead of creating a second task. Workflow joins
+   * set it to make an on_complete create_task fire exactly once under retries
+   * or engine restart.
+   */
+  'idempotencyKey'?: (string);
+  /**
+   * Optional fan-out/fan-in correlation identity, distinct from task_id. When
+   * non-empty it is persisted on the task and propagated to child spawns, and is
+   * queryable via TaskFilter.correlation_id. The barrier/group id a join matches.
+   */
+  'correlationId'?: (string);
+  /**
+   * Optional top-of-fan-out-tree identity (the flow / run id). Defaults to the
+   * task's own id when it is a root; inherited by descendants on spawn. Becomes
+   * the DAG run id when the join engine grows into full fan-out/fan-in.
+   */
+  'rootTaskId'?: (string);
+  /**
+   * Optional "feed B" config: emit a domain event onto event::* when this task
+   * reaches a (selected) terminal status. Absent/disabled = no emission.
+   */
+  'completionEvent'?: (_aether_v1_TaskCompletionEvent | null);
 }
 
 export interface CreateTaskRequest__Output {
@@ -108,4 +148,41 @@ export interface CreateTaskRequest__Output {
    * Empty = no session grouping.
    */
   'contextId': (string);
+  /**
+   * Optional. When set, the task store computes next_retry_at on FailTask
+   * according to this policy and re-pends the task automatically (up to
+   * max_attempts). Absent = legacy behavior (immediate re-pend, hardcoded
+   * max_retries=3).
+   */
+  'retryPolicy': (_aether_v1_RetryPolicy__Output | null);
+  /**
+   * Optional dispatch priority. Defaults to UNSPECIFIED ⇒ NORMAL. Higher
+   * priority pending tasks are delivered before lower ones (ties break FIFO).
+   */
+  'priority': (_aether_v1_TaskPriority__Output);
+  /**
+   * Optional idempotency key for exactly-once task creation. When non-empty the
+   * gateway dedupes creation on this key: a duplicate request returns the
+   * existing task identity instead of creating a second task. Workflow joins
+   * set it to make an on_complete create_task fire exactly once under retries
+   * or engine restart.
+   */
+  'idempotencyKey': (string);
+  /**
+   * Optional fan-out/fan-in correlation identity, distinct from task_id. When
+   * non-empty it is persisted on the task and propagated to child spawns, and is
+   * queryable via TaskFilter.correlation_id. The barrier/group id a join matches.
+   */
+  'correlationId': (string);
+  /**
+   * Optional top-of-fan-out-tree identity (the flow / run id). Defaults to the
+   * task's own id when it is a root; inherited by descendants on spawn. Becomes
+   * the DAG run id when the join engine grows into full fan-out/fan-in.
+   */
+  'rootTaskId': (string);
+  /**
+   * Optional "feed B" config: emit a domain event onto event::* when this task
+   * reaches a (selected) terminal status. Absent/disabled = no emission.
+   */
+  'completionEvent': (_aether_v1_TaskCompletionEvent__Output | null);
 }

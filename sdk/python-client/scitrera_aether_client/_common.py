@@ -197,6 +197,7 @@ def create_service_init(implementation: str, specifier: str,
                         credentials: Optional[Dict[str, str]] = None,
                         resume_session_id: str = "",
                         extensions: Optional[List["aether_pb2.ExtensionDeclaration"]] = None,
+                        no_pool_consumer: bool = False,
                         ) -> aether_pb2.InitConnection:
     """Create an InitConnection message for a Service principal (workspace-less).
 
@@ -205,11 +206,17 @@ def create_service_init(implementation: str, specifier: str,
     privileged work on behalf of users via ``AuthorizationContext``.
 
     Canonical identity string: ``sv::{implementation}::{specifier}``.
+
+    ``no_pool_consumer`` opts this connection OUT of pool-task routing — the
+    gateway will not add it to the implementation worker index, so it is never
+    targeted for POOL-mode task assignments. Set it for serve-only instances
+    that register no task handlers (default False = consumer, back-compat).
     """
     return _apply_client_version_meta(aether_pb2.InitConnection(
         service=aether_pb2.ServiceIdentity(
             implementation=implementation,
             specifier=specifier,
+            no_pool_consumer=no_pool_consumer,
         ),
         credentials=credentials or {},
         resume_session_id=resume_session_id,
@@ -230,18 +237,57 @@ def create_service_init(implementation: str, specifier: str,
 IDENTITY_SEP = "::"
 
 
+class _ServiceWildcard:
+    """Sentinel type for the service-addressing wildcard specifier.
+
+    A single module-level instance (:data:`SERVICE_WILDCARD`) is the only
+    value that should ever exist; identity comparison (``is``) is the
+    intended check. ``repr`` is descriptive so it reads clearly in logs
+    and assertion failures.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - trivial
+        return "SERVICE_WILDCARD"
+
+
+# Explicit, opt-in wildcard for service addressing. Pass this as the
+# ``specifier`` to :func:`create_topic_service` (or to a client's
+# ``send_message_to_service``) to emit the bare ``sv::{impl}`` wildcard
+# target. The gateway (``models.topics.ParseSendTarget``) resolves a bare
+# 2-segment ``sv::{impl}`` to any registered ``sv::{impl}::{spec}`` instance.
+#
+# This MUST be opted into deliberately: a normal non-empty specifier emits
+# the canonical 3-segment ``sv::{impl}::{spec}`` and an empty string ``""``
+# STAYS 3-segment (``sv::{impl}::``) — only this sentinel produces the
+# 2-segment wildcard, so "" can never silently become a wildcard.
+SERVICE_WILDCARD = _ServiceWildcard()
+
+
 def create_topic_agent(workspace: str, implementation: str, specifier: str) -> str:
     """Create a topic string for a specific agent."""
     return f"ag{IDENTITY_SEP}{workspace}{IDENTITY_SEP}{implementation}{IDENTITY_SEP}{specifier}"
 
 
-def create_topic_service(implementation: str, specifier: str) -> str:
-    """Create a topic string for a specific service principal.
+def create_topic_service(implementation, specifier) -> str:
+    """Create a topic string for a service principal.
 
-    Service principals are workspace-less (canonical identity is
-    ``sv::{implementation}::{specifier}``); the topic mirrors that shape.
-    Mirrors :func:`models.topics.ServiceTopic` on the gateway side.
+    Two shapes, selected by ``specifier``:
+
+    * A concrete ``specifier`` (any ``str``, including the empty string)
+      emits the canonical 3-segment ``sv::{implementation}::{specifier}``.
+      An empty string therefore yields ``sv::{implementation}::`` (a
+      concrete, trailing-``::`` target) — it is NOT treated as a wildcard.
+    * The :data:`SERVICE_WILDCARD` sentinel emits the bare 2-segment
+      ``sv::{implementation}`` wildcard, which the gateway resolves to any
+      registered ``sv::{implementation}::{spec}`` instance.
+
+    Mirrors :func:`models.topics.ServiceTopic` (concrete) and
+    :func:`models.topics.ParseSendTarget` (wildcard) on the gateway side.
     """
+    if specifier is SERVICE_WILDCARD:
+        return f"sv{IDENTITY_SEP}{implementation}"
     return f"sv{IDENTITY_SEP}{implementation}{IDENTITY_SEP}{specifier}"
 
 
@@ -265,6 +311,18 @@ def create_topic_user(user_id: str, window_id: str) -> str:
 def create_topic_user_workspace(user_id: str, workspace: str) -> str:
     """Create a topic string for user workspace messages."""
     return f"uw{IDENTITY_SEP}{user_id}{IDENTITY_SEP}{workspace}"
+
+
+def create_topic_user_broadcast(user_id: str) -> str:
+    """Create a per-user broadcast topic (uu::{user_id}).
+
+    Reaches every one of a user's open windows regardless of which workspace
+    each window is currently viewing -- the workspace-agnostic, non-progress
+    complement to the per-user progress topic. Only platform principals
+    (service / workflow-engine / bridge) may publish; the gateway rejects
+    sends from workspace-scoped principals.
+    """
+    return f"uu{IDENTITY_SEP}{user_id}"
 
 
 def create_topic_global_agents(workspace: str) -> str:
@@ -310,6 +368,26 @@ KV_SCOPE_GLOBAL_EXCLUSIVE = "global-exclusive"
 KV_SCOPE_WORKSPACE_EXCLUSIVE = "workspace-exclusive"
 KV_SCOPE_USER_SHARED = "user-shared"
 KV_SCOPE_USER_WORKSPACE_SHARED = "user-workspace-shared"
+
+
+class PrincipalType:
+    """Canonical Aether principal-type strings.
+
+    These MUST match the server's ``models.PrincipalType`` constants verbatim
+    (server/pkg/models/identity.go) — the gateway compares them exactly (e.g.
+    api-key ``parsePrincipalType``), so a case/spelling mismatch like ``"user"``
+    vs ``"User"`` is rejected. Always reference these constants instead of
+    hardcoding the string when minting tokens / asserting an identity type.
+    """
+
+    AGENT = "Agent"
+    TASK = "Task"
+    USER = "User"
+    SERVICE = "Service"
+    WORKFLOW_ENGINE = "WorkflowEngine"
+    METRICS_BRIDGE = "MetricsBridge"
+    ORCHESTRATOR = "Orchestrator"
+    BRIDGE = "Bridge"
 
 _SCOPE_MAP = {
     "global": aether_pb2.KVOperation.GLOBAL,

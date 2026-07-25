@@ -2,15 +2,16 @@ package gateway
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/checkpoint"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/internal/state"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/checkpoint"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/internal/state"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // ---------------------------------------------------------------------------
@@ -278,6 +279,10 @@ func (m *mockMessageRouter) SubscribeExclusiveFromTimestamp(topic string, consum
 	return m.SubscribeExclusive(topic, consumerName, handler)
 }
 
+func (m *mockMessageRouter) SubscribeExclusiveResumeOrTail(topic string, consumerName string, handler func([]byte)) (func(), error) {
+	return m.SubscribeExclusive(topic, consumerName, handler)
+}
+
 func (m *mockMessageRouter) hasSharedTopic(topic string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -300,6 +305,7 @@ func (m *mockMessageRouter) hasExclusiveTopic(topic string) bool {
 type mockKVReadWriter struct {
 	mu       sync.Mutex
 	listData map[string]string
+	setData  map[string]map[string]struct{}
 	getErr   error
 	setErr   error
 	delErr   error
@@ -309,19 +315,40 @@ type mockKVReadWriter struct {
 func newMockKVReadWriter() *mockKVReadWriter {
 	return &mockKVReadWriter{
 		listData: make(map[string]string),
+		setData:  make(map[string]map[string]struct{}),
 	}
 }
 
-func (m *mockKVReadWriter) Get(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, _ string) (string, error) {
-	return "", m.getErr
+func (m *mockKVReadWriter) Get(_ context.Context, _ models.Identity, _ kv.KVScope, key string, _ string, _ string) (string, error) {
+	if m.getErr != nil {
+		return "", m.getErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Realistic readback so handler tests (e.g. idempotent create-task) can
+	// observe values written via Set/SetNX; absent keys return "" like the
+	// real store's not-found path.
+	return m.listData[key], nil
 }
 
-func (m *mockKVReadWriter) Set(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, _ string, _ string, _ time.Duration) error {
-	return m.setErr
+func (m *mockKVReadWriter) Set(_ context.Context, _ models.Identity, _ kv.KVScope, key string, value string, _ string, _ string, _ time.Duration) error {
+	if m.setErr != nil {
+		return m.setErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.listData[key] = value
+	return nil
 }
 
-func (m *mockKVReadWriter) Delete(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, _ string) error {
-	return m.delErr
+func (m *mockKVReadWriter) Delete(_ context.Context, _ models.Identity, _ kv.KVScope, key string, _ string, _ string) error {
+	if m.delErr != nil {
+		return m.delErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.listData, key)
+	return nil
 }
 
 func (m *mockKVReadWriter) List(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string) (map[string]string, error) {
@@ -337,8 +364,23 @@ func (m *mockKVReadWriter) List(_ context.Context, _ models.Identity, _ kv.KVSco
 	return result, nil
 }
 
-func (m *mockKVReadWriter) ListPaginated(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, _ *kv.ListOptions) (*kv.ListResult, error) {
-	return &kv.ListResult{}, nil
+func (m *mockKVReadWriter) ListPaginated(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, opts *kv.ListOptions) (*kv.ListResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	keyPrefix := ""
+	if opts != nil {
+		keyPrefix = opts.KeyPrefix
+	}
+	items := make(map[string]string, len(m.listData))
+	for k, v := range m.listData {
+		if keyPrefix == "" || strings.HasPrefix(k, keyPrefix) {
+			items[k] = v
+		}
+	}
+	return &kv.ListResult{Items: items}, nil
 }
 
 func (m *mockKVReadWriter) Increment(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, _ string) (int64, error) {
@@ -355,6 +397,80 @@ func (m *mockKVReadWriter) IncrementIf(_ context.Context, _ models.Identity, _ k
 
 func (m *mockKVReadWriter) DecrementIf(_ context.Context, _ models.Identity, _ kv.KVScope, _ string, _ string, _ string, _ int64, _ int64) (int64, bool, error) {
 	return 0, true, nil
+}
+
+// SetNX/CompareAndSet/CompareAndDelete are backed by listData with realistic
+// conditional semantics (TTL ignored) so handler tests can exercise the
+// acquire/refresh/release flow.
+func (m *mockKVReadWriter) SetNX(_ context.Context, _ models.Identity, _ kv.KVScope, key string, value string, _ string, _ string, _ time.Duration) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.setErr != nil {
+		return false, m.setErr
+	}
+	if _, ok := m.listData[key]; ok {
+		return false, nil
+	}
+	m.listData[key] = value
+	return true, nil
+}
+
+func (m *mockKVReadWriter) CompareAndSet(_ context.Context, _ models.Identity, _ kv.KVScope, key string, expected string, value string, _ string, _ string, _ time.Duration) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.setErr != nil {
+		return false, m.setErr
+	}
+	cur, ok := m.listData[key]
+	if !ok || cur != expected {
+		return false, nil
+	}
+	m.listData[key] = value
+	return true, nil
+}
+
+func (m *mockKVReadWriter) CompareAndDelete(_ context.Context, _ models.Identity, _ kv.KVScope, key string, expected string, _ string, _ string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.delErr != nil {
+		return false, m.delErr
+	}
+	cur, ok := m.listData[key]
+	if !ok || cur != expected {
+		return false, nil
+	}
+	delete(m.listData, key)
+	return true, nil
+}
+
+// SetAdd/SetCard are backed by setData with realistic set semantics (TTL
+// ignored) so handler tests can exercise the add/cardinality flow.
+func (m *mockKVReadWriter) SetAdd(_ context.Context, _ models.Identity, _ kv.KVScope, key string, member string, _ string, _ string, _ time.Duration) (bool, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.setErr != nil {
+		return false, 0, m.setErr
+	}
+	members, ok := m.setData[key]
+	if !ok {
+		members = make(map[string]struct{})
+		m.setData[key] = members
+	}
+	added := false
+	if _, exists := members[member]; !exists {
+		members[member] = struct{}{}
+		added = true
+	}
+	return added, int64(len(members)), nil
+}
+
+func (m *mockKVReadWriter) SetCard(_ context.Context, _ models.Identity, _ kv.KVScope, key string, _ string, _ string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getErr != nil {
+		return 0, m.getErr
+	}
+	return int64(len(m.setData[key])), nil
 }
 
 // mockCheckpointManager implements CheckpointManager.
@@ -1149,11 +1265,13 @@ func TestSetupClientSubscriptions_UserGetsWindowAndWorkspaceTopics(t *testing.T)
 	if !router.hasExclusiveTopic("us::bob::win-42") {
 		t.Error("expected exclusive subscription for user window topic us.bob.win-42")
 	}
-	if !router.hasSharedTopic("gu::workspace-x") {
-		t.Error("expected shared subscription for global user topic gu.workspace-x")
+	// gu/uw broadcast lanes now use a per-window resume-or-tail (exclusive)
+	// consumer so reconnects replay only the gap, not the full retained history.
+	if !router.hasExclusiveTopic("gu::workspace-x") {
+		t.Error("expected exclusive (resume-or-tail) subscription for global user topic gu.workspace-x")
 	}
-	if !router.hasSharedTopic("uw::bob::workspace-x") {
-		t.Error("expected shared subscription for user-workspace topic uw.bob.workspace-x")
+	if !router.hasExclusiveTopic("uw::bob::workspace-x") {
+		t.Error("expected exclusive (resume-or-tail) subscription for user-workspace topic uw.bob.workspace-x")
 	}
 }
 

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/scitrera/aether/internal/state"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/state"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // TaskTokenAuthenticator validates short-lived task auth tokens against the

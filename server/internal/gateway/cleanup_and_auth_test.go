@@ -14,8 +14,11 @@ import (
 	"context"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // ---------------------------------------------------------------------------
@@ -586,6 +589,221 @@ func TestResolveConnectionIdentity_RelaxedMode_NoCertificate_MTLSRequired_Return
 	_, err := h.resolveConnectionIdentity(context.Background(), init, models.Identity{}, "", false, false)
 	if err == nil {
 		t.Fatal("expected Unauthenticated error when mTLS required in relaxed mode but no cert")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// resolveConnectionIdentity: semi-strict mode
+//
+// Semi-strict binds workspace + implementation + principal type to the
+// certificate, but lets the InitConnection supply/override the specifier.
+// This enables a single shared cert across horizontally-scaled instances.
+// ---------------------------------------------------------------------------
+
+func TestResolveConnectionIdentity_SemiStrictMode_SpecifierFromInit_Accepted(t *testing.T) {
+	h := newAuthHandler(nil, false, MTLSModeSemiStrict, nil, nil)
+
+	// Certificate identity: sv::frontend-api::cert-spec (workspace empty for service).
+	certIdentity := models.Identity{
+		Type:           models.PrincipalService,
+		Implementation: "frontend-api",
+		Specifier:      "cert-spec",
+	}
+
+	// InitConnection supplies a different specifier (pod-1) but matching impl.
+	init := &pb.InitConnection{
+		ClientType: &pb.InitConnection_Service{
+			Service: &pb.ServiceIdentity{
+				Implementation: "frontend-api",
+				Specifier:      "pod-1",
+			},
+		},
+	}
+
+	ident, err := h.resolveConnectionIdentity(context.Background(), init, certIdentity, "", true, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Resulting identity: specifier from Init, impl/type from cert => sv::frontend-api::pod-1
+	if ident.Type != models.PrincipalService {
+		t.Errorf("expected PrincipalService, got %s", ident.Type)
+	}
+	if ident.Implementation != "frontend-api" {
+		t.Errorf("expected Implementation 'frontend-api', got %q", ident.Implementation)
+	}
+	if ident.Specifier != "pod-1" {
+		t.Errorf("expected Specifier 'pod-1' (from Init), got %q", ident.Specifier)
+	}
+}
+
+func TestResolveConnectionIdentity_SemiStrictMode_ImplMismatch_Rejected(t *testing.T) {
+	h := newAuthHandler(nil, false, MTLSModeSemiStrict, nil, nil)
+
+	certIdentity := models.Identity{
+		Type:           models.PrincipalService,
+		Implementation: "frontend-api",
+		Specifier:      "cert-spec",
+	}
+
+	// InitConnection claims a DIFFERENT implementation than the cert.
+	init := &pb.InitConnection{
+		ClientType: &pb.InitConnection_Service{
+			Service: &pb.ServiceIdentity{
+				Implementation: "backend-api",
+				Specifier:      "pod-1",
+			},
+		},
+	}
+
+	_, err := h.resolveConnectionIdentity(context.Background(), init, certIdentity, "", true, false)
+	if err == nil {
+		t.Fatal("expected PermissionDenied for implementation mismatch, got nil")
+	}
+	if status.Code(err) != codes.PermissionDenied {
+		t.Errorf("expected PermissionDenied, got %v", status.Code(err))
+	}
+}
+
+func TestResolveConnectionIdentity_SemiStrictMode_TypeMismatch_Rejected(t *testing.T) {
+	h := newAuthHandler(nil, false, MTLSModeSemiStrict, nil, nil)
+
+	// Cert is a service identity.
+	certIdentity := models.Identity{
+		Type:           models.PrincipalService,
+		Implementation: "frontend-api",
+		Specifier:      "cert-spec",
+	}
+
+	// InitConnection claims an AGENT (different principal type) with matching impl.
+	init := &pb.InitConnection{
+		ClientType: &pb.InitConnection_Agent{
+			Agent: &pb.AgentIdentity{
+				Workspace:      "",
+				Implementation: "frontend-api",
+				Specifier:      "pod-1",
+			},
+		},
+	}
+
+	_, err := h.resolveConnectionIdentity(context.Background(), init, certIdentity, "", true, false)
+	if err == nil {
+		t.Fatal("expected PermissionDenied for principal type mismatch, got nil")
+	}
+	if status.Code(err) != codes.PermissionDenied {
+		t.Errorf("expected PermissionDenied, got %v", status.Code(err))
+	}
+}
+
+func TestResolveConnectionIdentity_SemiStrictMode_WorkspaceMismatch_Rejected(t *testing.T) {
+	h := newAuthHandler(nil, false, MTLSModeSemiStrict, nil, nil)
+
+	// Cert is an agent identity bound to workspace 'cert-ws'.
+	certIdentity := models.Identity{
+		Type:           models.PrincipalAgent,
+		Workspace:      "cert-ws",
+		Implementation: "worker",
+		Specifier:      "cert-spec",
+	}
+
+	// InitConnection claims a different workspace.
+	init := &pb.InitConnection{
+		ClientType: &pb.InitConnection_Agent{
+			Agent: &pb.AgentIdentity{
+				Workspace:      "other-ws",
+				Implementation: "worker",
+				Specifier:      "pod-1",
+			},
+		},
+	}
+
+	_, err := h.resolveConnectionIdentity(context.Background(), init, certIdentity, "", true, false)
+	if err == nil {
+		t.Fatal("expected PermissionDenied for workspace mismatch, got nil")
+	}
+	if status.Code(err) != codes.PermissionDenied {
+		t.Errorf("expected PermissionDenied, got %v", status.Code(err))
+	}
+}
+
+func TestResolveConnectionIdentity_SemiStrictMode_EmptyInitSpecifier_StableIdentity(t *testing.T) {
+	h := newAuthHandler(nil, false, MTLSModeSemiStrict, nil, nil)
+
+	certIdentity := models.Identity{
+		Type:           models.PrincipalService,
+		Implementation: "frontend-api",
+		Specifier:      "cert-spec",
+	}
+
+	// InitConnection supplies an empty specifier — accepted as sv::frontend-api::
+	init := &pb.InitConnection{
+		ClientType: &pb.InitConnection_Service{
+			Service: &pb.ServiceIdentity{
+				Implementation: "frontend-api",
+				Specifier:      "",
+			},
+		},
+	}
+
+	ident, err := h.resolveConnectionIdentity(context.Background(), init, certIdentity, "", true, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ident.Implementation != "frontend-api" {
+		t.Errorf("expected Implementation 'frontend-api', got %q", ident.Implementation)
+	}
+	if ident.Specifier != "" {
+		t.Errorf("expected empty Specifier (from Init), got %q", ident.Specifier)
+	}
+}
+
+func TestResolveConnectionIdentity_SemiStrictMode_NoCertificate_MTLSRequired_ReturnsUnauthenticated(t *testing.T) {
+	h := newAuthHandler(nil, true /* mtlsRequired=true */, MTLSModeSemiStrict, nil, nil)
+
+	init := &pb.InitConnection{
+		ClientType: &pb.InitConnection_Service{
+			Service: &pb.ServiceIdentity{Implementation: "frontend-api", Specifier: "pod-1"},
+		},
+	}
+
+	_, err := h.resolveConnectionIdentity(context.Background(), init, models.Identity{}, "", false, false)
+	if err == nil {
+		t.Fatal("expected Unauthenticated error when mTLS required in semi-strict mode but no cert")
+	}
+	if status.Code(err) != codes.Unauthenticated {
+		t.Errorf("expected Unauthenticated, got %v", status.Code(err))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ParseMTLSMode: config string parsing shared by both gateway binaries
+// ---------------------------------------------------------------------------
+
+func TestParseMTLSMode(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    MTLSMode
+		wantErr bool
+	}{
+		{"", MTLSModeStrict, false},
+		{"strict", MTLSModeStrict, false},
+		{"semi-strict", MTLSModeSemiStrict, false},
+		{"relaxed", MTLSModeRelaxed, false},
+		{"bogus", "", true},
+	}
+	for _, tc := range cases {
+		got, err := ParseMTLSMode(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("ParseMTLSMode(%q): expected error, got nil", tc.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("ParseMTLSMode(%q): unexpected error: %v", tc.in, err)
+		}
+		if got != tc.want {
+			t.Errorf("ParseMTLSMode(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 

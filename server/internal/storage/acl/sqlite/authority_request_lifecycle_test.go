@@ -25,11 +25,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/acl"
-	legacyaudit "github.com/scitrera/aether/internal/audit"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	aclsqlite "github.com/scitrera/aether/internal/storage/acl/sqlite"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	legacyaudit "github.com/scitrera/aether/server/internal/audit"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	aclsqlite "github.com/scitrera/aether/server/internal/storage/acl/sqlite"
+	"github.com/scitrera/aether/server/pkg/models"
 
 	_ "modernc.org/sqlite"
 )

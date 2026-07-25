@@ -21,9 +21,9 @@ package postgres
 import (
 	"database/sql"
 
-	legacy "github.com/scitrera/aether/internal/acl"
-	legacyaudit "github.com/scitrera/aether/internal/audit"
-	"github.com/scitrera/aether/internal/storage/acl"
+	legacy "github.com/scitrera/aether/server/internal/acl"
+	legacyaudit "github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/internal/storage/acl"
 )
 
 // Store is the postgres-backed ACL store. It is a direct type alias for

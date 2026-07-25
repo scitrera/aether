@@ -5,10 +5,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/scitrera/aether/internal/lite"
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/lite"
+	"github.com/scitrera/aether/server/internal/logging"
 )
 
 // defaultSubscriberBufferSize is the default channel buffer size for live fan-out
@@ -49,7 +50,37 @@ type BadgerRouter struct {
 	// exclusiveLocks tracks which (topic, consumerName) pairs already have an
 	// active exclusive subscriber. The stored value is always struct{}{}.
 	exclusiveLocks sync.Map // key: topic+"\x00"+consumerName
+
+	// messageTTL bounds how long a published message is retained before Badger
+	// expires it (native per-entry TTL, reclaimed by Badger's value-log GC). It
+	// caps otherwise-unbounded topic-log growth and the size of any cold-start /
+	// full-replay burst, while comfortably exceeding the realistic reconnect gap
+	// so a resuming consumer still catches up. The SEQUENCE COUNTER (seq:{topic})
+	// carries NO TTL, so numbering is never rewound. Zero disables expiry (retain
+	// forever). Set at construction; treat as immutable after use.
+	messageTTL time.Duration
+
+	// offsetTTL bounds how long a per-consumer offset key is retained, refreshed
+	// on every save. Decoupled from messageTTL and deliberately generous (default
+	// 7d): the offset is a tiny 8-byte key, and keeping it well past the message
+	// window lets a consumer that was away a while still RESUME (replaying
+	// whatever messages remain) rather than cold-starting — while an orphaned
+	// per-window offset (its browser tab closed; a reopened tab gets a fresh
+	// window id) still expires instead of accumulating unboundedly as windows
+	// churn. Zero disables expiry (retain forever). Immutable after use.
+	offsetTTL time.Duration
 }
+
+// defaultMessageRetentionTTL is the default per-message retention. 24h caps
+// growth at roughly a day of traffic per topic while dwarfing the real reconnect
+// gap (seconds–minutes). Override via SetMessageRetentionTTL before first use.
+const defaultMessageRetentionTTL = 24 * time.Hour
+
+// defaultOffsetRetentionTTL is the default per-consumer offset retention. Much
+// more generous than message retention (offsets are tiny and worth keeping so a
+// consumer away for days still resumes), but still bounded so orphaned per-window
+// offsets don't grow without limit. Override via SetOffsetRetentionTTL.
+const defaultOffsetRetentionTTL = 7 * 24 * time.Hour
 
 // msgWithSeq bundles a message payload with its Badger sequence number so that
 // the drain goroutine can persist the exact offset of each processed message.
@@ -85,7 +116,29 @@ func NewBadgerRouterWithBufferSize(db *badger.DB, bufferSize int) *BadgerRouter 
 		db:                   db,
 		subscriberBufferSize: bufferSize,
 		subs:                 make(map[string][]*subscriber),
+		messageTTL:           defaultMessageRetentionTTL,
+		offsetTTL:            defaultOffsetRetentionTTL,
 	}
+}
+
+// SetMessageRetentionTTL overrides the per-message retention TTL. A value <= 0
+// disables expiry (messages retained forever). Call once at startup before the
+// router serves traffic; not safe to change concurrently with Publish.
+func (r *BadgerRouter) SetMessageRetentionTTL(d time.Duration) {
+	if d < 0 {
+		d = 0
+	}
+	r.messageTTL = d
+}
+
+// SetOffsetRetentionTTL overrides the per-consumer offset retention TTL. A value
+// <= 0 disables expiry (offsets retained forever). Call once at startup before
+// the router serves traffic; not safe to change concurrently with saveOffset.
+func (r *BadgerRouter) SetOffsetRetentionTTL(d time.Duration) {
+	if d < 0 {
+		d = 0
+	}
+	r.offsetTTL = d
 }
 
 // Close shuts down all active subscribers.
@@ -139,24 +192,54 @@ func (r *BadgerRouter) Publish(_ context.Context, topic string, payload []byte) 
 	return nil
 }
 
+// startPolicy selects where a subscription begins reading when it is created.
+type startPolicy int
+
+const (
+	// startResume resumes from the named consumer's committed offset; a cold
+	// consumer (no committed offset) — and every anonymous subscriber — starts
+	// at sequence 0 and replays the entire retained log.
+	startResume startPolicy = iota
+	// startTail starts at the current tail and never replays, ignoring any
+	// committed offset.
+	startTail
+	// startResumeOrTail resumes from the named consumer's committed offset when
+	// one exists, and otherwise starts at the current tail (NOT sequence 0). This
+	// is the right default for shared/broadcast lanes a client re-subscribes on
+	// every connect: first connect gets no history dump, reconnect replays only
+	// the gap since the last committed offset.
+	startResumeOrTail
+)
+
 // Subscribe creates a subscription with full replay from the consumer's last
 // persisted offset (or the beginning of the log if none exists).
 // The consumerName is derived from the handler address (not persisted), so
 // replay always starts from sequence 0 for anonymous subscribers.
 func (r *BadgerRouter) Subscribe(topic string, handler func([]byte)) (func(), error) {
-	return r.subscribe(topic, "", handler, false)
+	return r.subscribe(topic, "", handler, startResume)
 }
 
 // SubscribeExclusive creates a named exclusive subscription with replay.
 // Only one active subscriber per (topic, consumerName) is permitted.
 func (r *BadgerRouter) SubscribeExclusive(topic string, consumerName string, handler func([]byte)) (func(), error) {
-	return r.subscribe(topic, consumerName, handler, false)
+	return r.subscribe(topic, consumerName, handler, startResume)
 }
 
 // SubscribeExclusiveFromNow creates a named exclusive subscription that starts
 // from the current write position, skipping all previously stored messages.
 func (r *BadgerRouter) SubscribeExclusiveFromNow(topic string, consumerName string, handler func([]byte)) (func(), error) {
-	return r.subscribe(topic, consumerName, handler, true)
+	return r.subscribe(topic, consumerName, handler, startTail)
+}
+
+// SubscribeExclusiveResumeOrTail creates a named exclusive subscription that
+// resumes from the consumer's last committed offset, or — when no offset has
+// been committed yet (a brand-new consumer) — starts at the current tail instead
+// of replaying the whole topic from sequence 0. Use it for shared/broadcast
+// lanes a client re-subscribes on every (re)connect so a first connect gets no
+// history dump and a reconnect replays only the gap. Contrast SubscribeExclusive
+// (cold → full replay from 0) and SubscribeExclusiveFromNow (always tail).
+func (r *BadgerRouter) SubscribeExclusiveResumeOrTail(topic string, consumerName string, handler func([]byte)) (func(), error) {
+	return r.subscribe(topic, consumerName, handler, startResumeOrTail)
 }
 
 // SubscribeExclusiveFromTimestamp creates an exclusive subscription with full replay
@@ -167,7 +250,7 @@ func (r *BadgerRouter) SubscribeExclusiveFromNow(topic string, consumerName stri
 // already returns all messages since the log start for new consumers — a superset
 // of timestamp-based replay. The trigger message is guaranteed to be in that replay.
 func (r *BadgerRouter) SubscribeExclusiveFromTimestamp(topic string, consumerName string, _ int64, handler func([]byte)) (func(), error) {
-	return r.subscribe(topic, consumerName, handler, false)
+	return r.subscribe(topic, consumerName, handler, startResume)
 }
 
 // --------------------------------------------------------------------------
@@ -175,7 +258,7 @@ func (r *BadgerRouter) SubscribeExclusiveFromTimestamp(topic string, consumerNam
 // --------------------------------------------------------------------------
 
 // subscribe is the shared implementation for all three public Subscribe variants.
-func (r *BadgerRouter) subscribe(topic, consumerName string, handler func([]byte), fromNow bool) (func(), error) {
+func (r *BadgerRouter) subscribe(topic, consumerName string, handler func([]byte), policy startPolicy) (func(), error) {
 	exclusive := consumerName != ""
 
 	if exclusive {
@@ -184,32 +267,67 @@ func (r *BadgerRouter) subscribe(topic, consumerName string, handler func([]byte
 			return nil, fmt.Errorf("badger_router: exclusive consumer %q already active on topic %q", consumerName, topic)
 		}
 	}
+	// releaseLock undoes the exclusive lock reservation on any early-return error
+	// path (before the drain goroutine / unsub takes ownership of it).
+	releaseLock := func() {
+		if exclusive {
+			r.exclusiveLocks.Delete(topic + "\x00" + consumerName)
+		}
+	}
 
 	// Determine replay start sequence before registering in live fan-out so we
 	// don't miss any messages published concurrently during replay.
 	var startSeq uint64
-	if fromNow {
+	switch policy {
+	case startTail:
 		// Start after the current tail; no replay.
 		cur, err := r.currentSequence(topic)
 		if err != nil {
-			if exclusive {
-				r.exclusiveLocks.Delete(topic + "\x00" + consumerName)
-			}
+			releaseLock()
 			return nil, fmt.Errorf("badger_router: read sequence for %q: %w", topic, err)
 		}
 		startSeq = cur
-	} else if exclusive && consumerName != "" {
-		// Resume from persisted offset.
-		last, err := r.loadOffset(topic, consumerName)
-		if err != nil {
-			if exclusive {
-				r.exclusiveLocks.Delete(topic + "\x00" + consumerName)
+	case startResumeOrTail:
+		if exclusive {
+			// Resume from the committed offset if one exists; otherwise start at
+			// the current tail (a cold consumer skips the retained backlog rather
+			// than replaying from sequence 0).
+			last, ok, err := r.loadOffsetOK(topic, consumerName)
+			if err != nil {
+				releaseLock()
+				return nil, fmt.Errorf("badger_router: load offset for %q/%q: %w", topic, consumerName, err)
 			}
-			return nil, fmt.Errorf("badger_router: load offset for %q/%q: %w", topic, consumerName, err)
+			if ok {
+				startSeq = last // warm: replay only the gap (from last+1 below)
+			} else {
+				cur, cerr := r.currentSequence(topic)
+				if cerr != nil {
+					releaseLock()
+					return nil, fmt.Errorf("badger_router: read sequence for %q: %w", topic, cerr)
+				}
+				startSeq = cur // cold: start at tail
+			}
+		} else {
+			// Anonymous resume-or-tail has no offset to resume from → start at tail.
+			cur, err := r.currentSequence(topic)
+			if err != nil {
+				releaseLock()
+				return nil, fmt.Errorf("badger_router: read sequence for %q: %w", topic, err)
+			}
+			startSeq = cur
 		}
-		startSeq = last // replay from last+1 below
+	default: // startResume
+		if exclusive {
+			// Resume from persisted offset (cold → 0 → full replay).
+			last, err := r.loadOffset(topic, consumerName)
+			if err != nil {
+				releaseLock()
+				return nil, fmt.Errorf("badger_router: load offset for %q/%q: %w", topic, consumerName, err)
+			}
+			startSeq = last // replay from last+1 below
+		}
+		// For anonymous Subscribe, startSeq stays 0 → replay from beginning.
 	}
-	// For anonymous Subscribe, startSeq stays 0 → replay from beginning.
 
 	s := &subscriber{
 		handler: handler,
@@ -239,6 +357,23 @@ func (r *BadgerRouter) subscribe(topic, consumerName string, handler func([]byte
 	}
 	// Tell drain to skip any live messages that were already delivered by replay.
 	s.replayedUpTo = replayedUpTo
+
+	// Persist the consumer offset for the replayed range. drain saves the offset
+	// per live message, but replay (the reconnect catch-up path) did not — so a
+	// named consumer that caught up via replay never committed its progress, and
+	// those messages re-replayed on every reconnect. This is especially harmful
+	// for messages that only ever reach a consumer via replay: Publish drops from
+	// the live fan-out channel (non-blocking) when it is full, but still persists
+	// to badger, so a slow consumer's messages are delivered only via replay and,
+	// without this save, re-shed on every reconnect forever. Commit the highest
+	// replayed sequence so the next reconnect resumes from head. Named consumers
+	// only (anonymous subscribers, consumerName=="", don't track offsets).
+	if consumerName != "" && replayedUpTo > startSeq {
+		if err := r.saveOffset(topic, consumerName, replayedUpTo); err != nil {
+			logging.Logger.Error().Err(err).Str("topic", topic).Str("consumer", consumerName).
+				Msg("badger_router: failed to save consumer offset after replay")
+		}
+	}
 
 	// Start drain goroutine.
 	go r.drain(s, topic)
@@ -373,7 +508,12 @@ func (r *BadgerRouter) appendMessage(topic string, payload []byte) (uint64, erro
 				return err
 			}
 
-			// Write message.
+			// Write message. Carries a TTL so Badger natively expires old
+			// messages and bounds topic-log growth; the seq counter (above) has
+			// no TTL so sequence numbering is never rewound.
+			if r.messageTTL > 0 {
+				return txn.SetEntry(badger.NewEntry(messageKey(topic, seq), payload).WithTTL(r.messageTTL))
+			}
 			return txn.Set(messageKey(topic, seq), payload)
 		})
 		if lastErr == nil {
@@ -411,7 +551,17 @@ func (r *BadgerRouter) currentSequence(topic string) (uint64, error) {
 // loadOffset returns the last-read sequence number for a named consumer.
 // Returns 0 if no offset has been persisted yet.
 func (r *BadgerRouter) loadOffset(topic, consumerName string) (uint64, error) {
+	off, _, err := r.loadOffsetOK(topic, consumerName)
+	return off, err
+}
+
+// loadOffsetOK returns the last-read sequence number for a named consumer and
+// whether a committed offset actually exists. The bool distinguishes "no offset
+// persisted yet" (found=false) from a genuinely committed offset of 0, which
+// callers need to decide between full replay and tail on a cold consumer.
+func (r *BadgerRouter) loadOffsetOK(topic, consumerName string) (uint64, bool, error) {
 	var off uint64
+	var found bool
 	err := r.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(offsetKey(topic, consumerName))
 		if err == badger.ErrKeyNotFound {
@@ -420,6 +570,7 @@ func (r *BadgerRouter) loadOffset(topic, consumerName string) (uint64, error) {
 		if err != nil {
 			return err
 		}
+		found = true
 		return item.Value(func(val []byte) error {
 			if len(val) == 8 {
 				off = binary.BigEndian.Uint64(val)
@@ -427,16 +578,45 @@ func (r *BadgerRouter) loadOffset(topic, consumerName string) (uint64, error) {
 			return nil
 		})
 	})
-	return off, err
+	return off, found, err
 }
 
 // saveOffset persists seq as the consumer's last-read offset for topic.
+//
+// Retries on badger.ErrConflict: the offset key is written from the consumer's
+// drain goroutine (per live message) and once from the replay catch-up path, and
+// under a connection storm / heavy concurrent publish+commit load the optimistic
+// txn can conflict. Without the retry the save silently fails (logged, non-fatal)
+// and the offset stalls, so the consumer re-replays the same backlog on the next
+// reconnect and re-sheds it under gateway backpressure. Mirrors appendMessage's
+// bounded ErrConflict retry (sub-millisecond txns; no backoff needed).
+//
+// The offset key carries offsetTTL (generous by default — 7d — and decoupled
+// from message retention), refreshed on every save. An active consumer rewrites
+// its offset as messages flow, so the TTL keeps resetting and the key never
+// expires while the consumer is alive; an orphaned per-window consumer (its
+// browser tab closed — a reopened tab gets a fresh window id from sessionStorage
+// anyway) stops refreshing and its offset eventually expires, so offset keys
+// don't accumulate unboundedly as windows churn.
 func (r *BadgerRouter) saveOffset(topic, consumerName string, seq uint64) error {
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, seq)
-	return r.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(offsetKey(topic, consumerName), buf)
-	})
+	var lastErr error
+	for attempt := 0; attempt < appendMessageMaxRetries; attempt++ {
+		lastErr = r.db.Update(func(txn *badger.Txn) error {
+			if r.offsetTTL > 0 {
+				return txn.SetEntry(badger.NewEntry(offsetKey(topic, consumerName), buf).WithTTL(r.offsetTTL))
+			}
+			return txn.Set(offsetKey(topic, consumerName), buf)
+		})
+		if lastErr == nil {
+			return nil
+		}
+		if lastErr != badger.ErrConflict {
+			return lastErr
+		}
+	}
+	return lastErr
 }
 
 // replay calls handler for every message in the range (startSeq, currentSeq].

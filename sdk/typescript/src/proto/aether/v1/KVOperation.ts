@@ -20,6 +20,43 @@ export const _aether_v1_KVOperation_OpType = {
    * Atomic decrement that succeeds only if result >= guard_value
    */
   DECREMENT_IF: 'DECREMENT_IF',
+  /**
+   * Atomic conditional writes — the building blocks for distributed
+   * coordination primitives (mutex, leader election, run-once). All three
+   * are backed across Redis / Badger / NATS-JetStream. KVResponse.applied
+   * reports whether the conditional mutation took effect.
+   */
+  SET_NX: 'SET_NX',
+  /**
+   * Set `value` only if current == expected_value. applied=true iff swapped.
+   */
+  COMPARE_AND_SET: 'COMPARE_AND_SET',
+  /**
+   * Delete only if current == expected_value. applied=true iff deleted.
+   */
+  COMPARE_AND_DELETE: 'COMPARE_AND_DELETE',
+  /**
+   * REMOVAL-ONLY purge of ANOTHER principal's KV namespace, for lifecycle
+   * managers reaping ephemeral principals (e.g. sandbox-provider clearing a
+   * destroyed sidecar's private state). Deletes every key in
+   * (target_identity, scope) optionally filtered by `key` as a prefix.
+   * Gated by the capability/kv_purge_identity ACL grant. By design it
+   * returns ONLY KVResponse.counter_value (count deleted) — never keys or
+   * values — so the grant cannot be used to exfiltrate another principal's
+   * data. Maintains component separation: the gateway has no sandbox-specific
+   * knowledge; the caller decides what to purge and when.
+   */
+  PURGE_IDENTITY: 'PURGE_IDENTITY',
+  /**
+   * Atomic set primitives backing fan-in joins (set-completeness) and
+   * at-most-once dedup ledgers, native across Redis / Badger / NATS-JetStream.
+   * SET_ADD adds `value` (the member) to the set at `key`, (re)setting `ttl`
+   * on a newly-added member: KVResponse.applied=true iff newly added,
+   * counter_value=cardinality after the add. SET_CARD returns
+   * counter_value=cardinality (0 if absent).
+   */
+  SET_ADD: 'SET_ADD',
+  SET_CARD: 'SET_CARD',
 } as const;
 
 export type _aether_v1_KVOperation_OpType =
@@ -45,6 +82,49 @@ export type _aether_v1_KVOperation_OpType =
    */
   | 'DECREMENT_IF'
   | 7
+  /**
+   * Atomic conditional writes — the building blocks for distributed
+   * coordination primitives (mutex, leader election, run-once). All three
+   * are backed across Redis / Badger / NATS-JetStream. KVResponse.applied
+   * reports whether the conditional mutation took effect.
+   */
+  | 'SET_NX'
+  | 8
+  /**
+   * Set `value` only if current == expected_value. applied=true iff swapped.
+   */
+  | 'COMPARE_AND_SET'
+  | 9
+  /**
+   * Delete only if current == expected_value. applied=true iff deleted.
+   */
+  | 'COMPARE_AND_DELETE'
+  | 10
+  /**
+   * REMOVAL-ONLY purge of ANOTHER principal's KV namespace, for lifecycle
+   * managers reaping ephemeral principals (e.g. sandbox-provider clearing a
+   * destroyed sidecar's private state). Deletes every key in
+   * (target_identity, scope) optionally filtered by `key` as a prefix.
+   * Gated by the capability/kv_purge_identity ACL grant. By design it
+   * returns ONLY KVResponse.counter_value (count deleted) — never keys or
+   * values — so the grant cannot be used to exfiltrate another principal's
+   * data. Maintains component separation: the gateway has no sandbox-specific
+   * knowledge; the caller decides what to purge and when.
+   */
+  | 'PURGE_IDENTITY'
+  | 11
+  /**
+   * Atomic set primitives backing fan-in joins (set-completeness) and
+   * at-most-once dedup ledgers, native across Redis / Badger / NATS-JetStream.
+   * SET_ADD adds `value` (the member) to the set at `key`, (re)setting `ttl`
+   * on a newly-added member: KVResponse.applied=true iff newly added,
+   * counter_value=cardinality after the add. SET_CARD returns
+   * counter_value=cardinality (0 if absent).
+   */
+  | 'SET_ADD'
+  | 12
+  | 'SET_CARD'
+  | 13
 
 export type _aether_v1_KVOperation_OpType__Output = typeof _aether_v1_KVOperation_OpType[keyof typeof _aether_v1_KVOperation_OpType]
 
@@ -210,6 +290,29 @@ export interface KVOperation {
    * negative deltas are rejected by the server.
    */
   'deltaValue'?: (number | string | Long);
+  /**
+   * Expected current value for COMPARE_AND_SET / COMPARE_AND_DELETE. The
+   * mutation applies only when the stored value equals these bytes. Unused by
+   * other ops. For an empty/absent comparison use SET_NX instead.
+   */
+  'expectedValue'?: (Buffer | Uint8Array | string);
+  /**
+   * LIST pagination. limit caps the keys returned in one LIST response (<=0 →
+   * server default). cursor pages through results: pass the previous
+   * KVResponse.next_cursor to fetch the next page; empty starts from the
+   * beginning. For LIST, `key` (field 3) is the key prefix filter, applied
+   * server-side BEFORE the limit. Unused by non-LIST ops.
+   */
+  'limit'?: (number);
+  'cursor'?: (string);
+  /**
+   * PURGE_IDENTITY only: the principal whose KV namespace to purge (e.g.
+   * "sv::sandbox-sidecar::<sandbox_id>"). The caller's OWN identity authorizes
+   * the op via capability/kv_purge_identity; this names the TARGET namespace.
+   * `key` (field 3) acts as an optional prefix filter; `scope` selects which
+   * scope to purge. Ignored by all other ops.
+   */
+  'targetIdentity'?: (string);
 }
 
 /**
@@ -248,4 +351,27 @@ export interface KVOperation__Output {
    * negative deltas are rejected by the server.
    */
   'deltaValue': (string);
+  /**
+   * Expected current value for COMPARE_AND_SET / COMPARE_AND_DELETE. The
+   * mutation applies only when the stored value equals these bytes. Unused by
+   * other ops. For an empty/absent comparison use SET_NX instead.
+   */
+  'expectedValue': (Buffer);
+  /**
+   * LIST pagination. limit caps the keys returned in one LIST response (<=0 →
+   * server default). cursor pages through results: pass the previous
+   * KVResponse.next_cursor to fetch the next page; empty starts from the
+   * beginning. For LIST, `key` (field 3) is the key prefix filter, applied
+   * server-side BEFORE the limit. Unused by non-LIST ops.
+   */
+  'limit': (number);
+  'cursor': (string);
+  /**
+   * PURGE_IDENTITY only: the principal whose KV namespace to purge (e.g.
+   * "sv::sandbox-sidecar::<sandbox_id>"). The caller's OWN identity authorizes
+   * the op via capability/kv_purge_identity; this names the TARGET namespace.
+   * `key` (field 3) acts as an optional prefix filter; `scope` selects which
+   * scope to purge. Ignored by all other ops.
+   */
+  'targetIdentity': (string);
 }

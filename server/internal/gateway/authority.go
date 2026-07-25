@@ -7,11 +7,11 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/audit"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 func (s *GatewayServer) resolveAuthorizationContext(ctx context.Context, client *ClientSession, actor models.Identity, authz *pb.AuthorizationContext) (*acl.ResolvedAuthority, error) {
@@ -215,7 +215,13 @@ func normalizeAuditPrincipalTypeFilter(value string) string {
 	return audit.NormalizePrincipalTypeCase(trimmed)
 }
 
-func (s *GatewayServer) checkMessageSendWithAuthority(ctx context.Context, sender models.Identity, targetTopic string, sessionID uuid.UUID, authority *acl.ResolvedAuthority) error {
+// checkMessageSendWithAuthority returns the effective access level granted by
+// the winning ACL decision (direct actor grant or OBO subject grant)
+// alongside the error. The level is what the gateway mints into
+// X-Auth-Workspace-Access on the proxy path; callers that only need the
+// allow/deny outcome may ignore it. When no workspace check applies the level
+// is acl.AccessNone (0).
+func (s *GatewayServer) checkMessageSendWithAuthority(ctx context.Context, sender models.Identity, targetTopic string, sessionID uuid.UUID, authority *acl.ResolvedAuthority) (int, error) {
 	hasGrant := authority != nil && authority.Grant != nil
 	subjectType := ""
 	subjectID := ""
@@ -232,7 +238,19 @@ func (s *GatewayServer) checkMessageSendWithAuthority(ctx context.Context, sende
 		Msg("checkMessageSendWithAuthority entry")
 
 	if s.acl == nil {
-		return fmt.Errorf("ACL service not available")
+		return acl.AccessNone, fmt.Errorf("ACL service not available")
+	}
+
+	// Additive task-party grant: a task's own party (assignee/creator/OBO
+	// subject) may send to the task's msg lane even without a workspace send
+	// grant. Non-parties / non-task-msg topics fall through unchanged to the
+	// workspace/OBO logic below.
+	if ok, isTaskMsg := s.taskMsgSenderIsTaskParty(ctx, sender, targetTopic); isTaskMsg && ok {
+		logging.Logger.Info().
+			Str("from", sender.ToTopic()).
+			Str("target", targetTopic).
+			Msg("task-msg send authorized via task-party match")
+		return acl.AccessReadWrite, nil
 	}
 
 	// Workspace-less senders (bridges, services, users) check against the
@@ -241,11 +259,11 @@ func (s *GatewayServer) checkMessageSendWithAuthority(ctx context.Context, sende
 	if sender.Workspace == "" {
 		targetWorkspace := extractWorkspaceFromTopic(targetTopic)
 		if targetWorkspace == "" {
-			return nil
+			return acl.AccessNone, nil
 		}
 		decision, err := s.acl.CheckAccessWithAuthority(ctx, sender, authority, acl.ResourceTypeWorkspace, targetWorkspace, "send_message", targetWorkspace, sessionID, acl.AccessReadWrite)
 		if err != nil {
-			return fmt.Errorf("ACL check failed: %w", err)
+			return acl.AccessNone, fmt.Errorf("ACL check failed: %w", err)
 		}
 		if decision.Denied() {
 			logging.Logger.Info().
@@ -253,9 +271,9 @@ func (s *GatewayServer) checkMessageSendWithAuthority(ctx context.Context, sende
 				Str("target", targetTopic).
 				Str("reason", decision.Reason).
 				Msg("checkMessageSendWithAuthority denial")
-			return fmt.Errorf("access denied: %s", decision.Reason)
+			return acl.AccessNone, fmt.Errorf("access denied: %s", decision.Reason)
 		}
-		return nil
+		return decision.EffectiveAccessLevel, nil
 	}
 
 	// Workspace-scoped senders: the workspace we gate on is the TARGET
@@ -284,10 +302,10 @@ func (s *GatewayServer) checkMessageSendWithAuthority(ctx context.Context, sende
 	//     actor lacks direct grant but the subject has it.
 	directDecision, directErr := s.acl.CheckAccess(ctx, sender, acl.ResourceTypeWorkspace, checkWorkspace, "send_message", checkWorkspace, sessionID, acl.AccessReadWrite)
 	if directErr != nil {
-		return fmt.Errorf("ACL check failed (direct): %w", directErr)
+		return acl.AccessNone, fmt.Errorf("ACL check failed (direct): %w", directErr)
 	}
 	if directDecision != nil && !directDecision.Denied() {
-		return nil // actor's own grant suffices, OBO chain not consulted
+		return directDecision.EffectiveAccessLevel, nil // actor's own grant suffices, OBO chain not consulted
 	}
 	directReason := "no decision"
 	if directDecision != nil {
@@ -304,7 +322,7 @@ func (s *GatewayServer) checkMessageSendWithAuthority(ctx context.Context, sende
 			Str("actor_reason", directReason).
 			Err(oboErr).
 			Msg("checkMessageSendWithAuthority OBO fallback errored")
-		return fmt.Errorf("access denied (actor: %s; OBO check failed: %w)", directReason, oboErr)
+		return acl.AccessNone, fmt.Errorf("access denied (actor: %s; OBO check failed: %w)", directReason, oboErr)
 	}
 	if oboDecision == nil || oboDecision.Denied() {
 		oboReason := "no decision"
@@ -318,7 +336,7 @@ func (s *GatewayServer) checkMessageSendWithAuthority(ctx context.Context, sende
 			Str("actor_reason", directReason).
 			Str("obo_reason", oboReason).
 			Msg("checkMessageSendWithAuthority denial (both actor + OBO)")
-		return fmt.Errorf("access denied: actor lacks workspace %s grant (%s) AND OBO subject lacks it (%s)", checkWorkspace, directReason, oboReason)
+		return acl.AccessNone, fmt.Errorf("access denied: actor lacks workspace %s grant (%s) AND OBO subject lacks it (%s)", checkWorkspace, directReason, oboReason)
 	}
 	logging.Logger.Debug().
 		Str("sender", sender.ToTopic()).
@@ -326,5 +344,5 @@ func (s *GatewayServer) checkMessageSendWithAuthority(ctx context.Context, sende
 		Str("workspace_checked", checkWorkspace).
 		Str("actor_reason", directReason).
 		Msg("checkMessageSendWithAuthority allowed via OBO fallback (actor lacks direct grant)")
-	return nil
+	return oboDecision.EffectiveAccessLevel, nil
 }

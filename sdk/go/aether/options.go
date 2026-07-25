@@ -8,6 +8,8 @@ package aether
 import (
 	"crypto/tls"
 	"time"
+
+	pb "github.com/scitrera/aether/api/proto"
 )
 
 // =============================================================================
@@ -170,7 +172,13 @@ type ClientOptions struct {
 	// Keys and values are passed to the server as metadata.
 	Credentials map[string]string
 
-	// Metadata contains additional metadata to send with the connection.
+	// Metadata contains additional gRPC metadata (headers) attached to the
+	// Connect stream's outgoing context, readable server-side via
+	// metadata.FromIncomingContext. Unlike Credentials (carried in the
+	// InitConnection payload), these ride as transport-level headers and are
+	// available before the first frame is read — e.g. an aggregator that pairs
+	// an inbound Connect by an "x-aether-tenant" header. Empty/nil = no extra
+	// headers (the pre-existing behavior), so this is fully backward-compatible.
 	Metadata map[string]string
 }
 
@@ -481,6 +489,14 @@ type KVGetOptions struct {
 	// If empty, uses the client's current workspace.
 	Workspace string
 
+	// Authorization carries an on-behalf-of AuthorizationContext stamped onto
+	// the KVOperation (proto field 9). When set, the synchronous GetSync path
+	// forwards it so the gateway resolves the operation under the named subject
+	// (e.g. a user OBO grant) instead of the connecting principal. nil leaves
+	// the operation as direct (today's behavior). Only the *Sync paths honor
+	// this; the async builders always send nil for backward compatibility.
+	Authorization *pb.AuthorizationContext
+
 	// Timeout for synchronous operations.
 	// If 0, uses a default timeout.
 	Timeout time.Duration
@@ -511,6 +527,13 @@ type KVPutOptions struct {
 	// 0 means no expiration.
 	TTL time.Duration
 
+	// Authorization carries an on-behalf-of AuthorizationContext stamped onto
+	// the KVOperation (proto field 9). When set, the synchronous PutSync path
+	// forwards it so the gateway resolves the write under the named subject
+	// (e.g. a user OBO grant). nil leaves the write as direct (today's
+	// behavior). Only the *Sync paths honor this.
+	Authorization *pb.AuthorizationContext
+
 	// Timeout for synchronous operations.
 	// If 0, uses a default timeout.
 	Timeout time.Duration
@@ -532,6 +555,23 @@ type KVListOptions struct {
 	// Workspace is required for KVScopeWorkspace and KVScopeUserWorkspace.
 	// If empty, uses the client's current workspace.
 	Workspace string
+
+	// Limit caps the number of keys returned in a single LIST response.
+	// 0 = server default. The KeyPrefix filter is applied server-side BEFORE
+	// the limit, so the cap bounds matching keys, not all keys in the scope.
+	Limit int32
+
+	// Cursor pages through LIST results larger than Limit: pass the previous
+	// KVResponse.NextCursor to fetch the next page; empty starts from the
+	// beginning. Iterate until KVResponse.HasMore is false.
+	Cursor string
+
+	// Authorization carries an on-behalf-of AuthorizationContext stamped onto
+	// the KVOperation (proto field 9). When set, the synchronous ListSync path
+	// forwards it so the gateway resolves the list under the named subject
+	// (e.g. a user OBO grant). nil leaves the list as direct (today's
+	// behavior). Only the *Sync paths honor this.
+	Authorization *pb.AuthorizationContext
 
 	// Timeout for synchronous operations.
 	// If 0, uses a default timeout.
@@ -557,6 +597,26 @@ type KVDeleteOptions struct {
 
 	// Timeout for synchronous operations.
 	// If 0, uses a default timeout.
+	Timeout time.Duration
+}
+
+// KVPurgeOptions configures a REMOVAL-ONLY PURGE_IDENTITY operation: delete
+// every key in ANOTHER principal's KV namespace. Requires the
+// capability/kv_purge_identity grant on the calling client's identity. The
+// response carries only the deleted count — never keys or values.
+type KVPurgeOptions struct {
+	// TargetIdentity is the principal whose namespace to purge, e.g.
+	// "sv::sandbox-sidecar::<sandbox_id>". Required.
+	TargetIdentity string
+
+	// Scope selects which scope to purge. Default: KVScopeGlobal.
+	Scope KVScope
+
+	// KeyPrefix, when set, restricts the purge to keys beginning with it.
+	// Empty purges the entire (target, scope) namespace.
+	KeyPrefix string
+
+	// Timeout for the synchronous operation. 0 → default.
 	Timeout time.Duration
 }
 
@@ -672,6 +732,31 @@ type CreateTaskOptions struct {
 	// flows (sandbox lease, etc.). Use TargetAgentID for the Agent-typed
 	// equivalent; the two are mutually exclusive.
 	TargetIdentity string
+
+	// RetryPolicy, when non-nil, is persisted on the created task. The
+	// task store consults it on FailTask to compute next_retry_at,
+	// re-pending the task up to the policy's max_attempts. Use this to
+	// lift retry scheduling out of the worker (e.g., svix-style schedules
+	// for webhook delivery). Absent = the server's legacy default
+	// (immediate re-pend, max_retries=3).
+	RetryPolicy *pb.RetryPolicy
+
+	// Priority is the optional dispatch priority for the task. Higher
+	// priority pending tasks are delivered before lower ones (ties break
+	// FIFO). Defaults to UNSPECIFIED, which the server normalizes to NORMAL.
+	// Use the pb.TaskPriority_TASK_PRIORITY_* constants.
+	Priority pb.TaskPriority
+
+	// Authorization, when non-nil, is forwarded verbatim as the created
+	// task's AuthorizationContext. The gateway runs it through
+	// resolveAuthorizationContext and seeds the task's Authority subject from
+	// it, so an on-behalf-of context here makes the task act on behalf of the
+	// named subject (e.g. seeding task.Authority.Subject* for subject-
+	// participation notifications). When nil the gateway falls back to its
+	// own inheritance chain (nested-task authority or none). Typically the
+	// caller forwards an inbound ProxyHttpRequest.GetAuthorization() to make a
+	// service-created notification task carry the originating user's subject.
+	Authorization *pb.AuthorizationContext
 }
 
 // =============================================================================
@@ -742,6 +827,16 @@ type SendMessageOptions struct {
 
 	// Metadata is optional message metadata.
 	Metadata map[string]string
+
+	// Authorization optionally carries an on-behalf-of AuthorizationContext for
+	// this send. The gateway validates it (grant + delegate + audience) and, on
+	// success, stamps the resolved subject onto the delivered
+	// MessageEnvelope.on_behalf_subject so the recipient can identify the user
+	// the message is sent for. EXPLICIT by design: a bare send never assumes an
+	// OBO context. Use OBOAuthorizationFromContext(ctx) to populate this from a
+	// context set via WithOBOAuthorization, or build the *pb.AuthorizationContext
+	// directly. Nil ⇒ direct (non-OBO) send.
+	Authorization *pb.AuthorizationContext
 }
 
 // =============================================================================

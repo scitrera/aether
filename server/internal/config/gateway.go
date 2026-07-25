@@ -346,11 +346,24 @@ type AuditConfig struct {
 	FlushPeriod   string   `yaml:"flush_period"`
 	RetentionDays int      `yaml:"retention_days"`
 	ChannelBuffer int      `yaml:"channel_buffer"`
+
+	// CoalesceWindow is the window over which a burst of identical successful
+	// message-route / proxy-route audit events from the same sender→target is
+	// recorded once (the first = the authorization record) and the rest are
+	// suppressed. Defaults to "60s". Set to "0" to disable coalescing (audit
+	// every event).
+	CoalesceWindow string `yaml:"audit_coalesce_window"`
 }
 
 // GetFlushPeriod parses the flush period duration
 func (a *AuditConfig) GetFlushPeriod() time.Duration {
 	return parseDurationOrDefault(a.FlushPeriod, 5*time.Second)
+}
+
+// GetCoalesceWindow parses the audit coalesce window duration, defaulting to
+// 60s. A value of "0" disables coalescing (every event is audited).
+func (a *AuditConfig) GetCoalesceWindow() time.Duration {
+	return parseDurationOrDefault(a.CoalesceWindow, 60*time.Second)
 }
 
 // CleanupConfig contains cleanup job settings
@@ -371,6 +384,46 @@ type CleanupConfig struct {
 	// ReconciliationInterval is how often to run orphaned task reconciliation (e.g., "1m").
 	// Set to "0" to disable automatic reconciliation.
 	ReconciliationInterval string `yaml:"reconciliation_interval"`
+
+	// InteractiveTaskTTL is how old a non-terminal INTERACTIVE (chat turn) task
+	// may get before it is auto-cancelled (e.g., "1h").
+	InteractiveTaskTTL string `yaml:"interactive_task_ttl"`
+
+	// InteractiveTaskCancelInterval is how often to run the stale interactive
+	// task sweep (e.g., "15m"). Set to "0" to disable.
+	InteractiveTaskCancelInterval string `yaml:"interactive_task_cancel_interval"`
+
+	// StartupTaskTTL is how old an UNCLAIMED (pending) agent_startup task may
+	// get before it is auto-cancelled (e.g., "30m"). Deliberately generous so a
+	// briefly-unavailable orchestrator's pending task is never reaped.
+	StartupTaskTTL string `yaml:"startup_task_ttl"`
+
+	// StartupTaskCancelInterval is how often to run the stale startup task
+	// sweep (e.g., "15m"). Set to "0" to disable.
+	StartupTaskCancelInterval string `yaml:"startup_task_cancel_interval"`
+
+	// PoolTaskTTL is how old an UNCLAIMED (pending) regular POOL task may get
+	// before it is auto-cancelled (e.g., "1h"). Deliberately generous so a
+	// briefly-absent worker's pending task is never reaped.
+	PoolTaskTTL string `yaml:"pool_task_ttl"`
+
+	// PoolTaskCancelInterval is how often to run the stale pool task sweep
+	// (e.g., "15m"). Set to "0" to disable.
+	PoolTaskCancelInterval string `yaml:"pool_task_cancel_interval"`
+
+	// QueueReconcileInterval is how often to retire orphaned
+	// orchestrated_task_queue rows whose task is terminal/missing (e.g., "5m").
+	// Set to "0" to disable.
+	QueueReconcileInterval string `yaml:"queue_reconcile_interval"`
+
+	// AuditRetentionDays is how many days of comprehensive_audit_log rows to
+	// keep; older rows are deleted by the scheduled audit-retention sweep.
+	// Defaults to 90.
+	AuditRetentionDays int `yaml:"audit_retention_days"`
+
+	// AuditCleanupInterval is how often to run the scheduled audit-log
+	// retention sweep (e.g., "24h"). Set to "0" to disable.
+	AuditCleanupInterval string `yaml:"audit_cleanup_interval"`
 }
 
 // GetTaskPurgeInterval parses the task purge interval duration
@@ -396,6 +449,56 @@ func (c *CleanupConfig) GetCancelledTaskRetention() time.Duration {
 // GetReconciliationInterval parses the reconciliation interval duration
 func (c *CleanupConfig) GetReconciliationInterval() time.Duration {
 	return parseDurationOrDefault(c.ReconciliationInterval, 1*time.Minute)
+}
+
+// GetInteractiveTaskTTL parses the interactive task TTL duration
+func (c *CleanupConfig) GetInteractiveTaskTTL() time.Duration {
+	return parseDurationOrDefault(c.InteractiveTaskTTL, 1*time.Hour)
+}
+
+// GetInteractiveTaskCancelInterval parses the interactive task cancel interval duration
+func (c *CleanupConfig) GetInteractiveTaskCancelInterval() time.Duration {
+	return parseDurationOrDefault(c.InteractiveTaskCancelInterval, 15*time.Minute)
+}
+
+// GetStartupTaskTTL parses the startup task TTL duration
+func (c *CleanupConfig) GetStartupTaskTTL() time.Duration {
+	return parseDurationOrDefault(c.StartupTaskTTL, 30*time.Minute)
+}
+
+// GetStartupTaskCancelInterval parses the startup task cancel interval duration
+func (c *CleanupConfig) GetStartupTaskCancelInterval() time.Duration {
+	return parseDurationOrDefault(c.StartupTaskCancelInterval, 15*time.Minute)
+}
+
+// GetPoolTaskTTL parses the pool task TTL duration
+func (c *CleanupConfig) GetPoolTaskTTL() time.Duration {
+	return parseDurationOrDefault(c.PoolTaskTTL, 1*time.Hour)
+}
+
+// GetPoolTaskCancelInterval parses the pool task cancel interval duration
+func (c *CleanupConfig) GetPoolTaskCancelInterval() time.Duration {
+	return parseDurationOrDefault(c.PoolTaskCancelInterval, 15*time.Minute)
+}
+
+// GetQueueReconcileInterval parses the orphaned-queue reconcile interval duration
+func (c *CleanupConfig) GetQueueReconcileInterval() time.Duration {
+	return parseDurationOrDefault(c.QueueReconcileInterval, 5*time.Minute)
+}
+
+// GetAuditRetentionDays returns the audit-log retention window in days,
+// defaulting to 90 when unset (<= 0).
+func (c *CleanupConfig) GetAuditRetentionDays() int {
+	if c.AuditRetentionDays <= 0 {
+		return 90
+	}
+	return c.AuditRetentionDays
+}
+
+// GetAuditCleanupInterval parses the audit-log cleanup interval duration,
+// defaulting to 24h. A value of "0" disables the scheduled sweep.
+func (c *CleanupConfig) GetAuditCleanupInterval() time.Duration {
+	return parseDurationOrDefault(c.AuditCleanupInterval, 24*time.Hour)
 }
 
 // KVConfig contains KV store settings
@@ -789,6 +892,9 @@ func (c *Config) ApplyEnvOverrides() {
 	}
 	if v := os.Getenv("AETHER_AUDIT_EVENT_TYPES"); v != "" {
 		c.Audit.EventTypes = strings.Split(v, ",")
+	}
+	if v := os.Getenv("AETHER_AUDIT_COALESCE_WINDOW"); v != "" {
+		c.Audit.CoalesceWindow = v
 	}
 }
 

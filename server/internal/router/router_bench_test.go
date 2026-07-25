@@ -10,7 +10,7 @@ import (
 
 	"github.com/rabbitmq/rabbitmq-stream-go-client/pkg/amqp"
 	"github.com/rabbitmq/rabbitmq-stream-go-client/pkg/stream"
-	"github.com/scitrera/aether/internal/testutil"
+	"github.com/scitrera/aether/server/internal/testutil"
 )
 
 // BenchmarkPublishWithPooling benchmarks message publishing with producer pooling

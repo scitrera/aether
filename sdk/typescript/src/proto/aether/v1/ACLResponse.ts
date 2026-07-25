@@ -5,6 +5,11 @@ import type { ACLFallbackPolicyInfo as _aether_v1_ACLFallbackPolicyInfo, ACLFall
 import type { ACLAuditEntryInfo as _aether_v1_ACLAuditEntryInfo, ACLAuditEntryInfo__Output as _aether_v1_ACLAuditEntryInfo__Output } from '../../aether/v1/ACLAuditEntryInfo';
 import type { ACLCleanupResult as _aether_v1_ACLCleanupResult, ACLCleanupResult__Output as _aether_v1_ACLCleanupResult__Output } from '../../aether/v1/ACLCleanupResult';
 import type { ACLAuthorityGrantInfo as _aether_v1_ACLAuthorityGrantInfo, ACLAuthorityGrantInfo__Output as _aether_v1_ACLAuthorityGrantInfo__Output } from '../../aether/v1/ACLAuthorityGrantInfo';
+import type { ACLGroupInfo as _aether_v1_ACLGroupInfo, ACLGroupInfo__Output as _aether_v1_ACLGroupInfo__Output } from '../../aether/v1/ACLGroupInfo';
+import type { ACLRoleInfo as _aether_v1_ACLRoleInfo, ACLRoleInfo__Output as _aether_v1_ACLRoleInfo__Output } from '../../aether/v1/ACLRoleInfo';
+import type { ACLGroupMemberInfo as _aether_v1_ACLGroupMemberInfo, ACLGroupMemberInfo__Output as _aether_v1_ACLGroupMemberInfo__Output } from '../../aether/v1/ACLGroupMemberInfo';
+import type { ACLRoleAssignmentInfo as _aether_v1_ACLRoleAssignmentInfo, ACLRoleAssignmentInfo__Output as _aether_v1_ACLRoleAssignmentInfo__Output } from '../../aether/v1/ACLRoleAssignmentInfo';
+import type { ACLAccessExplanationInfo as _aether_v1_ACLAccessExplanationInfo, ACLAccessExplanationInfo__Output as _aether_v1_ACLAccessExplanationInfo__Output } from '../../aether/v1/ACLAccessExplanationInfo';
 
 /**
  * ACLResponse is sent in response to ACLOperation.
@@ -61,6 +66,34 @@ export interface ACLResponse {
    */
   'authorityGrants'?: (_aether_v1_ACLAuthorityGrantInfo)[];
   'totalAuthorityGrants'?: (number);
+  /**
+   * Role/group results.
+   */
+  'group'?: (_aether_v1_ACLGroupInfo | null);
+  /**
+   * LIST_GROUPS
+   */
+  'groups'?: (_aether_v1_ACLGroupInfo)[];
+  /**
+   * GET_ROLE / CREATE_ROLE
+   */
+  'role'?: (_aether_v1_ACLRoleInfo | null);
+  /**
+   * LIST_ROLES
+   */
+  'roles'?: (_aether_v1_ACLRoleInfo)[];
+  /**
+   * LIST_GROUP_MEMBERS / LIST_PRINCIPAL_GROUPS
+   */
+  'groupMembers'?: (_aether_v1_ACLGroupMemberInfo)[];
+  /**
+   * LIST_ROLE_ASSIGNMENTS / LIST_PRINCIPAL_ROLES
+   */
+  'roleAssignments'?: (_aether_v1_ACLRoleAssignmentInfo)[];
+  /**
+   * EXPLAIN_ACCESS
+   */
+  'explanation'?: (_aether_v1_ACLAccessExplanationInfo | null);
 }
 
 /**
@@ -118,4 +151,32 @@ export interface ACLResponse__Output {
    */
   'authorityGrants': (_aether_v1_ACLAuthorityGrantInfo__Output)[];
   'totalAuthorityGrants': (number);
+  /**
+   * Role/group results.
+   */
+  'group': (_aether_v1_ACLGroupInfo__Output | null);
+  /**
+   * LIST_GROUPS
+   */
+  'groups': (_aether_v1_ACLGroupInfo__Output)[];
+  /**
+   * GET_ROLE / CREATE_ROLE
+   */
+  'role': (_aether_v1_ACLRoleInfo__Output | null);
+  /**
+   * LIST_ROLES
+   */
+  'roles': (_aether_v1_ACLRoleInfo__Output)[];
+  /**
+   * LIST_GROUP_MEMBERS / LIST_PRINCIPAL_GROUPS
+   */
+  'groupMembers': (_aether_v1_ACLGroupMemberInfo__Output)[];
+  /**
+   * LIST_ROLE_ASSIGNMENTS / LIST_PRINCIPAL_ROLES
+   */
+  'roleAssignments': (_aether_v1_ACLRoleAssignmentInfo__Output)[];
+  /**
+   * EXPLAIN_ACCESS
+   */
+  'explanation': (_aether_v1_ACLAccessExplanationInfo__Output | null);
 }

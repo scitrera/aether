@@ -7,13 +7,13 @@ package workflow
 // introduce a native sqlite sibling and may eventually let us collapse
 // the legacy types into this package. For now, downstream callers can
 //
-//	import "github.com/scitrera/aether/internal/storage/workflow"
+//	import "github.com/scitrera/aether/server/internal/storage/workflow"
 //
 // and find every type and constant they need to read or write workflow
 // rows — no double-import of the legacy package required.
 
 import (
-	legacy "github.com/scitrera/aether/internal/workflow"
+	legacy "github.com/scitrera/aether/server/internal/workflow"
 )
 
 // Core types — aliased so a single import gets callers everything they
@@ -29,6 +29,8 @@ type (
 	StepState = legacy.StepState
 	// Schedule is a workflow_schedules row.
 	Schedule = legacy.Schedule
+	// Join is a workflow_joins row.
+	Join = legacy.Join
 	// StateMachineDef is a workflow_state_machines row.
 	StateMachineDef = legacy.StateMachineDef
 	// StateMachineInstance is a workflow_state_machine_instances row.
@@ -60,4 +62,19 @@ const (
 	ScheduleTypeInterval     = legacy.ScheduleTypeInterval
 	ScheduleTypeOnce         = legacy.ScheduleTypeOnce
 	ScheduleTypeEventDelayed = legacy.ScheduleTypeEventDelayed
+)
+
+// Join mode values — values that land in workflow_joins.mode.
+const (
+	JoinModeCount    = legacy.JoinModeCount
+	JoinModeSet      = legacy.JoinModeSet
+	JoinModeCoalesce = legacy.JoinModeCoalesce
+)
+
+// Join status values — values that land in workflow_joins.status.
+const (
+	JoinStatusOpen      = legacy.JoinStatusOpen
+	JoinStatusFired     = legacy.JoinStatusFired
+	JoinStatusTimedOut  = legacy.JoinStatusTimedOut
+	JoinStatusCancelled = legacy.JoinStatusCancelled
 )

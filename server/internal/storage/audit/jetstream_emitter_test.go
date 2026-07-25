@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
-	auditstore "github.com/scitrera/aether/internal/storage/audit"
+	auditstore "github.com/scitrera/aether/server/internal/storage/audit"
 )
 
 // ---------------------------------------------------------------------------

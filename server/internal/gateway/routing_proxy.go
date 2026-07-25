@@ -10,10 +10,11 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/audit"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/pkg/identityheaders"
+	"github.com/scitrera/aether/server/pkg/models"
 	"github.com/scitrera/aether/sdk/go/aether"
 	bp "github.com/scitrera/go-backpressure"
 	"google.golang.org/protobuf/proto"
@@ -162,16 +163,21 @@ func (s *GatewayServer) findLocalServiceInstances(impl string) []string {
 }
 
 // proxyACLCheck reuses checkMessageSendWithAuthority / checkMessageSend,
-// matching the same actor-direct-then-OBO order plain messages use.
-func (s *GatewayServer) proxyACLCheck(ctx context.Context, client *ClientSession, sender models.Identity, target string, authz *pb.AuthorizationContext) (*acl.ResolvedAuthority, error) {
+// matching the same actor-direct-then-OBO order plain messages use. It also
+// returns the effective access level granted by the winning decision so the
+// proxy path can mint it into X-Auth-Workspace-Access (acl.AccessNone when ACL
+// is disabled or no workspace check applies).
+func (s *GatewayServer) proxyACLCheck(ctx context.Context, client *ClientSession, sender models.Identity, target string, authz *pb.AuthorizationContext) (*acl.ResolvedAuthority, int, error) {
 	resolved, err := s.resolveAuthorizationContext(ctx, client, sender, authz)
 	if err != nil {
-		return nil, err
+		return nil, acl.AccessNone, err
 	}
 	if resolved != nil {
-		return resolved, s.checkMessageSendWithAuthority(ctx, sender, target, client.SessionUUID, resolved)
+		level, checkErr := s.checkMessageSendWithAuthority(ctx, sender, target, client.SessionUUID, resolved)
+		return resolved, level, checkErr
 	}
-	return nil, s.checkMessageSend(ctx, sender, target)
+	level, checkErr := s.checkMessageSend(ctx, sender, target)
+	return nil, level, checkErr
 }
 
 // proxyFrameSourceMarker is the “MessageEnvelope.Source“ value used to
@@ -372,8 +378,10 @@ func (s *GatewayServer) routeProxyHttpRequest(ctx context.Context, client *Clien
 	}
 	req.TargetTopic = concrete
 
-	// 2. ACL check — same primitives as plain SendMessage.
-	resolvedAuthority, err := s.proxyACLCheck(ctx, client, sender, concrete, req.GetAuthorization())
+	// 2. ACL check — same primitives as plain SendMessage. The effective send-
+	//    permission level is not used for header minting (WorkspaceAccess is
+	//    computed separately below, per OBO/direct mode).
+	resolvedAuthority, _, err := s.proxyACLCheck(ctx, client, sender, concrete, req.GetAuthorization())
 	if err != nil {
 		s.auditProxyHttpFailure(ctx, sender, concrete, requestID, client.SessionUUID, resolvedAuthority, err.Error())
 		sendProxyHttpError(client, requestID, pb.ProxyError_ACL_DENIED, err.Error())
@@ -389,17 +397,77 @@ func (s *GatewayServer) routeProxyHttpRequest(ctx context.Context, client *Clien
 	//      it tried to re-resolve. By inlining the resolution here we
 	//      eliminate that mismatch and a redundant RPC round-trip per
 	//      request. See AuthorizationContext.resolved doc in api/proto/aether.proto.
+	//
+	//      This remains for backward-compat with strict consumers (e.g. the
+	//      Go sidecar) that overlay X-Auth-* from the proto. The header
+	//      minting in step 3 is ADDITIVE and is the canonical path for
+	//      passthrough terminators (e.g. MemoryLayer's in-process terminator).
 	if resolvedAuthority != nil && req.Authorization != nil && resolvedAuthority.Grant != nil {
 		req.Authorization.Resolved = grantToResolvedAuthorityInfo(resolvedAuthority.Grant)
 	}
 
-	// 3. Stamp the originating caller into the envelope so the receiving
-	//    sidecar can populate X-Auth-* headers without a separate lookup.
-	//    (T3 introduces the helper; here we just propagate the actor topic.)
+	// 3. Mint the canonical X-Auth-* trusted header set onto the envelope so
+	//    a passthrough terminator (no Go sidecar to re-mint) can trust it
+	//    directly. This is the single minting point — identityheaders is the
+	//    same package the auth-proxy and Go sidecar use, so the wire format is
+	//    identical everywhere.
 	if req.Headers == nil {
 		req.Headers = make(map[string]string)
 	}
+	// Anti-spoof: drop any client-supplied x-auth-* / x-aether-* before we
+	// stamp our trusted set, so a caller cannot smuggle a forged identity.
+	identityheaders.StripInboundMap(req.Headers)
+	// Keep stamping the originating caller topic for strict Go-sidecar
+	// consumers that read it; set AFTER the strip so it survives.
 	req.Headers["x-aether-actor-topic"] = sender.ToTopic()
+
+	// gatewayTenantID identifies the tenant minted into X-Auth-Tenant-ID. The
+	// gateway is per-tenant; when AETHER_TENANT_ID is configured (s.tenantID)
+	// we use it, otherwise we fall back to the sender's workspace as the
+	// tenant scope so the fail-closed terminator authz still receives a
+	// non-empty tenant.
+	gatewayTenantID := s.tenantID
+	if gatewayTenantID == "" {
+		gatewayTenantID = sender.Workspace
+	}
+	ident := identityheaders.Identity{
+		UserID:        sender.CanonicalPrincipalID(),
+		PrincipalType: string(sender.Type),
+		CallerTopic:   sender.ToTopic(),
+	}
+	if resolvedAuthority != nil && resolvedAuthority.Grant != nil {
+		// OBO mode: the grant's MaxAccessLevel is the subject's access level on
+		// this workspace — use it verbatim (the grant was already validated by
+		// proxyACLCheck; no second ACL round-trip needed).
+		ident.WorkspaceAccess = resolvedAuthority.Grant.MaxAccessLevel
+		ident.Authority = identityheaders.AuthorityFromResolved(resolvedAuthority)
+	} else {
+		// Direct mode: effectiveLevel from checkMessageSend is the send-
+		// permission check, not the principal's workspace resource access level.
+		// For workspace-less targets (sv::, br::) that path returns AccessNone(0)
+		// even when the principal holds a blanket workspace:* ADMIN(40) grant.
+		// Re-query the ACL for the principal's effective workspace access level
+		// so X-Auth-Workspace-Access carries the correct value.
+		//
+		// Use req.AppWorkspace when the caller has declared a workspace context;
+		// fall back to "*" so a wildcard/blanket grant (e.g. workspace:* ADMIN)
+		// is matched and its level is returned.
+		wsCheck := req.GetAppWorkspace()
+		if wsCheck == "" {
+			wsCheck = "*"
+		}
+		if s.acl != nil {
+			// requiredLevel=AccessNone so this never denies — we only want the
+			// EffectiveAccessLevel from the winning rule.
+			if d, aclErr := s.acl.CheckAccess(ctx, sender, acl.ResourceTypeWorkspace, wsCheck, "read", wsCheck, uuid.Nil, acl.AccessNone); aclErr == nil && d != nil {
+				ident.WorkspaceAccess = d.EffectiveAccessLevel
+			}
+			// On error or nil decision, WorkspaceAccess stays 0 (AccessNone).
+			// The request still proceeds — send permission was already granted
+			// above; this is best-effort level enrichment for the header.
+		}
+	}
+	identityheaders.MintIntoMap(req.Headers, gatewayTenantID, ident)
 
 	// 4. Install request-pin so follow-on body chunks and the response can
 	//    route to the correct counterparty without re-resolving wildcards.
@@ -813,8 +881,9 @@ func (s *GatewayServer) routeTunnelOpen(ctx context.Context, client *ClientSessi
 	}
 	open.TargetTopic = concrete
 
-	// 2. ACL.
-	resolvedAuthority, err := s.proxyACLCheck(ctx, client, sender, concrete, open.GetAuthorization())
+	// 2. ACL. Tunnels do not mint X-Auth-* headers, so the effective level is
+	//    discarded here.
+	resolvedAuthority, _, err := s.proxyACLCheck(ctx, client, sender, concrete, open.GetAuthorization())
 	if err != nil {
 		s.auditTunnelOpenFailure(ctx, sender, concrete, tunnelID, client.SessionUUID, resolvedAuthority, err.Error())
 		sendTunnelClose(client, tunnelID, pb.TunnelClose_ERROR, "ACL_DENIED: "+err.Error())

@@ -36,11 +36,11 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/server"
 	natsgo "github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/scitrera/aether/internal/checkpoint"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/internal/router"
-	"github.com/scitrera/aether/internal/state"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/checkpoint"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/internal/router"
+	"github.com/scitrera/aether/server/internal/state"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // startSmokeJetStream boots an in-process NATS server with JetStream enabled

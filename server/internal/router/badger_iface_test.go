@@ -1,8 +1,8 @@
 package router_test
 
 import (
-	"github.com/scitrera/aether/internal/gateway"
-	"github.com/scitrera/aether/internal/router"
+	"github.com/scitrera/aether/server/internal/gateway"
+	"github.com/scitrera/aether/server/internal/router"
 )
 
 // Compile-time check: BadgerRouter satisfies the gateway MessageRouter interface.

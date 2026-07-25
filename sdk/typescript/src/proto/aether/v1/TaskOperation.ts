@@ -37,6 +37,10 @@ export const _aether_v1_TaskOperation_OpType = {
    * Agent declines before processing -> REJECTED terminal state.
    */
   REJECT: 'REJECT',
+  /**
+   * Assignee transitions an assigned/pending task to RUNNING.
+   */
+  CLAIM: 'CLAIM',
 } as const;
 
 export type _aether_v1_TaskOperation_OpType =
@@ -80,6 +84,11 @@ export type _aether_v1_TaskOperation_OpType =
    */
   | 'REJECT'
   | 7
+  /**
+   * Assignee transitions an assigned/pending task to RUNNING.
+   */
+  | 'CLAIM'
+  | 8
 
 export type _aether_v1_TaskOperation_OpType__Output = typeof _aether_v1_TaskOperation_OpType[keyof typeof _aether_v1_TaskOperation_OpType]
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/casbin/casbin/v3/model"
 	"github.com/casbin/casbin/v3/persist"
+	"github.com/scitrera/aether/server/internal/logging"
 )
 
 // aclRulesAdapter implements the Casbin persist.Adapter interface by reading
@@ -74,7 +75,65 @@ func (a *aclRulesAdapter) LoadPolicy(m model.Model) error {
 		_ = persist.LoadPolicyArray([]string{"p", sub, obj, act, exp, ruleID}, m)
 	}
 
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// Load role/group membership as Casbin grouping (g) edges. This is
+	// additive on top of the per-principal rules above: absence of the
+	// groups/roles tables (e.g. a DB that predates migration 028) must not
+	// break core rule evaluation, so failures here are logged and skipped
+	// rather than aborting the whole policy load.
+	a.loadGroupingPolicies(m)
+
+	return nil
+}
+
+// loadGroupingPolicies loads acl_group_members and acl_role_assignments as
+// Casbin g-rules: g("<member_type>:<member_id>", "group:<group_name>") and
+// g("<assignee_type>:<assignee_id>", "role:<role_name>"). Expired edges are
+// excluded. Best-effort: a query error (e.g. missing table) is logged and
+// skipped so the per-principal rules remain authoritative.
+func (a *aclRulesAdapter) loadGroupingPolicies(m model.Model) {
+	memberQuery := `
+		SELECT m.member_type, m.member_id, g.group_name
+		FROM acl_group_members m
+		JOIN acl_groups g ON g.group_id = m.group_id
+		WHERE m.expires_at IS NULL OR m.expires_at > NOW()
+	`
+	if rows, err := a.db.Query(memberQuery); err != nil {
+		logging.Logger.Warn().Err(err).Msg("acl: failed to load group memberships; group-derived access disabled until next reload")
+	} else {
+		for rows.Next() {
+			var memberType, memberID, groupName string
+			if err := rows.Scan(&memberType, &memberID, &groupName); err != nil {
+				logging.Logger.Warn().Err(err).Msg("acl: failed to scan group membership row")
+				continue
+			}
+			_ = persist.LoadPolicyArray([]string{"g", memberType + ":" + memberID, GroupSubjectPrefix + groupName}, m)
+		}
+		rows.Close()
+	}
+
+	assignQuery := `
+		SELECT a.assignee_type, a.assignee_id, r.role_name
+		FROM acl_role_assignments a
+		JOIN acl_roles r ON r.role_id = a.role_id
+		WHERE a.expires_at IS NULL OR a.expires_at > NOW()
+	`
+	if rows, err := a.db.Query(assignQuery); err != nil {
+		logging.Logger.Warn().Err(err).Msg("acl: failed to load role assignments; role-derived access disabled until next reload")
+	} else {
+		for rows.Next() {
+			var assigneeType, assigneeID, roleName string
+			if err := rows.Scan(&assigneeType, &assigneeID, &roleName); err != nil {
+				logging.Logger.Warn().Err(err).Msg("acl: failed to scan role assignment row")
+				continue
+			}
+			_ = persist.LoadPolicyArray([]string{"g", assigneeType + ":" + assigneeID, RoleSubjectPrefix + roleName}, m)
+		}
+		rows.Close()
+	}
 }
 
 // SavePolicy is a no-op. The Service manages database writes directly.

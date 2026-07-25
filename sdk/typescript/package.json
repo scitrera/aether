@@ -1,6 +1,6 @@
 {
   "name": "@scitrera/aether-client",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "TypeScript/JavaScript SDK for the Aether distributed control plane",
   "license": "Apache-2.0",
   "author": "scitrera.ai",
@@ -43,9 +43,9 @@
     "@grpc/proto-loader": "0.8.1"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
     "tsup": "^8.0.0",
-    "vitest": "^1.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^3.2.7"
   },
   "engines": {
     "node": ">=18.0.0"

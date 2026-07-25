@@ -28,12 +28,32 @@ func NewTemplateEngine(maxCacheSize int) *TemplateEngine {
 }
 
 // TransformResult is the parsed output of a template transformation.
+//
+// The first block (agent/tool_name/arguments) drives the default "message"
+// (tool-call) dispatch. The create_task block lets an event-triggered rule
+// dispatch an Aether POOL task instead — e.g. fire a memorylayer worker task
+// in response to an ingest-complete event. When Type == "create_task" the
+// executor routes to dispatchCreateTask using task_type/target_implementation/
+// payload; otherwise these fields are zero and the legacy message path runs.
 type TransformResult struct {
 	Agent     string            `yaml:"agent" json:"agent"`
 	ToolName  string            `yaml:"tool_name" json:"tool_name"`
 	Arguments map[string]any    `yaml:"arguments" json:"arguments"`
 	Workspace string            `yaml:"workspace" json:"workspace"`
 	Metadata  map[string]string `yaml:"metadata" json:"metadata"`
+	// create_task dispatch (event -> POOL task). Empty Type preserves the
+	// historical "message" behavior, so existing rules are unaffected.
+	Type                 string `yaml:"type" json:"type"`
+	TaskType             string `yaml:"task_type" json:"task_type"`
+	TargetImplementation string `yaml:"target_implementation" json:"target_implementation"`
+	Payload              any    `yaml:"payload" json:"payload"`
+	// Fan-out tagging for spawned tasks: a correlation id (the join's barrier
+	// key) and an optional feed-B completion-event opt-in.
+	CorrelationID   string                 `yaml:"correlation_id" json:"correlation_id"`
+	CompletionEvent *CompletionEventConfig `yaml:"completion_event" json:"completion_event"`
+	// Join destination (Type == "join"): a fan-in / barrier / coalesce. nil for
+	// every other destination kind, so existing rules are unaffected.
+	Join *JoinSpec `yaml:"join" json:"join"`
 }
 
 // Transform renders a Go text/template with the given data, then parses

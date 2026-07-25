@@ -44,10 +44,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go/jetstream"
 
-	internalregistry "github.com/scitrera/aether/internal/registry"
-	"github.com/scitrera/aether/internal/storage/registry"
-	"github.com/scitrera/aether/pkg/errors"
-	"github.com/scitrera/aether/pkg/models"
+	internalregistry "github.com/scitrera/aether/server/internal/registry"
+	"github.com/scitrera/aether/server/internal/storage/registry"
+	"github.com/scitrera/aether/server/pkg/errors"
+	"github.com/scitrera/aether/server/pkg/models"
 
 	_ "modernc.org/sqlite" // register bare "sqlite" driver
 )

@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // TestApplyHibernationHandoffToAssignment_Populates verifies that the helper

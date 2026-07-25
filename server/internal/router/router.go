@@ -10,8 +10,8 @@ import (
 
 	"github.com/rabbitmq/rabbitmq-stream-go-client/pkg/amqp"
 	"github.com/rabbitmq/rabbitmq-stream-go-client/pkg/stream"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/tracing"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -255,6 +255,15 @@ func (r *Router) SubscribeExclusiveFromNow(topic string, consumerName string, ha
 	opts := ExclusiveSubscribeOptions(consumerName)
 	opts.OffsetMode = OffsetFromNow
 	return r.subscriptions.SubscribeWithOptions(topic, handler, opts)
+}
+
+// SubscribeExclusiveResumeOrTail creates an exclusive subscription that resumes
+// from the consumer's committed offset, or — when none exists yet — starts at the
+// tail (.Next()) rather than replaying the whole stream. A RabbitMQ Streams named
+// consumer already resolves this way (stored offset wins, else .Next()), which is
+// exactly the timestamp-hint=0 path, so route through it.
+func (r *Router) SubscribeExclusiveResumeOrTail(topic string, consumerName string, handler func([]byte)) (func(), error) {
+	return r.SubscribeExclusiveFromTimestamp(topic, consumerName, 0, handler)
 }
 
 // SubscribeExclusiveFromTimestamp creates an exclusive subscription with offset tracking

@@ -130,10 +130,19 @@ npm test
 If you modify `.proto` files in `api/proto/`, regenerate the generated code before committing:
 
 ```bash
-bash scripts/compile_protos.sh
+python scripts/compile-protos.py            # regenerate Go + Python + TypeScript
+python scripts/compile-protos.py --check    # verify only; exit 1 on drift
 ```
 
-Commit both the `.proto` changes and the regenerated files together.
+Commit both the `.proto` changes and the regenerated files together. The
+`proto-check` workflow runs the `--check` form on every PR that touches
+`api/proto/`, the generated output directories, or `versions.yaml`.
+
+Compiler versions are pinned in the `proto:` block of `versions.yaml` and
+verified before generation, because generated artifacts embed the versions of
+the tools that produced them — an unpinned compiler makes the drift check
+nondeterministic. If a pin does not match what you have installed, the command
+fails with the exact install command rather than writing mismatched output.
 
 ---
 

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	natsutil "github.com/scitrera/aether/internal/cluster/nats"
+	natsutil "github.com/scitrera/aether/server/internal/cluster/nats"
 
 	"github.com/nats-io/nats.go/jetstream"
 )

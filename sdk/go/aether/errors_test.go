@@ -135,6 +135,7 @@ func TestNewConnectionError(t *testing.T) {
 			}
 
 			// Check it embeds AetherError
+			//nolint:staticcheck // explicit selector documents the embedding under test
 			if err.AetherError.Message != tt.want {
 				t.Errorf("AetherError.Message = %q, want %q", err.AetherError.Message, tt.want)
 			}

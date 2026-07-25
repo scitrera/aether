@@ -306,12 +306,12 @@ func TestEventTopic(t *testing.T) {
 		{
 			name:      "simple event type",
 			eventType: "task.completed",
-			want:      "event.task.completed",
+			want:      "event::task.completed",
 		},
 		{
 			name:      "workflow event",
 			eventType: "workflow.started",
-			want:      "event.workflow.started",
+			want:      "event::workflow.started",
 		},
 	}
 
@@ -326,7 +326,7 @@ func TestEventTopic(t *testing.T) {
 }
 
 func TestEventWildcardTopic(t *testing.T) {
-	want := "event.*"
+	want := "event::*"
 	got := EventWildcardTopic()
 	if got != want {
 		t.Errorf("EventWildcardTopic() = %v, want %v", got, want)
@@ -342,12 +342,12 @@ func TestMetricTopic(t *testing.T) {
 		{
 			name:       "performance metric",
 			metricType: "performance",
-			want:       "metric.performance",
+			want:       "metric::performance",
 		},
 		{
 			name:       "latency metric",
 			metricType: "latency",
-			want:       "metric.latency",
+			want:       "metric::latency",
 		},
 	}
 
@@ -362,7 +362,7 @@ func TestMetricTopic(t *testing.T) {
 }
 
 func TestMetricWildcardTopic(t *testing.T) {
-	want := "metric.*"
+	want := "metric::*"
 	got := MetricWildcardTopic()
 	if got != want {
 		t.Errorf("MetricWildcardTopic() = %v, want %v", got, want)

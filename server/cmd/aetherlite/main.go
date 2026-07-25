@@ -18,39 +18,43 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/admin"
-	"github.com/scitrera/aether/internal/audit"
-	authsqlite "github.com/scitrera/aether/internal/auth/sqlite"
-	"github.com/scitrera/aether/internal/checkpoint"
-	"github.com/scitrera/aether/internal/cleanup"
-	"github.com/scitrera/aether/internal/cluster/backup"
-	clusternats "github.com/scitrera/aether/internal/cluster/nats"
-	"github.com/scitrera/aether/internal/config"
-	"github.com/scitrera/aether/internal/gateway"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/internal/lite"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/quota"
-	"github.com/scitrera/aether/internal/registry"
-	routerpkg "github.com/scitrera/aether/internal/router"
-	"github.com/scitrera/aether/internal/secrets"
-	"github.com/scitrera/aether/internal/state"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	aclsqlite "github.com/scitrera/aether/internal/storage/acl/sqlite"
-	auditstore "github.com/scitrera/aether/internal/storage/audit"
-	auditsqlite "github.com/scitrera/aether/internal/storage/audit/sqlite"
-	regsqlite "github.com/scitrera/aether/internal/storage/registry/sqlite"
-	tasksqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
-	wfsqlite "github.com/scitrera/aether/internal/storage/workflow/sqlite"
-	"github.com/scitrera/aether/internal/tracing"
-	versionpkg "github.com/scitrera/aether/internal/version"
-	"github.com/scitrera/aether/internal/workflow"
-	sqliteregistrymigrations "github.com/scitrera/aether/migrations/sqlite_registry"
+	"github.com/scitrera/aether/server/internal/admin"
+	"github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/internal/auth"
+	authsqlite "github.com/scitrera/aether/server/internal/auth/sqlite"
+	"github.com/scitrera/aether/server/internal/checkpoint"
+	"github.com/scitrera/aether/server/internal/cleanup"
+	"github.com/scitrera/aether/server/internal/cluster/backup"
+	clusternats "github.com/scitrera/aether/server/internal/cluster/nats"
+	"github.com/scitrera/aether/server/internal/config"
+	"github.com/scitrera/aether/server/internal/gateway"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/internal/lite"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/quota"
+	"github.com/scitrera/aether/server/internal/registry"
+	routerpkg "github.com/scitrera/aether/server/internal/router"
+	"github.com/scitrera/aether/server/internal/secrets"
+	"github.com/scitrera/aether/server/internal/state"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	aclsqlite "github.com/scitrera/aether/server/internal/storage/acl/sqlite"
+	auditstore "github.com/scitrera/aether/server/internal/storage/audit"
+	auditsqlite "github.com/scitrera/aether/server/internal/storage/audit/sqlite"
+	regsqlite "github.com/scitrera/aether/server/internal/storage/registry/sqlite"
+	tasksqlite "github.com/scitrera/aether/server/internal/storage/tasks/sqlite"
+	wfpg "github.com/scitrera/aether/server/internal/storage/workflow/postgres"
+	wfsqlite "github.com/scitrera/aether/server/internal/storage/workflow/sqlite"
+	"github.com/scitrera/aether/server/internal/tracing"
+	versionpkg "github.com/scitrera/aether/server/internal/version"
+	"github.com/scitrera/aether/server/internal/workflow"
+	wfmigrations "github.com/scitrera/aether/server/internal/workflow/migrations"
+	sqliteregistrymigrations "github.com/scitrera/aether/server/migrations/sqlite_registry"
 	pb_health "google.golang.org/grpc/health/grpc_health_v1"
 
+	_ "github.com/lib/pq" // postgres driver for the optional shared workflow store
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/scitrera/aether/pkg/crypto"
+	"github.com/scitrera/aether/server/pkg/crypto"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	otelgrpcfilters "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc/filters"
 	"google.golang.org/grpc"
@@ -171,6 +175,19 @@ func main() {
 	defer func() {
 		// Best-effort tracing shutdown on exit; any error is unactionable here.
 		_ = tracingShutdown(context.Background())
+	}()
+
+	// Initialize OpenTelemetry metrics (OTLP gRPC) + Go runtime metrics.
+	// Gated on the same OTEL_EXPORTER_OTLP_ENDPOINT env var as tracing —
+	// no-op when unset. The gRPC server's otelgrpc stats handler (wired below)
+	// then also emits rpc.server.* metrics through this MeterProvider.
+	metricsShutdown, err := tracing.InitMeter("aether-lite")
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Msg("failed to initialize metrics")
+	}
+	defer func() {
+		// Best-effort metrics flush/shutdown on exit; any error is unactionable here.
+		_ = metricsShutdown(context.Background())
 	}()
 
 	// Setup graceful shutdown.
@@ -456,7 +473,29 @@ func main() {
 		sessions = state.NewBadgerSessionRegistry(badgerDB)
 		kvStore = kv.NewBadgerKVStore(badgerDB)
 		checkpointStore = checkpoint.NewBadgerCheckpointStore(badgerDB)
-		msgRouter = routerpkg.NewBadgerRouter(badgerDB)
+		badgerRouter := routerpkg.NewBadgerRouter(badgerDB)
+		// Message retention: Badger expires topic messages after this TTL (native
+		// per-entry expiry) to bound log growth. Default 24h; override with a Go
+		// duration string (e.g. "6h", "72h"), or "0" to retain forever.
+		if ttlStr := os.Getenv("AETHER_MESSAGE_RETENTION_TTL"); ttlStr != "" {
+			if d, perr := time.ParseDuration(ttlStr); perr == nil {
+				badgerRouter.SetMessageRetentionTTL(d)
+				logging.Logger.Info().Dur("ttl", d).Msg("badger message retention TTL set from AETHER_MESSAGE_RETENTION_TTL")
+			} else {
+				logging.Logger.Warn().Str("value", ttlStr).Err(perr).Msg("invalid AETHER_MESSAGE_RETENTION_TTL; using default 24h")
+			}
+		}
+		// Consumer-offset retention: generous by default (7d) and decoupled from
+		// message retention. Override with a Go duration, or "0" to retain forever.
+		if ttlStr := os.Getenv("AETHER_OFFSET_RETENTION_TTL"); ttlStr != "" {
+			if d, perr := time.ParseDuration(ttlStr); perr == nil {
+				badgerRouter.SetOffsetRetentionTTL(d)
+				logging.Logger.Info().Dur("ttl", d).Msg("badger offset retention TTL set from AETHER_OFFSET_RETENTION_TTL")
+			} else {
+				logging.Logger.Warn().Str("value", ttlStr).Err(perr).Msg("invalid AETHER_OFFSET_RETENTION_TTL; using default 7d")
+			}
+		}
+		msgRouter = badgerRouter
 		dispatcher = orchestration.NewPollingTaskDispatcher(taskStore)
 	}
 
@@ -516,6 +555,13 @@ func main() {
 	gatewayOpts = append(gatewayOpts, gateway.WithQuotaManager(quotaManager))
 	gatewayOpts = append(gatewayOpts, gateway.WithOrchestrationServices(orchServices))
 	gatewayOpts = append(gatewayOpts, gateway.WithCheckpointDefaultTTL(cfg.Checkpoint.GetDefaultTTL()))
+	// Gateway tenant id, minted into X-Auth-Tenant-ID on proxied requests.
+	// The gateway is per-tenant; AETHER_TENANT_ID names it (matching the
+	// proxy-sidecar env convention). When unset, the proxy path falls back to
+	// the sender's workspace as the tenant scope.
+	if tenantID := os.Getenv("AETHER_TENANT_ID"); tenantID != "" {
+		gatewayOpts = append(gatewayOpts, gateway.WithGatewayTenantID(tenantID))
+	}
 
 	// Workspace rate limiter.
 	workspaceRL := quota.NewWorkspaceRateLimiter(cfg.Gateway.MessageRateLimit)
@@ -538,6 +584,9 @@ func main() {
 		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite audit store")
 	}
 	defer auditLogger.Close()
+
+	// Coalesce high-volume repetitive audit events (chat-streaming chatter).
+	gatewayOpts = append(gatewayOpts, gateway.WithAuditCoalesceWindow(cfg.Audit.GetCoalesceWindow()))
 
 	// Cluster mode: wrap the gateway-consumed audit Store with the JetStream
 	// emitter so every LogEvent / LogEventSync also fans onto the "audit"
@@ -601,21 +650,101 @@ func main() {
 		TaskPurgeInterval:      cfg.Cleanup.GetTaskPurgeInterval(),
 		CompletedTaskRetention: cfg.Cleanup.GetCompletedTaskRetention(),
 		FailedTaskRetention:    cfg.Cleanup.GetFailedTaskRetention(),
-		CancelledTaskRetention: cfg.Cleanup.GetCancelledTaskRetention(),
-		ReconciliationInterval: cfg.Cleanup.GetReconciliationInterval(),
+		CancelledTaskRetention:        cfg.Cleanup.GetCancelledTaskRetention(),
+		ReconciliationInterval:        cfg.Cleanup.GetReconciliationInterval(),
+		InteractiveTaskTTL:            cfg.Cleanup.GetInteractiveTaskTTL(),
+		InteractiveTaskCancelInterval: cfg.Cleanup.GetInteractiveTaskCancelInterval(),
+		StartupTaskTTL:                cfg.Cleanup.GetStartupTaskTTL(),
+		StartupTaskCancelInterval:     cfg.Cleanup.GetStartupTaskCancelInterval(),
+		PoolTaskTTL:                   cfg.Cleanup.GetPoolTaskTTL(),
+		PoolTaskCancelInterval:        cfg.Cleanup.GetPoolTaskCancelInterval(),
+		QueueReconcileInterval:        cfg.Cleanup.GetQueueReconcileInterval(),
+		AuditRetentionDays:            cfg.Cleanup.GetAuditRetentionDays(),
+		AuditCleanupInterval:          cfg.Cleanup.GetAuditCleanupInterval(),
+		// Single-node standalone runs the sweeps directly (no leader-election
+		// gating). Cluster mode (cenv.Enabled, JetStream dispatcher) is genuinely
+		// multi-node, so it keeps lease-based election to sweep on exactly one node.
+		SingleNode: !cenv.Enabled,
 	}
 	gatewayOpts = append(gatewayOpts, gateway.WithCleanupService(cleanupConfig))
+
+	// API token store + connection-time API-key authenticator.
+	//
+	// tokens.db holds the api_tokens table. The native sqlite impl uses the
+	// bare "sqlite" driver and runs its own per-domain migration set on
+	// construction. This gives lite mode full token CRUD parity with the
+	// PostgreSQL-backed full gateway. The SAME store instance is reused below
+	// by the admin state provider (token CRUD) — we never open a second store.
+	//
+	// Constructed here (before NewGatewayServer) so the composite authenticator
+	// can be attached via WithAuthenticator, mirroring cmd/gateway/main.go.
+	tokensSQLitePath := filepath.Join(*dataDir, "tokens.db")
+	tokensDB, err := openSQLiteNative(ctx, tokensSQLitePath)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Str("path", tokensSQLitePath).Msg("failed to open tokens SQLite database")
+	}
+	defer tokensDB.Close()
+
+	var apiTokenStore auth.APITokenStore
+	plainAPITokenStore, err := authsqlite.New(tokensDB)
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite token store")
+	}
+	apiTokenStore = plainAPITokenStore
+
+	// In cluster mode, decorate the token store with the JetStream-KV mirror so
+	// token mutations (create / revoke / delete) propagate to peer gateways and
+	// each peer serves token validation from its watch-maintained local view.
+	// Single-node lite keeps the plain SQLite store. The decorator preserves the
+	// full APITokenStore contract (revocation + expiry semantics intact).
+	if cenv.Enabled && natsServer != nil {
+		js := natsServer.JetStream()
+		replicas := natsServer.ReplicasForHA()
+		decorated, werr := activateClusterTokenStore(ctx, plainAPITokenStore, js, replicas)
+		if werr != nil {
+			logging.Logger.Fatal().Err(werr).Msg("failed to activate cluster API token store")
+		}
+		apiTokenStore = decorated
+	}
+
+	// Wire the connection-time API-key authenticator.
+	//
+	// The user-session path (per-user anonymous-cert + scoped API key) requires
+	// api-key auth. Enable it only when the operator explicitly lists "api_key"
+	// in auth.modes. Defaulting to on when modes is unset was removed because it
+	// created an inconsistency: IsAuthModeEnabled("api_key") returned false, yet
+	// api-key auth was silently active, making the config semantics opaque.
+	//
+	// SECURITY NOTE: when api_key auth is disabled AND the gateway accepts
+	// anonymous mTLS certificates, impersonable principals (User, Agent, Service,
+	// Task, Bridge) on the anonymous-cert / no-cert path are unconditionally
+	// rejected by authenticateCredentials' credential-required gate. Disabling
+	// api_key auth therefore means no external connections can authenticate via
+	// credential on that path — ensure your deployment either (a) enables api_key
+	// auth, or (b) disables anonymous cert acceptance, or (c) uses strict mTLS
+	// so every connection presents a named cert.
+	enableAPIKeyAuth := cfg.Auth.IsAuthModeEnabled("api_key")
+	if enableAPIKeyAuth {
+		compositeAuth := auth.NewCompositeAuthenticator(auth.NewAPIKeyAuthenticator(apiTokenStore))
+		gatewayOpts = append(gatewayOpts, gateway.WithAuthenticator(compositeAuth))
+		logging.Logger.Info().Msg("API key authentication enabled (connection-time)")
+	} else {
+		logging.Logger.Warn().
+			Strs("configured_modes", cfg.Auth.Modes).
+			Msg("API key authentication NOT enabled: anonymous-cert connections claiming impersonable principals will be rejected; add 'api_key' to auth.modes to allow them")
+	}
 
 	// mTLS config — Required defaults to false in lite mode, but when the
 	// config supplies an explicit mTLS block we honour it. Mode controls how
 	// strictly identity assertions are bound to the presented cert (strict /
 	// relaxed); matches the full gateway's semantics.
+	mtlsMode, mtlsModeErr := gateway.ParseMTLSMode(cfg.Auth.MTLS.Mode)
+	if mtlsModeErr != nil {
+		logging.Logger.Fatal().Err(mtlsModeErr).Str("mtls_mode", cfg.Auth.MTLS.Mode).Msg("invalid mTLS mode in configuration")
+	}
 	mtlsConfig := gateway.MTLSConfig{
 		Required: cfg.Auth.MTLS.Required,
-		Mode:     gateway.MTLSMode(cfg.Auth.MTLS.Mode),
-	}
-	if mtlsConfig.Mode == "" {
-		mtlsConfig.Mode = gateway.MTLSModeStrict
+		Mode:     mtlsMode,
 	}
 
 	// Create gateway server. ACL is supplied via WithACLService above.
@@ -649,8 +778,12 @@ func main() {
 			Timeout:               10 * time.Second,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             10 * time.Second,
-			PermitWithoutStream: false,
+			MinTime: 10 * time.Second,
+			// SDK clients dial with PermitWithoutStream: true and keepalive-ping
+			// idle connections (default every 30s). PermitWithoutStream: false here
+			// → GOAWAY "too_many_pings" on idle conns → connection churn (sandbox
+			// sidecars reaped). Permit streamless keepalive; MinTime still throttles.
+			PermitWithoutStream: true,
 		}),
 	}
 
@@ -747,22 +880,9 @@ func main() {
 	// State provider for admin. Registry already constructed above for the
 	// orchestration wiring; reuse it here for both agentRegistry+profileMgr
 	// slots (the bundled internal/storage/registry.Store covers both).
-	// Open dedicated tokens SQLite handle for API token management.
-	// tokens.db holds the api_tokens table. The native sqlite impl uses the
-	// bare "sqlite" driver and runs its own per-domain migration set on
-	// construction. This gives lite mode full token CRUD parity with the
-	// PostgreSQL-backed full gateway.
-	tokensSQLitePath := filepath.Join(*dataDir, "tokens.db")
-	tokensDB, err := openSQLiteNative(ctx, tokensSQLitePath)
-	if err != nil {
-		logging.Logger.Fatal().Err(err).Str("path", tokensSQLitePath).Msg("failed to open tokens SQLite database")
-	}
-	defer tokensDB.Close()
-
-	apiTokenStore, err := authsqlite.New(tokensDB)
-	if err != nil {
-		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite token store")
-	}
+	// apiTokenStore was constructed earlier (before the gateway server) so the
+	// connection-time API-key authenticator and the admin-side token CRUD path
+	// share the single store; here we just reuse it for the state provider.
 
 	stateProvider := gateway.NewGatewayStateProvider(
 		cfg.Gateway.GatewayID,
@@ -876,20 +996,16 @@ func main() {
 		// bufconn in-process listener — no TLS, no localhost dial, no
 		// reconnect-loop trap.
 		wfCfg := buildWorkflowConfig(inProcConn)
-		// Open workflow.db with the bare "sqlite" driver and construct the
-		// native sqlite store (Stage 2). wfsqlite.New runs migrations from
-		// migrations/sqlite_workflow/ internally. We then inject the store
-		// into the workflow server via NewServerWithStore so the engine
-		// skips its legacy sqlite_compat path entirely (§15.4).
-		wfDB, err := openSQLiteNative(ctx, wfCfg.SQLite.Path)
+		// Select the workflow store backend: a shared PostgreSQL when the
+		// workflow config supplies a postgres host (the recommended path for
+		// multi-node aetherlite-cluster, so the elected leader and its
+		// successors share durable state), otherwise the local native SQLite
+		// store (the zero-dependency single-node default).
+		wfStore, closeWFStore, err := buildEmbeddedWorkflowStore(ctx, wfCfg)
 		if err != nil {
-			logging.Logger.Fatal().Err(err).Str("path", wfCfg.SQLite.Path).Msg("failed to open workflow SQLite database")
+			logging.Logger.Fatal().Err(err).Msg("failed to construct workflow store")
 		}
-		defer wfDB.Close()
-		wfStore, err := wfsqlite.New(wfDB)
-		if err != nil {
-			logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite workflow store")
-		}
+		defer closeWFStore()
 		wfSrv, err := workflow.NewServer(wfCfg, wfStore)
 		if err != nil {
 			logging.Logger.Fatal().Err(err).Msg("failed to create workflow server")
@@ -1085,6 +1201,53 @@ func buildWorkflowConfig(inProcConn *grpc.ClientConn) *workflow.Config {
 // impls — they own their own SQL and don't need dbcompat translation.
 // (Stage 3 retired the sibling openSQLite/sqlite_compat path along with
 // aether.db itself; pkg/dbcompat is no longer imported by aetherlite.)
+// buildEmbeddedWorkflowStore selects the workflow store backend for the embedded
+// engine. When the workflow config supplies a PostgreSQL host it opens a shared
+// Postgres (running the workflow PG migrations), which lets multi-node
+// aetherlite-cluster deployments share durable workflow state across leader
+// failover. Otherwise it opens the local native SQLite store — the
+// zero-dependency single-node default. Returns the store plus a close func.
+func buildEmbeddedWorkflowStore(ctx context.Context, wfCfg *workflow.Config) (workflow.WorkflowStore, func(), error) {
+	if wfCfg.Postgres.Host != "" {
+		db, err := sql.Open("postgres", wfCfg.Postgres.DSN())
+		if err != nil {
+			return nil, nil, fmt.Errorf("open workflow postgres: %w", err)
+		}
+		if wfCfg.Postgres.MaxConnections > 0 {
+			db.SetMaxOpenConns(wfCfg.Postgres.MaxConnections)
+		}
+		if wfCfg.Postgres.MaxIdleConnections > 0 {
+			db.SetMaxIdleConns(wfCfg.Postgres.MaxIdleConnections)
+		}
+		if err := db.PingContext(ctx); err != nil {
+			_ = db.Close()
+			return nil, nil, fmt.Errorf("ping workflow postgres: %w", err)
+		}
+		if err := wfmigrations.Run(ctx, db); err != nil {
+			_ = db.Close()
+			return nil, nil, fmt.Errorf("run workflow postgres migrations: %w", err)
+		}
+		logging.Logger.Info().
+			Str("host", wfCfg.Postgres.Host).
+			Str("database", wfCfg.Postgres.Database).
+			Msg("embedded workflow engine using shared PostgreSQL store")
+		return wfpg.New(db, false), func() { _ = db.Close() }, nil
+	}
+
+	// Default: local native SQLite. wfsqlite.New runs its own migration set.
+	db, err := openSQLiteNative(ctx, wfCfg.SQLite.Path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open workflow sqlite %s: %w", wfCfg.SQLite.Path, err)
+	}
+	store, err := wfsqlite.New(db)
+	if err != nil {
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("construct native sqlite workflow store: %w", err)
+	}
+	logging.Logger.Info().Str("path", wfCfg.SQLite.Path).Msg("embedded workflow engine using local SQLite store")
+	return store, func() { _ = db.Close() }, nil
+}
+
 func openSQLiteNative(ctx context.Context, path string) (*sql.DB, error) {
 	return openSQLiteWithDriver(ctx, path, "sqlite")
 }
@@ -1094,6 +1257,16 @@ func openSQLiteWithDriver(ctx context.Context, path, driver string) (*sql.DB, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite database %s (driver=%s): %w", path, driver, err)
 	}
+	// Pin to a single connection (single-writer discipline). Two reasons:
+	//   1. busy_timeout is a PER-CONNECTION setting; setting it via ExecContext
+	//      below only cushions the one connection that runs it, so extra pool
+	//      connections opened under a concurrent-write burst would hit immediate
+	//      SQLITE_BUSY ("database is locked"). With one connection, the pragma
+	//      always applies.
+	//   2. Serializing all access on one connection prevents writer-vs-writer WAL
+	//      contention outright — the same discipline the per-domain sqlite stores
+	//      (tasks/registry/workflow/acl) already enforce in their constructors.
+	db.SetMaxOpenConns(1)
 	for _, pragma := range []string{
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA busy_timeout=5000",

@@ -9,7 +9,7 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 
-	clusternats "github.com/scitrera/aether/internal/cluster/nats"
+	clusternats "github.com/scitrera/aether/server/internal/cluster/nats"
 )
 
 // newEmbeddedJS spins up a single-node embedded NATS server with JetStream

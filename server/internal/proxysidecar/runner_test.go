@@ -145,6 +145,87 @@ func TestSharedRuntimeSessionDeliver_ShedsBestEffortFirst(t *testing.T) {
 // test means the runner sends are now routing envelopes through the wrong
 // CoDel queue — a behaviour regression even when no test downstream of it
 // notices.
+// TestRouteResponseToOwner_DeliversAndReleases verifies the correlated
+// response routing the rawDownstreamTap relies on: a registered request_id
+// routes its response to the owning session's inbox and releases the route;
+// an unregistered id returns false (so the SDK handles it normally) and
+// delivers nothing.
+func TestRouteResponseToOwner_DeliversAndReleases(t *testing.T) {
+	sess, cleanup := newDeliverTestSession(t, 1)
+	defer cleanup()
+	sink := sess.owner
+
+	const reqID = "kv-req-1"
+	sink.registerRequest(sess, reqID)
+
+	kvResp := &pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Kv{Kv: &pb.KVResponse{RequestId: reqID, Success: true}},
+	}
+	if !sink.routeResponseToOwner(reqID, kvResp) {
+		t.Fatal("routeResponseToOwner returned false for a registered request_id")
+	}
+	select {
+	case got := <-sess.inbox:
+		if _, ok := got.GetPayload().(*pb.DownstreamMessage_Kv); !ok {
+			t.Fatalf("inbox got %T, want *DownstreamMessage_Kv", got.GetPayload())
+		}
+	default:
+		t.Fatal("expected the KV response on the session inbox")
+	}
+
+	// Route was released — a second delivery for the same id must miss.
+	if sink.routeResponseToOwner(reqID, kvResp) {
+		t.Error("routeResponseToOwner returned true after the route was released")
+	}
+	// Unknown id never claims.
+	if sink.routeResponseToOwner("no-such-id", kvResp) {
+		t.Error("routeResponseToOwner returned true for an unregistered request_id")
+	}
+}
+
+// TestDownstreamResponseRequestID pins the correlation-id extraction the tap
+// uses to decide whether a downstream message might belong to a relay session.
+func TestDownstreamResponseRequestID(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  *pb.DownstreamMessage
+		want string
+	}{
+		{
+			name: "Kv",
+			msg:  &pb.DownstreamMessage{Payload: &pb.DownstreamMessage_Kv{Kv: &pb.KVResponse{RequestId: "r1"}}},
+			want: "r1",
+		},
+		{
+			name: "TaskOp",
+			msg:  &pb.DownstreamMessage{Payload: &pb.DownstreamMessage_TaskOp{TaskOp: &pb.TaskOperationResponse{RequestId: "r2"}}},
+			want: "r2",
+		},
+		{
+			name: "TaskQuery",
+			msg:  &pb.DownstreamMessage{Payload: &pb.DownstreamMessage_TaskQuery{TaskQuery: &pb.TaskQueryResponse{RequestId: "r3"}}},
+			want: "r3",
+		},
+		{
+			name: "Error_with_request_id",
+			msg:  &pb.DownstreamMessage{Payload: &pb.DownstreamMessage_Error{Error: &pb.ErrorResponse{RequestId: "r4"}}},
+			want: "r4",
+		},
+		{
+			name: "Msg_is_not_a_correlated_response",
+			msg:  &pb.DownstreamMessage{Payload: &pb.DownstreamMessage_Msg{Msg: &pb.IncomingMessage{}}},
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := downstreamResponseRequestID(tc.msg); got != tc.want {
+				t.Errorf("downstreamResponseRequestID() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPriorityForSharedRelayUpstream(t *testing.T) {
 	cases := []struct {
 		name string

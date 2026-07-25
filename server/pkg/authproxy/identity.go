@@ -7,14 +7,14 @@
 // principal + raw claims into a ResolvedIdentity that drives header injection.
 //
 // External binaries import this package; they MUST NOT depend on
-// github.com/scitrera/aether/internal/...
+// github.com/scitrera/aether/server/internal/...
 package authproxy
 
 import (
 	"context"
 	"net/http"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // TenantInfo carries optional per-tenant metadata that callers may surface to
@@ -91,6 +91,24 @@ type ResolvedIdentity struct {
 	// Reject, when non-nil, instructs the middleware to deny the request.
 	// All other fields are ignored.
 	Reject *Rejection
+}
+
+// ExtraHeaderNaming is an OPTIONAL interface an IdentityResolver may implement
+// to declare the full set of ExtraHeaders names it can emit (e.g. Scitrera's
+// X-Scitrera-*). The auth-proxy uses it ONLY to CLEAR those headers on the
+// anonymous ext_authz passthrough (verify-optional with no credential): the
+// resolver is never invoked on that path, so the middleware needs a static
+// declaration of the extra header names to zero them out and prevent a
+// client-supplied value from surviving Envoy's authz-response override.
+//
+// Resolvers that do not implement this interface simply have their extra
+// headers (if any) not cleared on the anonymous path; the canonical X-Auth-* /
+// X-Aether-* set is always cleared regardless.
+type ExtraHeaderNaming interface {
+	// ExtraHeaderNames returns every header name this resolver may place in
+	// ResolvedIdentity.ExtraHeaders. It MUST be stable and safe for concurrent
+	// use.
+	ExtraHeaderNames() []string
 }
 
 // IdentityResolver maps an authenticator-verified principal + raw claims into

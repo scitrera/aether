@@ -227,6 +227,22 @@ func (c *BridgeClient) SendToUserWorkspaceWithType(userID, workspace string, pay
 	return c.sendMessage(topic, payload, msgType)
 }
 
+// SendToUserBroadcast sends a message to every one of a user's windows,
+// regardless of which workspace each window is viewing (topic uu::{user_id}).
+//
+// This is the workspace-agnostic, non-progress channel for platform→user
+// notifications. Uses OPAQUE message type by default; use
+// SendToUserBroadcastWithType for other types.
+func (c *BridgeClient) SendToUserBroadcast(userID string, payload []byte) error {
+	return c.SendToUserBroadcastWithType(userID, payload, pb.MessageType_OPAQUE)
+}
+
+// SendToUserBroadcastWithType sends a user-broadcast message with a custom message type.
+func (c *BridgeClient) SendToUserBroadcastWithType(userID string, payload []byte, msgType pb.MessageType) error {
+	topic := UserBroadcastTopic(userID)
+	return c.sendMessage(topic, payload, msgType)
+}
+
 // =============================================================================
 // Broadcast Helpers
 // =============================================================================

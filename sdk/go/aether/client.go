@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 )
 
 // =============================================================================
@@ -44,6 +45,13 @@ type BaseClient struct {
 	options    ConnectionOptions
 	tlsConfig  *TLSConfig
 	creds      map[string]string
+
+	// streamMetadata, when non-empty, is attached to the Connect stream's
+	// outgoing gRPC context as transport-level headers (via
+	// metadata.NewOutgoingContext) on every establishStream — including after
+	// a reconnect. Readable server-side via metadata.FromIncomingContext.
+	// nil/empty preserves the pre-existing behavior (no extra headers).
+	streamMetadata map[string]string
 
 	// preDialedConn, when non-nil, takes precedence over serverAddr/tlsConfig.
 	// Used by embedded callers (e.g. AetherLite's workflow engine) that
@@ -98,22 +106,35 @@ type BaseClient struct {
 	checkpointResponseQueue chan *CheckpointResponse
 
 	// Pending request maps for request_id-based correlation
-	pendingKVRequests             pendingRequests[*KVResponse]
-	pendingCheckpointRequests     pendingRequests[*CheckpointResponse]
-	pendingCreateTaskRequests     pendingRequests[*CreateTaskResponse]
-	pendingTaskQueryRequests      pendingRequests[*TaskQueryResponse]
-	pendingTaskOpRequests         pendingRequests[*TaskOperationResponse]
-	pendingWorkflowRequests       pendingRequests[*WorkflowResponse]
-	pendingWorkspaceRequests      pendingRequests[*WorkspaceResponse]
-	pendingAgentRequests          pendingRequests[*AgentResponse]
-	pendingACLRequests            pendingRequests[*ACLResponse]
-	pendingTokenRequests          pendingRequests[*TokenResponse]
-	pendingAuthorityGrantRequests pendingRequests[*pb.AuthorityGrantResponse]
-	pendingAdminRequests          pendingRequests[*AdminResponse]
-	pendingSessionRequests        pendingRequests[*SessionOperationResponse]
-	pendingAuditSubmitRequests    pendingRequests[*pb.SubmitAuditEventResponse]
-	pendingAuditQueryRequests     pendingRequests[*pb.AuditQueryResponse]
-	requestIDCounter              atomic.Uint64
+	pendingKVRequests               pendingRequests[*KVResponse]
+	pendingCheckpointRequests       pendingRequests[*CheckpointResponse]
+	pendingCreateTaskRequests       pendingRequests[*CreateTaskResponse]
+	pendingTaskQueryRequests        pendingRequests[*TaskQueryResponse]
+	pendingTaskOpRequests           pendingRequests[*TaskOperationResponse]
+	pendingWorkflowRequests         pendingRequests[*WorkflowResponse]
+	pendingWorkspaceRequests        pendingRequests[*WorkspaceResponse]
+	pendingAgentRequests            pendingRequests[*AgentResponse]
+	pendingACLRequests              pendingRequests[*ACLResponse]
+	pendingTokenRequests            pendingRequests[*TokenResponse]
+	pendingAuthorityGrantRequests   pendingRequests[*pb.AuthorityGrantResponse]
+	pendingConnectionStatusRequests pendingRequests[*pb.ConnectionStatusResponse]
+	pendingAdminRequests            pendingRequests[*AdminResponse]
+	pendingSessionRequests          pendingRequests[*SessionOperationResponse]
+	pendingAuditSubmitRequests      pendingRequests[*pb.SubmitAuditEventResponse]
+	pendingAuditQueryRequests       pendingRequests[*pb.AuditQueryResponse]
+	requestIDCounter                atomic.Uint64
+
+	// rawDownstreamTap, when non-nil, is invoked for every downstream
+	// message before typed dispatch. Returning true means the tap claimed
+	// the message and the SDK skips its own typed handling. This exists for
+	// the proxy-sidecar shared-runtime relay: a sandbox session's KV / task /
+	// workspace ops are relayed upstream as raw envelopes through this
+	// client, so the gateway's correlated responses arrive here with no
+	// pending request to resolve (the in-sandbox SDK owns the correlation).
+	// The tap lets the relay route those responses back to the originating
+	// session by request_id. Set once before the connection loop starts; not
+	// mutated concurrently.
+	rawDownstreamTap func(*pb.DownstreamMessage) bool
 
 	// Per-client inflight registries for proxy requests and tunnels. These
 	// must be per-BaseClient (not package-globals) because each BaseClient's
@@ -130,26 +151,28 @@ type BaseClient struct {
 	authorityCaches  []*AuthorityGrantCache
 
 	// Cached KV, Checkpoint, and Workflow helpers (for sync mutex to work across calls)
-	kvOnce            sync.Once
-	kvInstance        *KV
-	cpOnce            sync.Once
-	cpInstance        *Checkpoint
-	workflowOnce      sync.Once
-	workflowInstance  *WorkflowOps
-	workspaceOnce     sync.Once
-	workspaceInstance *WorkspaceOps
-	agentOnce         sync.Once
-	agentInstance     *AgentOps
-	aclOnce           sync.Once
-	aclInstance       *ACLOps
-	tokenOnce         sync.Once
-	tokenInstance     *TokenOps
-	authorityOnce     sync.Once
-	authorityInstance *AuthorityGrantOps
-	adminOnce         sync.Once
-	adminInstance     *AdminOps
-	sessionOnce       sync.Once
-	sessionInstance   *SessionOps
+	kvOnce             sync.Once
+	kvInstance         *KV
+	cpOnce             sync.Once
+	cpInstance         *Checkpoint
+	workflowOnce       sync.Once
+	workflowInstance   *WorkflowOps
+	workspaceOnce      sync.Once
+	workspaceInstance  *WorkspaceOps
+	agentOnce          sync.Once
+	agentInstance      *AgentOps
+	aclOnce            sync.Once
+	aclInstance        *ACLOps
+	tokenOnce          sync.Once
+	tokenInstance      *TokenOps
+	authorityOnce      sync.Once
+	authorityInstance  *AuthorityGrantOps
+	adminOnce          sync.Once
+	adminInstance      *AdminOps
+	sessionOnce        sync.Once
+	sessionInstance    *SessionOps
+	connectionOnce     sync.Once
+	connectionInstance *ConnectionOps
 
 	// InitConnection message builder (set by specific client types)
 	initMsgBuilder func() *pb.InitConnection
@@ -179,6 +202,11 @@ type BaseClientConfig struct {
 	// Credentials for authentication.
 	// Keys and values are passed to the server as metadata.
 	Credentials map[string]string
+
+	// Metadata, when non-empty, is attached to the Connect stream's outgoing
+	// gRPC context as transport-level headers. Readable server-side via
+	// metadata.FromIncomingContext. nil/empty = no extra headers.
+	Metadata map[string]string
 
 	// QueueSize is the size of the outgoing message queue.
 	// Default: 100.
@@ -255,6 +283,7 @@ func NewBaseClient(cfg BaseClientConfig) (*BaseClient, error) {
 		options:                 connOpts,
 		tlsConfig:               cfg.TLS,
 		creds:                   cfg.Credentials,
+		streamMetadata:          cfg.Metadata,
 		queueSize:               cfg.QueueSize,
 		sendSem:                 sendSem,
 		sendCh:                  make(chan *pb.UpstreamMessage, cfg.QueueSize),
@@ -462,8 +491,17 @@ func (c *BaseClient) establishStream(ctx context.Context) error {
 	// Create a context for the stream
 	c.streamCtx, c.streamCancel = context.WithCancel(ctx)
 
+	// Attach any caller-supplied stream metadata as transport-level headers.
+	// These are readable server-side via metadata.FromIncomingContext before
+	// the first frame is processed (e.g. an aggregator pairing by tenant). When
+	// streamMetadata is empty this is a no-op, preserving prior behavior.
+	streamCtx := context.Context(c.streamCtx)
+	if len(c.streamMetadata) > 0 {
+		streamCtx = metadata.NewOutgoingContext(streamCtx, metadata.New(c.streamMetadata))
+	}
+
 	// Create the stream
-	stream, err := c.client.Connect(c.streamCtx)
+	stream, err := c.client.Connect(streamCtx)
 	if err != nil {
 		return FromGRPCError(err)
 	}
@@ -614,6 +652,18 @@ func (c *BaseClient) setSessionID(id string) {
 // wrap it with aether.AsyncMessageHandler.
 func (c *BaseClient) OnMessage(handler MessageHandler) {
 	c.handlers.OnMessage = handler
+}
+
+// SetRawDownstreamTap installs a tap invoked for every downstream message
+// before typed dispatch. Returning true claims the message — the SDK then
+// skips its own typed handling for it. Passing nil clears the tap.
+//
+// Used by the proxy-sidecar shared-runtime relay to route responses for ops
+// a sandbox session issued (which this client has no pending correlation
+// state for) back to that session. Must be set before the connection loop
+// starts; it is read on the receive loop without locking.
+func (c *BaseClient) SetRawDownstreamTap(tap func(*pb.DownstreamMessage) bool) {
+	c.rawDownstreamTap = tap
 }
 
 // OnConfig registers a handler for configuration snapshots.
@@ -921,8 +971,20 @@ func messageTypeToProto(mt MessageType) pb.MessageType {
 // SendWithOptions sends a message using the provided SendMessageOptions.
 // This is the options-based counterpart to the typed Send methods on each client type.
 func (c *BaseClient) SendWithOptions(opts SendMessageOptions) error {
-	msgType := messageTypeToProto(opts.MessageType)
-	return c.sendMessage(opts.TargetTopic, opts.Payload, msgType)
+	send := &pb.SendMessage{
+		TargetTopic: opts.TargetTopic,
+		Payload:     opts.Payload,
+		MessageType: messageTypeToProto(opts.MessageType),
+	}
+	// Explicit OBO: when set, the gateway resolves it and stamps the subject
+	// onto the delivered envelope (MessageEnvelope.on_behalf_subject). A bare
+	// send never assumes an OBO context.
+	if opts.Authorization != nil {
+		send.Authorization = opts.Authorization
+	}
+	return c.Send(&pb.UpstreamMessage{
+		Payload: &pb.UpstreamMessage_Send{Send: send},
+	})
 }
 
 // sendMessage sends a message to a target topic.
@@ -1765,6 +1827,13 @@ func (c *BaseClient) dispatchResponse(ctx context.Context, response *pb.Downstre
 		c.ConfirmConnection()
 	}
 
+	// Raw downstream tap: lets a relay claim responses for ops it forwarded
+	// on behalf of a sandbox session. When the tap claims the message we skip
+	// typed dispatch — this client has no pending correlation state for it.
+	if tap := c.rawDownstreamTap; tap != nil && tap(response) {
+		return nil
+	}
+
 	// Dispatch based on payload type
 	switch payload := response.GetPayload().(type) {
 	case *pb.DownstreamMessage_Msg:
@@ -1823,6 +1892,9 @@ func (c *BaseClient) dispatchResponse(ctx context.Context, response *pb.Downstre
 
 	case *pb.DownstreamMessage_SessionResponse:
 		return c.handleSessionResponse(ctx, payload.SessionResponse)
+
+	case *pb.DownstreamMessage_ConnectionStatusResponse:
+		return c.handleConnectionStatusResponse(ctx, payload.ConnectionStatusResponse)
 
 	case *pb.DownstreamMessage_AuthorityGrant:
 		return c.handleAuthorityGrantResponse(ctx, payload.AuthorityGrant)
@@ -1907,10 +1979,11 @@ func (c *BaseClient) dispatchResponse(ctx context.Context, response *pb.Downstre
 func (c *BaseClient) handleIncomingMessage(ctx context.Context, msg *pb.IncomingMessage) error {
 	// Convert to high-level Message type
 	message := &Message{
-		SourceTopic: msg.GetSourceTopic(),
-		Payload:     msg.GetPayload(),
-		MessageType: msg.GetMessageType(),
-		ReceivedAt:  time.Now(),
+		SourceTopic:     msg.GetSourceTopic(),
+		Payload:         msg.GetPayload(),
+		MessageType:     msg.GetMessageType(),
+		OnBehalfSubject: msg.GetOnBehalfSubject(),
+		ReceivedAt:      time.Now(),
 	}
 
 	// Dispatch to generic message handler
@@ -1952,9 +2025,12 @@ func (c *BaseClient) handleConfigSnapshot(ctx context.Context, config *pb.Config
 	}
 
 	// Convert to high-level ConfigSnapshot type
+	// The gateway stopped populating these (see aether.proto); they are read
+	// anyway so an older gateway that still sends them keeps working, and
+	// ConfigSnapshot.KV/GlobalKV are public SDK API.
 	snapshot := &ConfigSnapshot{
-		KV:       config.GetKv(),
-		GlobalKV: config.GetGlobalKv(),
+		KV:       config.GetKv(),       //nolint:staticcheck // deprecated wire field, kept for older gateways
+		GlobalKV: config.GetGlobalKv(), //nolint:staticcheck // deprecated wire field, kept for older gateways
 	}
 
 	return c.handlers.OnConfig(ctx, snapshot)
@@ -2059,6 +2135,8 @@ func (c *BaseClient) handleKVResponse(ctx context.Context, kv *pb.KVResponse) er
 		RequestId:    kv.GetRequestId(),
 		CounterValue: kv.GetCounterValue(),
 		Applied:      kv.GetApplied(),
+		NextCursor:   kv.GetNextCursor(),
+		HasMore:      kv.GetHasMore(),
 	}
 
 	// If response has a request_id, try to resolve a pending correlated request first
@@ -2088,6 +2166,18 @@ func (c *BaseClient) handleKVResponse(ctx context.Context, kv *pb.KVResponse) er
 }
 
 // handleTaskAssignment processes a task assignment from the server.
+//
+// The user-registered OnTaskAssignment handler is invoked in its own
+// goroutine rather than synchronously on the receive loop. Task workers
+// almost always need to make gateway round-trips during delivery
+// (CompleteTask/FailTask at a minimum, and frequently KVGetSync to
+// resolve resources); the response to those round-trips can ONLY arrive
+// via this same receive loop, so a synchronous dispatch would deadlock
+// the worker on its own KVResponse until the per-op timeout fires.
+//
+// Errors from the handler are logged via OnError if registered; panics
+// are recovered and logged. This call returns nil immediately so the
+// receive loop can continue processing inbound frames.
 func (c *BaseClient) handleTaskAssignment(ctx context.Context, ta *pb.TaskAssignment) error {
 	if c.handlers.OnTaskAssignment == nil {
 		return nil
@@ -2114,7 +2204,25 @@ func (c *BaseClient) handleTaskAssignment(ctx context.Context, ta *pb.TaskAssign
 		assignment.AssignedAt = time.Now()
 	}
 
-	return c.handlers.OnTaskAssignment(ctx, assignment)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if c.handlers.OnError != nil {
+					_ = c.handlers.OnError(ctx, &ErrorInfo{
+						Code:    "TASK_ASSIGNMENT_HANDLER_PANIC",
+						Message: fmt.Sprintf("OnTaskAssignment handler panic: %v", r),
+					})
+				}
+			}
+		}()
+		if err := c.handlers.OnTaskAssignment(ctx, assignment); err != nil && c.handlers.OnError != nil {
+			_ = c.handlers.OnError(ctx, &ErrorInfo{
+				Code:    "TASK_ASSIGNMENT_HANDLER_ERROR",
+				Message: err.Error(),
+			})
+		}
+	}()
+	return nil
 }
 
 // handleConnectionAck processes the connection acknowledgment from the server.
@@ -2298,6 +2406,9 @@ func (c *BaseClient) CreateTask(taskType, workspace string, opts CreateTaskOptio
 		LaunchParamOverrides: opts.LaunchParamOverrides,
 		Metadata:             opts.Metadata,
 		Payload:              opts.Payload,
+		RetryPolicy:          opts.RetryPolicy,
+		Priority:             opts.Priority,
+		Authorization:        opts.Authorization,
 	}
 	return c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_CreateTask{CreateTask: req},
@@ -2327,6 +2438,9 @@ func (c *BaseClient) CreateTaskSync(ctx context.Context, taskType, workspace str
 		LaunchParamOverrides: opts.LaunchParamOverrides,
 		Metadata:             opts.Metadata,
 		Payload:              opts.Payload,
+		RetryPolicy:          opts.RetryPolicy,
+		Priority:             opts.Priority,
+		Authorization:        opts.Authorization,
 		RequestId:            requestID,
 	}
 	if err := c.Send(&pb.UpstreamMessage{
@@ -2750,6 +2864,17 @@ func (c *BaseClient) FailTask(ctx context.Context, taskID, reason string, timeou
 	return c.doTaskOperation(ctx, pb.TaskOperation_FAIL, taskID, reason, timeout)
 }
 
+// ClaimTask sends a task CLAIM operation and returns the response synchronously.
+// CLAIM transitions an assigned/pending task to RUNNING; the caller must be the
+// task's assignee, creator, OBO subject, or a workspace admin (gateway
+// authorizeTaskOp). For a SELF_ASSIGN task the creator is also the assignee, so
+// the creating client may CLAIM its own task — which is what drives the
+// gateway's "running" lifecycle notice and (for subject-participating tasks)
+// the per-user subject auto-subscribe.
+func (c *BaseClient) ClaimTask(ctx context.Context, taskID string, timeout time.Duration) (*TaskOperationResponse, error) {
+	return c.doTaskOperation(ctx, pb.TaskOperation_CLAIM, taskID, "", timeout)
+}
+
 // =============================================================================
 // Proto Conversion Helpers
 // =============================================================================
@@ -2881,7 +3006,84 @@ func protoACLResponseToSDK(resp *pb.ACLResponse) *ACLResponse {
 			Message:      cr.GetMessage(),
 		}
 	}
+	if g := resp.GetGroup(); g != nil {
+		r.Group = protoACLGroupInfoToSDK(g)
+	}
+	for _, g := range resp.GetGroups() {
+		r.Groups = append(r.Groups, protoACLGroupInfoToSDK(g))
+	}
+	if role := resp.GetRole(); role != nil {
+		r.Role = protoACLRoleInfoToSDK(role)
+	}
+	for _, role := range resp.GetRoles() {
+		r.Roles = append(r.Roles, protoACLRoleInfoToSDK(role))
+	}
+	for _, m := range resp.GetGroupMembers() {
+		r.GroupMembers = append(r.GroupMembers, &ACLGroupMemberInfo{
+			GroupName:  m.GetGroupName(),
+			MemberType: m.GetMemberType(),
+			MemberID:   m.GetMemberId(),
+			GrantedBy:  m.GetGrantedBy(),
+			GrantedAt:  m.GetGrantedAt(),
+			ExpiresAt:  m.GetExpiresAt(),
+		})
+	}
+	for _, a := range resp.GetRoleAssignments() {
+		r.RoleAssignments = append(r.RoleAssignments, &ACLRoleAssignmentInfo{
+			RoleName:     a.GetRoleName(),
+			AssigneeType: a.GetAssigneeType(),
+			AssigneeID:   a.GetAssigneeId(),
+			GrantedBy:    a.GetGrantedBy(),
+			GrantedAt:    a.GetGrantedAt(),
+			ExpiresAt:    a.GetExpiresAt(),
+		})
+	}
+	if e := resp.GetExplanation(); e != nil {
+		exp := &ACLAccessExplanationInfo{
+			Principal:       e.GetPrincipal(),
+			Subjects:        e.GetSubjects(),
+			Allowed:         e.GetAllowed(),
+			Decision:        e.GetDecision(),
+			EffectiveLevel:  e.GetEffectiveAccessLevel(),
+			FallbackApplied: e.GetFallbackApplied(),
+			Reason:          e.GetReason(),
+		}
+		for _, c := range e.GetContributions() {
+			exp.Contributions = append(exp.Contributions, &ACLAccessContributionInfo{
+				Subject:     c.GetSubject(),
+				RuleID:      c.GetRuleId(),
+				AccessLevel: c.GetAccessLevel(),
+				Resource:    c.GetResource(),
+				Expired:     c.GetExpired(),
+			})
+		}
+		r.Explanation = exp
+	}
 	return r
+}
+
+// protoACLGroupInfoToSDK converts a protobuf ACLGroupInfo to the SDK type.
+func protoACLGroupInfoToSDK(g *pb.ACLGroupInfo) *ACLGroupInfo {
+	return &ACLGroupInfo{
+		GroupID:     g.GetGroupId(),
+		GroupName:   g.GetGroupName(),
+		Description: g.GetDescription(),
+		CreatedBy:   g.GetCreatedBy(),
+		CreatedAt:   g.GetCreatedAt(),
+		Metadata:    g.GetMetadata(),
+	}
+}
+
+// protoACLRoleInfoToSDK converts a protobuf ACLRoleInfo to the SDK type.
+func protoACLRoleInfoToSDK(role *pb.ACLRoleInfo) *ACLRoleInfo {
+	return &ACLRoleInfo{
+		RoleID:      role.GetRoleId(),
+		RoleName:    role.GetRoleName(),
+		Description: role.GetDescription(),
+		CreatedBy:   role.GetCreatedBy(),
+		CreatedAt:   role.GetCreatedAt(),
+		Metadata:    role.GetMetadata(),
+	}
 }
 
 // protoACLRuleInfoToSDK converts a protobuf ACLRuleInfo to the SDK type.

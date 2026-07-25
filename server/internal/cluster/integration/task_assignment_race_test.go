@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/orchestration"
 )
 
 // TestClusterIntegration_TaskAssignment_ExactlyOnce spins up two
@@ -33,7 +33,7 @@ import (
 func TestClusterIntegration_TaskAssignment_ExactlyOnce(t *testing.T) {
 	c := setupCluster3(t)
 
-	bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), scaled(30*time.Second))
 	defer bootstrapCancel()
 
 	store := newFakeTaskStore()
@@ -71,7 +71,7 @@ func TestClusterIntegration_TaskAssignment_ExactlyOnce(t *testing.T) {
 	dA.SetCallback(handlerFactory(&fromA))
 	dB.SetCallback(handlerFactory(&fromB))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scaled(45*time.Second))
 	defer cancel()
 	if err := dA.Start(ctx); err != nil {
 		t.Fatalf("start A: %v", err)
@@ -107,7 +107,7 @@ func TestClusterIntegration_TaskAssignment_ExactlyOnce(t *testing.T) {
 	// AckExplicit means a transient redelivery is theoretically possible if
 	// the test happens to interleave with NaK backoff timers — we permit
 	// at most 1 redelivery in the assertions below.
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(scaled(30 * time.Second))
 	for time.Now().Before(deadline) {
 		if counter.Load() >= int64(total) {
 			break

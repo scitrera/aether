@@ -7,10 +7,11 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/circuitbreaker"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/tracing"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/circuitbreaker"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/tracing"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/tasks"
 	"github.com/scitrera/aether/sdk/go/aether"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/protobuf/proto"
@@ -75,13 +76,19 @@ func (s *GatewayServer) handleProgressReport(ctx context.Context, client *Client
 		attribute.String("task_id", report.TaskId),
 	)
 
-	// Only agents and tasks can report progress
-	if sender.Type != models.PrincipalAgent && sender.Type != models.PrincipalTask {
+	// Only agents, tasks, and services can report progress. Services are
+	// permitted because sidecar bridges (identity sv::sandbox-sidecar::<id>)
+	// relay chat-lifecycle progress on behalf of the agent harness running
+	// inside the sandbox — they target a user recipient (us::{user}) just
+	// like an agent would, and recipient filtering still applies downstream.
+	if sender.Type != models.PrincipalAgent &&
+		sender.Type != models.PrincipalTask &&
+		sender.Type != models.PrincipalService {
 		if sendErr := client.SafeSend(&pb.DownstreamMessage{
 			Payload: &pb.DownstreamMessage_Error{
 				Error: &pb.ErrorResponse{
 					Code:    "ERR_INVALID_PRINCIPAL",
-					Message: "only agents and tasks can report progress",
+					Message: "only agents, tasks, and services can report progress",
 				},
 			},
 		}); sendErr != nil {
@@ -124,9 +131,24 @@ func (s *GatewayServer) handleProgressReport(ctx context.Context, client *Client
 	// For empty or non-user recipients, fall back to pg::{sender.Workspace}
 	// broadcast — preserving orchestrator/parent-agent consumption patterns
 	// for task-kind progress.
-	progressTopic, err := models.ProgressTopic(sender.Workspace)
+	// For task-bound progress from a workspace-less sender (e.g. a Service
+	// principal like the in-process ingest worker, sv::memorylayer), the sender
+	// has no workspace, so pg::{sender.Workspace} collapses to the empty "pg::"
+	// topic — which has no JetStream stream under AetherLite, so the publish
+	// hard-fails. Derive the broadcast workspace from the task row instead, so
+	// progress routes to pg::{task.workspace} and reaches that workspace's
+	// subscribers (the user/window sessions). Only consulted when the sender
+	// itself is workspace-less, so workspace-scoped agent senders are unchanged.
+	broadcastWorkspace := sender.Workspace
+	if broadcastWorkspace == "" && report.TaskId != "" && s.taskStore != nil {
+		if t, terr := s.taskStore.GetTask(ctx, report.TaskId); terr == nil && t != nil && t.Workspace != "" {
+			broadcastWorkspace = t.Workspace
+		}
+	}
+
+	progressTopic, err := models.ProgressTopic(broadcastWorkspace)
 	if err != nil {
-		logging.Logger.Warn().Err(err).Str("workspace", sender.Workspace).Msg("invalid workspace for progress topic; dropping report")
+		logging.Logger.Warn().Err(err).Str("workspace", broadcastWorkspace).Msg("invalid workspace for progress topic; dropping report")
 		return
 	}
 	if report.Recipient != "" {
@@ -162,7 +184,7 @@ func (s *GatewayServer) handleProgressReport(ctx context.Context, client *Client
 		Summary:     report.Summary,
 		Step:        report.Step,
 		TimestampMs: now.UnixMilli(),
-		Workspace:   sender.Workspace,
+		Workspace:   broadcastWorkspace,
 		RequestId:   report.RequestId,
 		Metadata:    report.Metadata,
 		Recipient:   report.Recipient,
@@ -274,6 +296,22 @@ func (s *GatewayServer) createProgressFilterHandler(client *ClientSession) func(
 			}
 		}
 
+		// Phase 2 "Design M": drive the per-task chat message lane off task
+		// lifecycle. The notice already targets this session's subject (the
+		// recipient filter above passed), so the session principal IS the
+		// task's subject — auto-attach / detach the tk::{ws}::{task}::msg lane
+		// without any additional authz. Subscribe on running, unsubscribe on a
+		// terminal status. Live (non-replay) subscribe: the running notice
+		// marks "from here forward".
+		if update.Kind == pb.ProgressKind_PROGRESS_KIND_TASK && update.TaskId != "" {
+			switch update.Metadata["status"] {
+			case "running":
+				s.subscribeClientToTaskMessages(client, update.Workspace, update.TaskId)
+			case "completed", "failed", "cancelled":
+				s.unsubscribeClientFromTaskMessages(client, update.TaskId)
+			}
+		}
+
 		// Progress updates ride at PriorityBestEffort — they are the first
 		// to be shed when the per-session delivery Semaphore is saturated
 		// by request / response chunk traffic.
@@ -291,7 +329,18 @@ func (s *GatewayServer) createProgressFilterHandler(client *ClientSession) func(
 // spawning agent receives the notification via server-side filtering.
 //
 // This method is best-effort: failures are logged but do not block the caller.
-func (s *GatewayServer) notifyTaskStatusChange(ctx context.Context, taskID, newStatus, workspace, parentAgentID, errorMsg string) {
+//
+// When task is non-nil and carries an OBO subject (subject_participant marked,
+// Authority.SubjectType == "User", Authority.SubjectID set), an ADDITIONAL
+// notice is emitted to the subject's per-user progress topic so the end user's
+// browser tabs can be driven by task lifecycle state. The subject emit routes
+// like handleProgressReport's us::<user> path (pg::us::<user>) rather than the
+// workspace-broadcast pg::<workspace> topic.
+func (s *GatewayServer) notifyTaskStatusChange(ctx context.Context, taskID, newStatus, workspace, parentAgentID, errorMsg string, task *tasks.Task) {
+	// Subject notify is independent of the parent notify: a per-turn chat task
+	// may have no parent agent but still needs to drive the user's tabs.
+	defer s.maybeNotifyTaskSubject(ctx, taskID, newStatus, task)
+
 	if parentAgentID == "" || workspace == "" {
 		return // No parent to notify or no workspace for the progress topic
 	}
@@ -335,6 +384,91 @@ func (s *GatewayServer) notifyTaskStatusChange(ctx context.Context, taskID, newS
 	}
 }
 
+// taskMetadataTruthy reports whether a task metadata value represents a truthy
+// flag. Accepts bool true or the strings "1"/"true" (case-insensitive).
+func taskMetadataTruthy(v interface{}) bool {
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "1", "true":
+			return true
+		}
+	}
+	return false
+}
+
+// maybeNotifyTaskSubject emits an additional ProgressUpdate to the task's OBO
+// subject (the end user) when the task opted into subject participation. Routed
+// to the per-user progress topic pg::us::<subject> with a bare us::<subject>
+// recipient so EVERY one of the user's windows receives it. Best-effort: any
+// failure is logged and ignored; never blocks the caller.
+func (s *GatewayServer) maybeNotifyTaskSubject(ctx context.Context, taskID, newStatus string, task *tasks.Task) {
+	if task == nil {
+		return
+	}
+	if !taskMetadataTruthy(task.Metadata["subject_participant"]) {
+		return
+	}
+	if task.Authority.SubjectType != string(models.PrincipalUser) || task.Authority.SubjectID == "" {
+		return
+	}
+
+	subjectID := task.Authority.SubjectID
+	subjectTopic, err := models.UserProgressTopic(subjectID)
+	if err != nil {
+		logging.Logger.Warn().Err(err).Str("task_id", taskID).Str("subject_id", subjectID).Msg("invalid subject id for task subject notification; skipping")
+		return
+	}
+
+	meta := map[string]string{
+		"status": newStatus,
+	}
+	if v := metadataString(task.Metadata, "thread_id"); v != "" {
+		meta["thread_id"] = v
+	}
+	if v := metadataString(task.Metadata, "message_id"); v != "" {
+		meta["message_id"] = v
+	}
+	if v := metadataString(task.Metadata, "started_at_ms"); v != "" {
+		meta["started_at_ms"] = v
+	}
+	if v := metadataString(task.Metadata, "task_type"); v != "" {
+		meta["task_type"] = v
+	} else if task.TaskType != "" {
+		meta["task_type"] = task.TaskType
+	}
+
+	update := &pb.ProgressUpdate{
+		Source:      s.gatewayID,
+		TaskId:      taskID,
+		State:       newStatus,
+		TimestampMs: time.Now().UnixMilli(),
+		Workspace:   task.Workspace,
+		// Bare user recipient → delivered to all of the user's windows via the
+		// gateway-side prefix-match filter (isBareUserRecipientMatch).
+		Recipient: "us" + models.IdentitySep + subjectID,
+		Kind:      pb.ProgressKind_PROGRESS_KIND_TASK,
+		Metadata:  meta,
+	}
+
+	updateBytes, err := proto.Marshal(update)
+	if err != nil {
+		logging.Logger.Warn().Err(err).Str("task_id", taskID).Msg("failed to marshal task subject notification")
+		return
+	}
+
+	publishErr := s.publishBreaker.Execute(func() error {
+		return s.router.Publish(ctx, subjectTopic, updateBytes)
+	})
+	if publishErr != nil {
+		logging.Logger.Warn().Err(publishErr).Str("task_id", taskID).Str("status", newStatus).Str("subject_id", subjectID).Msg("failed to publish task subject notification")
+	} else {
+		logging.Logger.Debug().Str("task_id", taskID).Str("status", newStatus).Str("subject_id", subjectID).Msg("task subject notification sent")
+	}
+}
+
 // notifyTaskStatusChangeFromTaskID looks up a task by ID, extracts the parent
 // agent and workspace, and publishes a status notification. Best-effort.
 func (s *GatewayServer) notifyTaskStatusChangeFromTaskID(ctx context.Context, taskID, newStatus, errorMsg string) {
@@ -345,11 +479,14 @@ func (s *GatewayServer) notifyTaskStatusChangeFromTaskID(ctx context.Context, ta
 	if err != nil || task == nil {
 		return
 	}
-	s.notifyTaskStatusChange(ctx, taskID, newStatus, task.Workspace, task.ParentAgentID, errorMsg)
+	s.notifyTaskStatusChange(ctx, taskID, newStatus, task.Workspace, task.ParentAgentID, errorMsg, task)
 }
 
 // subscribeClientToProgress subscribes a client to the pg::{workspace} progress
-// stream using a shared consumer with a per-client filtering handler.
+// stream with a per-client filtering handler. Uses a per-client named consumer
+// with resume-or-tail semantics (consumer = identity string) so a (re)connect
+// starts at the tail rather than re-dumping the entire retained progress history
+// from seq 0; a reconnect replays only the gap since the committed offset.
 func (s *GatewayServer) subscribeClientToProgress(client *ClientSession, workspace string) error {
 	pgTopic, err := models.ProgressTopic(workspace)
 	if err != nil {
@@ -359,7 +496,10 @@ func (s *GatewayServer) subscribeClientToProgress(client *ClientSession, workspa
 		return nil
 	}
 
-	cancel, err := s.router.Subscribe(pgTopic, s.createProgressFilterHandler(client))
+	client.identityMu.RLock()
+	consumerName := client.Identity.String()
+	client.identityMu.RUnlock()
+	cancel, err := s.router.SubscribeExclusiveResumeOrTail(pgTopic, consumerName, s.createProgressFilterHandler(client))
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to progress topic %s: %w", pgTopic, err)
 	}
@@ -373,15 +513,19 @@ func (s *GatewayServer) subscribeClientToProgress(client *ClientSession, workspa
 }
 
 // subscribeClientToUserProgress subscribes a user client to a per-user
-// progress topic (pg::us::{user}::{window}). The topic is self-scoped to a
-// single user-window, so no additional server-side recipient filtering is
-// required — the filter handler still applies self-echo suppression.
+// progress topic (pg::us::{user_id}). The topic is self-scoped to a single
+// user (all of that user's windows share it), so no additional server-side
+// recipient filtering is required — the filter handler still applies
+// self-echo suppression.
 func (s *GatewayServer) subscribeClientToUserProgress(client *ClientSession, topic string) error {
 	if client.HasSubscription(topic) {
 		return nil
 	}
 
-	cancel, err := s.router.Subscribe(topic, s.createProgressFilterHandler(client))
+	client.identityMu.RLock()
+	consumerName := client.Identity.String()
+	client.identityMu.RUnlock()
+	cancel, err := s.router.SubscribeExclusiveResumeOrTail(topic, consumerName, s.createProgressFilterHandler(client))
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to user-progress topic %s: %w", topic, err)
 	}

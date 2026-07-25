@@ -9,37 +9,189 @@
 # directives in each go.mod handle local builds; the `require` pins handle downstream
 # `go get` from pkg.go.dev. The gomod_require rules below keep those pins in sync.
 
-aether-gateway: 0.2.1
+aether-gateway: 0.2.2
 
-aether-sdk-go: 0.2.1          # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
+aether-sdk-go: 0.2.2         # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
 
-aether-sdk-typescript: 0.2.1  # @scitrera/aether-client
+aether-sdk-typescript: 0.2.2  # @scitrera/aether-client
 
-aether-sdk-python: 0.2.1      # scitrera-aether-client
-aether-sdk-python-ag2: 0.0.1  # scitrera-aether-ag2
+aether-sdk-python: 0.2.2      # scitrera-aether-client
+aether-sdk-python-ag2: 0.0.2  # scitrera-aether-ag2
 
 go_toolchain:
-  go: "1.25.10"
+  go: "1.25.12"
 
 # set explicit versions where possible to protect against supply chain attacks
 preferred_versions:
   go:
     "google.golang.org/grpc": "1.81.1"
     "google.golang.org/protobuf": "1.36.11"
+    "github.com/scitrera/go-backpressure": "v0.1.1"
   python:
-    "grpcio": 1.80.0
-    "grpcio-tools": 1.80.0
-    "protobuf": ">6"  # TODO: pin version that will be compatible with opentelemetry grpc
+    "grpcio": 1.81.1
+    "grpcio-tools": 1.81.1
+    # Floor is set by the generated Python gencode version (see the proto block):
+    # protoc 33.5 emits gencode 6.33.5, and the runtime guard in *_pb2.py rejects
+    # any protobuf runtime older than the gencode that produced it. Raise this in
+    # lockstep whenever proto.toolchain.grpcio_tools moves.
+    "protobuf": ">=6.33.5"
     "pytest": 9.0.3
   typescript:
     "@grpc/grpc-js": "1.14.3"
     "@grpc/proto-loader": "0.8.1"
+
+# NOTE: no `dependency_mappings` block, deliberately.
+#
+# It would order the publish jobs so scitrera-aether-client reaches PyPI before
+# scitrera-aether-ag2, but the two settings are inseparable: declaring
+# `dependencies` requires the matching `packages` entry, and `packages` makes
+# sync-versions rewrite ag2's requirement from `scitrera-aether-client>=0.2.0` to
+# `==<monorepo version>`. That tightens a *published* package's constraint and can
+# break resolution for anyone depending on both.
+#
+# The ordering buys little here: ag2's constraint is a floor, so the previous
+# client release already satisfies it and publishing out of order is harmless.
+# Add both settings together if lockstep exact-pinning ever becomes the intent —
+# most likely alongside raising ag2's floor to the current client version.
+
+# GitHub Actions generation. Run: generate-ci-gha [--check|--force]
+#
+# only_workflows is an allowlist. Everything is generated now except
+# integration.yml, which keeps the two jobs that need service containers.
+ci:
+  # Pinned deliberately: a bare `scitrera-repo-tools` floats to the newest
+  # release, which is the same unpinned-tooling drift proto-check exists to
+  # catch. Bump in lockstep with the proto toolchain when repo-tools changes
+  # generated output.
+  repo_tools_source: "scitrera-repo-tools==0.1.18"
+  # `push_branches` is deliberately unset, so develop stays in both the push and
+  # pull_request trigger lists and every check runs twice for a commit pushed to
+  # an open PR's branch. That is the intended trade: both runs complete and both
+  # report success, so the PR is unambiguously green and no push is ever
+  # unchecked. Setting `push_branches: [ main ]` would halve the jobs but leave
+  # pushes to develop uncovered whenever no PR is open. What we do NOT want is
+  # collapsing the pair via concurrency — a cancelled run reports as cancelled
+  # rather than success and can hold up a required check.
+  # One `v*.*.*` tag drives every artifact, so the GitHub Release belongs to the
+  # tag rather than to any single language's publish flow.
+  github_release: true
+  only_workflows:
+    - proto-check
+    - version-check
+    - test-python
+    - test-npm
+    - publish-python
+    - publish-npm
+    - publish-go
+    - test-go
+    - build-docker
+  python:
+    # The extra is named `dev` here, not the generator's default `test`.
+    install: 'pip install -e ".[dev]"'
+    # Disabled for now: ruff currently reports 67 findings across the two Python
+    # SDKs (60 in python-client, 7 in python-ag2). Enable this — and pin `ruff`
+    # under preferred_versions.python so the linter cannot float — once those are
+    # cleaned up. Leaving it on today would make every PR red.
+    lint: none
+    # Refuse to publish when the pushed tag disagrees with versions.yaml. Names
+    # the one Python project whose version tracks the tag; ag2 is versioned
+    # independently (0.0.2), so a single tag cannot verify both.
+    verify_tag_version: aether-sdk-python
+  go:
+    # -short matches what test.yml runs for unit CI: without it the suite tries
+    # to reach RabbitMQ/Valkey/Postgres, which only the integration job provides.
+    test_args: "-short -race -count=1"
+    # Preserves the go-coverage artifact that the hand-written test.yml uploaded.
+    coverage: true
+    # Accepted risk, scoped to the SDK because that is the only module that
+    # reaches them: all four are in github.com/docker/docker <= v28.5.2 via
+    # sdk/go/orchestrators/docker, and none has an upstream fix. Documented in
+    # SECURITY.md; drop these entries when docker ships fixed releases — CI
+    # warns once an entry stops matching.
+    govulncheck_ignore:
+      - id: GO-2026-4887
+        reason: "docker/docker <= v28.5.2; no upstream fix; see SECURITY.md"
+        projects: [ aether-sdk-go ]
+      - id: GO-2026-4883
+        reason: "docker/docker <= v28.5.2; no upstream fix; see SECURITY.md"
+        projects: [ aether-sdk-go ]
+      - id: GO-2026-5617
+        reason: "docker cp bind-mount redirection race; no upstream fix; see SECURITY.md"
+        projects: [ aether-sdk-go ]
+      - id: GO-2026-5668
+        reason: "docker cp symlink-swap empty-file race; no upstream fix; see SECURITY.md"
+        projects: [ aether-sdk-go ]
+    # Verify that scripts/tag-release.sh actually cut api/, sdk/go/ and server/
+    # tags for the release. Flip to `push` — and drop tag-release.sh — once a
+    # real release has proven the wiring.
+    module_tags: verify
+  docker:
+    # Empty to preserve build.yml's behavior: images build on a tag that was
+    # already tested on its branch, with no inlined test gate.
+    test_prereqs: []
+
+# Container images. Mirrors the hand-written build.yml this replaces: dual
+# registry, amd64+arm64 via QEMU, and a gateway -> aetherlite -> aetherlite-dev
+# cascade that threads BASE_IMAGE from each parent's freshly built tag.
+docker:
+  ghcr: scitrera
+  dockerhub: scitrera
+  images:
+    aether:
+      context: .
+      dockerfile: server/Dockerfile
+      version_from: aether-gateway
+    aetherlite:
+      context: server
+      dockerfile: server/Dockerfile.aetherlite-dev
+      needs: aether
+      version_from: aether-gateway
+    aetherlite-dev:
+      context: server
+      dockerfile: server/Dockerfile.aetherlite-dev
+      needs: aetherlite
+      # Same repository as `aetherlite`, distinguished only by the dev- tag
+      # prefix. Without this override the descriptor key would publish a new
+      # `aetherlite-dev` repository instead.
+      image_name: aetherlite
+      tag_style: dev
+      version_from: aether-gateway
+
+# Protobuf/gRPC codegen. Run: compile-protos [--check]
+#
+# Every pin here is verified before any code is generated, because generated
+# artifacts embed the versions of the tools that produced them — an unpinned
+# compiler makes the proto drift check nondeterministic.
+#
+# protoc and grpcio-tools are two INDEPENDENT compilers (grpc_tools bundles its
+# own libprotoc), so they are kept deliberately aligned: grpcio-tools 1.81.1
+# bundles libprotoc 33.5, hence protoc 33.5 here. compile-protos cross-checks
+# the pair and fails if they diverge.
+proto:
+  dir: api/proto
+  files: [ aether.proto, sandbox_relay_tunnel.proto ]
+  toolchain:
+    protoc: "33.5"
+    protoc_gen_go: null            # derived from preferred_versions.go["google.golang.org/protobuf"]
+    protoc_gen_go_grpc: "v1.6.2"   # separate module; NOT derivable from google.golang.org/grpc
+    grpcio_tools: "1.81.1"
+    proto_loader: "0.8.1"
+  outputs:
+    go:
+      path: api/proto
+    python:
+      path: sdk/python-client/scitrera_aether_client/proto
+    typescript:
+      path: sdk/typescript/src/proto
+      package_dir: sdk/typescript
 
 project_rules:
   aether-gateway:
     - { type: go_version,    path: server/internal/version/version.go }
     - { type: gomod_require, path: server/go.mod, args: [ github.com/scitrera/aether/api ] }
     - { type: gomod_require, path: server/go.mod, args: [ github.com/scitrera/aether/sdk/go ] }
+  aether-api-go:
+    - { type: gomod_require, path: api/go.mod }
   aether-sdk-go:
     - { type: go_version,    path: sdk/go/aether/version.go }
     - { type: gomod_require, path: sdk/go/go.mod, args: [ github.com/scitrera/aether/api ] }

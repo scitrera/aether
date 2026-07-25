@@ -4,6 +4,12 @@ import type { ACLRuleFilter as _aether_v1_ACLRuleFilter, ACLRuleFilter__Output a
 import type { ACLAuditFilter as _aether_v1_ACLAuditFilter, ACLAuditFilter__Output as _aether_v1_ACLAuditFilter__Output } from '../../aether/v1/ACLAuditFilter';
 import type { ACLGrantRequest as _aether_v1_ACLGrantRequest, ACLGrantRequest__Output as _aether_v1_ACLGrantRequest__Output } from '../../aether/v1/ACLGrantRequest';
 import type { ACLSetFallbackRequest as _aether_v1_ACLSetFallbackRequest, ACLSetFallbackRequest__Output as _aether_v1_ACLSetFallbackRequest__Output } from '../../aether/v1/ACLSetFallbackRequest';
+import type { PrincipalRef as _aether_v1_PrincipalRef, PrincipalRef__Output as _aether_v1_PrincipalRef__Output } from '../../aether/v1/PrincipalRef';
+import type { ACLGroupRequest as _aether_v1_ACLGroupRequest, ACLGroupRequest__Output as _aether_v1_ACLGroupRequest__Output } from '../../aether/v1/ACLGroupRequest';
+import type { ACLRoleRequest as _aether_v1_ACLRoleRequest, ACLRoleRequest__Output as _aether_v1_ACLRoleRequest__Output } from '../../aether/v1/ACLRoleRequest';
+import type { ACLGroupMemberRequest as _aether_v1_ACLGroupMemberRequest, ACLGroupMemberRequest__Output as _aether_v1_ACLGroupMemberRequest__Output } from '../../aether/v1/ACLGroupMemberRequest';
+import type { ACLRoleAssignmentRequest as _aether_v1_ACLRoleAssignmentRequest, ACLRoleAssignmentRequest__Output as _aether_v1_ACLRoleAssignmentRequest__Output } from '../../aether/v1/ACLRoleAssignmentRequest';
+import type { AuthorizationContext as _aether_v1_AuthorizationContext, AuthorizationContext__Output as _aether_v1_AuthorizationContext__Output } from '../../aether/v1/AuthorizationContext';
 
 // Original file: aether.proto
 
@@ -44,6 +50,75 @@ export const _aether_v1_ACLOperation_OpType = {
    * POST /api/acl/cleanup/audit-logs - Remove old audit log entries
    */
   CLEANUP_AUDIT_LOGS: 'CLEANUP_AUDIT_LOGS',
+  /**
+   * Role/group authorization. REST equivalents under /api/acl/groups,
+   * /api/acl/roles, and /api/acl/principals/{type}/{id}/{groups,roles}.
+   */
+  CREATE_GROUP: 'CREATE_GROUP',
+  /**
+   * Delete a group (name)
+   */
+  DELETE_GROUP: 'DELETE_GROUP',
+  /**
+   * Get a group (name)
+   */
+  GET_GROUP: 'GET_GROUP',
+  /**
+   * List all groups
+   */
+  LIST_GROUPS: 'LIST_GROUPS',
+  /**
+   * Add a member to a group (name + member_request)
+   */
+  ADD_GROUP_MEMBER: 'ADD_GROUP_MEMBER',
+  /**
+   * Remove a member from a group (name + principal)
+   */
+  REMOVE_GROUP_MEMBER: 'REMOVE_GROUP_MEMBER',
+  /**
+   * List members of a group (name)
+   */
+  LIST_GROUP_MEMBERS: 'LIST_GROUP_MEMBERS',
+  /**
+   * Create a role (role_request)
+   */
+  CREATE_ROLE: 'CREATE_ROLE',
+  /**
+   * Delete a role (name)
+   */
+  DELETE_ROLE: 'DELETE_ROLE',
+  /**
+   * Get a role (name)
+   */
+  GET_ROLE: 'GET_ROLE',
+  /**
+   * List all roles
+   */
+  LIST_ROLES: 'LIST_ROLES',
+  /**
+   * Assign a role (name + assignment_request)
+   */
+  ASSIGN_ROLE: 'ASSIGN_ROLE',
+  /**
+   * Unassign a role (name + principal)
+   */
+  UNASSIGN_ROLE: 'UNASSIGN_ROLE',
+  /**
+   * List assignees of a role (name)
+   */
+  LIST_ROLE_ASSIGNMENTS: 'LIST_ROLE_ASSIGNMENTS',
+  /**
+   * List groups a principal belongs to (principal)
+   */
+  LIST_PRINCIPAL_GROUPS: 'LIST_PRINCIPAL_GROUPS',
+  /**
+   * List roles assigned to a principal (principal)
+   */
+  LIST_PRINCIPAL_ROLES: 'LIST_PRINCIPAL_ROLES',
+  /**
+   * Explain effective access (principal + resource_type + resource_id [+ required_level])
+   */
+  EXPLAIN_ACCESS: 'EXPLAIN_ACCESS',
 } as const;
 
 export type _aether_v1_ACLOperation_OpType =
@@ -92,6 +167,92 @@ export type _aether_v1_ACLOperation_OpType =
    */
   | 'CLEANUP_AUDIT_LOGS'
   | 11
+  /**
+   * Role/group authorization. REST equivalents under /api/acl/groups,
+   * /api/acl/roles, and /api/acl/principals/{type}/{id}/{groups,roles}.
+   */
+  | 'CREATE_GROUP'
+  | 17
+  /**
+   * Delete a group (name)
+   */
+  | 'DELETE_GROUP'
+  | 18
+  /**
+   * Get a group (name)
+   */
+  | 'GET_GROUP'
+  | 19
+  /**
+   * List all groups
+   */
+  | 'LIST_GROUPS'
+  | 20
+  /**
+   * Add a member to a group (name + member_request)
+   */
+  | 'ADD_GROUP_MEMBER'
+  | 21
+  /**
+   * Remove a member from a group (name + principal)
+   */
+  | 'REMOVE_GROUP_MEMBER'
+  | 22
+  /**
+   * List members of a group (name)
+   */
+  | 'LIST_GROUP_MEMBERS'
+  | 23
+  /**
+   * Create a role (role_request)
+   */
+  | 'CREATE_ROLE'
+  | 24
+  /**
+   * Delete a role (name)
+   */
+  | 'DELETE_ROLE'
+  | 25
+  /**
+   * Get a role (name)
+   */
+  | 'GET_ROLE'
+  | 26
+  /**
+   * List all roles
+   */
+  | 'LIST_ROLES'
+  | 27
+  /**
+   * Assign a role (name + assignment_request)
+   */
+  | 'ASSIGN_ROLE'
+  | 28
+  /**
+   * Unassign a role (name + principal)
+   */
+  | 'UNASSIGN_ROLE'
+  | 29
+  /**
+   * List assignees of a role (name)
+   */
+  | 'LIST_ROLE_ASSIGNMENTS'
+  | 30
+  /**
+   * List groups a principal belongs to (principal)
+   */
+  | 'LIST_PRINCIPAL_GROUPS'
+  | 31
+  /**
+   * List roles assigned to a principal (principal)
+   */
+  | 'LIST_PRINCIPAL_ROLES'
+  | 32
+  /**
+   * Explain effective access (principal + resource_type + resource_id [+ required_level])
+   */
+  | 'EXPLAIN_ACCESS'
+  | 33
 
 export type _aether_v1_ACLOperation_OpType__Output = typeof _aether_v1_ACLOperation_OpType[keyof typeof _aether_v1_ACLOperation_OpType]
 
@@ -149,6 +310,46 @@ export interface ACLOperation {
    * Client-generated correlation ID for matching responses to requests
    */
   'requestId'?: (string);
+  /**
+   * Role/group fields.
+   * name: group/role name for GET/DELETE/LIST_*_MEMBERS/ASSIGNMENTS/ADD/ASSIGN.
+   */
+  'name'?: (string);
+  /**
+   * principal: member/assignee for REMOVE_GROUP_MEMBER, UNASSIGN_ROLE, and
+   * the subject for LIST_PRINCIPAL_GROUPS / LIST_PRINCIPAL_ROLES.
+   */
+  'principal'?: (_aether_v1_PrincipalRef | null);
+  /**
+   * CREATE_GROUP
+   */
+  'groupRequest'?: (_aether_v1_ACLGroupRequest | null);
+  /**
+   * CREATE_ROLE
+   */
+  'roleRequest'?: (_aether_v1_ACLRoleRequest | null);
+  /**
+   * ADD_GROUP_MEMBER
+   */
+  'memberRequest'?: (_aether_v1_ACLGroupMemberRequest | null);
+  /**
+   * ASSIGN_ROLE
+   */
+  'assignmentRequest'?: (_aether_v1_ACLRoleAssignmentRequest | null);
+  /**
+   * EXPLAIN_ACCESS: the resource to explain against (principal carries the
+   * subject; required_level is the threshold the decision is compared to).
+   */
+  'resourceType'?: (string);
+  'resourceId'?: (string);
+  'requiredLevel'?: (number);
+  /**
+   * Optional on-behalf-of authority context. When set, the gateway runs the
+   * admin ACL check against the subject (the user) rather than the actor
+   * (the platform-server). Mirrors SessionOperation.authorization (field 6)
+   * and AuditQuery.authorization (field 18).
+   */
+  'authorization'?: (_aether_v1_AuthorizationContext | null);
 }
 
 /**
@@ -205,4 +406,44 @@ export interface ACLOperation__Output {
    * Client-generated correlation ID for matching responses to requests
    */
   'requestId': (string);
+  /**
+   * Role/group fields.
+   * name: group/role name for GET/DELETE/LIST_*_MEMBERS/ASSIGNMENTS/ADD/ASSIGN.
+   */
+  'name': (string);
+  /**
+   * principal: member/assignee for REMOVE_GROUP_MEMBER, UNASSIGN_ROLE, and
+   * the subject for LIST_PRINCIPAL_GROUPS / LIST_PRINCIPAL_ROLES.
+   */
+  'principal': (_aether_v1_PrincipalRef__Output | null);
+  /**
+   * CREATE_GROUP
+   */
+  'groupRequest': (_aether_v1_ACLGroupRequest__Output | null);
+  /**
+   * CREATE_ROLE
+   */
+  'roleRequest': (_aether_v1_ACLRoleRequest__Output | null);
+  /**
+   * ADD_GROUP_MEMBER
+   */
+  'memberRequest': (_aether_v1_ACLGroupMemberRequest__Output | null);
+  /**
+   * ASSIGN_ROLE
+   */
+  'assignmentRequest': (_aether_v1_ACLRoleAssignmentRequest__Output | null);
+  /**
+   * EXPLAIN_ACCESS: the resource to explain against (principal carries the
+   * subject; required_level is the threshold the decision is compared to).
+   */
+  'resourceType': (string);
+  'resourceId': (string);
+  'requiredLevel': (number);
+  /**
+   * Optional on-behalf-of authority context. When set, the gateway runs the
+   * admin ACL check against the subject (the user) rather than the actor
+   * (the platform-server). Mirrors SessionOperation.authorization (field 6)
+   * and AuditQuery.authorization (field 18).
+   */
+  'authorization': (_aether_v1_AuthorizationContext__Output | null);
 }

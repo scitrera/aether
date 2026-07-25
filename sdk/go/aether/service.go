@@ -65,6 +65,7 @@ func NewServiceClient(opts ServiceOptions) (*ServiceClient, error) {
 		Connection:  opts.Connection,
 		TLS:         opts.TLS,
 		Credentials: opts.Credentials,
+		Metadata:    opts.Metadata,
 	}
 
 	base, err := NewBaseClient(cfg)
@@ -104,4 +105,21 @@ func (c *ServiceClient) Implementation() string {
 // Specifier returns the service's specifier.
 func (c *ServiceClient) Specifier() string {
 	return c.specifier
+}
+
+// SendToUserBroadcast sends a message to every one of a user's windows,
+// regardless of which workspace each window is viewing (topic uu::{user_id}).
+//
+// This is the workspace-agnostic, non-progress channel for platform→user
+// notifications — the intended way for a service principal to push an opaque
+// update to a user without abusing the progress channel. Uses OPAQUE message
+// type by default; use SendToUserBroadcastWithType for other types.
+func (c *ServiceClient) SendToUserBroadcast(userID string, payload []byte) error {
+	return c.SendToUserBroadcastWithType(userID, payload, pb.MessageType_OPAQUE)
+}
+
+// SendToUserBroadcastWithType sends a user-broadcast message with a custom message type.
+func (c *ServiceClient) SendToUserBroadcastWithType(userID string, payload []byte, msgType pb.MessageType) error {
+	topic := UserBroadcastTopic(userID)
+	return c.sendMessage(topic, payload, msgType)
 }

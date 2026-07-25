@@ -13,10 +13,14 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
-	"github.com/scitrera/aether/internal/config"
-	"github.com/scitrera/aether/internal/secrets"
-	"github.com/scitrera/aether/pkg/certgen"
-	"github.com/scitrera/aether/pkg/models"
+	authsqlite "github.com/scitrera/aether/server/internal/auth/sqlite"
+	"github.com/scitrera/aether/server/internal/config"
+	"github.com/scitrera/aether/server/internal/secrets"
+	aclsqlite "github.com/scitrera/aether/server/internal/storage/acl/sqlite"
+	"github.com/scitrera/aether/server/pkg/certgen"
+	"github.com/scitrera/aether/server/pkg/models"
+
+	_ "modernc.org/sqlite" // register bare "sqlite" driver for aetherlite token/acl DBs
 )
 
 const defaultSecretsPath = "/etc/aether/generated-secrets.yaml"
@@ -35,6 +39,7 @@ func main() {
 	tokenName := flag.String("token-name", "admin-bootstrap", "Name for the initial token")
 	principalType := flag.String("principal-type", "User", "Principal type for the token (User, Agent, Task, Service, Orchestrator, WorkflowEngine, MetricsBridge, Bridge)")
 	accessLevel := flag.String("access-level", "ADMIN", "Access level for the token (NONE, READ, READWRITE, MANAGE, ADMIN, SUPERADMIN)")
+	dataDir := flag.String("data-dir", config.EnvStr("AETHERLITE_DATA_DIR", "./aether-lite-data"), "AetherLite data directory holding tokens.db/acl.db; used for --create-token when PostgreSQL is not configured (env: AETHERLITE_DATA_DIR)")
 	force := flag.Bool("force", false, "Regenerate even if secrets file already exists")
 	printSecrets := flag.Bool("print", false, "Print generated values to stdout")
 
@@ -125,27 +130,23 @@ func main() {
 	}
 
 	if *createToken {
-		if cfg.Postgres.Host == "" {
-			log.Fatal("--create-token requires PostgreSQL configuration (set via --config or env vars)")
-		}
-
-		db, err := sql.Open("postgres", cfg.Postgres.DSN())
-		if err != nil {
-			log.Fatalf("Failed to open database: %v", err)
-		}
-		defer db.Close()
-
-		ctx := context.Background()
-		if err := db.PingContext(ctx); err != nil {
-			log.Fatalf("Failed to connect to database: %v", err)
-		}
-
 		level, err := secrets.ParseAccessLevel(*accessLevel)
 		if err != nil {
 			log.Fatalf("Invalid access level %q: %v", *accessLevel, err)
 		}
 
-		plaintext, err := secrets.CreateInitialToken(ctx, db, cfg, *tokenName, models.PrincipalType(*principalType), level)
+		ctx := context.Background()
+
+		var plaintext string
+		if cfg.Postgres.Host != "" {
+			// Full gateway topology: mint against PostgreSQL (existing behavior).
+			plaintext, err = createTokenPostgres(ctx, cfg, *tokenName, models.PrincipalType(*principalType), level)
+		} else {
+			// aetherlite topology (single or cluster): no PostgreSQL. Mint
+			// directly against the SQLite stores the gateway uses, so the CLI
+			// works WITHOUT a running gateway.
+			plaintext, err = createTokenSQLite(ctx, cfg, *dataDir, *tokenName, models.PrincipalType(*principalType), level)
+		}
 		if err != nil {
 			log.Fatalf("Failed to create initial token: %v", err)
 		}
@@ -153,6 +154,104 @@ func main() {
 		fmt.Printf("initial_api_token:   %s\n", plaintext)
 		log.Printf("Initial API token '%s' created with %s access", *tokenName, *accessLevel)
 	}
+}
+
+// createTokenPostgres mints an initial API token against the configured
+// PostgreSQL database (full gateway topology).
+func createTokenPostgres(ctx context.Context, cfg *config.Config, tokenName string, principalType models.PrincipalType, level int) (string, error) {
+	db, err := sql.Open("postgres", cfg.Postgres.DSN())
+	if err != nil {
+		return "", fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+
+	if err := db.PingContext(ctx); err != nil {
+		return "", fmt.Errorf("connecting to database: %w", err)
+	}
+
+	return secrets.CreateInitialToken(ctx, db, cfg, tokenName, principalType, level)
+}
+
+// createTokenSQLite mints an initial API token against the SQLite stores under
+// dataDir, exactly as aetherlite opens them (tokens.db + acl.db via the bare
+// "sqlite" driver with WAL). This path is intended for when the aether gateway
+// is DOWN: SQLite is single-writer and a running gateway holds the file. If the
+// DB is locked, the error surfaced here suggests stopping the gateway.
+func createTokenSQLite(ctx context.Context, cfg *config.Config, dataDir, tokenName string, principalType models.PrincipalType, level int) (string, error) {
+	if dataDir == "" {
+		return "", fmt.Errorf("--data-dir is required to create a token without PostgreSQL")
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return "", fmt.Errorf("creating data directory %s: %w", dataDir, err)
+	}
+
+	// tokens.db holds the api_tokens table; authsqlite.New runs its migrations.
+	tokensPath := filepath.Join(dataDir, "tokens.db")
+	tokensDB, err := openSQLiteNative(ctx, tokensPath)
+	if err != nil {
+		return "", fmt.Errorf("opening tokens database %s (is the gateway running and holding it?): %w", tokensPath, err)
+	}
+	defer tokensDB.Close()
+
+	tokenStore, err := authsqlite.New(tokensDB)
+	if err != nil {
+		return "", fmt.Errorf("constructing sqlite token store: %w", err)
+	}
+
+	// acl.db holds the ACL rules; aclsqlite.New runs its migrations and seeds
+	// default fallback policies. We seed an explicit grant so the bootstrap
+	// token's _system creator gets the requested (possibly elevated) access
+	// level on all workspaces, matching the PostgreSQL path.
+	aclPath := filepath.Join(dataDir, "acl.db")
+	aclDB, err := openSQLiteNative(ctx, aclPath)
+	if err != nil {
+		return "", fmt.Errorf("opening acl database %s (is the gateway running and holding it?): %w", aclPath, err)
+	}
+	defer aclDB.Close()
+
+	// audit.db is the audit sink the ACL store stamps decisions into; opening it
+	// keeps parity with aetherlite's wiring. sharedAudit is nil — init-secrets
+	// is a one-shot CLI and does not run the async audit batcher.
+	auditPath := filepath.Join(dataDir, "audit.db")
+	auditDB, err := openSQLiteNative(ctx, auditPath)
+	if err != nil {
+		return "", fmt.Errorf("opening audit database %s: %w", auditPath, err)
+	}
+	defer auditDB.Close()
+
+	aclStore, err := aclsqlite.New(aclDB, nil, auditDB, cfg.Gateway.GatewayID)
+	if err != nil {
+		return "", fmt.Errorf("constructing sqlite acl store: %w", err)
+	}
+	defer aclStore.Close()
+
+	grant := func(ctx context.Context, principalType, principalID, resourceType, resourceID string, accessLevel int, grantedBy, reason string, expiresAt *time.Time) error {
+		_, gerr := aclStore.GrantAccess(ctx, principalType, principalID, resourceType, resourceID, accessLevel, grantedBy, reason, expiresAt)
+		return gerr
+	}
+
+	return secrets.CreateInitialTokenWithStore(ctx, tokenStore, grant, cfg, tokenName, principalType, level)
+}
+
+// openSQLiteNative opens a SQLite database via the bare "sqlite" driver
+// (modernc.org/sqlite) with the same pragmas aetherlite uses, so init-secrets
+// reads/writes the on-disk files identically (see cmd/aetherlite/main.go).
+func openSQLiteNative(ctx context.Context, path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open SQLite database %s: %w", path, err)
+	}
+	for _, pragma := range []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA busy_timeout=5000",
+		"PRAGMA foreign_keys=ON",
+	} {
+		if _, err := db.ExecContext(ctx, pragma); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("applying pragma %q on %s: %w", pragma, path, err)
+		}
+	}
+	return db, nil
 }
 
 func handleGenerateTLS(gs *secrets.GeneratedSecrets, secretsPath, tlsDir string, validity time.Duration, force, printSecrets bool, extraSANs []string) error {

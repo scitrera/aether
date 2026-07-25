@@ -16,31 +16,31 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/admin"
-	"github.com/scitrera/aether/internal/audit"
-	"github.com/scitrera/aether/internal/auth"
-	"github.com/scitrera/aether/internal/checkpoint"
-	"github.com/scitrera/aether/internal/circuitbreaker"
-	"github.com/scitrera/aether/internal/cleanup"
-	"github.com/scitrera/aether/internal/config"
-	"github.com/scitrera/aether/internal/gateway"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/quota"
-	"github.com/scitrera/aether/internal/readiness"
-	"github.com/scitrera/aether/internal/registry"
-	"github.com/scitrera/aether/internal/router"
-	"github.com/scitrera/aether/internal/secrets"
-	"github.com/scitrera/aether/internal/state"
-	aclpg "github.com/scitrera/aether/internal/storage/acl/postgres"
-	regstore "github.com/scitrera/aether/internal/storage/registry"
-	regpg "github.com/scitrera/aether/internal/storage/registry/postgres"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
-	"github.com/scitrera/aether/internal/tracing"
-	versionpkg "github.com/scitrera/aether/internal/version"
-	"github.com/scitrera/aether/pkg/certgen"
-	"github.com/scitrera/aether/pkg/crypto"
+	"github.com/scitrera/aether/server/internal/admin"
+	"github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/internal/auth"
+	"github.com/scitrera/aether/server/internal/checkpoint"
+	"github.com/scitrera/aether/server/internal/circuitbreaker"
+	"github.com/scitrera/aether/server/internal/cleanup"
+	"github.com/scitrera/aether/server/internal/config"
+	"github.com/scitrera/aether/server/internal/gateway"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/quota"
+	"github.com/scitrera/aether/server/internal/readiness"
+	"github.com/scitrera/aether/server/internal/registry"
+	"github.com/scitrera/aether/server/internal/router"
+	"github.com/scitrera/aether/server/internal/secrets"
+	"github.com/scitrera/aether/server/internal/state"
+	aclpg "github.com/scitrera/aether/server/internal/storage/acl/postgres"
+	regstore "github.com/scitrera/aether/server/internal/storage/registry"
+	regpg "github.com/scitrera/aether/server/internal/storage/registry/postgres"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	taskpg "github.com/scitrera/aether/server/internal/storage/tasks/postgres"
+	"github.com/scitrera/aether/server/internal/tracing"
+	versionpkg "github.com/scitrera/aether/server/internal/version"
+	"github.com/scitrera/aether/server/pkg/certgen"
+	"github.com/scitrera/aether/server/pkg/crypto"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	otelgrpcfilters "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc/filters"
 	"google.golang.org/grpc"
@@ -269,6 +269,22 @@ func main() {
 		logging.Logger.Debug().Msg("OpenTelemetry tracing disabled (OTEL_EXPORTER_OTLP_ENDPOINT not set)")
 	}
 
+	// Initialize OpenTelemetry metrics (OTLP gRPC) + Go runtime metrics.
+	// Gated on the same OTEL_EXPORTER_OTLP_ENDPOINT env var as tracing —
+	// no-op when unset. The gRPC server's otelgrpc stats handler (wired below)
+	// then also emits rpc.server.* metrics through this MeterProvider.
+	metricsShutdown, err := tracing.InitMeter("aether-gateway")
+	if err != nil {
+		logging.Logger.Fatal().Err(err).Msg("failed to initialize metrics")
+	}
+	defer func() {
+		// Best-effort metrics flush/shutdown on exit; any error is unactionable here.
+		_ = metricsShutdown(context.Background())
+	}()
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+		logging.Logger.Info().Msg("OpenTelemetry metrics + Go runtime instrumentation enabled")
+	}
+
 	// Initialize OpenTelemetry log bridge — exports structured zerolog
 	// events to SigNoz via OTLP with trace context correlation.
 	logBridge, err := tracing.NewLogBridge(context.Background(), "aether-gateway")
@@ -394,9 +410,9 @@ func main() {
 		mtlsRequired = true // -tls flag forces mTLS to be required
 	}
 
-	mtlsMode := gateway.MTLSModeStrict
-	if cfg.Auth.MTLS.Mode == "relaxed" {
-		mtlsMode = gateway.MTLSModeRelaxed
+	mtlsMode, mtlsModeErr := gateway.ParseMTLSMode(cfg.Auth.MTLS.Mode)
+	if mtlsModeErr != nil {
+		logging.Logger.Fatal().Err(mtlsModeErr).Str("mtls_mode", cfg.Auth.MTLS.Mode).Msg("invalid mTLS mode in configuration")
 	}
 
 	mtlsConfig := gateway.MTLSConfig{
@@ -408,6 +424,18 @@ func main() {
 	auditConfig := buildAuditConfig(cfg)
 	auditLogger := audit.NewAuditLogger(db, cfg.Gateway.GatewayID, auditConfig)
 	defer auditLogger.Close()
+
+	// Coalesce high-volume repetitive audit events (chat-streaming chatter).
+	gatewayOpts = append(gatewayOpts, gateway.WithAuditCoalesceWindow(cfg.Audit.GetCoalesceWindow()))
+
+	// Gateway tenant id, minted into X-Auth-Tenant-ID on proxied requests.
+	// The gateway is per-tenant; AETHER_TENANT_ID names it (matching the
+	// proxy-sidecar env convention). When unset, the proxy path falls back to
+	// the sender's workspace as the tenant scope.
+	if tenantID := os.Getenv("AETHER_TENANT_ID"); tenantID != "" {
+		gatewayOpts = append(gatewayOpts, gateway.WithGatewayTenantID(tenantID))
+		logging.Logger.Debug().Str("tenant_id", tenantID).Msg("gateway tenant id configured for X-Auth-Tenant-ID minting")
+	}
 
 	// Checkpoint default TTL
 	checkpointDefaultTTL := cfg.Checkpoint.GetDefaultTTL()
@@ -546,8 +574,20 @@ func main() {
 		TaskPurgeInterval:      cfg.Cleanup.GetTaskPurgeInterval(),
 		CompletedTaskRetention: cfg.Cleanup.GetCompletedTaskRetention(),
 		FailedTaskRetention:    cfg.Cleanup.GetFailedTaskRetention(),
-		CancelledTaskRetention: cfg.Cleanup.GetCancelledTaskRetention(),
-		ReconciliationInterval: cfg.Cleanup.GetReconciliationInterval(),
+		CancelledTaskRetention:        cfg.Cleanup.GetCancelledTaskRetention(),
+		ReconciliationInterval:        cfg.Cleanup.GetReconciliationInterval(),
+		InteractiveTaskTTL:            cfg.Cleanup.GetInteractiveTaskTTL(),
+		InteractiveTaskCancelInterval: cfg.Cleanup.GetInteractiveTaskCancelInterval(),
+		StartupTaskTTL:                cfg.Cleanup.GetStartupTaskTTL(),
+		StartupTaskCancelInterval:     cfg.Cleanup.GetStartupTaskCancelInterval(),
+		PoolTaskTTL:                   cfg.Cleanup.GetPoolTaskTTL(),
+		PoolTaskCancelInterval:        cfg.Cleanup.GetPoolTaskCancelInterval(),
+		QueueReconcileInterval:        cfg.Cleanup.GetQueueReconcileInterval(),
+		AuditRetentionDays:            cfg.Cleanup.GetAuditRetentionDays(),
+		AuditCleanupInterval:          cfg.Cleanup.GetAuditCleanupInterval(),
+		// Full gateway is Redis-backed and multi-node-capable; keep lease-based
+		// leader election (SingleNode stays false) so exactly one node sweeps. A
+		// stuck Redis lease self-heals via LockTTL expiry.
 	}
 	gatewayOpts = append(gatewayOpts, gateway.WithCleanupService(cleanupConfig))
 
@@ -620,8 +660,14 @@ func main() {
 			Timeout:               10 * time.Second,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             10 * time.Second,
-			PermitWithoutStream: false,
+			MinTime: 10 * time.Second,
+			// SDK clients dial with PermitWithoutStream: true and keepalive-ping
+			// idle connections (default every 30s) to detect a dead gateway. With
+			// PermitWithoutStream: false here the gateway counts those idle pings
+			// as abusive and sends GOAWAY "too_many_pings", churning the client's
+			// connection (e.g. sandbox sidecars → reaped). Permit streamless
+			// keepalive; MinTime (10s) still throttles a genuinely chatty client.
+			PermitWithoutStream: true,
 		}),
 	}
 

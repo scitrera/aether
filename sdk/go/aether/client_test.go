@@ -451,6 +451,66 @@ func TestBaseClient_Send_Success(t *testing.T) {
 	}
 }
 
+// TestSendWithOptions_ThreadsAuthorization verifies that an explicit OBO
+// AuthorizationContext on SendMessageOptions is threaded onto the wire
+// SendMessage, and that a bare send carries no authorization (explicit by
+// design — a send never assumes an OBO context).
+func TestSendWithOptions_ThreadsAuthorization(t *testing.T) {
+	newRunningClient := func() *BaseClient {
+		c, err := NewBaseClient(BaseClientConfig{ServerAddr: TestServerAddr})
+		if err != nil {
+			t.Fatalf("NewBaseClient() error = %v", err)
+		}
+		c.running.Store(true)
+		return c
+	}
+	dequeueSend := func(c *BaseClient) *pb.SendMessage {
+		select {
+		case m := <-c.RequestQueue():
+			return m.GetSend()
+		default:
+			t.Fatal("message should be in the queue")
+			return nil
+		}
+	}
+
+	// Explicit authorization is forwarded.
+	authz := &pb.AuthorizationContext{
+		AuthorityMode: "on_behalf_of",
+		Subject:       &pb.PrincipalRef{PrincipalType: "user", PrincipalId: "alice@example.com"},
+		GrantId:       "grant-123",
+	}
+	c := newRunningClient()
+	if err := c.SendWithOptions(SendMessageOptions{
+		TargetTopic:   "test.topic",
+		Payload:       []byte("hi"),
+		MessageType:   MessageTypeChat,
+		Authorization: authz,
+	}); err != nil {
+		t.Fatalf("SendWithOptions() error = %v", err)
+	}
+	send := dequeueSend(c)
+	if send.GetAuthorization() == nil {
+		t.Fatal("expected authorization to be threaded onto SendMessage")
+	}
+	if got := send.GetAuthorization().GetSubject().GetPrincipalId(); got != "alice@example.com" {
+		t.Errorf("authorization subject = %q, want alice@example.com", got)
+	}
+
+	// Bare send (no authorization) stays nil.
+	c2 := newRunningClient()
+	if err := c2.SendWithOptions(SendMessageOptions{
+		TargetTopic: "test.topic",
+		Payload:     []byte("hi"),
+		MessageType: MessageTypeChat,
+	}); err != nil {
+		t.Fatalf("SendWithOptions() error = %v", err)
+	}
+	if send := dequeueSend(c2); send.GetAuthorization() != nil {
+		t.Error("bare send must not assume an OBO authorization")
+	}
+}
+
 // =============================================================================
 // Connection Lifecycle Tests
 // =============================================================================
@@ -937,8 +997,26 @@ func TestBaseClient_DispatchResponse_TaskAssignment(t *testing.T) {
 		t.Errorf("dispatchResponse() error = %v", err)
 	}
 
-	if len(tracker.tasks) != 1 {
-		t.Errorf("Task assignment handler called %d times, want 1", len(tracker.tasks))
+	// OnTaskAssignment is dispatched on its own goroutine — workers
+	// typically need to round-trip the gateway (CompleteTask, KVGetSync)
+	// during delivery and would deadlock the receive loop if invoked
+	// synchronously. Poll for handler completion under the tracker's
+	// mutex.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		tracker.mu.Lock()
+		n := len(tracker.tasks)
+		tracker.mu.Unlock()
+		if n >= 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	tracker.mu.Lock()
+	got := len(tracker.tasks)
+	tracker.mu.Unlock()
+	if got != 1 {
+		t.Errorf("Task assignment handler called %d times, want 1", got)
 	}
 }
 

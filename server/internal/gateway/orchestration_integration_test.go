@@ -3,7 +3,7 @@ package gateway
 import (
 	"testing"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 func TestPhase6Integration_ParseIdentity(t *testing.T) {

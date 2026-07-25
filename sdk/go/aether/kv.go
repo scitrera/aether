@@ -105,17 +105,25 @@ func (kv *KV) Get(key string, scope KVScope, userID, workspace string) error {
 
 // GetWithRequestID retrieves a value from the KV store with a specific request ID for correlation.
 func (kv *KV) GetWithRequestID(key string, scope KVScope, userID, workspace, requestID string) error {
+	return kv.getWithReqIDAuth(key, scope, userID, workspace, requestID, nil)
+}
+
+// getWithReqIDAuth is the internal GET builder carrying an optional
+// on-behalf-of AuthorizationContext (proto field 9). GetWithRequestID passes
+// nil (direct mode); GetSync forwards KVGetOptions.Authorization.
+func (kv *KV) getWithReqIDAuth(key string, scope KVScope, userID, workspace, requestID string, auth *pb.AuthorizationContext) error {
 	if scope == "" {
 		scope = KVScopeGlobal
 	}
 
 	op := &pb.KVOperation{
-		Op:        pb.KVOperation_GET,
-		Scope:     kvScopeToProto(scope),
-		Key:       key,
-		UserId:    userID,
-		Workspace: workspace,
-		RequestId: requestID,
+		Op:            pb.KVOperation_GET,
+		Scope:         kvScopeToProto(scope),
+		Key:           key,
+		UserId:        userID,
+		Workspace:     workspace,
+		RequestId:     requestID,
+		Authorization: auth,
 	}
 
 	return kv.client.Send(&pb.UpstreamMessage{
@@ -143,19 +151,27 @@ func (kv *KV) Put(key string, value []byte, scope KVScope, userID, workspace str
 
 // PutWithRequestID stores a value in the KV store with a specific request ID for correlation.
 func (kv *KV) PutWithRequestID(key string, value []byte, scope KVScope, userID, workspace string, ttl int64, requestID string) error {
+	return kv.putWithReqIDAuth(key, value, scope, userID, workspace, ttl, requestID, nil)
+}
+
+// putWithReqIDAuth is the internal PUT builder carrying an optional
+// on-behalf-of AuthorizationContext (proto field 9). PutWithRequestID passes
+// nil (direct mode); PutSync forwards KVPutOptions.Authorization.
+func (kv *KV) putWithReqIDAuth(key string, value []byte, scope KVScope, userID, workspace string, ttl int64, requestID string, auth *pb.AuthorizationContext) error {
 	if scope == "" {
 		scope = KVScopeGlobal
 	}
 
 	op := &pb.KVOperation{
-		Op:        pb.KVOperation_PUT,
-		Scope:     kvScopeToProto(scope),
-		Key:       key,
-		Value:     value,
-		UserId:    userID,
-		Workspace: workspace,
-		Ttl:       ttl,
-		RequestId: requestID,
+		Op:            pb.KVOperation_PUT,
+		Scope:         kvScopeToProto(scope),
+		Key:           key,
+		Value:         value,
+		UserId:        userID,
+		Workspace:     workspace,
+		Ttl:           ttl,
+		RequestId:     requestID,
+		Authorization: auth,
 	}
 
 	return kv.client.Send(&pb.UpstreamMessage{
@@ -181,17 +197,34 @@ func (kv *KV) List(keyPrefix string, scope KVScope, userID, workspace string) er
 
 // ListWithRequestID lists keys with a specific request ID for correlation.
 func (kv *KV) ListWithRequestID(keyPrefix string, scope KVScope, userID, workspace, requestID string) error {
+	return kv.listWithOpts(keyPrefix, scope, userID, workspace, requestID, 0, "")
+}
+
+// listWithOpts is the internal LIST builder carrying pagination (limit/cursor).
+// ListWithRequestID passes the zero values (server default, first page);
+// ListSync forwards KVListOptions.Limit/Cursor.
+func (kv *KV) listWithOpts(keyPrefix string, scope KVScope, userID, workspace, requestID string, limit int32, cursor string) error {
+	return kv.listWithOptsAuth(keyPrefix, scope, userID, workspace, requestID, limit, cursor, nil)
+}
+
+// listWithOptsAuth is the internal LIST builder carrying pagination plus an
+// optional on-behalf-of AuthorizationContext (proto field 9). listWithOpts
+// passes nil (direct mode); ListSync forwards KVListOptions.Authorization.
+func (kv *KV) listWithOptsAuth(keyPrefix string, scope KVScope, userID, workspace, requestID string, limit int32, cursor string, auth *pb.AuthorizationContext) error {
 	if scope == "" {
 		scope = KVScopeGlobal
 	}
 
 	op := &pb.KVOperation{
-		Op:        pb.KVOperation_LIST,
-		Scope:     kvScopeToProto(scope),
-		Key:       keyPrefix,
-		UserId:    userID,
-		Workspace: workspace,
-		RequestId: requestID,
+		Op:            pb.KVOperation_LIST,
+		Scope:         kvScopeToProto(scope),
+		Key:           keyPrefix,
+		UserId:        userID,
+		Workspace:     workspace,
+		RequestId:     requestID,
+		Limit:         limit,
+		Cursor:        cursor,
+		Authorization: auth,
 	}
 
 	return kv.client.Send(&pb.UpstreamMessage{
@@ -287,6 +320,46 @@ func (kv *KV) DecrementWithRequestID(key string, scope KVScope, userID, workspac
 	return kv.client.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_KvOp{KvOp: op},
 	})
+}
+
+// PurgeIdentitySync REMOVAL-ONLY purges every key in another principal's KV
+// namespace (opts.TargetIdentity, opts.Scope), optionally filtered by
+// opts.KeyPrefix, and waits for the response. Requires the
+// capability/kv_purge_identity grant on THIS client's identity. The response
+// carries only the deleted count (KVResponse.CounterValue) — never keys or
+// values — so the capability cannot be used to read another principal's data.
+func (kv *KV) PurgeIdentitySync(ctx context.Context, opts KVPurgeOptions) (*KVResponse, error) {
+	kv.syncMu.Lock()
+	defer kv.syncMu.Unlock()
+
+	timeout := opts.Timeout
+	if timeout == 0 {
+		timeout = DefaultKVTimeout
+	}
+
+	requestID := kv.client.NextRequestID()
+	ch := kv.client.RegisterPendingKVRequest(requestID)
+	defer kv.client.pendingKVRequests.Delete(requestID)
+
+	scope := opts.Scope
+	if scope == "" {
+		scope = KVScopeGlobal
+	}
+
+	op := &pb.KVOperation{
+		Op:             pb.KVOperation_PURGE_IDENTITY,
+		Scope:          kvScopeToProto(scope),
+		Key:            opts.KeyPrefix,
+		TargetIdentity: opts.TargetIdentity,
+		RequestId:      requestID,
+	}
+	if err := kv.client.Send(&pb.UpstreamMessage{
+		Payload: &pb.UpstreamMessage_KvOp{KvOp: op},
+	}); err != nil {
+		return nil, err
+	}
+
+	return kv.waitForCorrelatedResponse(ctx, ch, timeout)
 }
 
 // IncrementSync atomically increments a counter and waits for the response.
@@ -458,6 +531,201 @@ func (kv *KV) DecrementIfSync(ctx context.Context, key string, scope KVScope, us
 }
 
 // =============================================================================
+// Conditional-write Operations (coordination primitives)
+// =============================================================================
+//
+// SetNX / CompareAndSet / CompareAndDelete are the atomic building blocks for
+// distributed coordination (see the coord package for Mutex / LeaderElection /
+// Once helpers built on them). The lease TTL is carried over the wire in whole
+// seconds, so sub-second lock leases are not representable — use seconds-scale
+// TTLs (the coord defaults are 30s lease / 10s renew).
+
+// SetNXSync sets key=value only if the key is absent. Returns applied=true iff
+// the value was written. ttl is the lease lifetime (truncated to whole
+// seconds; 0 means no expiry).
+func (kv *KV) SetNXSync(ctx context.Context, key string, value []byte, scope KVScope, userID, workspace string, ttl, timeout time.Duration) (bool, error) {
+	kv.syncMu.Lock()
+	defer kv.syncMu.Unlock()
+
+	if timeout == 0 {
+		timeout = DefaultKVTimeout
+	}
+	if scope == "" {
+		scope = KVScopeGlobal
+	}
+
+	requestID := kv.client.NextRequestID()
+	ch := kv.client.RegisterPendingKVRequest(requestID)
+	defer kv.client.pendingKVRequests.Delete(requestID)
+
+	op := &pb.KVOperation{
+		Op:        pb.KVOperation_SET_NX,
+		Scope:     kvScopeToProto(scope),
+		Key:       key,
+		Value:     value,
+		UserId:    userID,
+		Workspace: workspace,
+		Ttl:       int64(ttl.Seconds()),
+		RequestId: requestID,
+	}
+	if err := kv.client.Send(&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_KvOp{KvOp: op}}); err != nil {
+		return false, err
+	}
+	resp, err := kv.waitForCorrelatedResponse(ctx, ch, timeout)
+	if err != nil {
+		return false, err
+	}
+	return resp.Applied, nil
+}
+
+// CompareAndSetSync sets key=value only if the current stored value equals
+// expected. Returns applied=true iff the swap was applied. ttl is the new lease
+// lifetime (whole seconds; 0 means no expiry).
+func (kv *KV) CompareAndSetSync(ctx context.Context, key string, expected, value []byte, scope KVScope, userID, workspace string, ttl, timeout time.Duration) (bool, error) {
+	kv.syncMu.Lock()
+	defer kv.syncMu.Unlock()
+
+	if timeout == 0 {
+		timeout = DefaultKVTimeout
+	}
+	if scope == "" {
+		scope = KVScopeGlobal
+	}
+
+	requestID := kv.client.NextRequestID()
+	ch := kv.client.RegisterPendingKVRequest(requestID)
+	defer kv.client.pendingKVRequests.Delete(requestID)
+
+	op := &pb.KVOperation{
+		Op:            pb.KVOperation_COMPARE_AND_SET,
+		Scope:         kvScopeToProto(scope),
+		Key:           key,
+		ExpectedValue: expected,
+		Value:         value,
+		UserId:        userID,
+		Workspace:     workspace,
+		Ttl:           int64(ttl.Seconds()),
+		RequestId:     requestID,
+	}
+	if err := kv.client.Send(&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_KvOp{KvOp: op}}); err != nil {
+		return false, err
+	}
+	resp, err := kv.waitForCorrelatedResponse(ctx, ch, timeout)
+	if err != nil {
+		return false, err
+	}
+	return resp.Applied, nil
+}
+
+// CompareAndDeleteSync deletes key only if the current stored value equals
+// expected. Returns applied=true iff the delete was applied.
+func (kv *KV) CompareAndDeleteSync(ctx context.Context, key string, expected []byte, scope KVScope, userID, workspace string, timeout time.Duration) (bool, error) {
+	kv.syncMu.Lock()
+	defer kv.syncMu.Unlock()
+
+	if timeout == 0 {
+		timeout = DefaultKVTimeout
+	}
+	if scope == "" {
+		scope = KVScopeGlobal
+	}
+
+	requestID := kv.client.NextRequestID()
+	ch := kv.client.RegisterPendingKVRequest(requestID)
+	defer kv.client.pendingKVRequests.Delete(requestID)
+
+	op := &pb.KVOperation{
+		Op:            pb.KVOperation_COMPARE_AND_DELETE,
+		Scope:         kvScopeToProto(scope),
+		Key:           key,
+		ExpectedValue: expected,
+		UserId:        userID,
+		Workspace:     workspace,
+		RequestId:     requestID,
+	}
+	if err := kv.client.Send(&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_KvOp{KvOp: op}}); err != nil {
+		return false, err
+	}
+	resp, err := kv.waitForCorrelatedResponse(ctx, ch, timeout)
+	if err != nil {
+		return false, err
+	}
+	return resp.Applied, nil
+}
+
+// SetAddSync adds member to the set at key, returning whether it was newly
+// added and the set's cardinality after the add. ttl (re)sets expiry on a new
+// member. Mirrors the SetAdd KV primitive.
+func (kv *KV) SetAddSync(ctx context.Context, key string, member []byte, scope KVScope, userID, workspace string, ttl, timeout time.Duration) (bool, int64, error) {
+	kv.syncMu.Lock()
+	defer kv.syncMu.Unlock()
+
+	if timeout == 0 {
+		timeout = DefaultKVTimeout
+	}
+	if scope == "" {
+		scope = KVScopeGlobal
+	}
+
+	requestID := kv.client.NextRequestID()
+	ch := kv.client.RegisterPendingKVRequest(requestID)
+	defer kv.client.pendingKVRequests.Delete(requestID)
+
+	op := &pb.KVOperation{
+		Op:        pb.KVOperation_SET_ADD,
+		Scope:     kvScopeToProto(scope),
+		Key:       key,
+		Value:     member,
+		UserId:    userID,
+		Workspace: workspace,
+		Ttl:       int64(ttl.Seconds()),
+		RequestId: requestID,
+	}
+	if err := kv.client.Send(&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_KvOp{KvOp: op}}); err != nil {
+		return false, 0, err
+	}
+	resp, err := kv.waitForCorrelatedResponse(ctx, ch, timeout)
+	if err != nil {
+		return false, 0, err
+	}
+	return resp.Applied, resp.CounterValue, nil
+}
+
+// SetCardSync returns the cardinality of the set at key (0 if absent).
+func (kv *KV) SetCardSync(ctx context.Context, key string, scope KVScope, userID, workspace string, timeout time.Duration) (int64, error) {
+	kv.syncMu.Lock()
+	defer kv.syncMu.Unlock()
+
+	if timeout == 0 {
+		timeout = DefaultKVTimeout
+	}
+	if scope == "" {
+		scope = KVScopeGlobal
+	}
+
+	requestID := kv.client.NextRequestID()
+	ch := kv.client.RegisterPendingKVRequest(requestID)
+	defer kv.client.pendingKVRequests.Delete(requestID)
+
+	op := &pb.KVOperation{
+		Op:        pb.KVOperation_SET_CARD,
+		Scope:     kvScopeToProto(scope),
+		Key:       key,
+		UserId:    userID,
+		Workspace: workspace,
+		RequestId: requestID,
+	}
+	if err := kv.client.Send(&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_KvOp{KvOp: op}}); err != nil {
+		return 0, err
+	}
+	resp, err := kv.waitForCorrelatedResponse(ctx, ch, timeout)
+	if err != nil {
+		return 0, err
+	}
+	return resp.CounterValue, nil
+}
+
+// =============================================================================
 // Synchronous KV Operations
 // =============================================================================
 
@@ -494,7 +762,7 @@ func (kv *KV) GetSync(ctx context.Context, opts KVGetOptions) (*KVResponse, erro
 		scope = KVScopeGlobal
 	}
 
-	if err := kv.GetWithRequestID(opts.Key, scope, opts.UserID, opts.Workspace, requestID); err != nil {
+	if err := kv.getWithReqIDAuth(opts.Key, scope, opts.UserID, opts.Workspace, requestID, opts.Authorization); err != nil {
 		return nil, err
 	}
 
@@ -541,7 +809,7 @@ func (kv *KV) PutSync(ctx context.Context, opts KVPutOptions) (*KVResponse, erro
 		ttlSeconds = int64(opts.TTL.Seconds())
 	}
 
-	if err := kv.PutWithRequestID(opts.Key, opts.Value, scope, opts.UserID, opts.Workspace, ttlSeconds, requestID); err != nil {
+	if err := kv.putWithReqIDAuth(opts.Key, opts.Value, scope, opts.UserID, opts.Workspace, ttlSeconds, requestID, opts.Authorization); err != nil {
 		return nil, err
 	}
 
@@ -582,7 +850,7 @@ func (kv *KV) ListSync(ctx context.Context, opts KVListOptions) (*KVResponse, er
 		scope = KVScopeGlobal
 	}
 
-	if err := kv.ListWithRequestID(opts.KeyPrefix, scope, opts.UserID, opts.Workspace, requestID); err != nil {
+	if err := kv.listWithOptsAuth(opts.KeyPrefix, scope, opts.UserID, opts.Workspace, requestID, opts.Limit, opts.Cursor, opts.Authorization); err != nil {
 		return nil, err
 	}
 
@@ -645,24 +913,6 @@ func (kv *KV) drainResponseQueue() {
 		default:
 			return
 		}
-	}
-}
-
-// waitForResponse waits for a KV response with timeout (legacy queue-based).
-func (kv *KV) waitForResponse(ctx context.Context, timeout time.Duration) (*KVResponse, error) {
-	// Create a timer for the timeout
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	queue := kv.client.KVResponseQueue()
-
-	select {
-	case <-ctx.Done():
-		return nil, NewTimeoutError("context canceled", timeout.Seconds())
-	case <-timer.C:
-		return nil, NewTimeoutError("KV operation timed out", timeout.Seconds())
-	case resp := <-queue:
-		return resp, nil
 	}
 }
 

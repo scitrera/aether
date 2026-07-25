@@ -26,8 +26,8 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 
-	legacy "github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/pkg/models"
+	legacy "github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // JetStreamAuthorityStore decorates an inner aclstore.Store, routing the

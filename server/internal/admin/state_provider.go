@@ -59,6 +59,7 @@ type StateProvider interface {
 	// ACL Management
 	ListACLRules(ctx context.Context, filter *ACLRuleFilter) ([]*ACLRuleInfo, error)
 	GetACLRule(ctx context.Context, principalType, principalID, resourceType, resourceID string) (*ACLRuleInfo, error)
+	GetACLRuleByID(ctx context.Context, ruleID string) (*ACLRuleInfo, error)
 	GrantACLAccess(ctx context.Context, req *GrantACLAccessRequest) (*ACLRuleInfo, error)
 	RevokeACLAccess(ctx context.Context, principalType, principalID, resourceType, resourceID string) error
 	ListACLAuthorityGrants(ctx context.Context, filter *ACLAuthorityGrantFilter) ([]*ACLAuthorityGrantInfo, error)
@@ -71,6 +72,25 @@ type StateProvider interface {
 	QueryACLAuditLog(ctx context.Context, filter *ACLAuditLogFilter) ([]*ACLAuditLogEntryInfo, error)
 	CleanupExpiredACLRules(ctx context.Context) (int64, error)
 	CleanupOldACLAuditLogs(ctx context.Context, retentionDays int) (int64, error)
+
+	// ACL Groups & Roles
+	ListACLGroups(ctx context.Context) ([]*ACLGroupInfo, error)
+	CreateACLGroup(ctx context.Context, req *CreateACLGroupRequest) (*ACLGroupInfo, error)
+	GetACLGroup(ctx context.Context, name string) (*ACLGroupInfo, error)
+	DeleteACLGroup(ctx context.Context, name string) error
+	ListACLGroupMembers(ctx context.Context, groupName string) ([]*ACLGroupMemberInfo, error)
+	AddACLGroupMember(ctx context.Context, groupName string, req *AddACLGroupMemberRequest) (*ACLGroupMemberInfo, error)
+	RemoveACLGroupMember(ctx context.Context, groupName, memberType, memberID string) error
+	ListACLRoles(ctx context.Context) ([]*ACLRoleInfo, error)
+	CreateACLRole(ctx context.Context, req *CreateACLRoleRequest) (*ACLRoleInfo, error)
+	GetACLRole(ctx context.Context, name string) (*ACLRoleInfo, error)
+	DeleteACLRole(ctx context.Context, name string) error
+	ListACLRoleAssignments(ctx context.Context, roleName string) ([]*ACLRoleAssignmentInfo, error)
+	AssignACLRole(ctx context.Context, roleName string, req *AssignACLRoleRequest) (*ACLRoleAssignmentInfo, error)
+	UnassignACLRole(ctx context.Context, roleName, assigneeType, assigneeID string) error
+	ListACLPrincipalGroups(ctx context.Context, memberType, memberID string) ([]*ACLGroupMemberInfo, error)
+	ListACLPrincipalRoles(ctx context.Context, assigneeType, assigneeID string) ([]*ACLRoleAssignmentInfo, error)
+	ExplainACLAccess(ctx context.Context, principalType, principalID, resourceType, resourceID string, requiredLevel int, callerType, callerID string) (*ACLAccessExplanationInfo, error)
 
 	// Message Flow Visualization
 	GetMessageFlow(ctx context.Context, workspaceID string) (*MessageFlowInfo, error)
@@ -184,6 +204,8 @@ type TaskFilter struct {
 	AuthorityGrantID     string  `json:"authority_grant_id,omitempty"`
 	RootAuthorityGrantID string  `json:"root_authority_grant_id,omitempty"`
 	ParentTaskID         string  `json:"parent_task_id,omitempty"`
+	Priority             int32   `json:"priority,omitempty"`     // exact dispatch-priority filter; 0 = no filter
+	MinPriority          int32   `json:"min_priority,omitempty"` // minimum dispatch-priority threshold; 0 = no filter
 	Limit                int     `json:"limit,omitempty"`
 	Offset               int     `json:"offset,omitempty"`
 }
@@ -193,6 +215,7 @@ type TaskInfo struct {
 	TaskID         string                 `json:"task_id"`
 	TaskType       string                 `json:"task_type"`
 	TaskClass      int32                  `json:"task_class,omitempty"`
+	Priority       int32                  `json:"priority,omitempty"`
 	DisconnectedAt *time.Time             `json:"disconnected_at,omitempty"`
 	GraceWindowMs  int64                  `json:"grace_window_ms,omitempty"`
 	Status         string                 `json:"status"`
@@ -515,6 +538,102 @@ type ACLAuditLogEntryInfo struct {
 	GatewayID       string                 `json:"gateway_id"`
 	SessionID       string                 `json:"session_id,omitempty"`
 	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// ACLGroupInfo represents an ACL group
+type ACLGroupInfo struct {
+	GroupID     string                 `json:"group_id"`
+	GroupName   string                 `json:"group_name"`
+	Description string                 `json:"description,omitempty"`
+	CreatedBy   string                 `json:"created_by,omitempty"`
+	CreatedAt   time.Time              `json:"created_at"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// CreateACLGroupRequest represents a request to create an ACL group
+type CreateACLGroupRequest struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	CreatedBy   string                 `json:"created_by,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// ACLGroupMemberInfo represents a group membership edge
+type ACLGroupMemberInfo struct {
+	GroupName  string     `json:"group_name"`
+	MemberType string     `json:"member_type"`
+	MemberID   string     `json:"member_id"`
+	GrantedBy  string     `json:"granted_by,omitempty"`
+	GrantedAt  time.Time  `json:"granted_at"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+}
+
+// AddACLGroupMemberRequest represents a request to add a member to a group
+type AddACLGroupMemberRequest struct {
+	MemberType string     `json:"member_type"`
+	MemberID   string     `json:"member_id"`
+	GrantedBy  string     `json:"granted_by,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+}
+
+// ACLRoleInfo represents an ACL role
+type ACLRoleInfo struct {
+	RoleID      string                 `json:"role_id"`
+	RoleName    string                 `json:"role_name"`
+	Description string                 `json:"description,omitempty"`
+	CreatedBy   string                 `json:"created_by,omitempty"`
+	CreatedAt   time.Time              `json:"created_at"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// CreateACLRoleRequest represents a request to create an ACL role
+type CreateACLRoleRequest struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	CreatedBy   string                 `json:"created_by,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// ACLRoleAssignmentInfo represents a role assignment edge
+type ACLRoleAssignmentInfo struct {
+	RoleName     string     `json:"role_name"`
+	AssigneeType string     `json:"assignee_type"`
+	AssigneeID   string     `json:"assignee_id"`
+	GrantedBy    string     `json:"granted_by,omitempty"`
+	GrantedAt    time.Time  `json:"granted_at"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+}
+
+// ACLAccessContributionInfo is one rule that matched the principal or one of
+// its groups/roles for an explained resource.
+type ACLAccessContributionInfo struct {
+	Subject     string `json:"subject"`
+	RuleID      string `json:"rule_id"`
+	AccessLevel int    `json:"access_level"`
+	Resource    string `json:"resource"`
+	Expired     bool   `json:"expired"`
+}
+
+// ACLAccessExplanationInfo explains how a principal's effective access to a
+// resource is decided: the resolved subject set, the rules that matched, and
+// the resulting decision. No audit row is written for an explain.
+type ACLAccessExplanationInfo struct {
+	Principal       string                       `json:"principal"`
+	Subjects        []string                     `json:"subjects"`
+	Contributions   []*ACLAccessContributionInfo `json:"contributions,omitempty"`
+	Allowed         bool                         `json:"allowed"`
+	Decision        string                       `json:"decision"`
+	EffectiveLevel  int                          `json:"effective_access_level"`
+	FallbackApplied bool                         `json:"fallback_applied"`
+	Reason          string                       `json:"reason,omitempty"`
+}
+
+// AssignACLRoleRequest represents a request to assign a role to a principal
+type AssignACLRoleRequest struct {
+	AssigneeType string     `json:"assignee_type"`
+	AssigneeID   string     `json:"assignee_id"`
+	GrantedBy    string     `json:"granted_by,omitempty"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
 }
 
 // =============================================================================

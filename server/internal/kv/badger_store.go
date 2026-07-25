@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // BadgerKVStore is a Badger-backed implementation of the KVReadWriter interface.
@@ -155,6 +155,7 @@ func (s *BadgerKVStore) ListPaginated(
 ) (*ListResult, error) {
 	limit := DefaultListLimit
 	var startAfter []byte
+	keyPrefix := ""
 	if opts != nil {
 		if opts.Limit > 0 {
 			limit = opts.Limit
@@ -162,9 +163,17 @@ func (s *BadgerKVStore) ListPaginated(
 		if opts.Cursor != "" && opts.Cursor != "0" {
 			startAfter = []byte(opts.Cursor)
 		}
+		keyPrefix = opts.KeyPrefix
 	}
 
 	prefix := s.badgerPrefix(agent, scope, userID, workspace)
+	// scanPrefix narrows iteration to keys whose user-facing portion begins with
+	// keyPrefix, so the limit bounds matches rather than the whole namespace.
+	// shortKey extraction below still strips only the namespace `prefix`.
+	scanPrefix := prefix
+	if keyPrefix != "" {
+		scanPrefix = append(append([]byte{}, prefix...), keyPrefix...)
+	}
 
 	items := make(map[string]string)
 	var nextCursor string
@@ -172,7 +181,7 @@ func (s *BadgerKVStore) ListPaginated(
 
 	err := s.db.View(func(txn *badger.Txn) error {
 		iterOpts := badger.DefaultIteratorOptions
-		iterOpts.Prefix = prefix
+		iterOpts.Prefix = scanPrefix
 
 		it := txn.NewIterator(iterOpts)
 		defer it.Close()
@@ -186,7 +195,7 @@ func (s *BadgerKVStore) ListPaginated(
 				it.Next()
 			}
 		} else {
-			it.Seek(prefix)
+			it.Seek(scanPrefix)
 		}
 
 		count := 0
@@ -254,21 +263,33 @@ func (s *BadgerKVStore) Decrement(
 
 // addDelta performs an atomic read-modify-write to add delta to the stored integer.
 // Values are stored as their decimal string representation (matching Redis INCR semantics).
+//
+// Badger uses optimistic concurrency control, so concurrent increments against
+// the same key collide with ErrConflict — acute for hot keys like the per-user
+// ratelimit counter (ratelimit:user:{user}) under a connection storm (e.g. a
+// mass window refresh), where every request increments the same key. Retry the
+// pure read-modify-write, matching addDeltaGuarded's policy; without this the
+// conflict surfaced as a hard "failed to modify counter" error.
 func (s *BadgerKVStore) addDelta(fullKey []byte, delta int64) (int64, error) {
 	var newVal int64
-	err := s.db.Update(func(txn *badger.Txn) error {
-		current, err := readBadgerCounter(txn, fullKey)
-		if err != nil {
-			return err
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		err := s.db.Update(func(txn *badger.Txn) error {
+			current, err := readBadgerCounter(txn, fullKey)
+			if err != nil {
+				return err
+			}
+			newVal = current + delta
+			return txn.Set(fullKey, []byte(strconv.FormatInt(newVal, 10)))
+		})
+		if err == nil {
+			return newVal, nil
 		}
-		newVal = current + delta
-		encoded := []byte(strconv.FormatInt(newVal, 10))
-		return txn.Set(fullKey, encoded)
-	})
-	if err != nil {
+		if errors.Is(err, badger.ErrConflict) {
+			continue
+		}
 		return 0, fmt.Errorf("failed to modify counter: %w", err)
 	}
-	return newVal, nil
+	return 0, fmt.Errorf("failed to modify counter on %s: contention after %d attempts", string(fullKey), casMaxAttempts)
 }
 
 // readBadgerCounter loads the integer value at fullKey within the given
@@ -389,4 +410,256 @@ func (s *BadgerKVStore) addDeltaGuarded(fullKey []byte, delta, guard int64, isCe
 		return 0, false, fmt.Errorf("guarded counter on %s failed: %w", string(fullKey), err)
 	}
 	return 0, false, fmt.Errorf("guarded counter on %s failed: contention after %d attempts", string(fullKey), maxAttempts)
+}
+
+// casMaxAttempts bounds the optimistic-concurrency retry loop for the
+// conditional write primitives, matching addDeltaGuarded's policy.
+const casMaxAttempts = 100
+
+// readBadgerValue loads the string value at fullKey within txn. Badger honors
+// per-entry TTL natively, so logically-expired keys surface as
+// badger.ErrKeyNotFound (found=false) — no soft-TTL handling required.
+func readBadgerValue(txn *badger.Txn, fullKey []byte) (val string, found bool, err error) {
+	item, err := txn.Get(fullKey)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	err = item.Value(func(v []byte) error {
+		val = string(v)
+		return nil
+	})
+	if err != nil {
+		return "", false, err
+	}
+	return val, true, nil
+}
+
+// SetNX sets key=value only if the key is absent. Returns true iff written.
+//
+// TTL caveat: Badger's WithTTL truncates expiry to whole seconds, so a
+// coordination lease's effective TTL rounds to ±1s on this backend. This is
+// harmless for real coordination TTLs (seconds-scale); avoid sub-second lease
+// TTLs on the single-node backend.
+func (s *BadgerKVStore) SetNX(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	fullKey := s.badgerKey(agent, scope, key, userID, workspace)
+
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		var written bool
+		err := s.db.Update(func(txn *badger.Txn) error {
+			_, found, err := readBadgerValue(txn, fullKey)
+			if err != nil {
+				return err
+			}
+			if found {
+				written = false
+				return nil
+			}
+			entry := badger.NewEntry(fullKey, []byte(value))
+			if ttl > 0 {
+				entry = entry.WithTTL(ttl)
+			}
+			written = true
+			return txn.SetEntry(entry)
+		})
+		if err == nil {
+			return written, nil
+		}
+		if errors.Is(err, badger.ErrConflict) {
+			continue
+		}
+		return false, fmt.Errorf("failed to setnx key %s: %w", key, err)
+	}
+	return false, fmt.Errorf("failed to setnx key %s: contention after %d attempts", key, casMaxAttempts)
+}
+
+// CompareAndSet sets key=value only if the current value equals expected.
+// Returns true iff the swap was applied. A missing key never matches.
+func (s *BadgerKVStore) CompareAndSet(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	expected string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	fullKey := s.badgerKey(agent, scope, key, userID, workspace)
+
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		var applied bool
+		err := s.db.Update(func(txn *badger.Txn) error {
+			current, found, err := readBadgerValue(txn, fullKey)
+			if err != nil {
+				return err
+			}
+			if !found || current != expected {
+				applied = false
+				return nil
+			}
+			entry := badger.NewEntry(fullKey, []byte(value))
+			if ttl > 0 {
+				entry = entry.WithTTL(ttl)
+			}
+			applied = true
+			return txn.SetEntry(entry)
+		})
+		if err == nil {
+			return applied, nil
+		}
+		if errors.Is(err, badger.ErrConflict) {
+			continue
+		}
+		return false, fmt.Errorf("failed to compare-and-set key %s: %w", key, err)
+	}
+	return false, fmt.Errorf("failed to compare-and-set key %s: contention after %d attempts", key, casMaxAttempts)
+}
+
+// CompareAndDelete deletes key only if the current value equals expected.
+// Returns true iff the delete was applied.
+func (s *BadgerKVStore) CompareAndDelete(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	expected string,
+	userID string,
+	workspace string,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	fullKey := s.badgerKey(agent, scope, key, userID, workspace)
+
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		var applied bool
+		err := s.db.Update(func(txn *badger.Txn) error {
+			current, found, err := readBadgerValue(txn, fullKey)
+			if err != nil {
+				return err
+			}
+			if !found || current != expected {
+				applied = false
+				return nil
+			}
+			applied = true
+			return txn.Delete(fullKey)
+		})
+		if err == nil {
+			return applied, nil
+		}
+		if errors.Is(err, badger.ErrConflict) {
+			continue
+		}
+		return false, fmt.Errorf("failed to compare-and-delete key %s: %w", key, err)
+	}
+	return false, fmt.Errorf("failed to compare-and-delete key %s: contention after %d attempts", key, casMaxAttempts)
+}
+
+// SetAdd atomically adds member to the JSON-encoded set stored at key. Returns
+// whether the member was newly added (false if already present) and the set's
+// cardinality after the add. When ttl > 0 the key's expiry is (re)set on a
+// newly-added member (Badger truncates TTL to whole seconds). Duplicate adds are
+// pure reads and never write, so they neither refresh the TTL nor cause churn.
+func (s *BadgerKVStore) SetAdd(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	member string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, int64, error) {
+	if err := validateKey(key); err != nil {
+		return false, 0, err
+	}
+	fullKey := s.badgerKey(agent, scope, key, userID, workspace)
+
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		var (
+			added bool
+			card  int64
+		)
+		err := s.db.Update(func(txn *badger.Txn) error {
+			raw, _, err := readBadgerValue(txn, fullKey)
+			if err != nil {
+				return err
+			}
+			set := parseMemberSet(raw)
+			if _, ok := set[member]; ok {
+				added = false
+				card = int64(len(set))
+				return nil // member already present — no write
+			}
+			set[member] = struct{}{}
+			added = true
+			card = int64(len(set))
+			entry := badger.NewEntry(fullKey, []byte(encodeMemberSet(set)))
+			if ttl > 0 {
+				entry = entry.WithTTL(ttl)
+			}
+			return txn.SetEntry(entry)
+		})
+		if err == nil {
+			return added, card, nil
+		}
+		if errors.Is(err, badger.ErrConflict) {
+			continue
+		}
+		return false, 0, fmt.Errorf("set-add on %s failed: %w", string(fullKey), err)
+	}
+	return false, 0, fmt.Errorf("set-add on %s failed: contention after %d attempts", string(fullKey), casMaxAttempts)
+}
+
+// SetCard returns the cardinality of the set stored at key (0 if absent or
+// logically expired via Badger's native TTL).
+func (s *BadgerKVStore) SetCard(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	userID string,
+	workspace string,
+) (int64, error) {
+	if err := validateKey(key); err != nil {
+		return 0, err
+	}
+	fullKey := s.badgerKey(agent, scope, key, userID, workspace)
+
+	var card int64
+	err := s.db.View(func(txn *badger.Txn) error {
+		raw, found, err := readBadgerValue(txn, fullKey)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return nil
+		}
+		card = int64(len(parseMemberSet(raw)))
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("set-card on %s failed: %w", string(fullKey), err)
+	}
+	return card, nil
 }

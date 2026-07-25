@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/scitrera/aether/pkg/authproxy/login"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/authproxy/login"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // CredKeySession is the credentials-map key carrying an opaque session id

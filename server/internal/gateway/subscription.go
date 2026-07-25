@@ -8,9 +8,9 @@ import (
 	"unsafe"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/tracing"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/tracing"
+	"github.com/scitrera/aether/server/pkg/models"
 	"github.com/scitrera/aether/sdk/go/aether"
 	bp "github.com/scitrera/go-backpressure"
 	"go.opentelemetry.io/otel/attribute"
@@ -85,6 +85,34 @@ func (s *GatewayServer) subscribeClientToTopicExclusive(client *ClientSession, t
 		return err
 	}
 
+	client.AddSubscription(topic, func() {
+		cancel()
+		topicSubscriptions.Dec()
+	})
+	topicSubscriptions.Inc()
+	return nil
+}
+
+// subscribeClientToTopicResumeOrTail subscribes a client to a shared/broadcast
+// topic with a per-window named consumer that resumes from its committed offset,
+// or — on a first-ever subscribe — starts at the tail instead of replaying the
+// whole topic. Use this (rather than the anonymous subscribeClientToTopic) for
+// broadcast lanes the client re-subscribes on every connect (gu/uw/uu): a
+// reconnect then replays only what was published while it was away instead of
+// re-dumping (and re-shedding under backpressure) the entire retained history.
+// The consumer name is the identity string, which is per-window, so each window
+// tracks its own offset without stealing another window's.
+func (s *GatewayServer) subscribeClientToTopicResumeOrTail(client *ClientSession, topic string) error {
+	if client.HasSubscription(topic) {
+		return nil // Already subscribed
+	}
+	client.identityMu.RLock()
+	consumerName := client.Identity.String()
+	client.identityMu.RUnlock()
+	cancel, err := s.router.SubscribeExclusiveResumeOrTail(topic, consumerName, s.createMessageHandler(client))
+	if err != nil {
+		return err
+	}
 	client.AddSubscription(topic, func() {
 		cancel()
 		topicSubscriptions.Dec()
@@ -231,6 +259,9 @@ func (s *GatewayServer) createMessageHandler(client *ClientSession) func([]byte)
 					SourceTopic: parsed.env.Source,
 					Payload:     parsed.env.Payload,
 					MessageType: parsed.env.MessageType,
+					// Mirror the gateway-stamped OBO subject onto delivery so the
+					// recipient can identify the user the message was sent for.
+					OnBehalfSubject: parsed.env.GetOnBehalfSubject(),
 				},
 			},
 		})
@@ -354,6 +385,29 @@ func (s *GatewayServer) setupClientSubscriptions(client *ClientSession) error {
 				logging.Logger.Warn().Err(err).Str("topic", upgTopic).Msg("failed to subscribe to user-progress topic")
 			}
 		}
+		// Subscribe to the per-user broadcast topic (uu::{user}) — a
+		// workspace-agnostic channel for platform→user notifications that
+		// reaches every one of the user's windows regardless of the active
+		// workspace. Shared subscription with local fan-out (mirroring the
+		// per-user progress topic), but carrying ordinary messages rather than
+		// progress updates, so it uses the generic message handler.
+		if identity.ID != "" {
+			ubTopic, err := models.UserBroadcastTopic(identity.ID)
+			if err != nil {
+				return fmt.Errorf("invalid user-broadcast topic: %w", err)
+			}
+			if err := s.subscribeClientToTopicResumeOrTail(client, ubTopic); err != nil {
+				logging.Logger.Warn().Err(err).Str("topic", ubTopic).Msg("failed to subscribe to user-broadcast topic")
+			}
+		}
+		// Phase 2 "Design M": re-attach this session to the per-task chat
+		// message lanes of any tasks that are already RUNNING with this user
+		// as the participating OBO subject. The live subscribe path
+		// (createProgressFilterHandler) only fires on the running notice, which
+		// has already passed for in-flight tasks — backfill catches them.
+		if s.taskStore != nil {
+			s.backfillRunningSubjectTaskMessages(context.Background(), client)
+		}
 		// Subscribe to workspace-scoped topics if workspace is set (shared, no offset tracking)
 		// This includes gu::{workspace}, uw::{user}::{workspace}, and pg::{workspace}
 		if identity.Workspace != "" {
@@ -414,7 +468,7 @@ func (s *GatewayServer) subscribeUserToWorkspaceTopics(client *ClientSession, wo
 	if err != nil {
 		return fmt.Errorf("invalid global user topic: %w", err)
 	}
-	if err := s.subscribeClientToTopic(client, guTopic); err != nil {
+	if err := s.subscribeClientToTopicResumeOrTail(client, guTopic); err != nil {
 		return fmt.Errorf("failed to subscribe to %s: %w", guTopic, err)
 	}
 
@@ -423,7 +477,7 @@ func (s *GatewayServer) subscribeUserToWorkspaceTopics(client *ClientSession, wo
 	if err != nil {
 		return fmt.Errorf("invalid user-workspace topic: %w", err)
 	}
-	if err := s.subscribeClientToTopic(client, uwTopic); err != nil {
+	if err := s.subscribeClientToTopicResumeOrTail(client, uwTopic); err != nil {
 		return fmt.Errorf("failed to subscribe to %s: %w", uwTopic, err)
 	}
 

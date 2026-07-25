@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 func TestValidateHibernationPrecondition_RejectsNilHibernation(t *testing.T) {

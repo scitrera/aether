@@ -1,4 +1,4 @@
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 # Import the proxy module for its side effect: installs the
 # ``ProxyHttpResponse`` / ``ProxyHttpBodyChunk`` dispatcher hook on
@@ -41,8 +41,14 @@ from ._common import (
     KV_SCOPE_USER_SHARED,
     KV_SCOPE_USER_WORKSPACE_SHARED,
 
+    # Canonical principal-type strings (mirror server models.PrincipalType)
+    PrincipalType,
+
     # Auth credentials builder
     Credentials,
+
+    # Service-addressing wildcard sentinel
+    SERVICE_WILDCARD,
 
     # internal
     _logging_lite_hook,
@@ -393,6 +399,9 @@ __all__ = (
 
     # Types - Other
     'Credentials',
+
+    # Service-addressing wildcard sentinel
+    'SERVICE_WILDCARD',
 
     # Metric builder
     'MetricBuilder',

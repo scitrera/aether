@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scitrera-aether-client"
-version = "0.2.1"
+version = "0.2.2"
 description = "Python client SDK for Scitrera Aether distributed control plane"
 readme = "README.md"
 license = "Apache-2.0"
@@ -36,15 +36,23 @@ classifiers = [
     "Framework :: AsyncIO",
 ]
 dependencies = [
-    "grpcio==1.80.0",
-    "protobuf>6",
+    "grpcio==1.81.1",
+    "protobuf>=6.33.5",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "grpcio==1.80.0",
+    "grpcio==1.81.1",
     "pytest==9.0.3",
-    "pytest==9.0.3",
+    # Required, not optional: asyncio_mode = "auto" below plus ~170 async tests.
+    "pytest-asyncio>=0.23.0",
+    # requests and httpx are optional at runtime — requests_adapter.py and
+    # httpx_transport.py both guard the import and raise a clear install hint —
+    # but their test modules import them unconditionally, so the suite cannot run
+    # without them. Absent from the extra, these passed locally only because a
+    # shared virtualenv happened to have both installed.
+    "requests>=2.32",
+    "httpx>=0.27",
     "mypy>=1.8.0",
     "types-protobuf>=4.24.0",
     "grpc-stubs>=1.53.0",

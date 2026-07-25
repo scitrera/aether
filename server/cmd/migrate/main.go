@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	_ "github.com/lib/pq"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/migrations"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/migrations"
 )
 
 var (

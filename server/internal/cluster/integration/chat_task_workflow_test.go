@@ -52,14 +52,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/checkpoint"
-	clusternats "github.com/scitrera/aether/internal/cluster/nats"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/router"
-	"github.com/scitrera/aether/internal/router/natscodec"
-	"github.com/scitrera/aether/internal/state"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/checkpoint"
+	clusternats "github.com/scitrera/aether/server/internal/cluster/nats"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/router"
+	"github.com/scitrera/aether/server/internal/router/natscodec"
+	"github.com/scitrera/aether/server/internal/state"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // oboGrant models an on-behalf-of authority grant. Production uses
@@ -142,7 +142,7 @@ func setupCluster1(t *testing.T) *clusternats.EmbeddedServer {
 		ClientPort:  -1, // ephemeral
 		HAMode:      clusternats.HAModeAuto,
 	}
-	startCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	startCtx, cancel := context.WithTimeout(context.Background(), scaled(20*time.Second))
 	defer cancel()
 	if err := es.Start(startCtx, cfg); err != nil {
 		t.Fatalf("start embedded NATS: %v", err)
@@ -177,7 +177,7 @@ func buildBackends(t *testing.T, es *clusternats.EmbeddedServer, taskStore *fake
 	js := es.JetStream()
 	const replicas = 1
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scaled(20*time.Second))
 	defer cancel()
 
 	r, err := router.NewJetStreamRouter(js, replicas, nil)
@@ -249,7 +249,7 @@ func TestClusterIntegration_ChatTaskWorkflow_EndToEnd(t *testing.T) {
 	const gatewayID = "chat-task-gw"
 	b := buildBackends(t, es, taskStore, gatewayID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scaled(55*time.Second))
 	defer cancel()
 
 	// ----- Phase 1: service principals connect -----
@@ -441,7 +441,7 @@ func TestClusterIntegration_ChatTaskWorkflow_EndToEnd(t *testing.T) {
 	select {
 	case <-taskDelivered:
 		t.Log("phase 6: dispatcher fired; assignment delivered to orchestrator")
-	case <-time.After(10 * time.Second):
+	case <-time.After(scaled(10 * time.Second)):
 		t.Fatal("phase 6: dispatcher callback never fired within 10s")
 	}
 	got, _ := receivedTask.Load().(*orchestration.OrchestrationTaskNotification)
@@ -532,7 +532,7 @@ func TestClusterIntegration_ChatTaskWorkflow_EndToEnd(t *testing.T) {
 		agentGrantID = env.GrantID
 		agentPayload = env.Payload
 		_ = agentPayload // payload would feed the agent's LLM call in production
-	case <-time.After(5 * time.Second):
+	case <-time.After(scaled(5 * time.Second)):
 		t.Fatal("phase 8: agent did not receive the pre-startup message within 5s (cold-start replay broken)")
 	}
 	// Flip the chat task into in_progress now that the agent has it.
@@ -659,7 +659,7 @@ func TestClusterIntegration_ChatTaskWorkflow_EndToEnd(t *testing.T) {
 	select {
 	case <-sandboxDelivered:
 		// proceed
-	case <-time.After(10 * time.Second):
+	case <-time.After(scaled(10 * time.Second)):
 		t.Fatal("phase 11: sandbox-startup dispatcher callback never fired within 10s")
 	}
 	got2, _ := sandboxNotif.Load().(*orchestration.OrchestrationTaskNotification)
@@ -766,7 +766,7 @@ func TestClusterIntegration_ChatTaskWorkflow_EndToEnd(t *testing.T) {
 		if err := b.router.Publish(ctx, agentTopic, respBytes); err != nil {
 			t.Fatalf("phase 13: sandbox Publish reply: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(scaled(5 * time.Second)):
 		t.Fatal("phase 13: sandbox did not receive request within 5s")
 	}
 
@@ -780,7 +780,7 @@ func TestClusterIntegration_ChatTaskWorkflow_EndToEnd(t *testing.T) {
 		if env.TaskID != agentTaskID {
 			t.Errorf("phase 13: agent sandbox reply task_id = %q, want %q", env.TaskID, agentTaskID)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(scaled(5 * time.Second)):
 		t.Fatal("phase 13: agent did not receive sandbox reply within 5s")
 	}
 
@@ -807,7 +807,7 @@ func TestClusterIntegration_ChatTaskWorkflow_EndToEnd(t *testing.T) {
 		if env.TaskID != agentTaskID {
 			t.Errorf("phase 14: user received task_id = %q, want %q", env.TaskID, agentTaskID)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(scaled(5 * time.Second)):
 		t.Fatal("phase 14: user did not receive agent reply within 5s")
 	}
 
@@ -886,7 +886,7 @@ func TestClusterIntegration_ChatTaskWorkflow_EndToEnd(t *testing.T) {
 		if string(got.data) != string(betweenMsg) {
 			t.Errorf("phase 16: re-subscribe got %q, want %q (durable offset resume)", got.data, betweenMsg)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(scaled(5 * time.Second)):
 		t.Fatal("phase 16: re-subscribe did NOT receive between-reconnects message — durable offset resume broken")
 	}
 

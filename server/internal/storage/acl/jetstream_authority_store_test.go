@@ -26,9 +26,9 @@ import (
 
 	"github.com/google/uuid"
 
-	legacy "github.com/scitrera/aether/internal/acl"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	"github.com/scitrera/aether/pkg/models"
+	legacy "github.com/scitrera/aether/server/internal/acl"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // ---------------------------------------------------------------------------
@@ -363,6 +363,11 @@ func (f *fakeInnerStore) GetRule(ctx context.Context, principalType, principalID
 	}, nil
 }
 
+func (f *fakeInnerStore) GetRuleByID(ctx context.Context, ruleID string) (*aclstore.Rule, error) {
+	f.getRuleCalls++
+	return &aclstore.Rule{RuleID: ruleID}, nil
+}
+
 func (f *fakeInnerStore) ListRules(ctx context.Context, filter aclstore.RuleFilter) ([]*aclstore.Rule, error) {
 	return nil, nil
 }
@@ -403,6 +408,53 @@ func (f *fakeInnerStore) Close() error { return nil }
 // ----- Prefix index hook -----
 
 func (f *fakeInnerStore) SetPrefixIndex(p aclstore.PrefixLookup) {}
+
+// ----- Roles & groups (passthrough stubs) -----
+
+func (f *fakeInnerStore) CreateGroup(ctx context.Context, name, description, createdBy string, metadata map[string]interface{}) (*aclstore.Group, error) {
+	return &aclstore.Group{GroupName: name}, nil
+}
+func (f *fakeInnerStore) DeleteGroup(ctx context.Context, name string) error { return nil }
+func (f *fakeInnerStore) GetGroup(ctx context.Context, name string) (*aclstore.Group, error) {
+	return &aclstore.Group{GroupName: name}, nil
+}
+func (f *fakeInnerStore) ListGroups(ctx context.Context) ([]*aclstore.Group, error) { return nil, nil }
+func (f *fakeInnerStore) CreateRole(ctx context.Context, name, description, createdBy string, metadata map[string]interface{}) (*aclstore.Role, error) {
+	return &aclstore.Role{RoleName: name}, nil
+}
+func (f *fakeInnerStore) DeleteRole(ctx context.Context, name string) error { return nil }
+func (f *fakeInnerStore) GetRole(ctx context.Context, name string) (*aclstore.Role, error) {
+	return &aclstore.Role{RoleName: name}, nil
+}
+func (f *fakeInnerStore) ListRoles(ctx context.Context) ([]*aclstore.Role, error) { return nil, nil }
+func (f *fakeInnerStore) AddGroupMember(ctx context.Context, groupName, memberType, memberID, grantedBy string, expiresAt *time.Time) (*aclstore.GroupMember, error) {
+	return &aclstore.GroupMember{GroupName: groupName, MemberType: memberType, MemberID: memberID}, nil
+}
+func (f *fakeInnerStore) RemoveGroupMember(ctx context.Context, groupName, memberType, memberID string) error {
+	return nil
+}
+func (f *fakeInnerStore) ListGroupMembers(ctx context.Context, groupName string) ([]*aclstore.GroupMember, error) {
+	return nil, nil
+}
+func (f *fakeInnerStore) ListPrincipalGroups(ctx context.Context, memberType, memberID string) ([]*aclstore.GroupMember, error) {
+	return nil, nil
+}
+func (f *fakeInnerStore) AssignRole(ctx context.Context, roleName, assigneeType, assigneeID, grantedBy string, expiresAt *time.Time) (*aclstore.RoleAssignment, error) {
+	return &aclstore.RoleAssignment{RoleName: roleName, AssigneeType: assigneeType, AssigneeID: assigneeID}, nil
+}
+func (f *fakeInnerStore) UnassignRole(ctx context.Context, roleName, assigneeType, assigneeID string) error {
+	return nil
+}
+func (f *fakeInnerStore) ListRoleAssignments(ctx context.Context, roleName string) ([]*aclstore.RoleAssignment, error) {
+	return nil, nil
+}
+func (f *fakeInnerStore) ListPrincipalRoles(ctx context.Context, assigneeType, assigneeID string) ([]*aclstore.RoleAssignment, error) {
+	return nil, nil
+}
+func (f *fakeInnerStore) ExplainAccess(ctx context.Context, principalType, principalID, resourceType, resourceID string, requiredLevel int, callerType, callerID string) (*aclstore.AccessExplanation, error) {
+	return &aclstore.AccessExplanation{}, nil
+}
+func (f *fakeInnerStore) CleanupExpiredMemberships(ctx context.Context) (int64, error) { return 0, nil }
 
 // Compile-time assertion: the fake inner satisfies aclstore.Store. If a method
 // is added to Store and not added here, the test build fails — which is the

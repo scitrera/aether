@@ -20,12 +20,12 @@ import (
 	"testing"
 	"time"
 
-	wfstore "github.com/scitrera/aether/internal/storage/workflow"
-	wfpg "github.com/scitrera/aether/internal/storage/workflow/postgres"
-	wfsqlite "github.com/scitrera/aether/internal/storage/workflow/sqlite"
-	"github.com/scitrera/aether/internal/testutil"
-	"github.com/scitrera/aether/internal/workflow"
-	wfmigrations "github.com/scitrera/aether/internal/workflow/migrations"
+	wfstore "github.com/scitrera/aether/server/internal/storage/workflow"
+	wfpg "github.com/scitrera/aether/server/internal/storage/workflow/postgres"
+	wfsqlite "github.com/scitrera/aether/server/internal/storage/workflow/sqlite"
+	"github.com/scitrera/aether/server/internal/testutil"
+	"github.com/scitrera/aether/server/internal/workflow"
+	wfmigrations "github.com/scitrera/aether/server/internal/workflow/migrations"
 )
 
 // storeFactory builds a Store and returns a cleanup func. The factory may

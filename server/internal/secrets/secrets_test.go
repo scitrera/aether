@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/scitrera/aether/internal/config"
+	"github.com/scitrera/aether/server/internal/config"
 )
 
 func TestGenerateAndLoadRoundTrip(t *testing.T) {

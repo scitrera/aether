@@ -795,11 +795,49 @@ func TestUpstreamOpName(t *testing.T) {
 		{&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_KvOp{KvOp: &pb.KVOperation{}}}, OpKVOperation},
 		{&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_ProxyHttpRequest{ProxyHttpRequest: &pb.ProxyHttpRequest{}}}, OpProxyHttpRequest},
 		{&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_TunnelOpen{TunnelOpen: &pb.TunnelOpen{}}}, OpTunnelOpen},
+		// Bridge-driven task-lifecycle ops: TaskQuery (orphan scan) and
+		// TaskOp (complete / fail / pause). Without these cases the
+		// relay returns "" and labels them <unknown> in RELAY_OP_DENIED.
+		{&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_TaskQuery{TaskQuery: &pb.TaskQuery{}}}, OpTaskQuery},
+		{&pb.UpstreamMessage{Payload: &pb.UpstreamMessage_TaskOp{TaskOp: &pb.TaskOperation{}}}, OpTaskOp},
 	}
 	for _, tc := range cases {
 		got := upstreamOpName(tc.msg)
 		if got != tc.want {
 			t.Errorf("upstreamOpName(%T) = %q; want %q", tc.msg.GetPayload(), got, tc.want)
+		}
+	}
+}
+
+func TestProfileOps_SidecarOwn(t *testing.T) {
+	// sidecar-own must be a superset of sandbox-tunnels (so the in-sandbox
+	// SDK keeps its proxy/tunnel access) and additionally allow the task
+	// lifecycle ops the in-sidecar bridge needs.
+	got, err := profileOps(AllowedOpsProfileSidecarOwn)
+	if err != nil {
+		t.Fatalf("profileOps(sidecar-own) error: %v", err)
+	}
+	gotSet := make(map[string]struct{}, len(got))
+	for _, op := range got {
+		gotSet[op] = struct{}{}
+	}
+	required := []string{
+		OpSendMessage,
+		OpProgressReport,
+		OpKVOperation,
+		OpProxyHttpRequest,
+		OpProxyHttpBodyChunk,
+		OpProxyHttpResponse,
+		OpTunnelOpen,
+		OpTunnelData,
+		OpTunnelClose,
+		OpTunnelAck,
+		OpTaskQuery,
+		OpTaskOp,
+	}
+	for _, op := range required {
+		if _, ok := gotSet[op]; !ok {
+			t.Errorf("sidecar-own profile missing required op %q", op)
 		}
 	}
 }

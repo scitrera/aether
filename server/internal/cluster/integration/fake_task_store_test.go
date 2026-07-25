@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
 )
 
 // fakeTaskStore is a minimal taskstore.Store implementation used by the
@@ -44,6 +44,9 @@ func (f *fakeTaskStore) CompleteQueueEntryByTaskID(_ context.Context, _ string) 
 func (f *fakeTaskStore) FailQueueEntryByTaskID(_ context.Context, _, _ string) error {
 	return nil
 }
+func (f *fakeTaskStore) ReconcileOrphanedQueueEntries(_ context.Context) (int64, error) {
+	return 0, nil
+}
 func (f *fakeTaskStore) GetQueueEntryDetails(_ context.Context, queueID string) (*taskstore.QueueEntryDetails, error) {
 	return &taskstore.QueueEntryDetails{
 		TaskID:               queueID,
@@ -78,7 +81,7 @@ func (f *fakeTaskStore) CountPendingQueueEntries(_ context.Context) (int, error)
 // --- Methods that should never be touched in these tests; panic to surface
 //     unexpected calls during integration ---
 
-func (f *fakeTaskStore) InsertQueueEntry(_ context.Context, _, _, _, _, _ string, _ []byte) error {
+func (f *fakeTaskStore) InsertQueueEntry(_ context.Context, _, _, _, _, _ string, _ []byte, _ int) error {
 	panic("InsertQueueEntry unexpected in cluster integration tests")
 }
 func (f *fakeTaskStore) PollPendingQueueEntries(_ context.Context, _ int) ([]*taskstore.QueueEntryNotification, error) {
@@ -103,6 +106,7 @@ func (f *fakeTaskStore) StartTask(_ context.Context, _ string) error     { panic
 func (f *fakeTaskStore) StartTaskWithAgent(_ context.Context, _, _ string) error {
 	panic("unexpected")
 }
+func (f *fakeTaskStore) ClaimTask(_ context.Context, _ string) error    { panic("unexpected") }
 func (f *fakeTaskStore) CompleteTask(_ context.Context, _ string) error { panic("unexpected") }
 func (f *fakeTaskStore) FailTask(_ context.Context, _, _ string) error  { panic("unexpected") }
 func (f *fakeTaskStore) FailTaskWithRetry(_ context.Context, _, _, _ string, _ *time.Time) error {

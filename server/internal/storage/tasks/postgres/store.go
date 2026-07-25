@@ -14,11 +14,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/scitrera/aether/internal/storage/tasks"
-	legacy "github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/storage/tasks"
+	legacy "github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // Store is the postgres-backed task store. It embeds the legacy
@@ -155,12 +156,15 @@ func (s *Store) InsertDLQEntryTx(ctx context.Context, tx tasks.StoreTx, taskID, 
 // Non-transactional queue operations (orchestrated_task_queue)
 // =========================================================================
 
-func (s *Store) InsertQueueEntry(ctx context.Context, queueID, taskID, targetImplementation, workspace, profile string, launchParamsJSON []byte) error {
+func (s *Store) InsertQueueEntry(ctx context.Context, queueID, taskID, targetImplementation, workspace, profile string, launchParamsJSON []byte, priority int) error {
+	if priority == 0 {
+		priority = int(tasks.PriorityNormal)
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO orchestrated_task_queue
-		(queue_id, task_id, target_implementation, workspace, profile, launch_params, status)
-		VALUES ($1, $2, $3, $4, $5, $6, 'pending')
-	`, queueID, taskID, targetImplementation, workspace, profile, launchParamsJSON)
+		(queue_id, task_id, target_implementation, workspace, profile, launch_params, status, priority)
+		VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
+	`, queueID, taskID, targetImplementation, workspace, profile, launchParamsJSON, priority)
 	return err
 }
 
@@ -172,7 +176,7 @@ func (s *Store) PollPendingQueueEntries(ctx context.Context, limit int) ([]*task
 		SELECT queue_id, task_id, profile, workspace, target_implementation
 		FROM orchestrated_task_queue
 		WHERE status = $1 AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-		ORDER BY created_at ASC
+		ORDER BY priority DESC, created_at ASC
 		LIMIT $2
 	`, "pending", limit)
 	if err != nil {
@@ -297,6 +301,39 @@ func (s *Store) FailQueueEntryByTaskID(ctx context.Context, taskID, errorMsg str
 		WHERE task_id = $1 AND status IN ($4, $5)
 	`, taskID, errorMsg, "failed", "pending", "claimed")
 	return err
+}
+
+// ReconcileOrphanedQueueEntries retires every pending/claimed queue row whose
+// task is no longer live (terminal or purged) in one statement. Liveness is a
+// correlated NOT EXISTS against the tasks table restricted to the canonical
+// non-terminal status set, so a purged task (no row) and a terminal task (row
+// present but terminal status) are both treated as orphaned. See the
+// tasks.Store interface doc for the full contract.
+func (s *Store) ReconcileOrphanedQueueEntries(ctx context.Context) (int64, error) {
+	statuses := tasks.NonTerminalStatuses()
+	// $1 = error_message; $2.. = the non-terminal status list.
+	placeholders := make([]string, len(statuses))
+	args := make([]interface{}, 0, len(statuses)+1)
+	args = append(args, tasks.ReconcileErrorMessage)
+	for i, st := range statuses {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, string(st))
+	}
+	query := fmt.Sprintf(`
+		UPDATE orchestrated_task_queue
+		SET status = 'failed', error_message = $1, completed_at = NOW()
+		WHERE status IN ('pending', 'claimed')
+		  AND NOT EXISTS (
+			SELECT 1 FROM tasks t
+			WHERE t.task_id = orchestrated_task_queue.task_id
+			  AND t.status IN (%s)
+		  )
+	`, strings.Join(placeholders, ", "))
+	res, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // =========================================================================

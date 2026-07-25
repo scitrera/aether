@@ -12,10 +12,10 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/nats-io/nats.go/jetstream"
 
-	clusternats "github.com/scitrera/aether/internal/cluster/nats"
-	legacyregistry "github.com/scitrera/aether/internal/registry"
-	registrysqlite "github.com/scitrera/aether/internal/storage/registry/sqlite"
-	sqliteregistrymigrations "github.com/scitrera/aether/migrations/sqlite_registry"
+	clusternats "github.com/scitrera/aether/server/internal/cluster/nats"
+	legacyregistry "github.com/scitrera/aether/server/internal/registry"
+	registrysqlite "github.com/scitrera/aether/server/internal/storage/registry/sqlite"
+	sqliteregistrymigrations "github.com/scitrera/aether/server/migrations/sqlite_registry"
 )
 
 func newWriteSideStore(t *testing.T) (*registrysqlite.Store, func()) {

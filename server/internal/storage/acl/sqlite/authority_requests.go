@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/scitrera/aether/internal/acl"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // CreateAuthorityRequest persists a new authority-request row in PENDING

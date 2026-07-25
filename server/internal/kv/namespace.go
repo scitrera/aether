@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // KVScope represents the visibility scope of KV data.
@@ -32,6 +32,15 @@ const (
 	ScopeUser               KVScope = "user"
 	ScopeUserWorkspace      KVScope = "user-workspace"
 )
+
+// ReservedCoordKeyPrefix namespaces internal coordination keys — distributed
+// locks and leader-election leases used by trusted infrastructure principals
+// (e.g. the WorkflowEngine). Keys under this prefix are eligible for the
+// gateway's infra-coordination ACL fast-path (see KVHandler.checkKeyPermission),
+// which lets infra principals coordinate over the shared KV store without a
+// per-key ACL grant. Application principals (agents/tasks/services) are NOT
+// auto-granted here; they remain subject to normal ACL on these keys.
+const ReservedCoordKeyPrefix = "_sys/coord/"
 
 // IdentityScope identifies the visibility tier of a KV entry.
 type IdentityScope int

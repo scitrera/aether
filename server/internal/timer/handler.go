@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/scitrera/aether/internal/logging"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/logging"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // TimeoutHandler handles task timeout events and updates task state

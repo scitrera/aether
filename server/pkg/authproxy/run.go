@@ -13,11 +13,11 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/auth"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/secrets"
-	"github.com/scitrera/aether/pkg/crypto"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/auth"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/secrets"
+	"github.com/scitrera/aether/server/pkg/crypto"
 )
 
 // Option is a functional option for Run.

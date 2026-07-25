@@ -10,11 +10,11 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
-	"github.com/scitrera/aether/internal/circuitbreaker"
-	"github.com/scitrera/aether/internal/tracing"
-	"github.com/scitrera/aether/pkg/crypto"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/redisutil"
+	"github.com/scitrera/aether/server/internal/circuitbreaker"
+	"github.com/scitrera/aether/server/internal/tracing"
+	"github.com/scitrera/aether/server/pkg/crypto"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/redisutil"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -224,6 +224,14 @@ type ListOptions struct {
 	// Limit is the maximum number of keys to return in a single call.
 	// If <= 0, DefaultListLimit is used.
 	Limit int
+	// KeyPrefix, when non-empty, restricts results to keys whose user-facing
+	// key begins with this prefix. Crucially the prefix is applied BEFORE the
+	// Limit cap (server-side where the backend supports it), so the cap bounds
+	// the number of MATCHING keys rather than all keys in the scope. Without
+	// this, a caller listing a small prefixed subset of a large shared scope
+	// (e.g. "sandbox:" within the _sandbox workspace) could have its matches
+	// fall outside the first page of a scope-wide scan and vanish.
+	KeyPrefix string
 }
 
 // ListResult is the return type for ListPaginated.
@@ -231,6 +239,24 @@ type ListResult struct {
 	Items      map[string]string
 	NextCursor string
 	HasMore    bool
+}
+
+// escapeRedisGlob escapes the glob metacharacters Redis SCAN MATCH recognizes
+// (* ? [ ] \) so a key prefix is matched literally.
+func escapeRedisGlob(s string) string {
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 4)
+	for _, r := range s {
+		switch r {
+		case '*', '?', '[', ']', '\\':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // ListPaginated returns up to opts.Limit keys in a namespace with their values,
@@ -262,8 +288,16 @@ func (s *Store) ListPaginated(
 	}
 
 	namespace := BuildNamespace(agent, scope, userID, workspace)
-	pattern := fmt.Sprintf("%s:*", namespace)
 	prefix := namespace + ":"
+	// Apply the caller's key prefix in the SCAN MATCH pattern so the server
+	// only returns matching keys — the Limit then bounds matches, not the whole
+	// scope. Glob metacharacters in the prefix are escaped so a literal prefix
+	// like "sandbox:" matches literally.
+	keyPrefix := ""
+	if opts != nil {
+		keyPrefix = opts.KeyPrefix
+	}
+	pattern := fmt.Sprintf("%s:%s*", namespace, escapeRedisGlob(keyPrefix))
 
 	var collected []string
 	cursor := startCursor
@@ -635,6 +669,215 @@ func (s *Store) runGuardedCounter(ctx context.Context, script *redis.Script, ful
 	applied, _ := appliedRaw.(int64)
 	value, _ := valueRaw.(int64)
 	return value, applied == 1, nil
+}
+
+// compareAndSetLuaScript sets KEYS[1]=ARGV[2] only when the current value
+// equals ARGV[1]. ARGV[3] is the TTL in milliseconds (<=0 means no expiry).
+// Returns 1 when the swap was applied, 0 otherwise.
+var compareAndSetLuaScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  if tonumber(ARGV[3]) > 0 then
+    redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+  else
+    redis.call('SET', KEYS[1], ARGV[2])
+  end
+  return 1
+end
+return 0
+`)
+
+// compareAndDeleteLuaScript deletes KEYS[1] only when the current value equals
+// ARGV[1]. Returns 1 when the delete was applied, 0 otherwise.
+var compareAndDeleteLuaScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`)
+
+// SetNX sets key=value only if the key is absent. Returns true iff written.
+//
+// Coordination ops (SetNX/CompareAndSet/CompareAndDelete) intentionally do NOT
+// apply the "enc:" at-rest encryption transform: the encryption nonce makes
+// ciphertext non-deterministic, which would break the value comparison the
+// compare-and-* ops rely on. Coordination keys carry opaque owner tokens, not
+// user secrets, so storing them in the clear is appropriate.
+func (s *Store) SetNX(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	namespace := BuildNamespace(agent, scope, userID, workspace)
+	fullKey := fmt.Sprintf("%s:%s", namespace, key)
+
+	effectiveTTL := ttl
+	if effectiveTTL <= 0 && s.defaultTTL > 0 {
+		effectiveTTL = s.defaultTTL
+	}
+
+	var ok bool
+	if err := s.execCB(func() error {
+		var setErr error
+		ok, setErr = s.client.SetNX(ctx, fullKey, value, effectiveTTL).Result()
+		return setErr
+	}); err != nil {
+		return false, fmt.Errorf("failed to setnx key %s: %w", key, err)
+	}
+	return ok, nil
+}
+
+// CompareAndSet sets key=value only if the current value equals expected.
+// Returns true iff the swap was applied.
+func (s *Store) CompareAndSet(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	expected string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	namespace := BuildNamespace(agent, scope, userID, workspace)
+	fullKey := fmt.Sprintf("%s:%s", namespace, key)
+
+	effectiveTTL := ttl
+	if effectiveTTL <= 0 && s.defaultTTL > 0 {
+		effectiveTTL = s.defaultTTL
+	}
+
+	var raw interface{}
+	if err := s.execCB(func() error {
+		var runErr error
+		raw, runErr = compareAndSetLuaScript.Run(ctx, s.client, []string{fullKey}, expected, value, effectiveTTL.Milliseconds()).Result()
+		return runErr
+	}); err != nil {
+		return false, fmt.Errorf("failed to compare-and-set key %s: %w", key, err)
+	}
+	applied, _ := raw.(int64)
+	return applied == 1, nil
+}
+
+// CompareAndDelete deletes key only if the current value equals expected.
+// Returns true iff the delete was applied.
+func (s *Store) CompareAndDelete(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	expected string,
+	userID string,
+	workspace string,
+) (bool, error) {
+	if err := validateKey(key); err != nil {
+		return false, err
+	}
+	namespace := BuildNamespace(agent, scope, userID, workspace)
+	fullKey := fmt.Sprintf("%s:%s", namespace, key)
+
+	var raw interface{}
+	if err := s.execCB(func() error {
+		var runErr error
+		raw, runErr = compareAndDeleteLuaScript.Run(ctx, s.client, []string{fullKey}, expected).Result()
+		return runErr
+	}); err != nil {
+		return false, fmt.Errorf("failed to compare-and-delete key %s: %w", key, err)
+	}
+	applied, _ := raw.(int64)
+	return applied == 1, nil
+}
+
+// setAddLuaScript atomically adds ARGV[1] to the set at KEYS[1], (re)setting the
+// key's TTL to ARGV[2] milliseconds when the member is newly added and ARGV[2] > 0,
+// and returns {addedFlag, cardinality}. addedFlag is 1 when the member was newly
+// added, 0 when it was already present. TTL is refreshed only on a real write so
+// duplicate adds are pure reads (matching the Badger/JetStream backends).
+var setAddLuaScript = redis.NewScript(`
+local added = redis.call('SADD', KEYS[1], ARGV[1])
+if added == 1 and tonumber(ARGV[2]) > 0 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[2])
+end
+local card = redis.call('SCARD', KEYS[1])
+return {added, card}
+`)
+
+// SetAdd atomically adds member to the set stored at key and returns whether the
+// member was newly added (false if already present) plus the set's cardinality
+// after the add. See KVReadWriter.SetAdd for the firing/dedup semantics.
+//
+// Set values are stored in the clear (no "enc:" at-rest transform): members are
+// opaque correlation/dedup tokens, not user secrets, and SADD over
+// non-deterministic ciphertext would break membership semantics — the same
+// rationale as the SetNX/CompareAndSet coordination ops above.
+func (s *Store) SetAdd(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	member string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+) (bool, int64, error) {
+	if err := validateKey(key); err != nil {
+		return false, 0, err
+	}
+	namespace := BuildNamespace(agent, scope, userID, workspace)
+	fullKey := fmt.Sprintf("%s:%s", namespace, key)
+
+	var raw interface{}
+	if err := s.execCB(func() error {
+		var runErr error
+		raw, runErr = setAddLuaScript.Run(ctx, s.client, []string{fullKey}, member, ttl.Milliseconds()).Result()
+		return runErr
+	}); err != nil {
+		return false, 0, fmt.Errorf("set-add on %s failed: %w", key, err)
+	}
+	arr, ok := raw.([]interface{})
+	if !ok || len(arr) != 2 {
+		return false, 0, fmt.Errorf("unexpected set-add result shape: %T", raw)
+	}
+	added, _ := arr[0].(int64)
+	card, _ := arr[1].(int64)
+	return added == 1, card, nil
+}
+
+// SetCard returns the cardinality of the set stored at key (0 if absent).
+func (s *Store) SetCard(
+	ctx context.Context,
+	agent models.Identity,
+	scope KVScope,
+	key string,
+	userID string,
+	workspace string,
+) (int64, error) {
+	if err := validateKey(key); err != nil {
+		return 0, err
+	}
+	namespace := BuildNamespace(agent, scope, userID, workspace)
+	fullKey := fmt.Sprintf("%s:%s", namespace, key)
+
+	var card int64
+	if err := s.execCB(func() error {
+		var cErr error
+		card, cErr = s.client.SCard(ctx, fullKey).Result()
+		return cErr
+	}); err != nil {
+		return 0, fmt.Errorf("set-card on %s failed: %w", key, err)
+	}
+	return card, nil
 }
 
 // GetJSON retrieves and unmarshals a JSON value

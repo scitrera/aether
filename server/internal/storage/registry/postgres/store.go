@@ -20,8 +20,8 @@ package postgres
 import (
 	"database/sql"
 
-	legacy "github.com/scitrera/aether/internal/registry"
-	"github.com/scitrera/aether/internal/storage/registry"
+	legacy "github.com/scitrera/aether/server/internal/registry"
+	"github.com/scitrera/aether/server/internal/storage/registry"
 )
 
 // Store is the postgres-backed registry store. It struct-embeds the two

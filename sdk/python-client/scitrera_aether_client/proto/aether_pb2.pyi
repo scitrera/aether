@@ -79,6 +79,22 @@ class TaskClass(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     TASK_CLASS_BACKGROUND: _ClassVar[TaskClass]
     TASK_CLASS_BATCH: _ClassVar[TaskClass]
 
+class TaskPriority(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    TASK_PRIORITY_UNSPECIFIED: _ClassVar[TaskPriority]
+    TASK_PRIORITY_XLOW: _ClassVar[TaskPriority]
+    TASK_PRIORITY_LOW: _ClassVar[TaskPriority]
+    TASK_PRIORITY_NORMAL: _ClassVar[TaskPriority]
+    TASK_PRIORITY_HIGH: _ClassVar[TaskPriority]
+    TASK_PRIORITY_PREEMPT: _ClassVar[TaskPriority]
+
+class BackoffStrategy(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    BACKOFF_STRATEGY_UNSPECIFIED: _ClassVar[BackoffStrategy]
+    BACKOFF_STRATEGY_FIXED: _ClassVar[BackoffStrategy]
+    BACKOFF_STRATEGY_EXPONENTIAL: _ClassVar[BackoffStrategy]
+    BACKOFF_STRATEGY_EXPLICIT_SCHEDULE: _ClassVar[BackoffStrategy]
+
 class WaitReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     WAIT_REASON_UNSPECIFIED: _ClassVar[WaitReason]
@@ -150,6 +166,16 @@ TASK_CLASS_UNSPECIFIED: TaskClass
 TASK_CLASS_INTERACTIVE: TaskClass
 TASK_CLASS_BACKGROUND: TaskClass
 TASK_CLASS_BATCH: TaskClass
+TASK_PRIORITY_UNSPECIFIED: TaskPriority
+TASK_PRIORITY_XLOW: TaskPriority
+TASK_PRIORITY_LOW: TaskPriority
+TASK_PRIORITY_NORMAL: TaskPriority
+TASK_PRIORITY_HIGH: TaskPriority
+TASK_PRIORITY_PREEMPT: TaskPriority
+BACKOFF_STRATEGY_UNSPECIFIED: BackoffStrategy
+BACKOFF_STRATEGY_FIXED: BackoffStrategy
+BACKOFF_STRATEGY_EXPONENTIAL: BackoffStrategy
+BACKOFF_STRATEGY_EXPLICIT_SCHEDULE: BackoffStrategy
 WAIT_REASON_UNSPECIFIED: WaitReason
 WAIT_REASON_INPUT: WaitReason
 WAIT_REASON_AUTHORITY: WaitReason
@@ -342,7 +368,7 @@ class ConnectionAck(_message.Message):
     server_build_info: BuildInfo
     initial_connection_unix_ms: int
     reconnection_count: int
-    def __init__(self, session_id: _Optional[str] = ..., resumed: bool = ..., assigned_id: _Optional[str] = ..., negotiated_extensions: _Optional[_Iterable[_Union[NegotiatedExtension, _Mapping]]] = ..., server_supported_extensions: _Optional[_Iterable[str]] = ..., server_version: _Optional[str] = ..., server_build_info: _Optional[_Union[BuildInfo, _Mapping]] = ..., initial_connection_unix_ms: _Optional[int] = ..., reconnection_count: _Optional[int] = ...) -> None: ...
+    def __init__(self, session_id: _Optional[str] = ..., resumed: _Optional[bool] = ..., assigned_id: _Optional[str] = ..., negotiated_extensions: _Optional[_Iterable[_Union[NegotiatedExtension, _Mapping]]] = ..., server_supported_extensions: _Optional[_Iterable[str]] = ..., server_version: _Optional[str] = ..., server_build_info: _Optional[_Union[BuildInfo, _Mapping]] = ..., initial_connection_unix_ms: _Optional[int] = ..., reconnection_count: _Optional[int] = ...) -> None: ...
 
 class InitConnection(_message.Message):
     __slots__ = ("agent", "task", "user", "orchestrator", "workflow_engine", "metrics_bridge", "bridge", "service", "credentials", "resume_session_id", "extensions", "client_version", "client_sdk", "client_build_info")
@@ -405,7 +431,7 @@ class ExtensionDeclaration(_message.Message):
     version: str
     required: bool
     json_schema: str
-    def __init__(self, uri: _Optional[str] = ..., version: _Optional[str] = ..., required: bool = ..., json_schema: _Optional[str] = ...) -> None: ...
+    def __init__(self, uri: _Optional[str] = ..., version: _Optional[str] = ..., required: _Optional[bool] = ..., json_schema: _Optional[str] = ...) -> None: ...
 
 class NegotiatedExtension(_message.Message):
     __slots__ = ("uri", "version", "supported", "rejection_reason")
@@ -417,7 +443,7 @@ class NegotiatedExtension(_message.Message):
     version: str
     supported: bool
     rejection_reason: str
-    def __init__(self, uri: _Optional[str] = ..., version: _Optional[str] = ..., supported: bool = ..., rejection_reason: _Optional[str] = ...) -> None: ...
+    def __init__(self, uri: _Optional[str] = ..., version: _Optional[str] = ..., supported: _Optional[bool] = ..., rejection_reason: _Optional[str] = ...) -> None: ...
 
 class WorkflowEngineIdentity(_message.Message):
     __slots__ = ("instance_id",)
@@ -450,12 +476,14 @@ class BridgeIdentity(_message.Message):
     def __init__(self, implementation: _Optional[str] = ..., specifier: _Optional[str] = ...) -> None: ...
 
 class ServiceIdentity(_message.Message):
-    __slots__ = ("implementation", "specifier")
+    __slots__ = ("implementation", "specifier", "no_pool_consumer")
     IMPLEMENTATION_FIELD_NUMBER: _ClassVar[int]
     SPECIFIER_FIELD_NUMBER: _ClassVar[int]
+    NO_POOL_CONSUMER_FIELD_NUMBER: _ClassVar[int]
     implementation: str
     specifier: str
-    def __init__(self, implementation: _Optional[str] = ..., specifier: _Optional[str] = ...) -> None: ...
+    no_pool_consumer: bool
+    def __init__(self, implementation: _Optional[str] = ..., specifier: _Optional[str] = ..., no_pool_consumer: _Optional[bool] = ...) -> None: ...
 
 class AgentIdentity(_message.Message):
     __slots__ = ("workspace", "implementation", "specifier")
@@ -571,7 +599,7 @@ class SwitchWorkspace(_message.Message):
     def __init__(self, new_workspace_id: _Optional[str] = ...) -> None: ...
 
 class KVOperation(_message.Message):
-    __slots__ = ("op", "scope", "key", "value", "user_id", "workspace", "ttl", "request_id", "authorization", "guard_value", "delta_value")
+    __slots__ = ("op", "scope", "key", "value", "user_id", "workspace", "ttl", "request_id", "authorization", "guard_value", "delta_value", "expected_value", "limit", "cursor", "target_identity")
     class OpType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         GET: _ClassVar[KVOperation.OpType]
@@ -582,6 +610,12 @@ class KVOperation(_message.Message):
         DECREMENT: _ClassVar[KVOperation.OpType]
         INCREMENT_IF: _ClassVar[KVOperation.OpType]
         DECREMENT_IF: _ClassVar[KVOperation.OpType]
+        SET_NX: _ClassVar[KVOperation.OpType]
+        COMPARE_AND_SET: _ClassVar[KVOperation.OpType]
+        COMPARE_AND_DELETE: _ClassVar[KVOperation.OpType]
+        PURGE_IDENTITY: _ClassVar[KVOperation.OpType]
+        SET_ADD: _ClassVar[KVOperation.OpType]
+        SET_CARD: _ClassVar[KVOperation.OpType]
     GET: KVOperation.OpType
     PUT: KVOperation.OpType
     LIST: KVOperation.OpType
@@ -590,6 +624,12 @@ class KVOperation(_message.Message):
     DECREMENT: KVOperation.OpType
     INCREMENT_IF: KVOperation.OpType
     DECREMENT_IF: KVOperation.OpType
+    SET_NX: KVOperation.OpType
+    COMPARE_AND_SET: KVOperation.OpType
+    COMPARE_AND_DELETE: KVOperation.OpType
+    PURGE_IDENTITY: KVOperation.OpType
+    SET_ADD: KVOperation.OpType
+    SET_CARD: KVOperation.OpType
     class Scope(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         SCOPE_UNSPECIFIED: _ClassVar[KVOperation.Scope]
@@ -621,6 +661,10 @@ class KVOperation(_message.Message):
     AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
     GUARD_VALUE_FIELD_NUMBER: _ClassVar[int]
     DELTA_VALUE_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_VALUE_FIELD_NUMBER: _ClassVar[int]
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    CURSOR_FIELD_NUMBER: _ClassVar[int]
+    TARGET_IDENTITY_FIELD_NUMBER: _ClassVar[int]
     op: KVOperation.OpType
     scope: KVOperation.Scope
     key: str
@@ -632,10 +676,14 @@ class KVOperation(_message.Message):
     authorization: AuthorizationContext
     guard_value: int
     delta_value: int
-    def __init__(self, op: _Optional[_Union[KVOperation.OpType, str]] = ..., scope: _Optional[_Union[KVOperation.Scope, str]] = ..., key: _Optional[str] = ..., value: _Optional[bytes] = ..., user_id: _Optional[str] = ..., workspace: _Optional[str] = ..., ttl: _Optional[int] = ..., request_id: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., guard_value: _Optional[int] = ..., delta_value: _Optional[int] = ...) -> None: ...
+    expected_value: bytes
+    limit: int
+    cursor: str
+    target_identity: str
+    def __init__(self, op: _Optional[_Union[KVOperation.OpType, str]] = ..., scope: _Optional[_Union[KVOperation.Scope, str]] = ..., key: _Optional[str] = ..., value: _Optional[bytes] = ..., user_id: _Optional[str] = ..., workspace: _Optional[str] = ..., ttl: _Optional[int] = ..., request_id: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., guard_value: _Optional[int] = ..., delta_value: _Optional[int] = ..., expected_value: _Optional[bytes] = ..., limit: _Optional[int] = ..., cursor: _Optional[str] = ..., target_identity: _Optional[str] = ...) -> None: ...
 
 class KVResponse(_message.Message):
-    __slots__ = ("success", "value", "keys", "kv_map", "request_id", "counter_value", "applied")
+    __slots__ = ("success", "value", "keys", "kv_map", "request_id", "counter_value", "applied", "next_cursor", "has_more")
     class KvMapEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -650,6 +698,8 @@ class KVResponse(_message.Message):
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
     COUNTER_VALUE_FIELD_NUMBER: _ClassVar[int]
     APPLIED_FIELD_NUMBER: _ClassVar[int]
+    NEXT_CURSOR_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
     success: bool
     value: bytes
     keys: _containers.RepeatedScalarFieldContainer[str]
@@ -657,19 +707,23 @@ class KVResponse(_message.Message):
     request_id: str
     counter_value: int
     applied: bool
-    def __init__(self, success: bool = ..., value: _Optional[bytes] = ..., keys: _Optional[_Iterable[str]] = ..., kv_map: _Optional[_Mapping[str, bytes]] = ..., request_id: _Optional[str] = ..., counter_value: _Optional[int] = ..., applied: bool = ...) -> None: ...
+    next_cursor: str
+    has_more: bool
+    def __init__(self, success: _Optional[bool] = ..., value: _Optional[bytes] = ..., keys: _Optional[_Iterable[str]] = ..., kv_map: _Optional[_Mapping[str, bytes]] = ..., request_id: _Optional[str] = ..., counter_value: _Optional[int] = ..., applied: _Optional[bool] = ..., next_cursor: _Optional[str] = ..., has_more: _Optional[bool] = ...) -> None: ...
 
 class IncomingMessage(_message.Message):
-    __slots__ = ("source_topic", "payload", "message_type", "workspace")
+    __slots__ = ("source_topic", "payload", "message_type", "workspace", "on_behalf_subject")
     SOURCE_TOPIC_FIELD_NUMBER: _ClassVar[int]
     PAYLOAD_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_TYPE_FIELD_NUMBER: _ClassVar[int]
     WORKSPACE_FIELD_NUMBER: _ClassVar[int]
+    ON_BEHALF_SUBJECT_FIELD_NUMBER: _ClassVar[int]
     source_topic: str
     payload: bytes
     message_type: MessageType
     workspace: str
-    def __init__(self, source_topic: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., workspace: _Optional[str] = ...) -> None: ...
+    on_behalf_subject: PrincipalRef
+    def __init__(self, source_topic: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., workspace: _Optional[str] = ..., on_behalf_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ...) -> None: ...
 
 class ConfigSnapshot(_message.Message):
     __slots__ = ("kv", "global_kv", "task_context", "workspace_exclusive_kv", "global_exclusive_kv")
@@ -746,10 +800,40 @@ class ErrorResponse(_message.Message):
     retryable: bool
     retry_after_ms: int
     request_id: str
-    def __init__(self, code: _Optional[str] = ..., message: _Optional[str] = ..., retryable: bool = ..., retry_after_ms: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, code: _Optional[str] = ..., message: _Optional[str] = ..., retryable: _Optional[bool] = ..., retry_after_ms: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
+
+class RetryPolicy(_message.Message):
+    __slots__ = ("max_attempts", "backoff", "initial_delay_ms", "max_delay_ms", "jitter_factor", "schedule_ms", "retryable_status_codes", "honor_retry_after")
+    MAX_ATTEMPTS_FIELD_NUMBER: _ClassVar[int]
+    BACKOFF_FIELD_NUMBER: _ClassVar[int]
+    INITIAL_DELAY_MS_FIELD_NUMBER: _ClassVar[int]
+    MAX_DELAY_MS_FIELD_NUMBER: _ClassVar[int]
+    JITTER_FACTOR_FIELD_NUMBER: _ClassVar[int]
+    SCHEDULE_MS_FIELD_NUMBER: _ClassVar[int]
+    RETRYABLE_STATUS_CODES_FIELD_NUMBER: _ClassVar[int]
+    HONOR_RETRY_AFTER_FIELD_NUMBER: _ClassVar[int]
+    max_attempts: int
+    backoff: BackoffStrategy
+    initial_delay_ms: int
+    max_delay_ms: int
+    jitter_factor: float
+    schedule_ms: _containers.RepeatedScalarFieldContainer[int]
+    retryable_status_codes: _containers.RepeatedScalarFieldContainer[int]
+    honor_retry_after: bool
+    def __init__(self, max_attempts: _Optional[int] = ..., backoff: _Optional[_Union[BackoffStrategy, str]] = ..., initial_delay_ms: _Optional[int] = ..., max_delay_ms: _Optional[int] = ..., jitter_factor: _Optional[float] = ..., schedule_ms: _Optional[_Iterable[int]] = ..., retryable_status_codes: _Optional[_Iterable[int]] = ..., honor_retry_after: _Optional[bool] = ...) -> None: ...
+
+class TaskCompletionEvent(_message.Message):
+    __slots__ = ("enabled", "event_name", "on_statuses")
+    ENABLED_FIELD_NUMBER: _ClassVar[int]
+    EVENT_NAME_FIELD_NUMBER: _ClassVar[int]
+    ON_STATUSES_FIELD_NUMBER: _ClassVar[int]
+    enabled: bool
+    event_name: str
+    on_statuses: _containers.RepeatedScalarFieldContainer[TaskStatus]
+    def __init__(self, enabled: _Optional[bool] = ..., event_name: _Optional[str] = ..., on_statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ...) -> None: ...
 
 class CreateTaskRequest(_message.Message):
-    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id")
+    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id", "retry_policy", "priority", "idempotency_key", "correlation_id", "root_task_id", "completion_event")
     class LaunchParamOverridesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -777,6 +861,12 @@ class CreateTaskRequest(_message.Message):
     TARGET_IDENTITY_FIELD_NUMBER: _ClassVar[int]
     TASK_CLASS_FIELD_NUMBER: _ClassVar[int]
     CONTEXT_ID_FIELD_NUMBER: _ClassVar[int]
+    RETRY_POLICY_FIELD_NUMBER: _ClassVar[int]
+    PRIORITY_FIELD_NUMBER: _ClassVar[int]
+    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
+    CORRELATION_ID_FIELD_NUMBER: _ClassVar[int]
+    ROOT_TASK_ID_FIELD_NUMBER: _ClassVar[int]
+    COMPLETION_EVENT_FIELD_NUMBER: _ClassVar[int]
     task_type: str
     workspace: str
     assignment_mode: TaskAssignmentMode
@@ -790,7 +880,13 @@ class CreateTaskRequest(_message.Message):
     target_identity: str
     task_class: TaskClass
     context_id: str
-    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ...) -> None: ...
+    retry_policy: RetryPolicy
+    priority: TaskPriority
+    idempotency_key: str
+    correlation_id: str
+    root_task_id: str
+    completion_event: TaskCompletionEvent
+    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]] = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., idempotency_key: _Optional[str] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ..., completion_event: _Optional[_Union[TaskCompletionEvent, _Mapping]] = ...) -> None: ...
 
 class CreateTaskResponse(_message.Message):
     __slots__ = ("success", "task_id", "status", "error_code", "error_message", "request_id", "assigned_to", "task_token", "authority_grant_id")
@@ -812,7 +908,7 @@ class CreateTaskResponse(_message.Message):
     assigned_to: str
     task_token: str
     authority_grant_id: str
-    def __init__(self, success: bool = ..., task_id: _Optional[str] = ..., status: _Optional[str] = ..., error_code: _Optional[str] = ..., error_message: _Optional[str] = ..., request_id: _Optional[str] = ..., assigned_to: _Optional[str] = ..., task_token: _Optional[str] = ..., authority_grant_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., task_id: _Optional[str] = ..., status: _Optional[str] = ..., error_code: _Optional[str] = ..., error_message: _Optional[str] = ..., request_id: _Optional[str] = ..., assigned_to: _Optional[str] = ..., task_token: _Optional[str] = ..., authority_grant_id: _Optional[str] = ...) -> None: ...
 
 class TaskAssignment(_message.Message):
     __slots__ = ("task_id", "task_type", "assigned_to", "metadata", "assigned_at", "profile", "launch_params", "target_implementation", "workspace", "specifier", "payload", "task_class", "checkpoint_key", "resume_session_id")
@@ -898,7 +994,7 @@ class CheckpointResponse(_message.Message):
     error: str
     saved_at: int
     request_id: str
-    def __init__(self, success: bool = ..., data: _Optional[bytes] = ..., keys: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., saved_at: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., data: _Optional[bytes] = ..., keys: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., saved_at: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class AdminQuery(_message.Message):
     __slots__ = ("op", "session_id", "filter", "request_id")
@@ -980,7 +1076,7 @@ class AdminResponse(_message.Message):
     connections: _containers.RepeatedCompositeFieldContainer[ConnectionInfo]
     total_count: int
     request_id: str
-    def __init__(self, success: bool = ..., error: _Optional[str] = ..., health: _Optional[_Union[HealthInfo, _Mapping]] = ..., info: _Optional[_Union[GatewayInfo, _Mapping]] = ..., stats: _Optional[_Union[GatewayStats, _Mapping]] = ..., connection: _Optional[_Union[ConnectionInfo, _Mapping]] = ..., connections: _Optional[_Iterable[_Union[ConnectionInfo, _Mapping]]] = ..., total_count: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., health: _Optional[_Union[HealthInfo, _Mapping]] = ..., info: _Optional[_Union[GatewayInfo, _Mapping]] = ..., stats: _Optional[_Union[GatewayStats, _Mapping]] = ..., connection: _Optional[_Union[ConnectionInfo, _Mapping]] = ..., connections: _Optional[_Iterable[_Union[ConnectionInfo, _Mapping]]] = ..., total_count: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class HealthInfo(_message.Message):
     __slots__ = ("status", "timestamp", "checks", "stats")
@@ -1063,7 +1159,7 @@ class GatewayStats(_message.Message):
     total_messages: int
     active_timers: int
     pending_timers: int
-    def __init__(self, agent_connections: _Optional[int] = ..., task_connections: _Optional[int] = ..., user_connections: _Optional[int] = ..., orchestrator_connections: _Optional[int] = ..., workflow_engine_connected: bool = ..., metrics_bridge_connected: bool = ..., total_tasks: _Optional[int] = ..., pending_tasks: _Optional[int] = ..., running_tasks: _Optional[int] = ..., completed_tasks: _Optional[int] = ..., failed_tasks: _Optional[int] = ..., messages_per_second: _Optional[float] = ..., total_messages: _Optional[int] = ..., active_timers: _Optional[int] = ..., pending_timers: _Optional[int] = ...) -> None: ...
+    def __init__(self, agent_connections: _Optional[int] = ..., task_connections: _Optional[int] = ..., user_connections: _Optional[int] = ..., orchestrator_connections: _Optional[int] = ..., workflow_engine_connected: _Optional[bool] = ..., metrics_bridge_connected: _Optional[bool] = ..., total_tasks: _Optional[int] = ..., pending_tasks: _Optional[int] = ..., running_tasks: _Optional[int] = ..., completed_tasks: _Optional[int] = ..., failed_tasks: _Optional[int] = ..., messages_per_second: _Optional[float] = ..., total_messages: _Optional[int] = ..., active_timers: _Optional[int] = ..., pending_timers: _Optional[int] = ...) -> None: ...
 
 class SessionOperation(_message.Message):
     __slots__ = ("op", "session_id", "reason", "request_id", "filter", "authorization")
@@ -1105,7 +1201,7 @@ class SessionOperationResponse(_message.Message):
     connection: ConnectionInfo
     connections: _containers.RepeatedCompositeFieldContainer[ConnectionInfo]
     total_count: int
-    def __init__(self, success: bool = ..., message: _Optional[str] = ..., error: _Optional[str] = ..., request_id: _Optional[str] = ..., connection: _Optional[_Union[ConnectionInfo, _Mapping]] = ..., connections: _Optional[_Iterable[_Union[ConnectionInfo, _Mapping]]] = ..., total_count: _Optional[int] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., message: _Optional[str] = ..., error: _Optional[str] = ..., request_id: _Optional[str] = ..., connection: _Optional[_Union[ConnectionInfo, _Mapping]] = ..., connections: _Optional[_Iterable[_Union[ConnectionInfo, _Mapping]]] = ..., total_count: _Optional[int] = ...) -> None: ...
 
 class TaskQuery(_message.Message):
     __slots__ = ("op", "task_id", "filter", "request_id")
@@ -1126,7 +1222,7 @@ class TaskQuery(_message.Message):
     def __init__(self, op: _Optional[_Union[TaskQuery.OpType, str]] = ..., task_id: _Optional[str] = ..., filter: _Optional[_Union[TaskFilter, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class TaskFilter(_message.Message):
-    __slots__ = ("status", "workspace", "task_type", "limit", "offset", "statuses", "subject_type", "subject_id", "authority_mode", "authority_grant_id", "root_authority_grant_id", "parent_task_id", "task_class", "exclude_task_classes", "context_id", "exclude_statuses", "creator_actor", "status_timestamp_after_unix_ms", "page_token", "include_descendants")
+    __slots__ = ("status", "workspace", "task_type", "limit", "offset", "statuses", "subject_type", "subject_id", "authority_mode", "authority_grant_id", "root_authority_grant_id", "parent_task_id", "task_class", "exclude_task_classes", "context_id", "exclude_statuses", "creator_actor", "status_timestamp_after_unix_ms", "page_token", "include_descendants", "priority", "min_priority", "correlation_id", "root_task_id")
     STATUS_FIELD_NUMBER: _ClassVar[int]
     WORKSPACE_FIELD_NUMBER: _ClassVar[int]
     TASK_TYPE_FIELD_NUMBER: _ClassVar[int]
@@ -1147,6 +1243,10 @@ class TaskFilter(_message.Message):
     STATUS_TIMESTAMP_AFTER_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
     PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
     INCLUDE_DESCENDANTS_FIELD_NUMBER: _ClassVar[int]
+    PRIORITY_FIELD_NUMBER: _ClassVar[int]
+    MIN_PRIORITY_FIELD_NUMBER: _ClassVar[int]
+    CORRELATION_ID_FIELD_NUMBER: _ClassVar[int]
+    ROOT_TASK_ID_FIELD_NUMBER: _ClassVar[int]
     status: TaskStatus
     workspace: str
     task_type: str
@@ -1167,10 +1267,14 @@ class TaskFilter(_message.Message):
     status_timestamp_after_unix_ms: int
     page_token: str
     include_descendants: bool
-    def __init__(self, status: _Optional[_Union[TaskStatus, str]] = ..., workspace: _Optional[str] = ..., task_type: _Optional[str] = ..., limit: _Optional[int] = ..., offset: _Optional[int] = ..., statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., authority_mode: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., parent_task_id: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., exclude_task_classes: _Optional[_Iterable[_Union[TaskClass, str]]] = ..., context_id: _Optional[str] = ..., exclude_statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ..., creator_actor: _Optional[_Union[PrincipalRef, _Mapping]] = ..., status_timestamp_after_unix_ms: _Optional[int] = ..., page_token: _Optional[str] = ..., include_descendants: bool = ...) -> None: ...
+    priority: TaskPriority
+    min_priority: TaskPriority
+    correlation_id: str
+    root_task_id: str
+    def __init__(self, status: _Optional[_Union[TaskStatus, str]] = ..., workspace: _Optional[str] = ..., task_type: _Optional[str] = ..., limit: _Optional[int] = ..., offset: _Optional[int] = ..., statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., authority_mode: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., parent_task_id: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., exclude_task_classes: _Optional[_Iterable[_Union[TaskClass, str]]] = ..., context_id: _Optional[str] = ..., exclude_statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ..., creator_actor: _Optional[_Union[PrincipalRef, _Mapping]] = ..., status_timestamp_after_unix_ms: _Optional[int] = ..., page_token: _Optional[str] = ..., include_descendants: _Optional[bool] = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., min_priority: _Optional[_Union[TaskPriority, str]] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ...) -> None: ...
 
 class TaskInfo(_message.Message):
-    __slots__ = ("task_id", "task_type", "status", "workspace", "target_topic", "assigned_to", "created_at", "started_at", "completed_at", "attempt", "max_attempts", "error", "metadata", "authority_mode", "subject_type", "subject_id", "root_subject_type", "root_subject_id", "authority_grant_id", "root_authority_grant_id", "parent_authority_grant_id", "creator_actor_id", "parent_task_id", "task_class", "disconnected_at", "grace_window_ms", "wait_spec", "depends_on", "context_id", "paused_at")
+    __slots__ = ("task_id", "task_type", "status", "workspace", "target_topic", "assigned_to", "created_at", "started_at", "completed_at", "attempt", "max_attempts", "error", "metadata", "authority_mode", "subject_type", "subject_id", "root_subject_type", "root_subject_id", "authority_grant_id", "root_authority_grant_id", "parent_authority_grant_id", "creator_actor_id", "parent_task_id", "task_class", "disconnected_at", "grace_window_ms", "wait_spec", "depends_on", "context_id", "paused_at", "priority", "correlation_id", "root_task_id", "completion_event")
     class MetadataEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -1208,6 +1312,10 @@ class TaskInfo(_message.Message):
     DEPENDS_ON_FIELD_NUMBER: _ClassVar[int]
     CONTEXT_ID_FIELD_NUMBER: _ClassVar[int]
     PAUSED_AT_FIELD_NUMBER: _ClassVar[int]
+    PRIORITY_FIELD_NUMBER: _ClassVar[int]
+    CORRELATION_ID_FIELD_NUMBER: _ClassVar[int]
+    ROOT_TASK_ID_FIELD_NUMBER: _ClassVar[int]
+    COMPLETION_EVENT_FIELD_NUMBER: _ClassVar[int]
     task_id: str
     task_type: str
     status: TaskStatus
@@ -1238,7 +1346,11 @@ class TaskInfo(_message.Message):
     depends_on: _containers.RepeatedScalarFieldContainer[str]
     context_id: str
     paused_at: int
-    def __init__(self, task_id: _Optional[str] = ..., task_type: _Optional[str] = ..., status: _Optional[_Union[TaskStatus, str]] = ..., workspace: _Optional[str] = ..., target_topic: _Optional[str] = ..., assigned_to: _Optional[str] = ..., created_at: _Optional[int] = ..., started_at: _Optional[int] = ..., completed_at: _Optional[int] = ..., attempt: _Optional[int] = ..., max_attempts: _Optional[int] = ..., error: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., authority_mode: _Optional[str] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., root_subject_type: _Optional[str] = ..., root_subject_id: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., parent_authority_grant_id: _Optional[str] = ..., creator_actor_id: _Optional[str] = ..., parent_task_id: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., disconnected_at: _Optional[int] = ..., grace_window_ms: _Optional[int] = ..., wait_spec: _Optional[_Union[WaitSpec, _Mapping]] = ..., depends_on: _Optional[_Iterable[str]] = ..., context_id: _Optional[str] = ..., paused_at: _Optional[int] = ...) -> None: ...
+    priority: TaskPriority
+    correlation_id: str
+    root_task_id: str
+    completion_event: TaskCompletionEvent
+    def __init__(self, task_id: _Optional[str] = ..., task_type: _Optional[str] = ..., status: _Optional[_Union[TaskStatus, str]] = ..., workspace: _Optional[str] = ..., target_topic: _Optional[str] = ..., assigned_to: _Optional[str] = ..., created_at: _Optional[int] = ..., started_at: _Optional[int] = ..., completed_at: _Optional[int] = ..., attempt: _Optional[int] = ..., max_attempts: _Optional[int] = ..., error: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., authority_mode: _Optional[str] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., root_subject_type: _Optional[str] = ..., root_subject_id: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., parent_authority_grant_id: _Optional[str] = ..., creator_actor_id: _Optional[str] = ..., parent_task_id: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., disconnected_at: _Optional[int] = ..., grace_window_ms: _Optional[int] = ..., wait_spec: _Optional[_Union[WaitSpec, _Mapping]] = ..., depends_on: _Optional[_Iterable[str]] = ..., context_id: _Optional[str] = ..., paused_at: _Optional[int] = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ..., completion_event: _Optional[_Union[TaskCompletionEvent, _Mapping]] = ...) -> None: ...
 
 class TaskQueryResponse(_message.Message):
     __slots__ = ("success", "error", "task", "tasks", "total_count", "request_id", "next_page_token")
@@ -1256,7 +1368,7 @@ class TaskQueryResponse(_message.Message):
     total_count: int
     request_id: str
     next_page_token: str
-    def __init__(self, success: bool = ..., error: _Optional[str] = ..., task: _Optional[_Union[TaskInfo, _Mapping]] = ..., tasks: _Optional[_Iterable[_Union[TaskInfo, _Mapping]]] = ..., total_count: _Optional[int] = ..., request_id: _Optional[str] = ..., next_page_token: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., task: _Optional[_Union[TaskInfo, _Mapping]] = ..., tasks: _Optional[_Iterable[_Union[TaskInfo, _Mapping]]] = ..., total_count: _Optional[int] = ..., request_id: _Optional[str] = ..., next_page_token: _Optional[str] = ...) -> None: ...
 
 class TaskOperation(_message.Message):
     __slots__ = ("op", "task_id", "reason", "request_id", "wait_spec")
@@ -1270,6 +1382,7 @@ class TaskOperation(_message.Message):
         WAIT_FOR: _ClassVar[TaskOperation.OpType]
         RESUME: _ClassVar[TaskOperation.OpType]
         REJECT: _ClassVar[TaskOperation.OpType]
+        CLAIM: _ClassVar[TaskOperation.OpType]
     RETRY: TaskOperation.OpType
     CANCEL: TaskOperation.OpType
     COMPLETE: TaskOperation.OpType
@@ -1278,6 +1391,7 @@ class TaskOperation(_message.Message):
     WAIT_FOR: TaskOperation.OpType
     RESUME: TaskOperation.OpType
     REJECT: TaskOperation.OpType
+    CLAIM: TaskOperation.OpType
     OP_FIELD_NUMBER: _ClassVar[int]
     TASK_ID_FIELD_NUMBER: _ClassVar[int]
     REASON_FIELD_NUMBER: _ClassVar[int]
@@ -1317,7 +1431,7 @@ class WaitSpec(_message.Message):
     timeout_ms: int
     scheduled_wake_unix_ms: int
     hibernation: HibernationDescriptor
-    def __init__(self, reason: _Optional[_Union[WaitReason, str]] = ..., expected_principal: _Optional[str] = ..., input_match: _Optional[_Mapping[str, str]] = ..., authority_request_id: _Optional[str] = ..., depends_on: _Optional[_Iterable[str]] = ..., wake_on_any: bool = ..., timeout_ms: _Optional[int] = ..., scheduled_wake_unix_ms: _Optional[int] = ..., hibernation: _Optional[_Union[HibernationDescriptor, _Mapping]] = ...) -> None: ...
+    def __init__(self, reason: _Optional[_Union[WaitReason, str]] = ..., expected_principal: _Optional[str] = ..., input_match: _Optional[_Mapping[str, str]] = ..., authority_request_id: _Optional[str] = ..., depends_on: _Optional[_Iterable[str]] = ..., wake_on_any: _Optional[bool] = ..., timeout_ms: _Optional[int] = ..., scheduled_wake_unix_ms: _Optional[int] = ..., hibernation: _Optional[_Union[HibernationDescriptor, _Mapping]] = ...) -> None: ...
 
 class HibernationDescriptor(_message.Message):
     __slots__ = ("checkpoint_key", "resume_session_id", "wake_event_types", "escalation_policy")
@@ -1343,7 +1457,7 @@ class TaskOperationResponse(_message.Message):
     error: str
     task: TaskInfo
     request_id: str
-    def __init__(self, success: bool = ..., message: _Optional[str] = ..., error: _Optional[str] = ..., task: _Optional[_Union[TaskInfo, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., message: _Optional[str] = ..., error: _Optional[str] = ..., task: _Optional[_Union[TaskInfo, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class WorkspaceOperation(_message.Message):
     __slots__ = ("op", "workspace_id", "filter", "workspace", "request_id")
@@ -1434,7 +1548,7 @@ class WorkspaceResponse(_message.Message):
     total_count: int
     message_flow: MessageFlowInfo
     request_id: str
-    def __init__(self, success: bool = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., workspace: _Optional[_Union[WorkspaceInfo, _Mapping]] = ..., workspaces: _Optional[_Iterable[_Union[WorkspaceInfo, _Mapping]]] = ..., total_count: _Optional[int] = ..., message_flow: _Optional[_Union[MessageFlowInfo, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., workspace: _Optional[_Union[WorkspaceInfo, _Mapping]] = ..., workspaces: _Optional[_Iterable[_Union[WorkspaceInfo, _Mapping]]] = ..., total_count: _Optional[int] = ..., message_flow: _Optional[_Union[MessageFlowInfo, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class MessageFlowInfo(_message.Message):
     __slots__ = ("workspace_id", "nodes", "edges", "updated_at")
@@ -1534,7 +1648,7 @@ class AgentRegistrationInfo(_message.Message):
         VALUE_FIELD_NUMBER: _ClassVar[int]
         key: str
         value: bool
-        def __init__(self, key: _Optional[str] = ..., value: bool = ...) -> None: ...
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[bool] = ...) -> None: ...
     IMPLEMENTATION_FIELD_NUMBER: _ClassVar[int]
     ORCHESTRATOR_PROFILE_FIELD_NUMBER: _ClassVar[int]
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
@@ -1620,10 +1734,10 @@ class AgentResponse(_message.Message):
     orchestrators: _containers.RepeatedCompositeFieldContainer[OrchestratorInfo]
     launch_result: AgentLaunchResult
     request_id: str
-    def __init__(self, success: bool = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., agent: _Optional[_Union[AgentRegistrationInfo, _Mapping]] = ..., agents: _Optional[_Iterable[_Union[AgentRegistrationInfo, _Mapping]]] = ..., total_count: _Optional[int] = ..., orchestrators: _Optional[_Iterable[_Union[OrchestratorInfo, _Mapping]]] = ..., launch_result: _Optional[_Union[AgentLaunchResult, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., agent: _Optional[_Union[AgentRegistrationInfo, _Mapping]] = ..., agents: _Optional[_Iterable[_Union[AgentRegistrationInfo, _Mapping]]] = ..., total_count: _Optional[int] = ..., orchestrators: _Optional[_Iterable[_Union[OrchestratorInfo, _Mapping]]] = ..., launch_result: _Optional[_Union[AgentLaunchResult, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class ACLOperation(_message.Message):
-    __slots__ = ("op", "rule_id", "rule_category", "retention_days", "rule_filter", "audit_filter", "grant_request", "fallback_request", "request_id")
+    __slots__ = ("op", "rule_id", "rule_category", "retention_days", "rule_filter", "audit_filter", "grant_request", "fallback_request", "request_id", "name", "principal", "group_request", "role_request", "member_request", "assignment_request", "resource_type", "resource_id", "required_level", "authorization")
     class OpType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         LIST_RULES: _ClassVar[ACLOperation.OpType]
@@ -1635,6 +1749,23 @@ class ACLOperation(_message.Message):
         SET_FALLBACK_POLICY: _ClassVar[ACLOperation.OpType]
         CLEANUP_EXPIRED: _ClassVar[ACLOperation.OpType]
         CLEANUP_AUDIT_LOGS: _ClassVar[ACLOperation.OpType]
+        CREATE_GROUP: _ClassVar[ACLOperation.OpType]
+        DELETE_GROUP: _ClassVar[ACLOperation.OpType]
+        GET_GROUP: _ClassVar[ACLOperation.OpType]
+        LIST_GROUPS: _ClassVar[ACLOperation.OpType]
+        ADD_GROUP_MEMBER: _ClassVar[ACLOperation.OpType]
+        REMOVE_GROUP_MEMBER: _ClassVar[ACLOperation.OpType]
+        LIST_GROUP_MEMBERS: _ClassVar[ACLOperation.OpType]
+        CREATE_ROLE: _ClassVar[ACLOperation.OpType]
+        DELETE_ROLE: _ClassVar[ACLOperation.OpType]
+        GET_ROLE: _ClassVar[ACLOperation.OpType]
+        LIST_ROLES: _ClassVar[ACLOperation.OpType]
+        ASSIGN_ROLE: _ClassVar[ACLOperation.OpType]
+        UNASSIGN_ROLE: _ClassVar[ACLOperation.OpType]
+        LIST_ROLE_ASSIGNMENTS: _ClassVar[ACLOperation.OpType]
+        LIST_PRINCIPAL_GROUPS: _ClassVar[ACLOperation.OpType]
+        LIST_PRINCIPAL_ROLES: _ClassVar[ACLOperation.OpType]
+        EXPLAIN_ACCESS: _ClassVar[ACLOperation.OpType]
     LIST_RULES: ACLOperation.OpType
     GET_RULE: ACLOperation.OpType
     GRANT: ACLOperation.OpType
@@ -1644,6 +1775,23 @@ class ACLOperation(_message.Message):
     SET_FALLBACK_POLICY: ACLOperation.OpType
     CLEANUP_EXPIRED: ACLOperation.OpType
     CLEANUP_AUDIT_LOGS: ACLOperation.OpType
+    CREATE_GROUP: ACLOperation.OpType
+    DELETE_GROUP: ACLOperation.OpType
+    GET_GROUP: ACLOperation.OpType
+    LIST_GROUPS: ACLOperation.OpType
+    ADD_GROUP_MEMBER: ACLOperation.OpType
+    REMOVE_GROUP_MEMBER: ACLOperation.OpType
+    LIST_GROUP_MEMBERS: ACLOperation.OpType
+    CREATE_ROLE: ACLOperation.OpType
+    DELETE_ROLE: ACLOperation.OpType
+    GET_ROLE: ACLOperation.OpType
+    LIST_ROLES: ACLOperation.OpType
+    ASSIGN_ROLE: ACLOperation.OpType
+    UNASSIGN_ROLE: ACLOperation.OpType
+    LIST_ROLE_ASSIGNMENTS: ACLOperation.OpType
+    LIST_PRINCIPAL_GROUPS: ACLOperation.OpType
+    LIST_PRINCIPAL_ROLES: ACLOperation.OpType
+    EXPLAIN_ACCESS: ACLOperation.OpType
     OP_FIELD_NUMBER: _ClassVar[int]
     RULE_ID_FIELD_NUMBER: _ClassVar[int]
     RULE_CATEGORY_FIELD_NUMBER: _ClassVar[int]
@@ -1653,6 +1801,16 @@ class ACLOperation(_message.Message):
     GRANT_REQUEST_FIELD_NUMBER: _ClassVar[int]
     FALLBACK_REQUEST_FIELD_NUMBER: _ClassVar[int]
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    PRINCIPAL_FIELD_NUMBER: _ClassVar[int]
+    GROUP_REQUEST_FIELD_NUMBER: _ClassVar[int]
+    ROLE_REQUEST_FIELD_NUMBER: _ClassVar[int]
+    MEMBER_REQUEST_FIELD_NUMBER: _ClassVar[int]
+    ASSIGNMENT_REQUEST_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_TYPE_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_ID_FIELD_NUMBER: _ClassVar[int]
+    REQUIRED_LEVEL_FIELD_NUMBER: _ClassVar[int]
+    AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
     op: ACLOperation.OpType
     rule_id: str
     rule_category: str
@@ -1662,7 +1820,17 @@ class ACLOperation(_message.Message):
     grant_request: ACLGrantRequest
     fallback_request: ACLSetFallbackRequest
     request_id: str
-    def __init__(self, op: _Optional[_Union[ACLOperation.OpType, str]] = ..., rule_id: _Optional[str] = ..., rule_category: _Optional[str] = ..., retention_days: _Optional[int] = ..., rule_filter: _Optional[_Union[ACLRuleFilter, _Mapping]] = ..., audit_filter: _Optional[_Union[ACLAuditFilter, _Mapping]] = ..., grant_request: _Optional[_Union[ACLGrantRequest, _Mapping]] = ..., fallback_request: _Optional[_Union[ACLSetFallbackRequest, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
+    name: str
+    principal: PrincipalRef
+    group_request: ACLGroupRequest
+    role_request: ACLRoleRequest
+    member_request: ACLGroupMemberRequest
+    assignment_request: ACLRoleAssignmentRequest
+    resource_type: str
+    resource_id: str
+    required_level: int
+    authorization: AuthorizationContext
+    def __init__(self, op: _Optional[_Union[ACLOperation.OpType, str]] = ..., rule_id: _Optional[str] = ..., rule_category: _Optional[str] = ..., retention_days: _Optional[int] = ..., rule_filter: _Optional[_Union[ACLRuleFilter, _Mapping]] = ..., audit_filter: _Optional[_Union[ACLAuditFilter, _Mapping]] = ..., grant_request: _Optional[_Union[ACLGrantRequest, _Mapping]] = ..., fallback_request: _Optional[_Union[ACLSetFallbackRequest, _Mapping]] = ..., request_id: _Optional[str] = ..., name: _Optional[str] = ..., principal: _Optional[_Union[PrincipalRef, _Mapping]] = ..., group_request: _Optional[_Union[ACLGroupRequest, _Mapping]] = ..., role_request: _Optional[_Union[ACLRoleRequest, _Mapping]] = ..., member_request: _Optional[_Union[ACLGroupMemberRequest, _Mapping]] = ..., assignment_request: _Optional[_Union[ACLRoleAssignmentRequest, _Mapping]] = ..., resource_type: _Optional[str] = ..., resource_id: _Optional[str] = ..., required_level: _Optional[int] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ...) -> None: ...
 
 class ACLRuleFilter(_message.Message):
     __slots__ = ("principal_type", "principal_id", "resource_type", "resource_id", "limit", "offset")
@@ -1758,7 +1926,7 @@ class ACLAuthorityGrantFilter(_message.Message):
     active_only: bool
     limit: int
     offset: int
-    def __init__(self, root_grant_id: _Optional[str] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., delegate_type: _Optional[str] = ..., delegate_id: _Optional[str] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., include_revoked: bool = ..., active_only: bool = ..., limit: _Optional[int] = ..., offset: _Optional[int] = ...) -> None: ...
+    def __init__(self, root_grant_id: _Optional[str] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., delegate_type: _Optional[str] = ..., delegate_id: _Optional[str] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., include_revoked: _Optional[bool] = ..., active_only: _Optional[bool] = ..., limit: _Optional[int] = ..., offset: _Optional[int] = ...) -> None: ...
 
 class ACLAuthorityGrantResourceScopeEntry(_message.Message):
     __slots__ = ("resource_type", "patterns")
@@ -1813,7 +1981,7 @@ class ACLAuthorityGrantRequest(_message.Message):
     renewable_until: int
     reason: str
     metadata: _containers.ScalarMap[str, str]
-    def __init__(self, subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., delegate: _Optional[_Union[PrincipalRef, _Mapping]] = ..., issued_by: _Optional[_Union[PrincipalRef, _Mapping]] = ..., root_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., parent_grant_id: _Optional[str] = ..., may_delegate: bool = ..., remaining_hops: _Optional[int] = ..., workspace_scope: _Optional[_Iterable[str]] = ..., resource_scope: _Optional[_Iterable[_Union[ACLAuthorityGrantResourceScopeEntry, _Mapping]]] = ..., operation_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., valid_while_audience_active: bool = ..., expires_at: _Optional[int] = ..., renewable_until: _Optional[int] = ..., reason: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+    def __init__(self, subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., delegate: _Optional[_Union[PrincipalRef, _Mapping]] = ..., issued_by: _Optional[_Union[PrincipalRef, _Mapping]] = ..., root_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., parent_grant_id: _Optional[str] = ..., may_delegate: _Optional[bool] = ..., remaining_hops: _Optional[int] = ..., workspace_scope: _Optional[_Iterable[str]] = ..., resource_scope: _Optional[_Iterable[_Union[ACLAuthorityGrantResourceScopeEntry, _Mapping]]] = ..., operation_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., valid_while_audience_active: _Optional[bool] = ..., expires_at: _Optional[int] = ..., renewable_until: _Optional[int] = ..., reason: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
 
 class ACLRenewAuthorityGrantRequest(_message.Message):
     __slots__ = ("grant_id", "expires_at", "extend_seconds")
@@ -1908,7 +2076,7 @@ class ACLAuditEntryInfo(_message.Message):
     gateway_id: str
     session_id: str
     metadata: _containers.ScalarMap[str, str]
-    def __init__(self, audit_id: _Optional[int] = ..., timestamp: _Optional[int] = ..., decision: _Optional[str] = ..., access_level: _Optional[int] = ..., access_level_name: _Optional[str] = ..., principal_type: _Optional[str] = ..., principal_id: _Optional[str] = ..., resource_type: _Optional[str] = ..., resource_id: _Optional[str] = ..., operation: _Optional[str] = ..., workspace: _Optional[str] = ..., rule_id: _Optional[str] = ..., fallback_applied: bool = ..., gateway_id: _Optional[str] = ..., session_id: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+    def __init__(self, audit_id: _Optional[int] = ..., timestamp: _Optional[int] = ..., decision: _Optional[str] = ..., access_level: _Optional[int] = ..., access_level_name: _Optional[str] = ..., principal_type: _Optional[str] = ..., principal_id: _Optional[str] = ..., resource_type: _Optional[str] = ..., resource_id: _Optional[str] = ..., operation: _Optional[str] = ..., workspace: _Optional[str] = ..., rule_id: _Optional[str] = ..., fallback_applied: _Optional[bool] = ..., gateway_id: _Optional[str] = ..., session_id: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
 
 class ACLAuthorityGrantInfo(_message.Message):
     __slots__ = ("grant_id", "root_grant_id", "subject", "delegate", "issued_by", "root_subject", "parent_grant_id", "may_delegate", "remaining_hops", "workspace_scope", "resource_scope", "operation_scope", "max_access_level", "access_level_name", "audience_type", "audience_id", "valid_while_audience_active", "expires_at", "renewable_until", "renewed_at", "revoked", "revoked_at", "reason", "metadata", "created_at")
@@ -1969,7 +2137,7 @@ class ACLAuthorityGrantInfo(_message.Message):
     reason: str
     metadata: _containers.ScalarMap[str, str]
     created_at: int
-    def __init__(self, grant_id: _Optional[str] = ..., root_grant_id: _Optional[str] = ..., subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., delegate: _Optional[_Union[PrincipalRef, _Mapping]] = ..., issued_by: _Optional[_Union[PrincipalRef, _Mapping]] = ..., root_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., parent_grant_id: _Optional[str] = ..., may_delegate: bool = ..., remaining_hops: _Optional[int] = ..., workspace_scope: _Optional[_Iterable[str]] = ..., resource_scope: _Optional[_Iterable[_Union[ACLAuthorityGrantResourceScopeEntry, _Mapping]]] = ..., operation_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ..., access_level_name: _Optional[str] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., valid_while_audience_active: bool = ..., expires_at: _Optional[int] = ..., renewable_until: _Optional[int] = ..., renewed_at: _Optional[int] = ..., revoked: bool = ..., revoked_at: _Optional[int] = ..., reason: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., created_at: _Optional[int] = ...) -> None: ...
+    def __init__(self, grant_id: _Optional[str] = ..., root_grant_id: _Optional[str] = ..., subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., delegate: _Optional[_Union[PrincipalRef, _Mapping]] = ..., issued_by: _Optional[_Union[PrincipalRef, _Mapping]] = ..., root_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., parent_grant_id: _Optional[str] = ..., may_delegate: _Optional[bool] = ..., remaining_hops: _Optional[int] = ..., workspace_scope: _Optional[_Iterable[str]] = ..., resource_scope: _Optional[_Iterable[_Union[ACLAuthorityGrantResourceScopeEntry, _Mapping]]] = ..., operation_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ..., access_level_name: _Optional[str] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., valid_while_audience_active: _Optional[bool] = ..., expires_at: _Optional[int] = ..., renewable_until: _Optional[int] = ..., renewed_at: _Optional[int] = ..., revoked: _Optional[bool] = ..., revoked_at: _Optional[int] = ..., reason: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., created_at: _Optional[int] = ...) -> None: ...
 
 class ACLCleanupResult(_message.Message):
     __slots__ = ("deleted_count", "message")
@@ -1979,8 +2147,182 @@ class ACLCleanupResult(_message.Message):
     message: str
     def __init__(self, deleted_count: _Optional[int] = ..., message: _Optional[str] = ...) -> None: ...
 
+class ACLGroupRequest(_message.Message):
+    __slots__ = ("name", "description", "created_by", "metadata")
+    class MetadataEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    CREATED_BY_FIELD_NUMBER: _ClassVar[int]
+    METADATA_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    description: str
+    created_by: str
+    metadata: _containers.ScalarMap[str, str]
+    def __init__(self, name: _Optional[str] = ..., description: _Optional[str] = ..., created_by: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class ACLRoleRequest(_message.Message):
+    __slots__ = ("name", "description", "created_by", "metadata")
+    class MetadataEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    CREATED_BY_FIELD_NUMBER: _ClassVar[int]
+    METADATA_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    description: str
+    created_by: str
+    metadata: _containers.ScalarMap[str, str]
+    def __init__(self, name: _Optional[str] = ..., description: _Optional[str] = ..., created_by: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class ACLGroupMemberRequest(_message.Message):
+    __slots__ = ("member_type", "member_id", "granted_by", "expires_at")
+    MEMBER_TYPE_FIELD_NUMBER: _ClassVar[int]
+    MEMBER_ID_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_BY_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    member_type: str
+    member_id: str
+    granted_by: str
+    expires_at: int
+    def __init__(self, member_type: _Optional[str] = ..., member_id: _Optional[str] = ..., granted_by: _Optional[str] = ..., expires_at: _Optional[int] = ...) -> None: ...
+
+class ACLRoleAssignmentRequest(_message.Message):
+    __slots__ = ("assignee_type", "assignee_id", "granted_by", "expires_at")
+    ASSIGNEE_TYPE_FIELD_NUMBER: _ClassVar[int]
+    ASSIGNEE_ID_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_BY_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    assignee_type: str
+    assignee_id: str
+    granted_by: str
+    expires_at: int
+    def __init__(self, assignee_type: _Optional[str] = ..., assignee_id: _Optional[str] = ..., granted_by: _Optional[str] = ..., expires_at: _Optional[int] = ...) -> None: ...
+
+class ACLGroupInfo(_message.Message):
+    __slots__ = ("group_id", "group_name", "description", "created_by", "created_at", "metadata")
+    class MetadataEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    GROUP_ID_FIELD_NUMBER: _ClassVar[int]
+    GROUP_NAME_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    CREATED_BY_FIELD_NUMBER: _ClassVar[int]
+    CREATED_AT_FIELD_NUMBER: _ClassVar[int]
+    METADATA_FIELD_NUMBER: _ClassVar[int]
+    group_id: str
+    group_name: str
+    description: str
+    created_by: str
+    created_at: int
+    metadata: _containers.ScalarMap[str, str]
+    def __init__(self, group_id: _Optional[str] = ..., group_name: _Optional[str] = ..., description: _Optional[str] = ..., created_by: _Optional[str] = ..., created_at: _Optional[int] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class ACLRoleInfo(_message.Message):
+    __slots__ = ("role_id", "role_name", "description", "created_by", "created_at", "metadata")
+    class MetadataEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    ROLE_ID_FIELD_NUMBER: _ClassVar[int]
+    ROLE_NAME_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    CREATED_BY_FIELD_NUMBER: _ClassVar[int]
+    CREATED_AT_FIELD_NUMBER: _ClassVar[int]
+    METADATA_FIELD_NUMBER: _ClassVar[int]
+    role_id: str
+    role_name: str
+    description: str
+    created_by: str
+    created_at: int
+    metadata: _containers.ScalarMap[str, str]
+    def __init__(self, role_id: _Optional[str] = ..., role_name: _Optional[str] = ..., description: _Optional[str] = ..., created_by: _Optional[str] = ..., created_at: _Optional[int] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class ACLGroupMemberInfo(_message.Message):
+    __slots__ = ("group_name", "member_type", "member_id", "granted_by", "granted_at", "expires_at")
+    GROUP_NAME_FIELD_NUMBER: _ClassVar[int]
+    MEMBER_TYPE_FIELD_NUMBER: _ClassVar[int]
+    MEMBER_ID_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_BY_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_AT_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    group_name: str
+    member_type: str
+    member_id: str
+    granted_by: str
+    granted_at: int
+    expires_at: int
+    def __init__(self, group_name: _Optional[str] = ..., member_type: _Optional[str] = ..., member_id: _Optional[str] = ..., granted_by: _Optional[str] = ..., granted_at: _Optional[int] = ..., expires_at: _Optional[int] = ...) -> None: ...
+
+class ACLRoleAssignmentInfo(_message.Message):
+    __slots__ = ("role_name", "assignee_type", "assignee_id", "granted_by", "granted_at", "expires_at")
+    ROLE_NAME_FIELD_NUMBER: _ClassVar[int]
+    ASSIGNEE_TYPE_FIELD_NUMBER: _ClassVar[int]
+    ASSIGNEE_ID_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_BY_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_AT_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    role_name: str
+    assignee_type: str
+    assignee_id: str
+    granted_by: str
+    granted_at: int
+    expires_at: int
+    def __init__(self, role_name: _Optional[str] = ..., assignee_type: _Optional[str] = ..., assignee_id: _Optional[str] = ..., granted_by: _Optional[str] = ..., granted_at: _Optional[int] = ..., expires_at: _Optional[int] = ...) -> None: ...
+
+class ACLAccessContributionInfo(_message.Message):
+    __slots__ = ("subject", "rule_id", "access_level", "resource", "expired")
+    SUBJECT_FIELD_NUMBER: _ClassVar[int]
+    RULE_ID_FIELD_NUMBER: _ClassVar[int]
+    ACCESS_LEVEL_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_FIELD_NUMBER: _ClassVar[int]
+    EXPIRED_FIELD_NUMBER: _ClassVar[int]
+    subject: str
+    rule_id: str
+    access_level: int
+    resource: str
+    expired: bool
+    def __init__(self, subject: _Optional[str] = ..., rule_id: _Optional[str] = ..., access_level: _Optional[int] = ..., resource: _Optional[str] = ..., expired: _Optional[bool] = ...) -> None: ...
+
+class ACLAccessExplanationInfo(_message.Message):
+    __slots__ = ("principal", "subjects", "contributions", "allowed", "decision", "effective_access_level", "fallback_applied", "reason")
+    PRINCIPAL_FIELD_NUMBER: _ClassVar[int]
+    SUBJECTS_FIELD_NUMBER: _ClassVar[int]
+    CONTRIBUTIONS_FIELD_NUMBER: _ClassVar[int]
+    ALLOWED_FIELD_NUMBER: _ClassVar[int]
+    DECISION_FIELD_NUMBER: _ClassVar[int]
+    EFFECTIVE_ACCESS_LEVEL_FIELD_NUMBER: _ClassVar[int]
+    FALLBACK_APPLIED_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    principal: str
+    subjects: _containers.RepeatedScalarFieldContainer[str]
+    contributions: _containers.RepeatedCompositeFieldContainer[ACLAccessContributionInfo]
+    allowed: bool
+    decision: str
+    effective_access_level: int
+    fallback_applied: bool
+    reason: str
+    def __init__(self, principal: _Optional[str] = ..., subjects: _Optional[_Iterable[str]] = ..., contributions: _Optional[_Iterable[_Union[ACLAccessContributionInfo, _Mapping]]] = ..., allowed: _Optional[bool] = ..., decision: _Optional[str] = ..., effective_access_level: _Optional[int] = ..., fallback_applied: _Optional[bool] = ..., reason: _Optional[str] = ...) -> None: ...
+
 class ACLResponse(_message.Message):
-    __slots__ = ("success", "error", "message", "rule", "rules", "total_rules", "fallback_policy", "audit_entries", "total_audit_entries", "cleanup_result", "authority_grant", "authority_grants", "total_authority_grants", "request_id")
+    __slots__ = ("success", "error", "message", "rule", "rules", "total_rules", "fallback_policy", "audit_entries", "total_audit_entries", "cleanup_result", "authority_grant", "authority_grants", "total_authority_grants", "request_id", "group", "groups", "role", "roles", "group_members", "role_assignments", "explanation")
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
@@ -1995,6 +2337,13 @@ class ACLResponse(_message.Message):
     AUTHORITY_GRANTS_FIELD_NUMBER: _ClassVar[int]
     TOTAL_AUTHORITY_GRANTS_FIELD_NUMBER: _ClassVar[int]
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    GROUP_FIELD_NUMBER: _ClassVar[int]
+    GROUPS_FIELD_NUMBER: _ClassVar[int]
+    ROLE_FIELD_NUMBER: _ClassVar[int]
+    ROLES_FIELD_NUMBER: _ClassVar[int]
+    GROUP_MEMBERS_FIELD_NUMBER: _ClassVar[int]
+    ROLE_ASSIGNMENTS_FIELD_NUMBER: _ClassVar[int]
+    EXPLANATION_FIELD_NUMBER: _ClassVar[int]
     success: bool
     error: str
     message: str
@@ -2009,7 +2358,14 @@ class ACLResponse(_message.Message):
     authority_grants: _containers.RepeatedCompositeFieldContainer[ACLAuthorityGrantInfo]
     total_authority_grants: int
     request_id: str
-    def __init__(self, success: bool = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., rule: _Optional[_Union[ACLRuleInfo, _Mapping]] = ..., rules: _Optional[_Iterable[_Union[ACLRuleInfo, _Mapping]]] = ..., total_rules: _Optional[int] = ..., fallback_policy: _Optional[_Union[ACLFallbackPolicyInfo, _Mapping]] = ..., audit_entries: _Optional[_Iterable[_Union[ACLAuditEntryInfo, _Mapping]]] = ..., total_audit_entries: _Optional[int] = ..., cleanup_result: _Optional[_Union[ACLCleanupResult, _Mapping]] = ..., authority_grant: _Optional[_Union[ACLAuthorityGrantInfo, _Mapping]] = ..., authority_grants: _Optional[_Iterable[_Union[ACLAuthorityGrantInfo, _Mapping]]] = ..., total_authority_grants: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
+    group: ACLGroupInfo
+    groups: _containers.RepeatedCompositeFieldContainer[ACLGroupInfo]
+    role: ACLRoleInfo
+    roles: _containers.RepeatedCompositeFieldContainer[ACLRoleInfo]
+    group_members: _containers.RepeatedCompositeFieldContainer[ACLGroupMemberInfo]
+    role_assignments: _containers.RepeatedCompositeFieldContainer[ACLRoleAssignmentInfo]
+    explanation: ACLAccessExplanationInfo
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., rule: _Optional[_Union[ACLRuleInfo, _Mapping]] = ..., rules: _Optional[_Iterable[_Union[ACLRuleInfo, _Mapping]]] = ..., total_rules: _Optional[int] = ..., fallback_policy: _Optional[_Union[ACLFallbackPolicyInfo, _Mapping]] = ..., audit_entries: _Optional[_Iterable[_Union[ACLAuditEntryInfo, _Mapping]]] = ..., total_audit_entries: _Optional[int] = ..., cleanup_result: _Optional[_Union[ACLCleanupResult, _Mapping]] = ..., authority_grant: _Optional[_Union[ACLAuthorityGrantInfo, _Mapping]] = ..., authority_grants: _Optional[_Iterable[_Union[ACLAuthorityGrantInfo, _Mapping]]] = ..., total_authority_grants: _Optional[int] = ..., request_id: _Optional[str] = ..., group: _Optional[_Union[ACLGroupInfo, _Mapping]] = ..., groups: _Optional[_Iterable[_Union[ACLGroupInfo, _Mapping]]] = ..., role: _Optional[_Union[ACLRoleInfo, _Mapping]] = ..., roles: _Optional[_Iterable[_Union[ACLRoleInfo, _Mapping]]] = ..., group_members: _Optional[_Iterable[_Union[ACLGroupMemberInfo, _Mapping]]] = ..., role_assignments: _Optional[_Iterable[_Union[ACLRoleAssignmentInfo, _Mapping]]] = ..., explanation: _Optional[_Union[ACLAccessExplanationInfo, _Mapping]] = ...) -> None: ...
 
 class AuthorityGrantOperation(_message.Message):
     __slots__ = ("op", "grant_id", "exchange_request", "derive_request", "renew_request", "request_id", "list_request", "batch_exchange_request", "derive_for_target_request")
@@ -2090,7 +2446,7 @@ class AuthorityGrantExchangeRequest(_message.Message):
     remaining_hops: int
     reason: str
     metadata: _containers.ScalarMap[str, str]
-    def __init__(self, source_session_id: _Optional[str] = ..., workspace_scope: _Optional[_Iterable[str]] = ..., resource_scope: _Optional[_Iterable[_Union[ACLAuthorityGrantResourceScopeEntry, _Mapping]]] = ..., operation_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., valid_while_audience_active: bool = ..., expires_at: _Optional[int] = ..., renewable_until: _Optional[int] = ..., may_delegate: bool = ..., remaining_hops: _Optional[int] = ..., reason: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+    def __init__(self, source_session_id: _Optional[str] = ..., workspace_scope: _Optional[_Iterable[str]] = ..., resource_scope: _Optional[_Iterable[_Union[ACLAuthorityGrantResourceScopeEntry, _Mapping]]] = ..., operation_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., valid_while_audience_active: _Optional[bool] = ..., expires_at: _Optional[int] = ..., renewable_until: _Optional[int] = ..., may_delegate: _Optional[bool] = ..., remaining_hops: _Optional[int] = ..., reason: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
 
 class AuthorityGrantDeriveRequest(_message.Message):
     __slots__ = ("parent_grant_id", "delegate", "workspace_scope", "resource_scope", "operation_scope", "max_access_level", "audience_type", "audience_id", "valid_while_audience_active", "expires_at", "renewable_until", "may_delegate", "remaining_hops", "reason", "metadata")
@@ -2131,7 +2487,7 @@ class AuthorityGrantDeriveRequest(_message.Message):
     remaining_hops: int
     reason: str
     metadata: _containers.ScalarMap[str, str]
-    def __init__(self, parent_grant_id: _Optional[str] = ..., delegate: _Optional[_Union[PrincipalRef, _Mapping]] = ..., workspace_scope: _Optional[_Iterable[str]] = ..., resource_scope: _Optional[_Iterable[_Union[ACLAuthorityGrantResourceScopeEntry, _Mapping]]] = ..., operation_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., valid_while_audience_active: bool = ..., expires_at: _Optional[int] = ..., renewable_until: _Optional[int] = ..., may_delegate: bool = ..., remaining_hops: _Optional[int] = ..., reason: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
+    def __init__(self, parent_grant_id: _Optional[str] = ..., delegate: _Optional[_Union[PrincipalRef, _Mapping]] = ..., workspace_scope: _Optional[_Iterable[str]] = ..., resource_scope: _Optional[_Iterable[_Union[ACLAuthorityGrantResourceScopeEntry, _Mapping]]] = ..., operation_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., valid_while_audience_active: _Optional[bool] = ..., expires_at: _Optional[int] = ..., renewable_until: _Optional[int] = ..., may_delegate: _Optional[bool] = ..., remaining_hops: _Optional[int] = ..., reason: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ...) -> None: ...
 
 class AuthorityGrantResponse(_message.Message):
     __slots__ = ("success", "error", "message", "grant", "request_id", "grants", "total", "cache_hint_ttl_seconds")
@@ -2151,7 +2507,7 @@ class AuthorityGrantResponse(_message.Message):
     grants: _containers.RepeatedCompositeFieldContainer[ACLAuthorityGrantInfo]
     total: int
     cache_hint_ttl_seconds: int
-    def __init__(self, success: bool = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., grant: _Optional[_Union[ACLAuthorityGrantInfo, _Mapping]] = ..., request_id: _Optional[str] = ..., grants: _Optional[_Iterable[_Union[ACLAuthorityGrantInfo, _Mapping]]] = ..., total: _Optional[int] = ..., cache_hint_ttl_seconds: _Optional[int] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., grant: _Optional[_Union[ACLAuthorityGrantInfo, _Mapping]] = ..., request_id: _Optional[str] = ..., grants: _Optional[_Iterable[_Union[ACLAuthorityGrantInfo, _Mapping]]] = ..., total: _Optional[int] = ..., cache_hint_ttl_seconds: _Optional[int] = ...) -> None: ...
 
 class AuthorityGrantListRequest(_message.Message):
     __slots__ = ("audience_type", "audience_id", "include_revoked", "limit", "offset")
@@ -2165,7 +2521,7 @@ class AuthorityGrantListRequest(_message.Message):
     include_revoked: bool
     limit: int
     offset: int
-    def __init__(self, audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., include_revoked: bool = ..., limit: _Optional[int] = ..., offset: _Optional[int] = ...) -> None: ...
+    def __init__(self, audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., include_revoked: _Optional[bool] = ..., limit: _Optional[int] = ..., offset: _Optional[int] = ...) -> None: ...
 
 class AuthorityGrantBatchExchangeRequest(_message.Message):
     __slots__ = ("requests", "stop_on_first_error")
@@ -2173,7 +2529,7 @@ class AuthorityGrantBatchExchangeRequest(_message.Message):
     STOP_ON_FIRST_ERROR_FIELD_NUMBER: _ClassVar[int]
     requests: _containers.RepeatedCompositeFieldContainer[AuthorityGrantExchangeRequest]
     stop_on_first_error: bool
-    def __init__(self, requests: _Optional[_Iterable[_Union[AuthorityGrantExchangeRequest, _Mapping]]] = ..., stop_on_first_error: bool = ...) -> None: ...
+    def __init__(self, requests: _Optional[_Iterable[_Union[AuthorityGrantExchangeRequest, _Mapping]]] = ..., stop_on_first_error: _Optional[bool] = ...) -> None: ...
 
 class AuthorityGrantDeriveForTargetRequest(_message.Message):
     __slots__ = ("parent_grant_id", "target", "audience_type", "audience_id", "operation_scope", "max_access_level", "expires_at", "renewable_until", "may_delegate", "remaining_hops", "reason")
@@ -2199,7 +2555,7 @@ class AuthorityGrantDeriveForTargetRequest(_message.Message):
     may_delegate: bool
     remaining_hops: int
     reason: str
-    def __init__(self, parent_grant_id: _Optional[str] = ..., target: _Optional[_Union[PrincipalRef, _Mapping]] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., operation_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ..., expires_at: _Optional[int] = ..., renewable_until: _Optional[int] = ..., may_delegate: bool = ..., remaining_hops: _Optional[int] = ..., reason: _Optional[str] = ...) -> None: ...
+    def __init__(self, parent_grant_id: _Optional[str] = ..., target: _Optional[_Union[PrincipalRef, _Mapping]] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., operation_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ..., expires_at: _Optional[int] = ..., renewable_until: _Optional[int] = ..., may_delegate: _Optional[bool] = ..., remaining_hops: _Optional[int] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class AuthorityIdentity(_message.Message):
     __slots__ = ("subject", "root_subject", "delegate", "issued_by")
@@ -2231,7 +2587,7 @@ class AuthoritySpan(_message.Message):
     expires_at: int
     renewable_until: int
     revoked: bool
-    def __init__(self, workspace_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., valid_while_audience_active: bool = ..., expires_at: _Optional[int] = ..., renewable_until: _Optional[int] = ..., revoked: bool = ...) -> None: ...
+    def __init__(self, workspace_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., valid_while_audience_active: _Optional[bool] = ..., expires_at: _Optional[int] = ..., renewable_until: _Optional[int] = ..., revoked: _Optional[bool] = ...) -> None: ...
 
 class AuthorityGrantRevocation(_message.Message):
     __slots__ = ("grant_id", "root_grant_id", "reason", "revoked_at", "cascade")
@@ -2245,7 +2601,7 @@ class AuthorityGrantRevocation(_message.Message):
     reason: str
     revoked_at: int
     cascade: bool
-    def __init__(self, grant_id: _Optional[str] = ..., root_grant_id: _Optional[str] = ..., reason: _Optional[str] = ..., revoked_at: _Optional[int] = ..., cascade: bool = ...) -> None: ...
+    def __init__(self, grant_id: _Optional[str] = ..., root_grant_id: _Optional[str] = ..., reason: _Optional[str] = ..., revoked_at: _Optional[int] = ..., cascade: _Optional[bool] = ...) -> None: ...
 
 class AuthorityRequestRoutingTarget(_message.Message):
     __slots__ = ("principal", "capability")
@@ -2381,7 +2737,7 @@ class ResolveAuthorityRequestPayload(_message.Message):
     reason: str
     may_delegate: bool
     remaining_hops: int
-    def __init__(self, decision: _Optional[_Union[ResolveAuthorityRequestPayload.Decision, str]] = ..., granted_workspace_scope: _Optional[_Iterable[str]] = ..., granted_resource_scope: _Optional[_Iterable[_Union[AuthorityRequestResourceScopeEntry, _Mapping]]] = ..., granted_operation_scope: _Optional[_Iterable[str]] = ..., granted_access_level: _Optional[_Union[AccessLevel, str]] = ..., granted_duration_seconds: _Optional[int] = ..., reason: _Optional[str] = ..., may_delegate: bool = ..., remaining_hops: _Optional[int] = ...) -> None: ...
+    def __init__(self, decision: _Optional[_Union[ResolveAuthorityRequestPayload.Decision, str]] = ..., granted_workspace_scope: _Optional[_Iterable[str]] = ..., granted_resource_scope: _Optional[_Iterable[_Union[AuthorityRequestResourceScopeEntry, _Mapping]]] = ..., granted_operation_scope: _Optional[_Iterable[str]] = ..., granted_access_level: _Optional[_Union[AccessLevel, str]] = ..., granted_duration_seconds: _Optional[int] = ..., reason: _Optional[str] = ..., may_delegate: _Optional[bool] = ..., remaining_hops: _Optional[int] = ...) -> None: ...
 
 class AuthorityRequestListFilter(_message.Message):
     __slots__ = ("status", "workspace", "limit", "offset", "matching_capabilities")
@@ -2443,7 +2799,7 @@ class AuthorityRequestOperationResponse(_message.Message):
     request: AuthorityRequest
     requests: _containers.RepeatedCompositeFieldContainer[AuthorityRequest]
     total_count: int
-    def __init__(self, success: bool = ..., error: _Optional[str] = ..., client_request_id: _Optional[str] = ..., request: _Optional[_Union[AuthorityRequest, _Mapping]] = ..., requests: _Optional[_Iterable[_Union[AuthorityRequest, _Mapping]]] = ..., total_count: _Optional[int] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., client_request_id: _Optional[str] = ..., request: _Optional[_Union[AuthorityRequest, _Mapping]] = ..., requests: _Optional[_Iterable[_Union[AuthorityRequest, _Mapping]]] = ..., total_count: _Optional[int] = ...) -> None: ...
 
 class AuthorityRequestEvent(_message.Message):
     __slots__ = ("event_type", "request", "emitted_at")
@@ -2519,7 +2875,7 @@ class TokenFilter(_message.Message):
     limit: int
     offset: int
     include_revoked: bool
-    def __init__(self, limit: _Optional[int] = ..., offset: _Optional[int] = ..., include_revoked: bool = ...) -> None: ...
+    def __init__(self, limit: _Optional[int] = ..., offset: _Optional[int] = ..., include_revoked: _Optional[bool] = ...) -> None: ...
 
 class TokenInfo(_message.Message):
     __slots__ = ("id", "name", "principal_type", "workspace_patterns", "scopes", "created_by", "expires_at", "last_used_at", "revoked", "revoked_at", "created_at", "updated_at")
@@ -2547,7 +2903,7 @@ class TokenInfo(_message.Message):
     revoked_at: int
     created_at: int
     updated_at: int
-    def __init__(self, id: _Optional[str] = ..., name: _Optional[str] = ..., principal_type: _Optional[str] = ..., workspace_patterns: _Optional[_Iterable[str]] = ..., scopes: _Optional[_Iterable[str]] = ..., created_by: _Optional[str] = ..., expires_at: _Optional[int] = ..., last_used_at: _Optional[int] = ..., revoked: bool = ..., revoked_at: _Optional[int] = ..., created_at: _Optional[int] = ..., updated_at: _Optional[int] = ...) -> None: ...
+    def __init__(self, id: _Optional[str] = ..., name: _Optional[str] = ..., principal_type: _Optional[str] = ..., workspace_patterns: _Optional[_Iterable[str]] = ..., scopes: _Optional[_Iterable[str]] = ..., created_by: _Optional[str] = ..., expires_at: _Optional[int] = ..., last_used_at: _Optional[int] = ..., revoked: _Optional[bool] = ..., revoked_at: _Optional[int] = ..., created_at: _Optional[int] = ..., updated_at: _Optional[int] = ...) -> None: ...
 
 class TokenResponse(_message.Message):
     __slots__ = ("success", "error", "message", "token", "tokens", "total_count", "plaintext_token", "created_token", "request_id")
@@ -2569,7 +2925,7 @@ class TokenResponse(_message.Message):
     plaintext_token: str
     created_token: TokenInfo
     request_id: str
-    def __init__(self, success: bool = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., token: _Optional[_Union[TokenInfo, _Mapping]] = ..., tokens: _Optional[_Iterable[_Union[TokenInfo, _Mapping]]] = ..., total_count: _Optional[int] = ..., plaintext_token: _Optional[str] = ..., created_token: _Optional[_Union[TokenInfo, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., token: _Optional[_Union[TokenInfo, _Mapping]] = ..., tokens: _Optional[_Iterable[_Union[TokenInfo, _Mapping]]] = ..., total_count: _Optional[int] = ..., plaintext_token: _Optional[str] = ..., created_token: _Optional[_Union[TokenInfo, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class ProgressReport(_message.Message):
     __slots__ = ("task_id", "state", "completion", "summary", "step", "recipient", "request_id", "metadata", "kind")
@@ -2677,6 +3033,9 @@ class WorkflowOperation(_message.Message):
         CREATE_SM_INSTANCE: _ClassVar[WorkflowOperation.OpType]
         SEND_SM_EVENT: _ClassVar[WorkflowOperation.OpType]
         UPSERT_SCHEDULE: _ClassVar[WorkflowOperation.OpType]
+        LIST_JOINS: _ClassVar[WorkflowOperation.OpType]
+        GET_JOIN: _ClassVar[WorkflowOperation.OpType]
+        CANCEL_JOIN: _ClassVar[WorkflowOperation.OpType]
     LIST_RULES: WorkflowOperation.OpType
     GET_RULE: WorkflowOperation.OpType
     CREATE_RULE: WorkflowOperation.OpType
@@ -2701,6 +3060,9 @@ class WorkflowOperation(_message.Message):
     CREATE_SM_INSTANCE: WorkflowOperation.OpType
     SEND_SM_EVENT: WorkflowOperation.OpType
     UPSERT_SCHEDULE: WorkflowOperation.OpType
+    LIST_JOINS: WorkflowOperation.OpType
+    GET_JOIN: WorkflowOperation.OpType
+    CANCEL_JOIN: WorkflowOperation.OpType
     OP_FIELD_NUMBER: _ClassVar[int]
     ID_FIELD_NUMBER: _ClassVar[int]
     SECONDARY_ID_FIELD_NUMBER: _ClassVar[int]
@@ -2731,10 +3093,10 @@ class WorkflowResponse(_message.Message):
     data: bytes
     total_count: int
     request_id: str
-    def __init__(self, success: bool = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., data: _Optional[bytes] = ..., total_count: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., data: _Optional[bytes] = ..., total_count: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class MessageEnvelope(_message.Message):
-    __slots__ = ("source", "payload", "message_type", "timestamp_ms", "metadata", "workspace")
+    __slots__ = ("source", "payload", "message_type", "timestamp_ms", "metadata", "workspace", "on_behalf_subject")
     class MetadataEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -2748,13 +3110,15 @@ class MessageEnvelope(_message.Message):
     TIMESTAMP_MS_FIELD_NUMBER: _ClassVar[int]
     METADATA_FIELD_NUMBER: _ClassVar[int]
     WORKSPACE_FIELD_NUMBER: _ClassVar[int]
+    ON_BEHALF_SUBJECT_FIELD_NUMBER: _ClassVar[int]
     source: str
     payload: bytes
     message_type: MessageType
     timestamp_ms: int
     metadata: _containers.ScalarMap[str, str]
     workspace: str
-    def __init__(self, source: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., timestamp_ms: _Optional[int] = ..., metadata: _Optional[_Mapping[str, str]] = ..., workspace: _Optional[str] = ...) -> None: ...
+    on_behalf_subject: PrincipalRef
+    def __init__(self, source: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., timestamp_ms: _Optional[int] = ..., metadata: _Optional[_Mapping[str, str]] = ..., workspace: _Optional[str] = ..., on_behalf_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ...) -> None: ...
 
 class AuditQuery(_message.Message):
     __slots__ = ("request_id", "start_time", "end_time", "event_type", "actor_type", "actor_id", "resource_type", "resource_id", "operation", "workspace", "only_failures", "limit", "offset", "subject_type", "subject_id", "authority_mode", "authority_grant_id", "authorization", "exclude_actor_types", "exclude_workspaces", "exclude_service_direct")
@@ -2800,7 +3164,7 @@ class AuditQuery(_message.Message):
     exclude_actor_types: _containers.RepeatedScalarFieldContainer[str]
     exclude_workspaces: _containers.RepeatedScalarFieldContainer[str]
     exclude_service_direct: bool
-    def __init__(self, request_id: _Optional[str] = ..., start_time: _Optional[int] = ..., end_time: _Optional[int] = ..., event_type: _Optional[str] = ..., actor_type: _Optional[str] = ..., actor_id: _Optional[str] = ..., resource_type: _Optional[str] = ..., resource_id: _Optional[str] = ..., operation: _Optional[str] = ..., workspace: _Optional[str] = ..., only_failures: bool = ..., limit: _Optional[int] = ..., offset: _Optional[int] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., authority_mode: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., exclude_actor_types: _Optional[_Iterable[str]] = ..., exclude_workspaces: _Optional[_Iterable[str]] = ..., exclude_service_direct: bool = ...) -> None: ...
+    def __init__(self, request_id: _Optional[str] = ..., start_time: _Optional[int] = ..., end_time: _Optional[int] = ..., event_type: _Optional[str] = ..., actor_type: _Optional[str] = ..., actor_id: _Optional[str] = ..., resource_type: _Optional[str] = ..., resource_id: _Optional[str] = ..., operation: _Optional[str] = ..., workspace: _Optional[str] = ..., only_failures: _Optional[bool] = ..., limit: _Optional[int] = ..., offset: _Optional[int] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., authority_mode: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., exclude_actor_types: _Optional[_Iterable[str]] = ..., exclude_workspaces: _Optional[_Iterable[str]] = ..., exclude_service_direct: _Optional[bool] = ...) -> None: ...
 
 class AuditQueryResponse(_message.Message):
     __slots__ = ("request_id", "success", "error", "entries", "total_count")
@@ -2814,7 +3178,7 @@ class AuditQueryResponse(_message.Message):
     error: str
     entries: _containers.RepeatedCompositeFieldContainer[AuditEntry]
     total_count: int
-    def __init__(self, request_id: _Optional[str] = ..., success: bool = ..., error: _Optional[str] = ..., entries: _Optional[_Iterable[_Union[AuditEntry, _Mapping]]] = ..., total_count: _Optional[int] = ...) -> None: ...
+    def __init__(self, request_id: _Optional[str] = ..., success: _Optional[bool] = ..., error: _Optional[str] = ..., entries: _Optional[_Iterable[_Union[AuditEntry, _Mapping]]] = ..., total_count: _Optional[int] = ...) -> None: ...
 
 class AuditEntry(_message.Message):
     __slots__ = ("audit_id", "timestamp", "event_type", "actor_type", "actor_id", "resource_type", "resource_id", "operation", "workspace", "session_id", "gateway_id", "success", "error_message", "metadata_json", "subject_type", "subject_id", "root_subject_type", "root_subject_id", "authority_mode", "root_authority_grant_id", "authority_grant_id", "parent_authority_grant_id", "source")
@@ -2864,7 +3228,7 @@ class AuditEntry(_message.Message):
     authority_grant_id: str
     parent_authority_grant_id: str
     source: str
-    def __init__(self, audit_id: _Optional[int] = ..., timestamp: _Optional[int] = ..., event_type: _Optional[str] = ..., actor_type: _Optional[str] = ..., actor_id: _Optional[str] = ..., resource_type: _Optional[str] = ..., resource_id: _Optional[str] = ..., operation: _Optional[str] = ..., workspace: _Optional[str] = ..., session_id: _Optional[str] = ..., gateway_id: _Optional[str] = ..., success: bool = ..., error_message: _Optional[str] = ..., metadata_json: _Optional[str] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., root_subject_type: _Optional[str] = ..., root_subject_id: _Optional[str] = ..., authority_mode: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., parent_authority_grant_id: _Optional[str] = ..., source: _Optional[str] = ...) -> None: ...
+    def __init__(self, audit_id: _Optional[int] = ..., timestamp: _Optional[int] = ..., event_type: _Optional[str] = ..., actor_type: _Optional[str] = ..., actor_id: _Optional[str] = ..., resource_type: _Optional[str] = ..., resource_id: _Optional[str] = ..., operation: _Optional[str] = ..., workspace: _Optional[str] = ..., session_id: _Optional[str] = ..., gateway_id: _Optional[str] = ..., success: _Optional[bool] = ..., error_message: _Optional[str] = ..., metadata_json: _Optional[str] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., root_subject_type: _Optional[str] = ..., root_subject_id: _Optional[str] = ..., authority_mode: _Optional[str] = ..., root_authority_grant_id: _Optional[str] = ..., authority_grant_id: _Optional[str] = ..., parent_authority_grant_id: _Optional[str] = ..., source: _Optional[str] = ...) -> None: ...
 
 class SubmitAuditEventRequest(_message.Message):
     __slots__ = ("event_type", "operation", "resource_type", "resource_id", "workspace", "success", "error_message", "metadata", "client_request_id")
@@ -2893,7 +3257,7 @@ class SubmitAuditEventRequest(_message.Message):
     error_message: str
     metadata: _containers.ScalarMap[str, str]
     client_request_id: str
-    def __init__(self, event_type: _Optional[str] = ..., operation: _Optional[str] = ..., resource_type: _Optional[str] = ..., resource_id: _Optional[str] = ..., workspace: _Optional[str] = ..., success: bool = ..., error_message: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., client_request_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, event_type: _Optional[str] = ..., operation: _Optional[str] = ..., resource_type: _Optional[str] = ..., resource_id: _Optional[str] = ..., workspace: _Optional[str] = ..., success: _Optional[bool] = ..., error_message: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., client_request_id: _Optional[str] = ...) -> None: ...
 
 class SubmitAuditEventResponse(_message.Message):
     __slots__ = ("client_request_id", "success", "error_code", "error_message")
@@ -2905,7 +3269,7 @@ class SubmitAuditEventResponse(_message.Message):
     success: bool
     error_code: str
     error_message: str
-    def __init__(self, client_request_id: _Optional[str] = ..., success: bool = ..., error_code: _Optional[str] = ..., error_message: _Optional[str] = ...) -> None: ...
+    def __init__(self, client_request_id: _Optional[str] = ..., success: _Optional[bool] = ..., error_code: _Optional[str] = ..., error_message: _Optional[str] = ...) -> None: ...
 
 class ProxyHttpRequest(_message.Message):
     __slots__ = ("request_id", "target_topic", "method", "path", "headers", "body", "body_chunked", "authorization", "app_workspace", "timeout_ms", "follow_redirects", "backend_name", "stream_response_indefinitely", "stream_idle_timeout_ms", "max_response_body_bytes", "proxy_chain_depth")
@@ -2948,7 +3312,7 @@ class ProxyHttpRequest(_message.Message):
     stream_idle_timeout_ms: int
     max_response_body_bytes: int
     proxy_chain_depth: int
-    def __init__(self, request_id: _Optional[str] = ..., target_topic: _Optional[str] = ..., method: _Optional[str] = ..., path: _Optional[str] = ..., headers: _Optional[_Mapping[str, str]] = ..., body: _Optional[bytes] = ..., body_chunked: bool = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., app_workspace: _Optional[str] = ..., timeout_ms: _Optional[int] = ..., follow_redirects: bool = ..., backend_name: _Optional[str] = ..., stream_response_indefinitely: bool = ..., stream_idle_timeout_ms: _Optional[int] = ..., max_response_body_bytes: _Optional[int] = ..., proxy_chain_depth: _Optional[int] = ...) -> None: ...
+    def __init__(self, request_id: _Optional[str] = ..., target_topic: _Optional[str] = ..., method: _Optional[str] = ..., path: _Optional[str] = ..., headers: _Optional[_Mapping[str, str]] = ..., body: _Optional[bytes] = ..., body_chunked: _Optional[bool] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., app_workspace: _Optional[str] = ..., timeout_ms: _Optional[int] = ..., follow_redirects: _Optional[bool] = ..., backend_name: _Optional[str] = ..., stream_response_indefinitely: _Optional[bool] = ..., stream_idle_timeout_ms: _Optional[int] = ..., max_response_body_bytes: _Optional[int] = ..., proxy_chain_depth: _Optional[int] = ...) -> None: ...
 
 class ProxyHttpResponse(_message.Message):
     __slots__ = ("request_id", "status_code", "headers", "body", "body_chunked", "error")
@@ -2971,7 +3335,7 @@ class ProxyHttpResponse(_message.Message):
     body: bytes
     body_chunked: bool
     error: ProxyError
-    def __init__(self, request_id: _Optional[str] = ..., status_code: _Optional[int] = ..., headers: _Optional[_Mapping[str, str]] = ..., body: _Optional[bytes] = ..., body_chunked: bool = ..., error: _Optional[_Union[ProxyError, _Mapping]] = ...) -> None: ...
+    def __init__(self, request_id: _Optional[str] = ..., status_code: _Optional[int] = ..., headers: _Optional[_Mapping[str, str]] = ..., body: _Optional[bytes] = ..., body_chunked: _Optional[bool] = ..., error: _Optional[_Union[ProxyError, _Mapping]] = ...) -> None: ...
 
 class ProxyHttpBodyChunk(_message.Message):
     __slots__ = ("request_id", "is_request", "seq", "data", "fin")
@@ -2985,7 +3349,7 @@ class ProxyHttpBodyChunk(_message.Message):
     seq: int
     data: bytes
     fin: bool
-    def __init__(self, request_id: _Optional[str] = ..., is_request: bool = ..., seq: _Optional[int] = ..., data: _Optional[bytes] = ..., fin: bool = ...) -> None: ...
+    def __init__(self, request_id: _Optional[str] = ..., is_request: _Optional[bool] = ..., seq: _Optional[int] = ..., data: _Optional[bytes] = ..., fin: _Optional[bool] = ...) -> None: ...
 
 class ProxyError(_message.Message):
     __slots__ = ("kind", "message")
@@ -3064,7 +3428,7 @@ class TunnelData(_message.Message):
     seq: int
     data: bytes
     fin: bool
-    def __init__(self, tunnel_id: _Optional[str] = ..., seq: _Optional[int] = ..., data: _Optional[bytes] = ..., fin: bool = ...) -> None: ...
+    def __init__(self, tunnel_id: _Optional[str] = ..., seq: _Optional[int] = ..., data: _Optional[bytes] = ..., fin: _Optional[bool] = ...) -> None: ...
 
 class TunnelClose(_message.Message):
     __slots__ = ("tunnel_id", "reason", "detail")
@@ -3124,7 +3488,7 @@ class ResolveAuthorityResponse(_message.Message):
     ok: bool
     error: str
     authority: ResolvedAuthority
-    def __init__(self, request_id: _Optional[str] = ..., ok: bool = ..., error: _Optional[str] = ..., authority: _Optional[_Union[ResolvedAuthority, _Mapping]] = ...) -> None: ...
+    def __init__(self, request_id: _Optional[str] = ..., ok: _Optional[bool] = ..., error: _Optional[str] = ..., authority: _Optional[_Union[ResolvedAuthority, _Mapping]] = ...) -> None: ...
 
 class ResolvedAuthority(_message.Message):
     __slots__ = ("actor", "subject", "grant")
@@ -3160,7 +3524,7 @@ class AuthorityGrantInfo(_message.Message):
     workspace_scope: _containers.RepeatedScalarFieldContainer[str]
     expires_at: int
     revoked: bool
-    def __init__(self, grant_id: _Optional[str] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., root_subject_type: _Optional[str] = ..., root_subject_id: _Optional[str] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., max_access_level: _Optional[int] = ..., workspace_scope: _Optional[_Iterable[str]] = ..., expires_at: _Optional[int] = ..., revoked: bool = ...) -> None: ...
+    def __init__(self, grant_id: _Optional[str] = ..., subject_type: _Optional[str] = ..., subject_id: _Optional[str] = ..., root_subject_type: _Optional[str] = ..., root_subject_id: _Optional[str] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., max_access_level: _Optional[int] = ..., workspace_scope: _Optional[_Iterable[str]] = ..., expires_at: _Optional[int] = ..., revoked: _Optional[bool] = ...) -> None: ...
 
 class ConnectionStatusRequest(_message.Message):
     __slots__ = ("request_id", "principal")
@@ -3182,7 +3546,7 @@ class ConnectionStatusResponse(_message.Message):
     error: str
     connected: bool
     last_seen_at: int
-    def __init__(self, request_id: _Optional[str] = ..., ok: bool = ..., error: _Optional[str] = ..., connected: bool = ..., last_seen_at: _Optional[int] = ...) -> None: ...
+    def __init__(self, request_id: _Optional[str] = ..., ok: _Optional[bool] = ..., error: _Optional[str] = ..., connected: _Optional[bool] = ..., last_seen_at: _Optional[int] = ...) -> None: ...
 
 class TaskSubscriptionOperation(_message.Message):
     __slots__ = ("op", "task_id", "recursive", "client_request_id", "start_timestamp_unix_ms", "subscription_id")
@@ -3206,7 +3570,7 @@ class TaskSubscriptionOperation(_message.Message):
     client_request_id: str
     start_timestamp_unix_ms: int
     subscription_id: str
-    def __init__(self, op: _Optional[_Union[TaskSubscriptionOperation.OpType, str]] = ..., task_id: _Optional[str] = ..., recursive: bool = ..., client_request_id: _Optional[str] = ..., start_timestamp_unix_ms: _Optional[int] = ..., subscription_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, op: _Optional[_Union[TaskSubscriptionOperation.OpType, str]] = ..., task_id: _Optional[str] = ..., recursive: _Optional[bool] = ..., client_request_id: _Optional[str] = ..., start_timestamp_unix_ms: _Optional[int] = ..., subscription_id: _Optional[str] = ...) -> None: ...
 
 class TaskSubscriptionOperationResponse(_message.Message):
     __slots__ = ("success", "error", "client_request_id", "task_id", "subscription_id")
@@ -3220,7 +3584,7 @@ class TaskSubscriptionOperationResponse(_message.Message):
     client_request_id: str
     task_id: str
     subscription_id: str
-    def __init__(self, success: bool = ..., error: _Optional[str] = ..., client_request_id: _Optional[str] = ..., task_id: _Optional[str] = ..., subscription_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., client_request_id: _Optional[str] = ..., task_id: _Optional[str] = ..., subscription_id: _Optional[str] = ...) -> None: ...
 
 class TaskEvent(_message.Message):
     __slots__ = ("task_id", "emitted_at_unix_ms", "workspace", "parent_task_id", "subscription_id", "status_changed", "progress", "child_lifecycle", "authority_request")

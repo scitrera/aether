@@ -11,7 +11,7 @@ import (
 
 	"github.com/casbin/casbin/v3"
 	"github.com/casbin/casbin/v3/model"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // Casbin model definition embedded as a string constant so there is no
@@ -23,6 +23,9 @@ r = sub, obj, act
 
 [policy_definition]
 p = sub, obj, act, expires, rule_id
+
+[role_definition]
+g = _, _
 
 [policy_effect]
 e = some(where (p.eft == allow))
@@ -74,57 +77,106 @@ func NewCasbinEnforcer(db *sql.DB) (*CasbinEnforcer, error) {
 }
 
 // EvaluateAccess evaluates whether a principal has the required access level
-// to a resource. It performs the 5-step specificity-priority lookup:
+// to a resource. The principal's own subject plus every group/role it
+// transitively belongs to (resolved via the Casbin role manager) form the
+// "subject set"; rules matching ANY subject in the set are combined additively
+// (highest access level wins). The lookup proceeds through specificity tiers:
 //
-//  1. Exact principal + exact resource
+//  1. Subject set + exact resource          (self + groups/roles, additive max)
 //  2. Wildcard principal + exact resource
-//  3. Exact principal + wildcard resource ("*")
+//  3. Subject set + wildcard resource ("*")  (self + groups/roles, additive max)
 //  4. Wildcard principal + wildcard resource ("*")
-//  5. (No match — caller applies fallback policy)
+//  5. Glob-pattern rules (any subject in the set)
+//  6. (No match — caller applies fallback policy)
+//
+// With no groups/roles defined the subject set is just the principal, so the
+// behavior is identical to the original per-principal evaluation.
 //
 // Returns nil if no matching rule is found (caller should apply fallback).
 func (ce *CasbinEnforcer) EvaluateAccess(ctx context.Context, principal models.Identity, resourceType, resourceID string, requiredLevel int) (*ACLDecision, error) {
-	principalType := PrincipalTypeForModel(principal.Type)
-	principalID := principal.CanonicalPrincipalID()
+	return ce.EvaluateBySubject(PrincipalTypeForModel(principal.Type), principal.CanonicalPrincipalID(), resourceType, resourceID, requiredLevel), nil
+}
 
+// EvaluateBySubject is the string-keyed core of EvaluateAccess: it runs the
+// specificity ladder for a principal identified by its DB principal_type and
+// canonical principal_id (the same values used to build the Casbin subject),
+// without requiring a models.Identity. CheckAccess uses EvaluateAccess;
+// introspection paths (ExplainAccess) call this directly.
+func (ce *CasbinEnforcer) EvaluateBySubject(principalType, principalID, resourceType, resourceID string, requiredLevel int) *ACLDecision {
 	sub := principalType + ":" + principalID
 	obj := resourceType + ":" + resourceID
+	subjects := ce.subjectSet(sub)
 
-	// Step 1: Exact principal + exact resource
-	if decision := ce.findAndEvaluate(sub, obj, requiredLevel, "Explicit rule"); decision != nil {
-		return decision, nil
+	// Step 1: Subject set (self + groups/roles) + exact resource
+	if decision := ce.findAndEvaluateMulti(subjects, obj, requiredLevel, "Explicit rule"); decision != nil {
+		return decision
 	}
 
 	// Step 2: Wildcard principal + exact resource
 	for _, wSub := range wildcardSubjects(principalType) {
 		if decision := ce.findAndEvaluate(wSub, obj, requiredLevel, "Wildcard rule"); decision != nil {
-			return decision, nil
+			return decision
 		}
 	}
 
-	// Step 3: Exact principal + wildcard resource
+	// Step 3: Subject set + wildcard resource
 	if resourceID != WildcardAnyResource {
 		wObj := resourceType + ":" + WildcardAnyResource
 
-		if decision := ce.findAndEvaluate(sub, wObj, requiredLevel, "Any-resource rule"); decision != nil {
-			return decision, nil
+		if decision := ce.findAndEvaluateMulti(subjects, wObj, requiredLevel, "Any-resource rule"); decision != nil {
+			return decision
 		}
 
 		// Step 4: Wildcard principal + wildcard resource
 		for _, wSub := range wildcardSubjects(principalType) {
 			if decision := ce.findAndEvaluate(wSub, wObj, requiredLevel, "Wildcard any-resource rule"); decision != nil {
-				return decision, nil
+				return decision
 			}
 		}
 	}
 
 	// Step 5: Glob-pattern rules — scan policies with * or ? for pattern matches
-	if decision := ce.findGlobMatch(sub, obj, requiredLevel); decision != nil {
-		return decision, nil
+	if decision := ce.findGlobMatch(subjects, obj, requiredLevel); decision != nil {
+		return decision
 	}
 
 	// Step 6: No match — caller applies fallback
-	return nil, nil
+	return nil
+}
+
+// subjectSet returns the principal's own subject plus every group/role it
+// transitively belongs to. The first element is always the principal's own
+// subject. On role-manager error it degrades to just the principal subject.
+func (ce *CasbinEnforcer) subjectSet(sub string) []string {
+	roles, err := ce.enforcer.GetImplicitRolesForUser(sub)
+	if err != nil || len(roles) == 0 {
+		return []string{sub}
+	}
+	return append([]string{sub}, roles...)
+}
+
+// findAndEvaluateMulti evaluates (subject, obj) for every subject in the set
+// and combines the results additively: the highest non-expired access level
+// across all subjects wins. When the winning rule was granted to a group/role
+// rather than the principal itself, the reason is annotated for audit clarity.
+// subjects[0] is assumed to be the principal's own subject.
+func (ce *CasbinEnforcer) findAndEvaluateMulti(subjects []string, obj string, requiredLevel int, label string) *ACLDecision {
+	var best *ACLDecision
+	var bestSubject string
+	for _, s := range subjects {
+		d := ce.findAndEvaluate(s, obj, requiredLevel, label)
+		if d == nil {
+			continue
+		}
+		if best == nil || d.EffectiveAccessLevel > best.EffectiveAccessLevel {
+			best = d
+			bestSubject = s
+		}
+	}
+	if best != nil && len(subjects) > 0 && bestSubject != subjects[0] {
+		best.Reason = fmt.Sprintf("%s (via %s)", best.Reason, bestSubject)
+	}
+	return best
 }
 
 // findAndEvaluate looks up policies matching (sub, obj) and returns a decision
@@ -187,12 +239,14 @@ func (ce *CasbinEnforcer) findAndEvaluate(sub, obj string, requiredLevel int, la
 	return decision
 }
 
-// findGlobMatch scans all policies for glob-pattern rules that match the given
-// subject and object. This handles rules like "agent:ag._system.platform-server.*"
-// matching "agent:ag._system.platform-server.ws-spark-2918".
-// Only policies whose stored sub or obj contain glob characters (* or ?) are
-// evaluated — exact-match policies are handled by findAndEvaluate.
-func (ce *CasbinEnforcer) findGlobMatch(sub, obj string, requiredLevel int) *ACLDecision {
+// findGlobMatch scans all policies once for glob-pattern rules that match any
+// subject in the set and the given object. This handles rules like
+// "agent:ag._system.platform-server.*" matching
+// "agent:ag._system.platform-server.ws-spark-2918". Only policies whose stored
+// sub or obj contain glob characters (* or ?) are evaluated — exact-match
+// policies are handled by findAndEvaluate. The highest matching level across
+// all subjects wins (additive semantics consistent with findAndEvaluateMulti).
+func (ce *CasbinEnforcer) findGlobMatch(subjects []string, obj string, requiredLevel int) *ACLDecision {
 	policies, _ := ce.enforcer.GetPolicy()
 	if len(policies) == 0 {
 		return nil
@@ -213,8 +267,8 @@ func (ce *CasbinEnforcer) findGlobMatch(sub, obj string, requiredLevel int) *ACL
 			continue
 		}
 
-		// Check glob match on both subject and object
-		if !globMatch(sub, pSub) || !globMatch(obj, pObj) {
+		// Check glob match on the object and on ANY subject in the set
+		if !globMatch(obj, pObj) || !anyGlobMatch(subjects, pSub) {
 			continue
 		}
 
@@ -269,6 +323,16 @@ func globMatch(name, pattern string) bool {
 	return matched
 }
 
+// anyGlobMatch reports whether any of the names matches the pattern.
+func anyGlobMatch(names []string, pattern string) bool {
+	for _, n := range names {
+		if globMatch(n, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
 // AddPolicy adds a rule to the in-memory model. Called by Service after writing
 // to acl_rules. The adapter's AddPolicy is a no-op, so this only touches memory.
 func (ce *CasbinEnforcer) AddPolicy(sub, obj, act, expires, ruleID string) (bool, error) {
@@ -285,6 +349,103 @@ func (ce *CasbinEnforcer) RemovePolicy(sub, obj string) (bool, error) {
 // changes (e.g., fallback policy updates) that may affect cached decisions.
 func (ce *CasbinEnforcer) ReloadPolicies() error {
 	return ce.enforcer.LoadPolicy()
+}
+
+// AddGrouping adds a grouping (g) edge to the in-memory model: member belongs
+// to group/role. Called by the Service after persisting an acl_group_members /
+// acl_role_assignments row. member and target are full subjects, e.g.
+// ("user:alice", "group:engineering") or ("group:eng", "role:admin").
+func (ce *CasbinEnforcer) AddGrouping(member, target string) (bool, error) {
+	return ce.enforcer.AddGroupingPolicy(member, target)
+}
+
+// RemoveGrouping removes a grouping (g) edge from the in-memory model. Called
+// by the Service after deleting the corresponding membership/assignment row.
+func (ce *CasbinEnforcer) RemoveGrouping(member, target string) (bool, error) {
+	return ce.enforcer.RemoveGroupingPolicy(member, target)
+}
+
+// ImplicitRoles returns the transitive set of groups/roles a subject belongs
+// to. Used for cycle detection and access-explain introspection.
+func (ce *CasbinEnforcer) ImplicitRoles(sub string) ([]string, error) {
+	return ce.enforcer.GetImplicitRolesForUser(sub)
+}
+
+// SubjectSet returns the principal subject plus its transitive groups/roles.
+func (ce *CasbinEnforcer) SubjectSet(sub string) []string {
+	return ce.subjectSet(sub)
+}
+
+// Contributions returns every rule that matches any subject in the set for the
+// given resource — the "why" behind an access decision. See GatherContributions.
+func (ce *CasbinEnforcer) Contributions(subjects []string, resourceType, resourceID string) []AccessContribution {
+	return GatherContributions(ce.enforcer, subjects, resourceType, resourceID)
+}
+
+// GatherContributions scans the in-memory policy set once and returns every
+// rule whose subject matches any subject in the set (exact or glob) AND whose
+// object matches the resource (exact, the type-wildcard "*", or glob). Each
+// contribution records the granting subject, rule id, level, the matched
+// resource pattern, and whether the rule is expired — so callers can explain
+// exactly which identity (self / group / role) confers which access, and why a
+// rule did or did not apply. Shared by both the Postgres and SQLite stores.
+func GatherContributions(e *casbin.SyncedEnforcer, subjects []string, resourceType, resourceID string) []AccessContribution {
+	subjSet := make(map[string]bool, len(subjects))
+	for _, s := range subjects {
+		subjSet[s] = true
+	}
+	obj := resourceType + ":" + resourceID
+	wObj := resourceType + ":" + WildcardAnyResource
+
+	policies, _ := e.GetPolicy()
+	out := make([]AccessContribution, 0, len(subjects))
+	for _, p := range policies {
+		if len(p) < 3 {
+			continue
+		}
+		pSub, pObj := p[pIdxSub], p[pIdxObj]
+
+		// Subject match: exact membership, or a glob pattern covering a subject.
+		subjMatch := subjSet[pSub]
+		if !subjMatch && strings.ContainsAny(pSub, "*?") {
+			subjMatch = anyGlobMatch(subjects, pSub)
+		}
+		if !subjMatch {
+			continue
+		}
+
+		// Object match: exact, the type-wildcard, or a glob pattern.
+		objMatch := pObj == obj || pObj == wObj
+		if !objMatch && strings.ContainsAny(pObj, "*?") {
+			objMatch = globMatch(obj, pObj)
+		}
+		if !objMatch {
+			continue
+		}
+
+		level, err := strconv.Atoi(p[pIdxAct])
+		if err != nil {
+			continue
+		}
+		expired := false
+		if len(p) > pIdxExpires && p[pIdxExpires] != "" {
+			if t, err := time.Parse(time.RFC3339, p[pIdxExpires]); err == nil && time.Now().After(t) {
+				expired = true
+			}
+		}
+		ruleID := ""
+		if len(p) > pIdxRuleID {
+			ruleID = p[pIdxRuleID]
+		}
+		out = append(out, AccessContribution{
+			Subject:     pSub,
+			RuleID:      ruleID,
+			AccessLevel: level,
+			Resource:    pObj,
+			Expired:     expired,
+		})
+	}
+	return out
 }
 
 // wildcardSubjects returns the wildcard subject strings that match a principal type.

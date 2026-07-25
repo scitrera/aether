@@ -455,6 +455,7 @@ func TestWithOBOAuthorization_RoundTrip(t *testing.T) {
 }
 
 func TestOboFromContext_NilContext(t *testing.T) {
+	//nolint:staticcheck // passing nil is the behaviour under test
 	got := oboFromContext(nil)
 	if got != nil {
 		t.Error("oboFromContext(nil) should return nil")

@@ -12,7 +12,7 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/scitrera/aether/migrations"
+	"github.com/scitrera/aether/server/migrations"
 )
 
 // Default configuration matching scripts/setup_dev_infra.sh
@@ -242,13 +242,13 @@ func (tdb *TestDB) TruncateTestTables(t *testing.T) {
 		ON CONFLICT (rule_category) DO NOTHING
 	`)
 
-	// Re-insert default _global workspace ACL rule
-	_, _ = tdb.DB.Exec(`
-		INSERT INTO acl_rules (principal_type, principal_id, resource_type, resource_id, access_level, granted_by, reason)
-		VALUES ('wildcard', '_any_authenticated', 'workspace', '_global', 20, '_system',
-				'Default READ_WRITE access for all authenticated principals (development mode)')
-		ON CONFLICT (principal_type, principal_id, resource_type, resource_id) DO NOTHING
-	`)
+	// The `_global` workspace rule is deliberately NOT re-seeded — migration 030
+	// deletes it. It was inert: principal_id '_any_authenticated' is not a subject
+	// wildcardSubjects() ever builds (it produces _any_authenticated_user /
+	// _any_agent / _any_task / _any_service), so it matched no principal of any
+	// type. Re-inserting it here would resurrect the row the migration removes and
+	// make dev fixtures diverge from a real deployment. _global stays reachable
+	// via the *_workspace fallback policies seeded just above.
 }
 
 // Close closes the database connection.

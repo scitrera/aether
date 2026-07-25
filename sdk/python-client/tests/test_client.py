@@ -39,10 +39,13 @@ from scitrera_aether_client._common import (
     SELF_ASSIGN,
     TARGETED,
     create_topic_agent,
+    create_topic_service,
     create_topic_task,
     create_topic_user,
+    create_topic_user_broadcast,
     create_topic_global_agents,
     create_topic_global_users,
+    SERVICE_WILDCARD,
 )
 from scitrera_aether_client.exceptions import (
     AuthenticationError,
@@ -1398,6 +1401,11 @@ class TestTopicCreation:
         topic = create_topic_user("user-123", "window-456")
         assert topic == "us::user-123::window-456"
 
+    def test_create_topic_user_broadcast(self):
+        """Test per-user broadcast topic creation."""
+        topic = create_topic_user_broadcast("user-123")
+        assert topic == "uu::user-123"
+
     def test_create_topic_global_agents(self):
         """Test global agents broadcast topic creation."""
         topic = create_topic_global_agents("workspace")
@@ -1407,6 +1415,36 @@ class TestTopicCreation:
         """Test global users broadcast topic creation."""
         topic = create_topic_global_users("workspace")
         assert topic == "gu::workspace"
+
+    def test_create_topic_service_concrete(self):
+        """A concrete specifier emits the canonical 3-segment service topic."""
+        topic = create_topic_service("platform-bridge", "bridge-1")
+        assert topic == "sv::platform-bridge::bridge-1"
+
+    def test_create_topic_service_empty_specifier_stays_concrete(self):
+        """An empty-string specifier stays 3-segment (NOT a wildcard).
+
+        ``sv::platform-bridge::`` (trailing ``::``) is a concrete target the
+        gateway treats as non-wildcard — guarding against the trailing-``::``
+        footgun where "" silently became a wildcard.
+        """
+        topic = create_topic_service("platform-bridge", "")
+        assert topic == "sv::platform-bridge::"
+
+    def test_create_topic_service_wildcard_sentinel(self):
+        """The SERVICE_WILDCARD sentinel emits the bare 2-segment wildcard.
+
+        ``sv::platform-bridge`` is what the gateway's ParseSendTarget resolves
+        to any registered ``sv::platform-bridge::<spec>`` instance.
+        """
+        topic = create_topic_service("platform-bridge", SERVICE_WILDCARD)
+        assert topic == "sv::platform-bridge"
+
+    def test_service_wildcard_is_singleton(self):
+        """SERVICE_WILDCARD is a stable, repr-friendly identity sentinel."""
+        assert repr(SERVICE_WILDCARD) == "SERVICE_WILDCARD"
+        # Identity comparison is the intended check (used by create_topic_service).
+        assert SERVICE_WILDCARD is SERVICE_WILDCARD
 
 
 # =============================================================================
@@ -2069,6 +2107,29 @@ class TestServiceClient:
         assert client.init.service.implementation == "my-svc"
         assert client.init.service.specifier == "pod-1"
 
+    def test_init_default_is_pool_consumer(self):
+        """Default ServiceClient is a pool consumer (no_pool_consumer=False, back-compat)."""
+        from scitrera_aether_client.client import ServiceClient
+        client = ServiceClient(implementation="my-svc", specifier="pod-1")
+        assert client.init.service.no_pool_consumer is False
+
+    def test_init_consumes_pool_tasks_false_sets_no_pool_consumer(self):
+        """consumes_pool_tasks=False opts the service out of pool-task routing."""
+        from scitrera_aether_client.client import ServiceClient
+        client = ServiceClient(implementation="my-svc", specifier="pod-1",
+                               consumes_pool_tasks=False)
+        assert client.init.service.no_pool_consumer is True
+
+    def test_async_init_consumes_pool_tasks_maps_no_pool_consumer(self):
+        """AsyncServiceClient mirrors the mapping: consume=True->False, False->True."""
+        from scitrera_aether_client.client_async import AsyncServiceClient
+        worker = AsyncServiceClient(implementation="memorylayer", specifier="wkr",
+                                    consumes_pool_tasks=True)
+        server = AsyncServiceClient(implementation="memorylayer", specifier="srv",
+                                    consumes_pool_tasks=False)
+        assert worker.init.service.no_pool_consumer is False
+        assert server.init.service.no_pool_consumer is True
+
     def test_init_empty_implementation_raises(self):
         """ServiceClient raises InvalidArgumentError for empty implementation."""
         from scitrera_aether_client.client import ServiceClient
@@ -2132,6 +2193,15 @@ class TestServiceClient:
         msg = client.request_queue.get_nowait()
         assert msg.HasField("send")
         assert msg.send.target_topic == "uw::user-1::workspace-a"
+
+    def test_send_message_to_user_broadcast_queues_message(self):
+        """send_message_to_user_broadcast puts correct UpstreamMessage on request_queue."""
+        from scitrera_aether_client.client import ServiceClient
+        client = ServiceClient(implementation="my-svc", specifier="pod-1")
+        client.send_message_to_user_broadcast("user-1", b"payload")
+        msg = client.request_queue.get_nowait()
+        assert msg.HasField("send")
+        assert msg.send.target_topic == "uu::user-1"
 
     def test_exported_from_package(self):
         """ServiceClient is importable from the top-level package."""

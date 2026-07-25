@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/router"
+	"github.com/scitrera/aether/server/internal/router"
 )
 
 // TestClusterIntegration_PartitionRecovery is the "node restart + catch-up"
@@ -64,7 +64,7 @@ func TestClusterIntegration_PartitionRecovery(t *testing.T) {
 	const secondBatch = 25
 	const totalExpected = firstBatch + secondBatch
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scaled(60*time.Second))
 	defer cancel()
 
 	// Phase 1: publish 25 messages while all 3 nodes are healthy.
@@ -114,7 +114,7 @@ func TestClusterIntegration_PartitionRecovery(t *testing.T) {
 
 	select {
 	case <-doneSurvivors:
-	case <-time.After(15 * time.Second):
+	case <-time.After(scaled(15 * time.Second)):
 		t.Fatalf("survivors saw only %d of %d messages — post-stop writes lost",
 			survivedCount.Load(), totalExpected)
 	}

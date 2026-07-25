@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package aether.v1;
+
+option go_package = "github.com/scitrera/aether/api/proto;aether";
+
+import "aether.proto";
+
+// SandboxRelayTunnel is the aggregator's relay-facing surface. A tenant-relay
+// sidecar dials Tunnel() and announces its tenant via TunnelHello; the
+// aggregator pairs that relay with a provider's AetherGateway.Connect stream
+// for the same tenant and splices the two 1:1 (NOT a mux — each pair owns its
+// own gateway session, lock, and session id). WatchTenants lets a provider
+// learn which tenants currently have an online relay so it can dial in.
+service SandboxRelayTunnel {
+  // Tunnel carries one provider<->gateway session, framed in both directions.
+  // The relay's first frame MUST be a TunnelHello announcing its tenant.
+  rpc Tunnel(stream TunnelFrame) returns (stream TunnelFrame);
+
+  // WatchTenants streams tenant online/offline transitions to a provider.
+  rpc WatchTenants(WatchTenantsRequest) returns (stream TenantEvent);
+}
+
+// TunnelFrame wraps either direction of a relayed gateway session, or the
+// relay's opening hello. Provider->relay carries UpstreamMessage (up);
+// relay->provider carries DownstreamMessage (down).
+message TunnelFrame {
+  oneof f {
+    UpstreamMessage   up    = 1;
+    DownstreamMessage down  = 2;
+    TunnelHello       hello = 3;
+  }
+}
+
+// TunnelHello is the relay's opening frame, announcing the tenant it serves.
+// The tenant string is a hint that MUST be validated against the relay's
+// peer-certificate CN before any pairing.
+message TunnelHello { string tenant = 1; }
+
+// WatchTenantsRequest carries no parameters; the aggregator streams every
+// tenant transition for the lifetime of the call.
+message WatchTenantsRequest {}
+
+// TenantEvent reports a tenant's relay coming online (online=true) or going
+// offline (online=false).
+//
+// snapshot_complete is a terminal sentinel emitted exactly once per
+// (re)subscribe, after the burst of currently-online tenants is replayed and
+// before any live transitions stream. The provider uses it to deterministically
+// prune tenants that left during a watch disconnect (they are absent from the
+// replay set). Live events always carry snapshot_complete=false (the zero
+// value); the sentinel carries an empty tenant and online is irrelevant.
+message TenantEvent {
+  string tenant = 1;
+  bool online = 2;
+  bool snapshot_complete = 3;
+}

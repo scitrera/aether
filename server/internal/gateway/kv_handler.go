@@ -6,17 +6,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/logging"
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/audit"
-	"github.com/scitrera/aether/internal/kv"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	auditstore "github.com/scitrera/aether/internal/storage/audit"
-	"github.com/scitrera/aether/internal/tracing"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/internal/kv"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	auditstore "github.com/scitrera/aether/server/internal/storage/audit"
+	"github.com/scitrera/aether/server/internal/tracing"
+	"github.com/scitrera/aether/server/pkg/models"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -57,6 +57,36 @@ func newKVHandlerFromService(store KVReadWriter, auditLogger auditstore.Store, a
 	return NewKVHandler(store, auditLogger, checker)
 }
 
+// emitKVDenial logs a KV denial at Info level (for operator visibility) and,
+// when h.auditLogger is configured, records a success=false audit event. key
+// may be empty for scope-only operations (e.g. LIST). scope is always included
+// in the audit metadata; reason is the human-readable denial explanation.
+func (h *KVHandler) emitKVDenial(ctx context.Context, identity models.Identity, scope kv.KVScope, key, operation, workspace, reason string, sessionID uuid.UUID) {
+	logging.Logger.Info().
+		Str("identity", identity.String()).
+		Str("key", key).
+		Str("scope", string(scope)).
+		Str("op", operation).
+		Str("reason", reason).
+		Msg("KV access denied")
+	if h.auditLogger == nil {
+		return
+	}
+	metadata := map[string]interface{}{"scope": string(scope)}
+	event := audit.NewKVEvent(
+		string(identity.Type),
+		identity.String(),
+		operation,
+		key,
+		workspace,
+		sessionID,
+		false,  // success
+		reason, // errorMsg
+		metadata,
+	)
+	h.auditLogger.LogEvent(ctx, event)
+}
+
 // checkKeyPermission checks key-level then scope-level ACL for the given operation.
 // Key-level rules (kv_key/<key>) take precedence; if no explicit key rule exists
 // (FallbackApplied), falls through to scope-level check (kv_scope/<scope>).
@@ -75,6 +105,14 @@ func (h *KVHandler) checkKeyPermission(ctx context.Context, identity models.Iden
 		// direct authority; ownership is implicit by storage layout.
 		return nil
 	}
+	// Infra-coordination fast-path: trusted infrastructure principals operating
+	// on the reserved coordination namespace (distributed locks / leader-
+	// election leases) are allowed without an ACL lookup. These are internal
+	// coordination keys, not application data. Cross-principal (OBO) access
+	// still flows through the regular ACL path.
+	if authority == nil && isInfraCoordAccess(identity, key) {
+		return nil
+	}
 	if h.aclService == nil {
 		return nil
 	}
@@ -83,11 +121,13 @@ func (h *KVHandler) checkKeyPermission(ctx context.Context, identity models.Iden
 	decision, err := h.aclService.CheckAccessWithAuthority(ctx, identity, authority, acl.ResourceTypeKVKey, key, operation, workspace, sessionID, requiredLevel)
 	if err != nil {
 		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("key", key).Msg("ACL check failed for KV key, denying")
+		h.emitKVDenial(ctx, identity, scope, key, operation, workspace, "ACL check failed: "+err.Error(), sessionID)
 		return status.Errorf(codes.Internal, "ACL check failed: %v", err)
 	}
 	if !decision.FallbackApplied {
 		// Explicit rule exists for this key — use it
 		if decision.Denied() {
+			h.emitKVDenial(ctx, identity, scope, key, operation, workspace, decision.Reason, sessionID)
 			return status.Errorf(codes.PermissionDenied, "KV access denied for key %s: %s", key, decision.Reason)
 		}
 		return nil
@@ -97,12 +137,32 @@ func (h *KVHandler) checkKeyPermission(ctx context.Context, identity models.Iden
 	decision, err = h.aclService.CheckAccessWithAuthority(ctx, identity, authority, acl.ResourceTypeKVScope, string(scope), operation, workspace, sessionID, requiredLevel)
 	if err != nil {
 		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Msg("ACL check failed for KV scope, denying")
+		h.emitKVDenial(ctx, identity, scope, key, operation, workspace, "ACL check failed: "+err.Error(), sessionID)
 		return status.Errorf(codes.Internal, "ACL check failed: %v", err)
 	}
 	if decision.Denied() {
+		h.emitKVDenial(ctx, identity, scope, key, operation, workspace, decision.Reason, sessionID)
 		return status.Errorf(codes.PermissionDenied, "KV access denied for scope %s: %s", scope, decision.Reason)
 	}
 	return nil
+}
+
+// isInfraCoordAccess reports whether identity is a trusted infrastructure
+// principal accessing a key in the reserved coordination namespace
+// (kv.ReservedCoordKeyPrefix). Used to grant the WorkflowEngine (and any future
+// infra principal) lock/leader-election access without seeding per-key ACL
+// grants. Application principals never match — they are gated normally even on
+// reserved keys.
+func isInfraCoordAccess(identity models.Identity, key string) bool {
+	if !strings.HasPrefix(key, kv.ReservedCoordKeyPrefix) {
+		return false
+	}
+	switch identity.Type {
+	case models.PrincipalWorkflowEngine:
+		return true
+	default:
+		return false
+	}
 }
 
 // checkScopeReadPermission checks scope-level read permission (used for LIST which has no specific key).
@@ -113,9 +173,11 @@ func (h *KVHandler) checkScopeReadPermission(ctx context.Context, identity model
 	decision, err := h.aclService.CheckAccessWithAuthority(ctx, identity, authority, acl.ResourceTypeKVScope, string(scope), operation, workspace, sessionID, acl.AccessRead)
 	if err != nil {
 		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Msg("ACL check failed for KV scope read, denying")
+		h.emitKVDenial(ctx, identity, scope, "", operation, workspace, "ACL check failed: "+err.Error(), sessionID)
 		return status.Errorf(codes.Internal, "ACL check failed: %v", err)
 	}
 	if decision.Denied() {
+		h.emitKVDenial(ctx, identity, scope, "", operation, workspace, decision.Reason, sessionID)
 		return status.Errorf(codes.PermissionDenied, "KV read denied for scope %s: %s", scope, decision.Reason)
 	}
 	return nil
@@ -131,9 +193,25 @@ func (h *KVHandler) HandleKVOperation(
 	op *pb.KVOperation,
 	sendResponse func(*pb.DownstreamMessage),
 ) error {
-	// Agents, tasks, and services can access the KV store.
-	if identity.Type != models.PrincipalAgent && identity.Type != models.PrincipalTask && identity.Type != models.PrincipalService {
-		return status.Error(codes.PermissionDenied, "only agents, tasks, and services can access KV store")
+	// Agents, tasks, and services store application state in the KV store.
+	// The WorkflowEngine is additionally permitted so it can use the KV-backed
+	// coordination primitives (leader election) over the shared store in every
+	// backend mode; its access is effectively limited to the reserved
+	// coordination namespace by the infra fast-path in checkKeyPermission
+	// (other keys still require an ACL grant it does not hold).
+	// The MetricsBridge is permitted so the billing bridge can run on a SINGLE
+	// connection (its identity is a singleton, so it cannot hold a second
+	// Service connection for KV without a duplicate-identity collision): it
+	// reads its billing:openmeter config and persists usage/invoice snapshots
+	// to the tenant's internal KV. Like the WorkflowEngine, this only opens the
+	// type gate — every key it touches still requires an explicit ACL grant via
+	// checkKeyPermission (seeded for metrics::shard0 in acl_seed.py).
+	if identity.Type != models.PrincipalAgent &&
+		identity.Type != models.PrincipalTask &&
+		identity.Type != models.PrincipalService &&
+		identity.Type != models.PrincipalWorkflowEngine &&
+		identity.Type != models.PrincipalMetricsBridge {
+		return status.Error(codes.PermissionDenied, "only agents, tasks, services, the metrics bridge, and the workflow engine can access KV store")
 	}
 
 	// Map proto enum scope to internal KVScope (default to workspace for backward compatibility)
@@ -201,7 +279,7 @@ func (h *KVHandler) HandleKVOperation(
 		opErr = h.handleDelete(ctx, identity, authority, sessionID, scope, op.Key, userID, workspace, requestID, sendResponse)
 
 	case pb.KVOperation_LIST:
-		opErr = h.handleList(ctx, identity, authority, sessionID, scope, op.Key, userID, workspace, requestID, sendResponse)
+		opErr = h.handleList(ctx, identity, authority, sessionID, scope, op.Key, userID, workspace, op.GetLimit(), op.GetCursor(), requestID, sendResponse)
 
 	case pb.KVOperation_INCREMENT:
 		opErr = h.handleIncrement(ctx, identity, authority, sessionID, scope, op.Key, userID, workspace, ttl, requestID, sendResponse)
@@ -215,9 +293,44 @@ func (h *KVHandler) HandleKVOperation(
 	case pb.KVOperation_DECREMENT_IF:
 		opErr = h.handleDecrementIf(ctx, identity, authority, sessionID, scope, op.Key, userID, workspace, op.DeltaValue, op.GuardValue, requestID, sendResponse)
 
+	case pb.KVOperation_SET_NX:
+		opErr = h.handleSetNX(ctx, identity, authority, sessionID, scope, op.Key, string(op.Value), userID, workspace, ttl, requestID, sendResponse)
+
+	case pb.KVOperation_SET_ADD:
+		opErr = h.handleSetAdd(ctx, identity, authority, sessionID, scope, op.Key, op.Value, userID, workspace, ttl, requestID, sendResponse)
+
+	case pb.KVOperation_SET_CARD:
+		opErr = h.handleSetCard(ctx, identity, authority, sessionID, scope, op.Key, userID, workspace, requestID, sendResponse)
+
+	case pb.KVOperation_COMPARE_AND_SET:
+		opErr = h.handleCompareAndSet(ctx, identity, authority, sessionID, scope, op.Key, string(op.ExpectedValue), string(op.Value), userID, workspace, ttl, requestID, sendResponse)
+
+	case pb.KVOperation_COMPARE_AND_DELETE:
+		opErr = h.handleCompareAndDelete(ctx, identity, authority, sessionID, scope, op.Key, string(op.ExpectedValue), userID, workspace, requestID, sendResponse)
+
+	case pb.KVOperation_PURGE_IDENTITY:
+		opErr = h.handlePurgeIdentity(ctx, identity, sessionID, scope, op.GetTargetIdentity(), op.Key, requestID, sendResponse)
+
 	default:
 		opErr = status.Error(codes.InvalidArgument, "unknown KV operation")
 	}
+
+	// Every KV op's wire contract is "echo the request_id on a KVResponse
+	// (Success=true or false)". Sub-handlers always send a KVResponse on
+	// success but bail out on error without one — that asymmetry strands
+	// the SDK's KVGetSync / KVPutSync waiters on a pending request that
+	// the gateway has decided to reject. Emit a typed failure response
+	// here so the typed pending-request channel resolves. The caller
+	// continues to receive opErr and can layer its own ErrorResponse on
+	// top for OnError consumers.
+	if opErr != nil && requestID != "" {
+		sendResponse(&pb.DownstreamMessage{
+			Payload: &pb.DownstreamMessage_Kv{
+				Kv: &pb.KVResponse{Success: false, RequestId: requestID},
+			},
+		})
+	}
+
 	return opErr
 }
 
@@ -508,6 +621,8 @@ func (h *KVHandler) handleList(
 	keyPrefix string,
 	userID string,
 	workspace string,
+	limit int32,
+	cursor string,
 	requestID string,
 	sendResponse func(*pb.DownstreamMessage),
 ) error {
@@ -524,23 +639,26 @@ func (h *KVHandler) handleList(
 		return err
 	}
 
-	items, err := h.kvStore.List(ctx, identity, scope, userID, workspace)
-	// Apply caller-supplied key prefix filter. Pre-Solution-A this was
-	// implicitly handled by the per-agent storage namespace (each caller
-	// only saw its own writes). With shared global/workspace namespaces
-	// the store now returns every key in the scope; the prefix filter
-	// must be enforced explicitly so callers like
-	// AetherKVHelper.get_by_prefix actually see only the keys they asked
-	// for and don't try to deserialize unrelated payloads from sibling
-	// agents.
-	if err == nil && keyPrefix != "" && len(items) > 0 {
-		filtered := make(map[string]string, len(items))
-		for k, v := range items {
-			if strings.HasPrefix(k, keyPrefix) {
-				filtered[k] = v
-			}
-		}
-		items = filtered
+	// Apply the key prefix filter INSIDE the store's paginated scan so the
+	// limit bounds matching keys, not all keys in the scope. Previously this
+	// called the unpaginated List() and prefix-filtered afterwards — but List()
+	// caps at DefaultListLimit over the whole (shared) scope, so a caller
+	// listing a small prefixed subset of a large scope (e.g. "sandbox:" in the
+	// _sandbox workspace) could have all its matches fall outside the cap and
+	// see an empty result. ListPaginated with KeyPrefix fixes that and also
+	// exposes cursor/has_more so callers can page through >limit matches.
+	result, err := h.kvStore.ListPaginated(ctx, identity, scope, userID, workspace, &kv.ListOptions{
+		KeyPrefix: keyPrefix,
+		Limit:     int(limit),
+		Cursor:    cursor,
+	})
+	var items map[string]string
+	var nextCursor string
+	var hasMore bool
+	if result != nil {
+		items = result.Items
+		nextCursor = result.NextCursor
+		hasMore = result.HasMore
 	}
 
 	// Audit logging
@@ -594,14 +712,125 @@ func (h *KVHandler) handleList(
 	sendResponse(&pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_Kv{
 			Kv: &pb.KVResponse{
-				Success:   true,
-				Keys:      itemsToKeys(items),
-				KvMap:     itemsBytes,
-				RequestId: requestID,
+				Success:    true,
+				Keys:       itemsToKeys(items),
+				KvMap:      itemsBytes,
+				RequestId:  requestID,
+				NextCursor: nextCursor,
+				HasMore:    hasMore,
 			},
 		},
 	})
 
+	return nil
+}
+
+// handlePurgeIdentity REMOVAL-ONLY purges every key in another principal's KV
+// namespace (target_identity, scope), optionally filtered by keyPrefix. It is
+// the privileged primitive a lifecycle manager (e.g. sandbox-provider reaping a
+// sidecar) uses to clear an ephemeral principal's stranded state.
+//
+// Security contract:
+//   - Gated by the capability/kv_purge_identity grant on the CALLER's own
+//     identity (no authority/OBO path). The caller never authorizes "as" the
+//     target — it holds a narrow, explicit capability to delete-on-its-behalf.
+//   - REMOVAL-ONLY: keys are read internally solely to delete them; NEITHER
+//     keys NOR values are returned to the caller — only the deleted count.
+//     So the capability cannot be repurposed to exfiltrate another principal's
+//     data, which keeps the components decoupled (the gateway needs no
+//     sandbox-specific knowledge; the caller owns the what/when).
+func (h *KVHandler) handlePurgeIdentity(
+	ctx context.Context,
+	identity models.Identity,
+	sessionID uuid.UUID,
+	scope kv.KVScope,
+	targetIdentityStr string,
+	keyPrefix string,
+	requestID string,
+	sendResponse func(*pb.DownstreamMessage),
+) error {
+	ctx, span := tracing.Tracer.Start(ctx, "aether.kv.purge_identity")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("aether.kv.scope", string(scope)),
+		attribute.String("aether.kv.target_identity", targetIdentityStr),
+	)
+
+	if targetIdentityStr == "" {
+		return status.Error(codes.InvalidArgument, "purge_identity requires target_identity")
+	}
+	target, err := models.ParseIdentity(targetIdentityStr)
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "invalid target_identity %q: %v", targetIdentityStr, err)
+	}
+
+	// Capability gate. ACL-disabled (nil service) follows the package-wide
+	// dev convention of allow-all, same as the other KV handlers.
+	if h.aclService != nil {
+		decision, derr := h.aclService.CheckAccess(
+			ctx, identity, acl.ResourceTypeCapability, acl.PermissionKVPurgeIdentity,
+			audit.OpKVDelete, "", sessionID, acl.AccessManage,
+		)
+		if derr != nil {
+			logging.Logger.Error().Err(derr).Str("identity", identity.String()).Msg("ACL check failed for kv purge-identity, denying")
+			return status.Errorf(codes.Internal, "ACL check failed: %v", derr)
+		}
+		if decision.Denied() {
+			return status.Errorf(codes.PermissionDenied, "kv purge-identity denied: %s", decision.Reason)
+		}
+	}
+
+	// Delete in rounds, re-listing from the start each round: the set shrinks
+	// as we delete, so a fresh capped List returns the next batch until empty.
+	// This sidesteps cursor invalidation under concurrent deletes and needs no
+	// pagination state. The ceiling + no-progress break are runaway guards.
+	const purgePageLimit = 1000
+	const purgeRoundCeiling = 10000
+	deleted := 0
+	for round := 0; round < purgeRoundCeiling; round++ {
+		result, lerr := h.kvStore.ListPaginated(ctx, target, scope, "", "", &kv.ListOptions{
+			KeyPrefix: keyPrefix,
+			Limit:     purgePageLimit,
+		})
+		if lerr != nil {
+			return status.Errorf(codes.Internal, "purge list failed: %v", lerr)
+		}
+		if result == nil || len(result.Items) == 0 {
+			break
+		}
+		deletedThisRound := 0
+		for key := range result.Items {
+			if derr := h.kvStore.Delete(ctx, target, scope, key, "", ""); derr != nil {
+				logging.Logger.Warn().Err(derr).Str("target", target.String()).Str("scope", string(scope)).Str("key", key).Msg("kv purge-identity: delete failed")
+				continue
+			}
+			deleted++
+			deletedThisRound++
+		}
+		if deletedThisRound == 0 {
+			// Could not delete anything this round — avoid spinning on keys we
+			// can see but not remove.
+			break
+		}
+	}
+
+	logging.Logger.Info().
+		Str("caller", identity.String()).
+		Str("target", target.String()).
+		Str("scope", string(scope)).
+		Str("key_prefix", keyPrefix).
+		Int("deleted", deleted).
+		Msg("kv purge-identity")
+
+	sendResponse(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Kv{
+			Kv: &pb.KVResponse{
+				Success:      true,
+				CounterValue: int64(deleted),
+				RequestId:    requestID,
+			},
+		},
+	})
 	return nil
 }
 
@@ -951,6 +1180,294 @@ func (h *KVHandler) handleDecrementIf(
 		},
 	})
 	return nil
+}
+
+func (h *KVHandler) handleSetNX(
+	ctx context.Context,
+	identity models.Identity,
+	authority *acl.ResolvedAuthority,
+	sessionID uuid.UUID,
+	scope kv.KVScope,
+	key string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+	requestID string,
+	sendResponse func(*pb.DownstreamMessage),
+) error {
+	ctx, span := tracing.Tracer.Start(ctx, "aether.kv.set_nx")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("aether.kv.scope", string(scope)),
+		attribute.String("aether.kv.key", key),
+		attribute.String("aether.kv.workspace", workspace),
+	)
+
+	if err := h.checkKeyPermission(ctx, identity, authority, scope, key, audit.OpKVSetNX, workspace, sessionID, acl.AccessReadWrite); err != nil {
+		return err
+	}
+
+	applied, err := h.kvStore.SetNX(ctx, identity, scope, key, value, userID, workspace, ttl)
+	h.auditConditionalWrite(ctx, identity, authority, sessionID, audit.OpKVSetNX, scope, key, userID, workspace, applied, ttl, err)
+	if err != nil {
+		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Str("key", key).Msg("KV SET_NX failed")
+		return status.Errorf(codes.Internal, "failed to setnx key: %v", err)
+	}
+
+	sendResponse(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Kv{
+			Kv: &pb.KVResponse{Success: true, Applied: applied, RequestId: requestID},
+		},
+	})
+	return nil
+}
+
+func (h *KVHandler) handleSetAdd(
+	ctx context.Context,
+	identity models.Identity,
+	authority *acl.ResolvedAuthority,
+	sessionID uuid.UUID,
+	scope kv.KVScope,
+	key string,
+	value []byte,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+	requestID string,
+	sendResponse func(*pb.DownstreamMessage),
+) error {
+	ctx, span := tracing.Tracer.Start(ctx, "aether.kv.set_add")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("aether.kv.scope", string(scope)),
+		attribute.String("aether.kv.key", key),
+		attribute.String("aether.kv.workspace", workspace),
+	)
+
+	if err := h.checkKeyPermission(ctx, identity, authority, scope, key, audit.OpKVSetAdd, workspace, sessionID, acl.AccessReadWrite); err != nil {
+		return err
+	}
+
+	added, cardinality, err := h.kvStore.SetAdd(ctx, identity, scope, key, string(value), userID, workspace, ttl)
+	h.auditConditionalWrite(ctx, identity, authority, sessionID, audit.OpKVSetAdd, scope, key, userID, workspace, added, ttl, err)
+	if err != nil {
+		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Str("key", key).Msg("KV SET_ADD failed")
+		return status.Errorf(codes.Internal, "failed to set_add key: %v", err)
+	}
+
+	sendResponse(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Kv{
+			Kv: &pb.KVResponse{Success: true, RequestId: requestID, CounterValue: cardinality, Applied: added},
+		},
+	})
+	return nil
+}
+
+func (h *KVHandler) handleSetCard(
+	ctx context.Context,
+	identity models.Identity,
+	authority *acl.ResolvedAuthority,
+	sessionID uuid.UUID,
+	scope kv.KVScope,
+	key string,
+	userID string,
+	workspace string,
+	requestID string,
+	sendResponse func(*pb.DownstreamMessage),
+) error {
+	ctx, span := tracing.Tracer.Start(ctx, "aether.kv.set_card")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("aether.kv.scope", string(scope)),
+		attribute.String("aether.kv.key", key),
+		attribute.String("aether.kv.workspace", workspace),
+	)
+
+	if err := h.checkKeyPermission(ctx, identity, authority, scope, key, audit.OpKVSetCard, workspace, sessionID, acl.AccessRead); err != nil {
+		return err
+	}
+
+	cardinality, err := h.kvStore.SetCard(ctx, identity, scope, key, userID, workspace)
+
+	// Audit logging (reads are audited, mirroring handleGet)
+	if h.auditLogger != nil {
+		success := err == nil
+		errorMsg := ""
+		if err != nil {
+			errorMsg = err.Error()
+		}
+		metadata := map[string]interface{}{
+			"scope":     string(scope),
+			"key":       key,
+			"workspace": workspace,
+		}
+		if userID != "" {
+			metadata["user_id"] = userID
+		}
+		if success {
+			metadata["cardinality"] = cardinality
+		}
+		event := audit.NewKVEvent(
+			string(identity.Type),
+			identity.String(),
+			audit.OpKVSetCard,
+			key,
+			workspace,
+			sessionID,
+			success,
+			errorMsg,
+			metadata,
+		)
+		applyResolvedAuthorityToAuditEvent(event, authority)
+		h.auditLogger.LogEvent(ctx, event)
+	}
+
+	if err != nil {
+		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Str("key", key).Msg("KV SET_CARD failed")
+		return status.Errorf(codes.Internal, "failed to set_card key: %v", err)
+	}
+
+	sendResponse(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Kv{
+			Kv: &pb.KVResponse{Success: true, RequestId: requestID, CounterValue: cardinality},
+		},
+	})
+	return nil
+}
+
+func (h *KVHandler) handleCompareAndSet(
+	ctx context.Context,
+	identity models.Identity,
+	authority *acl.ResolvedAuthority,
+	sessionID uuid.UUID,
+	scope kv.KVScope,
+	key string,
+	expected string,
+	value string,
+	userID string,
+	workspace string,
+	ttl time.Duration,
+	requestID string,
+	sendResponse func(*pb.DownstreamMessage),
+) error {
+	ctx, span := tracing.Tracer.Start(ctx, "aether.kv.compare_and_set")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("aether.kv.scope", string(scope)),
+		attribute.String("aether.kv.key", key),
+		attribute.String("aether.kv.workspace", workspace),
+	)
+
+	if err := h.checkKeyPermission(ctx, identity, authority, scope, key, audit.OpKVCompareAndSet, workspace, sessionID, acl.AccessReadWrite); err != nil {
+		return err
+	}
+
+	applied, err := h.kvStore.CompareAndSet(ctx, identity, scope, key, expected, value, userID, workspace, ttl)
+	h.auditConditionalWrite(ctx, identity, authority, sessionID, audit.OpKVCompareAndSet, scope, key, userID, workspace, applied, ttl, err)
+	if err != nil {
+		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Str("key", key).Msg("KV COMPARE_AND_SET failed")
+		return status.Errorf(codes.Internal, "failed to compare-and-set key: %v", err)
+	}
+
+	sendResponse(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Kv{
+			Kv: &pb.KVResponse{Success: true, Applied: applied, RequestId: requestID},
+		},
+	})
+	return nil
+}
+
+func (h *KVHandler) handleCompareAndDelete(
+	ctx context.Context,
+	identity models.Identity,
+	authority *acl.ResolvedAuthority,
+	sessionID uuid.UUID,
+	scope kv.KVScope,
+	key string,
+	expected string,
+	userID string,
+	workspace string,
+	requestID string,
+	sendResponse func(*pb.DownstreamMessage),
+) error {
+	ctx, span := tracing.Tracer.Start(ctx, "aether.kv.compare_and_delete")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("aether.kv.scope", string(scope)),
+		attribute.String("aether.kv.key", key),
+		attribute.String("aether.kv.workspace", workspace),
+	)
+
+	if err := h.checkKeyPermission(ctx, identity, authority, scope, key, audit.OpKVCompareAndDelete, workspace, sessionID, acl.AccessReadWrite); err != nil {
+		return err
+	}
+
+	applied, err := h.kvStore.CompareAndDelete(ctx, identity, scope, key, expected, userID, workspace)
+	h.auditConditionalWrite(ctx, identity, authority, sessionID, audit.OpKVCompareAndDelete, scope, key, userID, workspace, applied, 0, err)
+	if err != nil {
+		logging.Logger.Error().Err(err).Str("identity", identity.String()).Str("scope", string(scope)).Str("key", key).Msg("KV COMPARE_AND_DELETE failed")
+		return status.Errorf(codes.Internal, "failed to compare-and-delete key: %v", err)
+	}
+
+	sendResponse(&pb.DownstreamMessage{
+		Payload: &pb.DownstreamMessage_Kv{
+			Kv: &pb.KVResponse{Success: true, Applied: applied, RequestId: requestID},
+		},
+	})
+	return nil
+}
+
+// auditConditionalWrite emits an audit event for the SetNX/CompareAndSet/
+// CompareAndDelete conditional-write ops, centralizing the shared metadata
+// shape (op, scope, key, workspace, applied, ttl).
+func (h *KVHandler) auditConditionalWrite(
+	ctx context.Context,
+	identity models.Identity,
+	authority *acl.ResolvedAuthority,
+	sessionID uuid.UUID,
+	operation string,
+	scope kv.KVScope,
+	key, userID, workspace string,
+	applied bool,
+	ttl time.Duration,
+	opErr error,
+) {
+	if h.auditLogger == nil {
+		return
+	}
+	success := opErr == nil
+	errorMsg := ""
+	if opErr != nil {
+		errorMsg = opErr.Error()
+	}
+	metadata := map[string]interface{}{
+		"scope":     string(scope),
+		"key":       key,
+		"workspace": workspace,
+	}
+	if userID != "" {
+		metadata["user_id"] = userID
+	}
+	if ttl > 0 {
+		metadata["ttl_seconds"] = int(ttl.Seconds())
+	}
+	if success {
+		metadata["applied"] = applied
+	}
+	event := audit.NewKVEvent(
+		string(identity.Type),
+		identity.String(),
+		operation,
+		key,
+		workspace,
+		sessionID,
+		success,
+		errorMsg,
+		metadata,
+	)
+	applyResolvedAuthorityToAuditEvent(event, authority)
+	h.auditLogger.LogEvent(ctx, event)
 }
 
 // itemsToKeys extracts just the keys from a map (for backward compatibility)

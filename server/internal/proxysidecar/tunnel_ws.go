@@ -15,7 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/pkg/identityheaders"
+	"github.com/scitrera/aether/server/pkg/identityheaders"
 )
 
 // WebSocket tunnel framing constants. Mirror the TCP backend so callers see

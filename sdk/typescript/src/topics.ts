@@ -18,6 +18,7 @@
  * - tb::{workspace}::{impl}         - Task broadcast (load-balancing)
  * - us::{user_id}::{window_id}      - User window-specific messages
  * - uw::{user_id}::{workspace}      - User workspace-scoped messages
+ * - uu::{user_id}                   - User broadcast (all windows, workspace-agnostic)
  * - ga::{workspace}                 - Global agent broadcast in workspace
  * - gu::{workspace}                 - Global user broadcast in workspace
  * - event::*                        - Workflow Engine only (broadcast events)
@@ -57,6 +58,13 @@ export const TOPIC_PREFIX_USER = "us";
 
 /** Prefix for user workspace topics. */
 export const TOPIC_PREFIX_USER_WORKSPACE = "uw";
+
+/**
+ * Prefix for per-user broadcast topics (workspace-agnostic; reaches all of a
+ * user's windows). Publishing is restricted to platform principals
+ * (service / workflow-engine / bridge).
+ */
+export const TOPIC_PREFIX_USER_BROADCAST = "uu";
 
 /** Prefix for global agent broadcast topics. */
 export const TOPIC_PREFIX_GLOBAL_AGENTS = "ga";
@@ -177,6 +185,22 @@ export function userTopic(userId: string, windowId: string): string {
  */
 export function userWorkspaceTopic(userId: string, workspace: string): string {
   return `${TOPIC_PREFIX_USER_WORKSPACE}${IDENTITY_SEP}${userId}${IDENTITY_SEP}${workspace}`;
+}
+
+/**
+ * Creates a per-user broadcast topic string.
+ *
+ * Messages sent to this topic reach every one of a user's open windows
+ * regardless of which workspace each window is currently viewing — the
+ * workspace-agnostic, non-progress complement to the per-user progress topic.
+ * Only platform principals (service / workflow-engine / bridge) may publish;
+ * the gateway rejects sends from workspace-scoped principals.
+ *
+ * @param userId - The user's unique identifier
+ * @returns Topic string in format: uu::{userId}
+ */
+export function userBroadcastTopic(userId: string): string {
+  return `${TOPIC_PREFIX_USER_BROADCAST}${IDENTITY_SEP}${userId}`;
 }
 
 /**

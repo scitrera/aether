@@ -8,8 +8,8 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/router"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/router"
 )
 
 // TestClusterIntegration_Phase4_PostSubscribeChild_CrossNode is the HEADLINE
@@ -96,7 +96,7 @@ func TestClusterIntegration_Phase4_PostSubscribeChild_CrossNode(t *testing.T) {
 			},
 		},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), scaled(5*time.Second))
 	defer cancel()
 	if err := publisherPub.PublishTaskEvent(ctx, ws, childTaskID, childEvt); err != nil {
 		t.Fatalf("PublishTaskEvent: %v", err)
@@ -113,7 +113,7 @@ func TestClusterIntegration_Phase4_PostSubscribeChild_CrossNode(t *testing.T) {
 		if sc := got.GetStatusChanged(); sc == nil || sc.GetToStatus() != pb.TaskStatus_TASK_STATUS_RUNNING {
 			t.Errorf("unexpected event variant: %+v", got.GetEvent())
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(scaled(3 * time.Second)):
 		t.Fatal("timeout: cross-node post-subscribe child event was NOT delivered (Phase 4 gap regression)")
 	}
 }
