@@ -22,6 +22,11 @@
 --     OBO) still requires an explicit grant, which the absence of a
 --     fallback enforces correctly.
 
+-- WARNING: principal_id '_any_authenticated' below is INERT. The enforcer
+-- derives wildcard subjects from the principal TYPE (wildcardSubjects() in
+-- internal/acl/enforcer.go) and only ever looks up _any_authenticated_user /
+-- _any_agent / _any_task / _any_service. Do NOT copy this spelling into new
+-- rules. See 029_fix_wildcard_principal_drift.sql.
 INSERT INTO acl_rules (principal_type, principal_id, resource_type, resource_id, access_level, granted_by, reason)
 VALUES ('wildcard', '_any_authenticated', 'kv_scope', 'user-shared', 0, '_system',
         'Default DENY on cross-agent shared per-user KV (privacy-sensitive); requires explicit grant or OBO'),

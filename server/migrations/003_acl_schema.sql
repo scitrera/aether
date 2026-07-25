@@ -99,6 +99,11 @@ VALUES ('user_workspace', 20, '_system'),     -- READ_WRITE for development
        ('service_kv_scope', 20, '_system')    -- READ_WRITE: service accessing its own KV scopes
 ON CONFLICT (rule_category) DO NOTHING;
 
+-- WARNING: principal_id '_any_authenticated' below is INERT. The enforcer
+-- derives wildcard subjects from the principal TYPE (wildcardSubjects() in
+-- internal/acl/enforcer.go) and only ever looks up _any_authenticated_user /
+-- _any_agent / _any_task / _any_service. Do NOT copy this spelling into new
+-- rules. See 029_fix_wildcard_principal_drift.sql.
 -- Default _global workspace rule
 -- All authenticated principals have READ_WRITE access to the _global workspace
 INSERT INTO acl_rules (principal_type, principal_id, resource_type, resource_id, access_level, granted_by, reason)
