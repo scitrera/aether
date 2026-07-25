@@ -18,8 +18,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go/jetstream"
 
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	"github.com/scitrera/aether/pkg/models"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // ---------------------------------------------------------------------------

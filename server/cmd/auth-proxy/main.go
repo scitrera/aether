@@ -28,13 +28,13 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/auth"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/secrets"
-	versionpkg "github.com/scitrera/aether/internal/version"
-	"github.com/scitrera/aether/pkg/authproxy"
-	"github.com/scitrera/aether/pkg/crypto"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/auth"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/secrets"
+	versionpkg "github.com/scitrera/aether/server/internal/version"
+	"github.com/scitrera/aether/server/pkg/authproxy"
+	"github.com/scitrera/aether/server/pkg/crypto"
 )
 
 var (

@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	pb "github.com/scitrera/aether/api/proto"
-	regstore "github.com/scitrera/aether/internal/storage/registry"
-	"github.com/scitrera/aether/pkg/models"
+	regstore "github.com/scitrera/aether/server/internal/storage/registry"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // extensionMetadataHeader is the gRPC metadata key clients can use to

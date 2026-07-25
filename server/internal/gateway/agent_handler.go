@@ -6,9 +6,9 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/admin"
-	"github.com/scitrera/aether/internal/logging"
-	aethererrors "github.com/scitrera/aether/pkg/errors"
+	"github.com/scitrera/aether/server/internal/admin"
+	"github.com/scitrera/aether/server/internal/logging"
+	aethererrors "github.com/scitrera/aether/server/pkg/errors"
 )
 
 // ErrCodePrefixConflict is the error_code returned to clients when

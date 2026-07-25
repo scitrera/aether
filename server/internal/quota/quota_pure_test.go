@@ -23,7 +23,7 @@ import (
 	"errors"
 	"testing"
 
-	pkgerrors "github.com/scitrera/aether/pkg/errors"
+	pkgerrors "github.com/scitrera/aether/server/pkg/errors"
 )
 
 // newPureQM builds a QuotaManager with a nil Redis client.

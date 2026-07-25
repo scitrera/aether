@@ -30,8 +30,8 @@ package postgres
 import (
 	"database/sql"
 
-	"github.com/scitrera/aether/internal/storage/workflow"
-	legacy "github.com/scitrera/aether/internal/workflow"
+	"github.com/scitrera/aether/server/internal/storage/workflow"
+	legacy "github.com/scitrera/aether/server/internal/workflow"
 )
 
 // Store is the postgres-backed workflow store. It is a direct type alias

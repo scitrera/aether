@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/pkg/identityheaders"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/pkg/identityheaders"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 func TestExtractCredentials_BearerAPIKey(t *testing.T) {

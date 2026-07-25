@@ -9,14 +9,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/registry"
-	"github.com/scitrera/aether/internal/state"
-	regstore "github.com/scitrera/aether/internal/storage/registry"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	"github.com/scitrera/aether/pkg/errors"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/registry"
+	"github.com/scitrera/aether/server/internal/state"
+	regstore "github.com/scitrera/aether/server/internal/storage/registry"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	"github.com/scitrera/aether/server/pkg/errors"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // SessionLivenessRegistry is the narrow surface TaskAssignmentService needs

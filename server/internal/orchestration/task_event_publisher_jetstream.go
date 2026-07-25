@@ -24,8 +24,8 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/router/natscodec"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/router/natscodec"
 	"google.golang.org/protobuf/proto"
 )
 

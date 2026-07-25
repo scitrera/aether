@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/scitrera/aether/internal/audit"
+	"github.com/scitrera/aether/server/internal/audit"
 )
 
 // auditCoalescer suppresses bursts of identical successful message-route /

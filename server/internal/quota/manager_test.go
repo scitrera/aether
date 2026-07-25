@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/scitrera/aether/internal/testutil"
-	pkgerrors "github.com/scitrera/aether/pkg/errors"
+	"github.com/scitrera/aether/server/internal/testutil"
+	pkgerrors "github.com/scitrera/aether/server/pkg/errors"
 )
 
 // testRedisClient returns a Redis client for testing, or skips the test if Redis is unavailable.

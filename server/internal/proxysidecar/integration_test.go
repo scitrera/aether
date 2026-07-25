@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/pkg/identityheaders"
+	"github.com/scitrera/aether/server/pkg/identityheaders"
 )
 
 // TestTerminator_RoundTrip_GET asserts a basic GET request against an

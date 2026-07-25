@@ -8,8 +8,8 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/router"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/router"
 )
 
 // TestClusterIntegration_Phase4_PostSubscribeChild_CrossNode is the HEADLINE

@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/auth"
-	"github.com/scitrera/aether/internal/config"
-	"github.com/scitrera/aether/pkg/crypto"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/auth"
+	"github.com/scitrera/aether/server/internal/config"
+	"github.com/scitrera/aether/server/pkg/crypto"
+	"github.com/scitrera/aether/server/pkg/models"
 	"gopkg.in/yaml.v3"
 )
 

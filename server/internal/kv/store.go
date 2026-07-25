@@ -10,11 +10,11 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
-	"github.com/scitrera/aether/internal/circuitbreaker"
-	"github.com/scitrera/aether/internal/tracing"
-	"github.com/scitrera/aether/pkg/crypto"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/redisutil"
+	"github.com/scitrera/aether/server/internal/circuitbreaker"
+	"github.com/scitrera/aether/server/internal/tracing"
+	"github.com/scitrera/aether/server/pkg/crypto"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/redisutil"
 	"go.opentelemetry.io/otel/attribute"
 )
 

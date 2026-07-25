@@ -3,7 +3,7 @@ package acl
 import (
 	"sync"
 
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/logging"
 )
 
 // legacyPermMap maps legacy "_perm:*" resource IDs (paired with the

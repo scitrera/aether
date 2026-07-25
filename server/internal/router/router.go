@@ -10,8 +10,8 @@ import (
 
 	"github.com/rabbitmq/rabbitmq-stream-go-client/pkg/amqp"
 	"github.com/rabbitmq/rabbitmq-stream-go-client/pkg/stream"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/tracing"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 

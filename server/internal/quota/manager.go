@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/scitrera/aether/internal/logging"
-	pkgerrors "github.com/scitrera/aether/pkg/errors"
+	"github.com/scitrera/aether/server/internal/logging"
+	pkgerrors "github.com/scitrera/aether/server/pkg/errors"
 )
 
 // Redis key prefixes for quota tracking.

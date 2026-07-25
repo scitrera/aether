@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/logging"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/logging"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
 )
 
 // This file mirrors internal/acl/groups_roles.go (the Postgres path) using the

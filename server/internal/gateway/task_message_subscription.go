@@ -4,9 +4,9 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // Phase 2 "Design M": task-driven chat streaming on a per-task message lane.

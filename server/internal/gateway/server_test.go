@@ -3,7 +3,7 @@ package gateway
 import (
 	"testing"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // Test helper types for identity resolution

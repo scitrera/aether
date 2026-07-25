@@ -19,8 +19,8 @@ package postgres
 import (
 	"database/sql"
 
-	legacy "github.com/scitrera/aether/internal/audit"
-	"github.com/scitrera/aether/internal/storage/audit"
+	legacy "github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/internal/storage/audit"
 )
 
 // Store is the postgres-backed audit store. It is a direct type alias for

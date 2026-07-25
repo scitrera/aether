@@ -20,9 +20,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/scitrera/aether/internal/config"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/pkg/crypto"
+	"github.com/scitrera/aether/server/internal/config"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/pkg/crypto"
 	"google.golang.org/grpc"
 )
 

@@ -19,10 +19,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/scitrera/aether/internal/storage/tasks"
-	taskspg "github.com/scitrera/aether/internal/storage/tasks/postgres"
-	taskssqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
-	"github.com/scitrera/aether/internal/testutil"
+	"github.com/scitrera/aether/server/internal/storage/tasks"
+	taskspg "github.com/scitrera/aether/server/internal/storage/tasks/postgres"
+	taskssqlite "github.com/scitrera/aether/server/internal/storage/tasks/sqlite"
+	"github.com/scitrera/aether/server/internal/testutil"
 
 	// Register bare "sqlite" driver for the native sqlite backend.
 	_ "modernc.org/sqlite"

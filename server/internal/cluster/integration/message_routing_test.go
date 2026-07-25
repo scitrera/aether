@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/router"
+	"github.com/scitrera/aether/server/internal/router"
 )
 
 // TestClusterIntegration_MessageRouting_CrossNode publishes a message via the

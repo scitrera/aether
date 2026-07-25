@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/scitrera/aether/internal/logging"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
+	"github.com/scitrera/aether/server/internal/logging"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
 )
 
 // PollingTaskDispatcher is a polling-only implementation of TaskDispatcher.

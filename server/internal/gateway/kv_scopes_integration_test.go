@@ -17,8 +17,8 @@ import (
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // newScopesTestBadgerStore opens a fresh in-memory Badger DB and registers

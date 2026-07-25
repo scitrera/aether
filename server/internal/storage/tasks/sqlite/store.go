@@ -27,8 +27,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/scitrera/aether/internal/storage/tasks"
-	migrations "github.com/scitrera/aether/migrations/sqlite_tasks"
+	"github.com/scitrera/aether/server/internal/storage/tasks"
+	migrations "github.com/scitrera/aether/server/migrations/sqlite_tasks"
 
 	// Register the bare "sqlite" driver (modernc.org/sqlite). This is the
 	// same underlying driver that pkg/dbcompat wraps as "sqlite_compat",

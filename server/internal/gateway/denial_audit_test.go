@@ -10,12 +10,12 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/audit"
-	auditstore "github.com/scitrera/aether/internal/storage/audit"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/audit"
+	auditstore "github.com/scitrera/aether/server/internal/storage/audit"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // ---------------------------------------------------------------------------

@@ -11,12 +11,12 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/circuitbreaker"
-	tasks "github.com/scitrera/aether/internal/storage/tasks"
-	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
-	"github.com/scitrera/aether/internal/testutil"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/circuitbreaker"
+	tasks "github.com/scitrera/aether/server/internal/storage/tasks"
+	taskpg "github.com/scitrera/aether/server/internal/storage/tasks/postgres"
+	"github.com/scitrera/aether/server/internal/testutil"
+	"github.com/scitrera/aether/server/pkg/models"
 	"google.golang.org/protobuf/proto"
 )
 

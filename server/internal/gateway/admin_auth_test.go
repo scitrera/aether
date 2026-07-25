@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // newAdminTestServer returns a GatewayServer with no ACL (nil) so non-system

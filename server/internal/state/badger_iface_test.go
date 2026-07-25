@@ -1,8 +1,8 @@
 package state_test
 
 import (
-	"github.com/scitrera/aether/internal/gateway"
-	"github.com/scitrera/aether/internal/state"
+	"github.com/scitrera/aether/server/internal/gateway"
+	"github.com/scitrera/aether/server/internal/state"
 )
 
 // Compile-time checks: Badger implementations satisfy gateway interfaces.

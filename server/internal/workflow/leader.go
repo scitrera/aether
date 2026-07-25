@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/scitrera/aether/internal/kv"
+	"github.com/scitrera/aether/server/internal/kv"
 	"github.com/scitrera/aether/sdk/go/coord"
 )
 

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/registry"
+	"github.com/scitrera/aether/server/internal/registry"
 )
 
 // TestClusterIntegration_Phase5_PrefixIndex_LiveUpdateCrossNode is the

@@ -11,8 +11,8 @@ import (
 	"sync"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/state"
-	"github.com/scitrera/aether/internal/version"
+	"github.com/scitrera/aether/server/internal/state"
+	"github.com/scitrera/aether/server/internal/version"
 )
 
 const (

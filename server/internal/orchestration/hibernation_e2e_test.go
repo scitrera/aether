@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // TestHibernationE2E_PauseWakeAssignsWithCheckpoint exercises the full Phase 3

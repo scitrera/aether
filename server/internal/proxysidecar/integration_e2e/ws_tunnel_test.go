@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/scitrera/aether/internal/proxysidecar"
+	"github.com/scitrera/aether/server/internal/proxysidecar"
 	"github.com/scitrera/aether/sdk/go/aether"
 )
 

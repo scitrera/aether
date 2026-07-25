@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
-	aclsqlite "github.com/scitrera/aether/internal/storage/acl/sqlite"
-	"github.com/scitrera/aether/pkg/models"
+	aclsqlite "github.com/scitrera/aether/server/internal/storage/acl/sqlite"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // The cross-agent shared per-user KV scopes must be DENIED by default on the

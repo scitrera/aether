@@ -7,13 +7,13 @@ package workflow
 // introduce a native sqlite sibling and may eventually let us collapse
 // the legacy types into this package. For now, downstream callers can
 //
-//	import "github.com/scitrera/aether/internal/storage/workflow"
+//	import "github.com/scitrera/aether/server/internal/storage/workflow"
 //
 // and find every type and constant they need to read or write workflow
 // rows — no double-import of the legacy package required.
 
 import (
-	legacy "github.com/scitrera/aether/internal/workflow"
+	legacy "github.com/scitrera/aether/server/internal/workflow"
 )
 
 // Core types — aliased so a single import gets callers everything they

@@ -7,14 +7,14 @@
 // principal + raw claims into a ResolvedIdentity that drives header injection.
 //
 // External binaries import this package; they MUST NOT depend on
-// github.com/scitrera/aether/internal/...
+// github.com/scitrera/aether/server/internal/...
 package authproxy
 
 import (
 	"context"
 	"net/http"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // TenantInfo carries optional per-tenant metadata that callers may surface to

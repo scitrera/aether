@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/scitrera/aether/internal/acl"
-	authsqlite "github.com/scitrera/aether/internal/auth/sqlite"
-	"github.com/scitrera/aether/internal/config"
-	"github.com/scitrera/aether/pkg/crypto"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	authsqlite "github.com/scitrera/aether/server/internal/auth/sqlite"
+	"github.com/scitrera/aether/server/internal/config"
+	"github.com/scitrera/aether/server/pkg/crypto"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 func init() {

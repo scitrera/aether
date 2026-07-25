@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 func TestMint_DirectMode(t *testing.T) {

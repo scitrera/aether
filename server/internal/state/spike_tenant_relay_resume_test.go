@@ -21,7 +21,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // resumeLocker is the slice of the session-registry surface the relay design

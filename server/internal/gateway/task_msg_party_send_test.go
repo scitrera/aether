@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/scitrera/aether/internal/acl"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/acl"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // fakeGetTaskStore is a minimal taskstore.Store whose only useful method is

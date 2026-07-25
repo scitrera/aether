@@ -1,7 +1,7 @@
 package gateway
 
 import (
-	"github.com/scitrera/aether/internal/quota"
+	"github.com/scitrera/aether/server/internal/quota"
 )
 
 // QuotaEnforcer encapsulates per-tenant quota and rate limiting configuration for the gateway.

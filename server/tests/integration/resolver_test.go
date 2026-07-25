@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/proxysidecar"
-	"github.com/scitrera/aether/pkg/identityheaders"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/proxysidecar"
+	"github.com/scitrera/aether/server/pkg/identityheaders"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // stubResolver is a deterministic identityheaders.AuthorityResolver used in

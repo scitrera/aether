@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/scitrera/aether/internal/checkpoint"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/internal/state"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/checkpoint"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/internal/state"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // SessionManager abstracts session registry operations used by the gateway.

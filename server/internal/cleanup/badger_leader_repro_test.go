@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/state"
-	sqlitetasks "github.com/scitrera/aether/internal/storage/tasks/sqlite"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/state"
+	sqlitetasks "github.com/scitrera/aether/server/internal/storage/tasks/sqlite"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // newReproBadgerRegistry stands up a fresh Badger-backed session registry

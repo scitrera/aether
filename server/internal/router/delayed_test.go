@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/testutil"
+	"github.com/scitrera/aether/server/internal/testutil"
 )
 
 func TestDelayedPublisherCreation(t *testing.T) {

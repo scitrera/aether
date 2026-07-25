@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // APITokenStore.ValidateToken is not on an interface, so this file wraps it

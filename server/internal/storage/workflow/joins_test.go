@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	wfstore "github.com/scitrera/aether/internal/storage/workflow"
-	wfsqlite "github.com/scitrera/aether/internal/storage/workflow/sqlite"
+	wfstore "github.com/scitrera/aether/server/internal/storage/workflow"
+	wfsqlite "github.com/scitrera/aether/server/internal/storage/workflow/sqlite"
 )
 
 // newJoinTestStore spins up a fresh native-SQLite store backed by a temp-dir

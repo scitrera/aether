@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/scitrera/aether/pkg/errors"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/errors"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // OrchestratorProfile represents an orchestrator's profile declaration

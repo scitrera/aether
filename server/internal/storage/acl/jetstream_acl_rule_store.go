@@ -56,8 +56,8 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 
-	legacy "github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/router/natscodec"
+	legacy "github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/router/natscodec"
 )
 
 // ACLRulesKVBucket is the NATS JetStream KV bucket name for ACL rule

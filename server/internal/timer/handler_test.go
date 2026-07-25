@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // Tests

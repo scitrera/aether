@@ -10,9 +10,9 @@ import (
 	"os"
 
 	_ "github.com/lib/pq"
-	"github.com/scitrera/aether/internal/config"
-	"github.com/scitrera/aether/internal/readiness"
-	"github.com/scitrera/aether/pkg/crypto"
+	"github.com/scitrera/aether/server/internal/config"
+	"github.com/scitrera/aether/server/internal/readiness"
+	"github.com/scitrera/aether/server/pkg/crypto"
 )
 
 func main() {

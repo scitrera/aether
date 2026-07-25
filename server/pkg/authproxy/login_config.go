@@ -10,9 +10,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/scitrera/aether/internal/auth"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/pkg/authproxy/login"
+	"github.com/scitrera/aether/server/internal/auth"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/pkg/authproxy/login"
 )
 
 // LoginConfig drives the optional browser-OAuth login flow.

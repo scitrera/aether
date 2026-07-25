@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/scitrera/aether/internal/cluster/backup"
+	"github.com/scitrera/aether/server/internal/cluster/backup"
 )
 
 // testLogger drains log lines into t.Log so failed integration tests surface

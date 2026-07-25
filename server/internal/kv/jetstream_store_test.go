@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/cluster/nats"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/cluster/nats"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // newTestJSStore boots an embedded NATS server and returns a JetStreamKVStore.

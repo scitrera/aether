@@ -30,8 +30,8 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	workflow "github.com/scitrera/aether/internal/storage/workflow"
-	migrations "github.com/scitrera/aether/migrations/sqlite_workflow"
+	workflow "github.com/scitrera/aether/server/internal/storage/workflow"
+	migrations "github.com/scitrera/aether/server/migrations/sqlite_workflow"
 
 	_ "modernc.org/sqlite" // registers bare "sqlite" driver
 )

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/scitrera/aether/internal/router/natscodec"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/router/natscodec"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 const (

@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/scitrera/aether/internal/admin"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/registry"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/admin"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/registry"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // =============================================================================

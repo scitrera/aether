@@ -14,7 +14,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/pkg/identityheaders"
+	"github.com/scitrera/aether/server/pkg/identityheaders"
 )
 
 // tunnelTargetResolver returns the per-grant tunnel_target patterns for a

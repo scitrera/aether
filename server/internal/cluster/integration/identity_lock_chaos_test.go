@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/state"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/state"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // TestClusterIntegration_IdentityLock_ExactlyOneWinner asserts that when N

@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/proxysidecar"
-	"github.com/scitrera/aether/pkg/identityheaders"
+	"github.com/scitrera/aether/server/internal/proxysidecar"
+	"github.com/scitrera/aether/server/pkg/identityheaders"
 )
 
 // TestPhase21_POST_LargeChunkedBody_RoundTrip exercises the full chunked

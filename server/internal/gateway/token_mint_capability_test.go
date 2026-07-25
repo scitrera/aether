@@ -19,8 +19,8 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/admin"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/admin"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // fakeTokenProvider embeds admin.StateProvider (so the large interface is

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/router/natscodec"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/router/natscodec"
 )
 
 // knownStreams maps the aether topic prefix (first token before "::") to the

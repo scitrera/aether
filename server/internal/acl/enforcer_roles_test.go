@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // addTestGrouping adds a grouping (g) edge directly to the in-memory enforcer.

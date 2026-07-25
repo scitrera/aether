@@ -7,13 +7,13 @@ package audit
 // sqlite sibling and may eventually let us collapse the legacy package
 // into this one. For now, downstream callers can
 //
-//	import "github.com/scitrera/aether/internal/storage/audit"
+//	import "github.com/scitrera/aether/server/internal/storage/audit"
 //
 // and find every type, constant, and helper they need to construct and
 // query audit events — no double-import of the legacy package required.
 
 import (
-	legacy "github.com/scitrera/aether/internal/audit"
+	legacy "github.com/scitrera/aether/server/internal/audit"
 )
 
 // Core types — aliased so a single import gets callers everything they need.

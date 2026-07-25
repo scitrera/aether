@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/kv"
+	"github.com/scitrera/aether/server/internal/kv"
 )
 
 // TestJSSetNX_AbsentThenPresent verifies SetNX acquires once and refuses a

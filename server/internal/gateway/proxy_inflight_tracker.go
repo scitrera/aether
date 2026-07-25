@@ -5,7 +5,7 @@ import (
 	"sync"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/logging"
 )
 
 // proxyInflightTracker remembers which (caller, service) topics have which

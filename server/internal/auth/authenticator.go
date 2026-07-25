@@ -3,7 +3,7 @@ package auth
 import (
 	"context"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // Credential key constants used across authenticators and SDK clients.

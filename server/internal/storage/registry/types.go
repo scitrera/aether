@@ -7,7 +7,7 @@ package registry
 // a native sqlite sibling and may eventually let us collapse the legacy
 // package into this one. For now, downstream callers can
 //
-//	import "github.com/scitrera/aether/internal/storage/registry"
+//	import "github.com/scitrera/aether/server/internal/storage/registry"
 //
 // and find every type, constant, and helper they need to construct registry
 // stores and consume their results — no double-import of the legacy package
@@ -22,7 +22,7 @@ package registry
 // new package.
 
 import (
-	legacy "github.com/scitrera/aether/internal/registry"
+	legacy "github.com/scitrera/aether/server/internal/registry"
 )
 
 // Core types — aliased so a single import gets callers everything they need.

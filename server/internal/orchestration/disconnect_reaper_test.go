@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	taskssqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
-	"github.com/scitrera/aether/pkg/tasks"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	taskssqlite "github.com/scitrera/aether/server/internal/storage/tasks/sqlite"
+	"github.com/scitrera/aether/server/pkg/tasks"
 
 	// Register bare "sqlite" driver for the native sqlite backend.
 	_ "modernc.org/sqlite"

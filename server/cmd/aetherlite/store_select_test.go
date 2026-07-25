@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/workflow"
+	"github.com/scitrera/aether/server/internal/workflow"
 )
 
 // TestBuildEmbeddedWorkflowStore_SelectsSQLiteByDefault verifies that with no

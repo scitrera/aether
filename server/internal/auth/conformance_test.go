@@ -15,10 +15,10 @@ import (
 
 	"database/sql"
 
-	"github.com/scitrera/aether/internal/auth"
-	authsqlite "github.com/scitrera/aether/internal/auth/sqlite"
-	"github.com/scitrera/aether/internal/testutil"
-	"github.com/scitrera/aether/pkg/crypto"
+	"github.com/scitrera/aether/server/internal/auth"
+	authsqlite "github.com/scitrera/aether/server/internal/auth/sqlite"
+	"github.com/scitrera/aether/server/internal/testutil"
+	"github.com/scitrera/aether/server/pkg/crypto"
 )
 
 // storeFactory builds a Store and returns a cleanup func.

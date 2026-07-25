@@ -39,12 +39,12 @@ import (
 
 	"github.com/google/uuid"
 
-	legacyaudit "github.com/scitrera/aether/internal/audit"
-	"github.com/scitrera/aether/internal/storage/acl"
-	aclpg "github.com/scitrera/aether/internal/storage/acl/postgres"
-	aclsqlite "github.com/scitrera/aether/internal/storage/acl/sqlite"
-	"github.com/scitrera/aether/internal/testutil"
-	"github.com/scitrera/aether/pkg/models"
+	legacyaudit "github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/internal/storage/acl"
+	aclpg "github.com/scitrera/aether/server/internal/storage/acl/postgres"
+	aclsqlite "github.com/scitrera/aether/server/internal/storage/acl/sqlite"
+	"github.com/scitrera/aether/server/internal/testutil"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // storeFactory builds a Store and returns flags describing backend

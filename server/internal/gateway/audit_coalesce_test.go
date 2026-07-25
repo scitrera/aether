@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/scitrera/aether/internal/audit"
+	"github.com/scitrera/aether/server/internal/audit"
 )
 
 // coalescableEvent builds a successful OpMessageReceived event for the given

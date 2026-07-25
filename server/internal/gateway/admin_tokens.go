@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/scitrera/aether/internal/admin"
-	"github.com/scitrera/aether/internal/auth"
+	"github.com/scitrera/aether/server/internal/admin"
+	"github.com/scitrera/aether/server/internal/auth"
 )
 
 // =============================================================================

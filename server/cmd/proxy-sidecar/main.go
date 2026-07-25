@@ -18,8 +18,8 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/scitrera/aether/internal/proxysidecar"
-	versionpkg "github.com/scitrera/aether/internal/version"
+	"github.com/scitrera/aether/server/internal/proxysidecar"
+	versionpkg "github.com/scitrera/aether/server/internal/version"
 )
 
 var (

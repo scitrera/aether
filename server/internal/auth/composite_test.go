@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // mockAuthenticator implements the Authenticator interface for testing.

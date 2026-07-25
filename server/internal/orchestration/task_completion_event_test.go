@@ -12,8 +12,8 @@ import (
 	"sync"
 	"testing"
 
-	taskssqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
-	"github.com/scitrera/aether/pkg/tasks"
+	taskssqlite "github.com/scitrera/aether/server/internal/storage/tasks/sqlite"
+	"github.com/scitrera/aether/server/pkg/tasks"
 
 	_ "modernc.org/sqlite"
 )

@@ -45,10 +45,10 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/sharding"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/sharding"
+	"github.com/scitrera/aether/server/pkg/tasks"
 	"github.com/scitrera/aether/sdk/go/aether"
 	"google.golang.org/protobuf/proto"
 )

@@ -42,12 +42,12 @@ import (
 	"github.com/casbin/casbin/v3/persist"
 	"github.com/google/uuid"
 
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/audit"
-	"github.com/scitrera/aether/internal/logging"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	sqliteaclmigrations "github.com/scitrera/aether/migrations/sqlite_acl"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/internal/logging"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	sqliteaclmigrations "github.com/scitrera/aether/server/migrations/sqlite_acl"
+	"github.com/scitrera/aether/server/pkg/models"
 
 	// Register the bare "sqlite" driver from modernc.org/sqlite.
 	// Stage 2 native impls use the bare driver, not sqlite_compat,

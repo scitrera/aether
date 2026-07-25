@@ -13,7 +13,7 @@ This project is made by scitrera.ai. Therefore, the naming involves "scitrera"; 
 ## Directory Structure (Monorepo)
 - api/ - Protobuf definitions and generated code (own Go module: `github.com/scitrera/aether/api`)
 - sdk/ - Client SDKs (Go, Python, TypeScript)
-- server/ - Go server (module: `github.com/scitrera/aether`)
+- server/ - Go server (module: `github.com/scitrera/aether/server`)
   - server/cmd/ - Main entry points (gateway, aetherlite, auth-proxy, proxy-sidecar, workflow, migrate, cleanup, init-secrets, readiness-check, loadtest)
   - server/configs/ - YAML configuration files (e.g., dev.yaml)
   - server/deployments/ - Kubernetes manifests and Docker Compose files

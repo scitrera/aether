@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 func TestParseIdentityFromCN(t *testing.T) {

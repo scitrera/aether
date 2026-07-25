@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/scitrera/aether/internal/logging"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/logging"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // AuthorityRequestSource is the narrow interface the task waker uses to

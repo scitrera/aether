@@ -21,13 +21,13 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 
-	legacyregistry "github.com/scitrera/aether/internal/registry"
-	"github.com/scitrera/aether/internal/storage/registry"
-	registrypg "github.com/scitrera/aether/internal/storage/registry/postgres"
-	registrysqlite "github.com/scitrera/aether/internal/storage/registry/sqlite"
-	"github.com/scitrera/aether/internal/testutil"
-	sqliteregistrymigrations "github.com/scitrera/aether/migrations/sqlite_registry"
-	aethererrors "github.com/scitrera/aether/pkg/errors"
+	legacyregistry "github.com/scitrera/aether/server/internal/registry"
+	"github.com/scitrera/aether/server/internal/storage/registry"
+	registrypg "github.com/scitrera/aether/server/internal/storage/registry/postgres"
+	registrysqlite "github.com/scitrera/aether/server/internal/storage/registry/sqlite"
+	"github.com/scitrera/aether/server/internal/testutil"
+	sqliteregistrymigrations "github.com/scitrera/aether/server/migrations/sqlite_registry"
+	aethererrors "github.com/scitrera/aether/server/pkg/errors"
 )
 
 // storeFactory builds a Store and returns a cleanup func plus a capability

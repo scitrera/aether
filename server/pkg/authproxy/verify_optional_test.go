@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/scitrera/aether/internal/auth"
+	"github.com/scitrera/aether/server/internal/auth"
 )
 
 // newVerifyTestServer builds a verify-mode Server whose middleware carries an

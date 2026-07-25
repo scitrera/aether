@@ -11,7 +11,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
-	versionpkg "github.com/scitrera/aether/internal/version"
+	versionpkg "github.com/scitrera/aether/server/internal/version"
 )
 
 // metricResource builds the OTel resource used by the MeterProvider. It mirrors

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
 )
 
 // fakeTaskStore is a minimal taskstore.Store implementation used by the

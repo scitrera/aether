@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/logging"
 )
 
 // TimerSequence manages multiple timers for task timeouts

@@ -3,7 +3,7 @@ package timer
 import (
 	"time"
 
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // TimeoutType is an alias for tasks.TimerType so the DB snake_case values are used consistently.

@@ -1,4 +1,4 @@
-module github.com/scitrera/aether
+module github.com/scitrera/aether/server
 
 go 1.25.12
 

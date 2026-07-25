@@ -36,9 +36,9 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/router"
-	"github.com/scitrera/aether/internal/router/natscodec"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/router"
+	"github.com/scitrera/aether/server/internal/router/natscodec"
 )
 
 // newTaskEventTestRig spins up a single-node embedded NATS cluster and

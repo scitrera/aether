@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/orchestration"
 )
 
 // TestClusterIntegration_TaskAssignment_ExactlyOnce spins up two

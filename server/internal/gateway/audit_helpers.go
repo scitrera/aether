@@ -3,7 +3,7 @@ package gateway
 import (
 	"context"
 
-	"github.com/scitrera/aether/internal/audit"
+	"github.com/scitrera/aether/server/internal/audit"
 )
 
 // auditLog logs an audit event asynchronously if the audit logger is configured.

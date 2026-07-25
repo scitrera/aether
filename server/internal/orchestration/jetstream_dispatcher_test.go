@@ -12,7 +12,7 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/server"
 	natsgo "github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
 )
 
 // ---------------------------------------------------------------------------

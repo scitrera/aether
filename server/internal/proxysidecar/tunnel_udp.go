@@ -11,7 +11,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/pkg/identityheaders"
+	"github.com/scitrera/aether/server/pkg/identityheaders"
 )
 
 const (

@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/scitrera/aether/internal/storage/tasks"
-	legacy "github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/storage/tasks"
+	legacy "github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // Store is the postgres-backed task store. It embeds the legacy

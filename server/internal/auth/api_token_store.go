@@ -8,7 +8,7 @@ import (
 
 	"github.com/lib/pq"
 
-	"github.com/scitrera/aether/pkg/crypto"
+	"github.com/scitrera/aether/server/pkg/crypto"
 )
 
 // APIToken represents a stored API token

@@ -4,7 +4,7 @@ import (
 	"context"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // authenticateMTLS delegates to the AuthHandler.

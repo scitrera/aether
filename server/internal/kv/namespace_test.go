@@ -3,7 +3,7 @@ package kv
 import (
 	"testing"
 
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 func TestBuildNamespace(t *testing.T) {

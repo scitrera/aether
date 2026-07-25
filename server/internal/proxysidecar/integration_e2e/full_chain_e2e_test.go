@@ -54,7 +54,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/proxysidecar"
+	"github.com/scitrera/aether/server/internal/proxysidecar"
 	pb "github.com/scitrera/aether/api/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

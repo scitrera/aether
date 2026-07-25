@@ -13,12 +13,12 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
-	authsqlite "github.com/scitrera/aether/internal/auth/sqlite"
-	"github.com/scitrera/aether/internal/config"
-	"github.com/scitrera/aether/internal/secrets"
-	aclsqlite "github.com/scitrera/aether/internal/storage/acl/sqlite"
-	"github.com/scitrera/aether/pkg/certgen"
-	"github.com/scitrera/aether/pkg/models"
+	authsqlite "github.com/scitrera/aether/server/internal/auth/sqlite"
+	"github.com/scitrera/aether/server/internal/config"
+	"github.com/scitrera/aether/server/internal/secrets"
+	aclsqlite "github.com/scitrera/aether/server/internal/storage/acl/sqlite"
+	"github.com/scitrera/aether/server/pkg/certgen"
+	"github.com/scitrera/aether/server/pkg/models"
 
 	_ "modernc.org/sqlite" // register bare "sqlite" driver for aetherlite token/acl DBs
 )

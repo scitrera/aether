@@ -12,9 +12,9 @@ import (
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	aclsqlite "github.com/scitrera/aether/internal/storage/acl/sqlite"
-	"github.com/scitrera/aether/pkg/models"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	aclsqlite "github.com/scitrera/aether/server/internal/storage/acl/sqlite"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 func newRolesTestStore(t *testing.T) *aclsqlite.Store {

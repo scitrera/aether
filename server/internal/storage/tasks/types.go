@@ -7,7 +7,7 @@ package tasks
 // and may eventually let us collapse the legacy package into this one. For
 // now, downstream callers can
 //
-//	import "github.com/scitrera/aether/internal/storage/tasks"
+//	import "github.com/scitrera/aether/server/internal/storage/tasks"
 //
 // and find every type, constant, and helper they need to construct, mutate,
 // and query tasks — no double-import of the legacy package required.
@@ -15,7 +15,7 @@ package tasks
 import (
 	"time"
 
-	legacy "github.com/scitrera/aether/pkg/tasks"
+	legacy "github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // QueueEntryNotification is the minimal projection of an

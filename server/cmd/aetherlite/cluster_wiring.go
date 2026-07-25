@@ -20,17 +20,17 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/auth"
-	"github.com/scitrera/aether/internal/cluster/backup"
-	clusternats "github.com/scitrera/aether/internal/cluster/nats"
-	"github.com/scitrera/aether/internal/config"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/registry"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	auditstore "github.com/scitrera/aether/internal/storage/audit"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/auth"
+	"github.com/scitrera/aether/server/internal/cluster/backup"
+	clusternats "github.com/scitrera/aether/server/internal/cluster/nats"
+	"github.com/scitrera/aether/server/internal/config"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/registry"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	auditstore "github.com/scitrera/aether/server/internal/storage/audit"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
 )
 
 // clusterEnv aggregates every AETHERLITE_* env var that gates cluster-mode

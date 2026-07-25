@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/logging"
 )
 
 // Handlers exposes the login flow's HTTP endpoints. Wire it into the server

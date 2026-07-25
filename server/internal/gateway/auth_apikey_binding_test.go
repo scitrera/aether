@@ -25,8 +25,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/auth"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/auth"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // fakeAPIKeyAuthenticator returns a fixed AuthResult for any credentials that

@@ -26,9 +26,9 @@ import (
 
 	"github.com/google/uuid"
 
-	legacy "github.com/scitrera/aether/internal/acl"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	"github.com/scitrera/aether/pkg/models"
+	legacy "github.com/scitrera/aether/server/internal/acl"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // ---------------------------------------------------------------------------

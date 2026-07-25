@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/scitrera/aether/internal/state"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/state"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // fakeTokenStore is a hand-rolled state.TokenStore for unit-testing the

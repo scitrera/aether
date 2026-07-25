@@ -8,9 +8,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/internal/testutil"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/internal/testutil"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // TestKVOperationResponseFlow tests that KV operations receive proper responses

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	taskssqlite "github.com/scitrera/aether/internal/storage/tasks/sqlite"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	taskssqlite "github.com/scitrera/aether/server/internal/storage/tasks/sqlite"
 
 	// Register the bare "sqlite" driver so the reconcile-job wiring test can run
 	// against the native sqlite store (always available, never skipped).

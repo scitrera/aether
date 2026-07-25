@@ -22,10 +22,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/logging"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/logging"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // SubmitAuthorityRequest validates the request payload, fills in

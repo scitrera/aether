@@ -13,13 +13,13 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
-	"github.com/scitrera/aether/internal/cleanup"
-	"github.com/scitrera/aether/internal/config"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/state"
-	taskpg "github.com/scitrera/aether/internal/storage/tasks/postgres"
-	versionpkg "github.com/scitrera/aether/internal/version"
+	"github.com/scitrera/aether/server/internal/cleanup"
+	"github.com/scitrera/aether/server/internal/config"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/state"
+	taskpg "github.com/scitrera/aether/server/internal/storage/tasks/postgres"
+	versionpkg "github.com/scitrera/aether/server/internal/version"
 )
 
 var (

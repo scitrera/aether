@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/scitrera/aether/internal/audit"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/audit"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // AuditLogger records ACL decisions to the audit log.

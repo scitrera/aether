@@ -3,8 +3,8 @@ package gateway
 import (
 	"testing"
 
-	"github.com/scitrera/aether/pkg/models"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/pkg/models"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // TestTaskToProto_AuthorityFields verifies that the first-class authority

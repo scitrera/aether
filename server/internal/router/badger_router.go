@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/scitrera/aether/internal/lite"
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/lite"
+	"github.com/scitrera/aether/server/internal/logging"
 )
 
 // defaultSubscriberBufferSize is the default channel buffer size for live fan-out

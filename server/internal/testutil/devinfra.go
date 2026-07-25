@@ -12,7 +12,7 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/scitrera/aether/migrations"
+	"github.com/scitrera/aether/server/migrations"
 )
 
 // Default configuration matching scripts/setup_dev_infra.sh

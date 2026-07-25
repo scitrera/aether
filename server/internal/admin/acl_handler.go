@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/gorilla/mux"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
 )
 
 // =============================================================================

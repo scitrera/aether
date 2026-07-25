@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/scitrera/aether/internal/kv"
+	"github.com/scitrera/aether/server/internal/kv"
 )
 
 // JetStream-backed equivalents of the SetAdd/SetCard tests, exercising the

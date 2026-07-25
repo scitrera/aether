@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	clusternats "github.com/scitrera/aether/internal/cluster/nats"
+	clusternats "github.com/scitrera/aether/server/internal/cluster/nats"
 )
 
 // pickFreePort asks the kernel for an ephemeral TCP port, closes the listener

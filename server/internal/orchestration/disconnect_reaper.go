@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/scitrera/aether/internal/logging"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/internal/logging"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // DisconnectReaper periodically scans tasks whose worker has been disconnected

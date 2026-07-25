@@ -11,18 +11,18 @@ import (
 	// AccessReadWrite, SystemPrincipal) that aclstore re-exports but the legacy
 	// import path is unchanged across the rest of the package — keeping both keeps
 	// the import graph flat. Stage 1 is mechanical; Stage 2 can prune.
-	"github.com/scitrera/aether/internal/acl"
-	"github.com/scitrera/aether/internal/admin"
-	"github.com/scitrera/aether/internal/auth"
-	"github.com/scitrera/aether/internal/circuitbreaker"
-	"github.com/scitrera/aether/internal/cleanup"
-	"github.com/scitrera/aether/internal/logging"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/quota"
-	aclstore "github.com/scitrera/aether/internal/storage/acl"
-	auditstore "github.com/scitrera/aether/internal/storage/audit"
-	taskstore "github.com/scitrera/aether/internal/storage/tasks"
-	"github.com/scitrera/aether/internal/timer"
+	"github.com/scitrera/aether/server/internal/acl"
+	"github.com/scitrera/aether/server/internal/admin"
+	"github.com/scitrera/aether/server/internal/auth"
+	"github.com/scitrera/aether/server/internal/circuitbreaker"
+	"github.com/scitrera/aether/server/internal/cleanup"
+	"github.com/scitrera/aether/server/internal/logging"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/quota"
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
+	auditstore "github.com/scitrera/aether/server/internal/storage/audit"
+	taskstore "github.com/scitrera/aether/server/internal/storage/tasks"
+	"github.com/scitrera/aether/server/internal/timer"
 )
 
 // GatewayServer implements the Aether gateway gRPC service.

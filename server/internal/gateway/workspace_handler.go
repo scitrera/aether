@@ -5,8 +5,8 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/internal/admin"
-	"github.com/scitrera/aether/internal/logging"
+	"github.com/scitrera/aether/server/internal/admin"
+	"github.com/scitrera/aether/server/internal/logging"
 )
 
 // handleWorkspaceOp processes a WorkspaceOperation from a connected client.

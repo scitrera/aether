@@ -9,7 +9,7 @@ package gateway
 
 import (
 	pb "github.com/scitrera/aether/api/proto"
-	"github.com/scitrera/aether/pkg/tasks"
+	"github.com/scitrera/aether/server/pkg/tasks"
 )
 
 // retryPolicyFromProto converts an incoming proto policy to the storage

@@ -52,14 +52,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scitrera/aether/internal/checkpoint"
-	clusternats "github.com/scitrera/aether/internal/cluster/nats"
-	"github.com/scitrera/aether/internal/kv"
-	"github.com/scitrera/aether/internal/orchestration"
-	"github.com/scitrera/aether/internal/router"
-	"github.com/scitrera/aether/internal/router/natscodec"
-	"github.com/scitrera/aether/internal/state"
-	"github.com/scitrera/aether/pkg/models"
+	"github.com/scitrera/aether/server/internal/checkpoint"
+	clusternats "github.com/scitrera/aether/server/internal/cluster/nats"
+	"github.com/scitrera/aether/server/internal/kv"
+	"github.com/scitrera/aether/server/internal/orchestration"
+	"github.com/scitrera/aether/server/internal/router"
+	"github.com/scitrera/aether/server/internal/router/natscodec"
+	"github.com/scitrera/aether/server/internal/state"
+	"github.com/scitrera/aether/server/pkg/models"
 )
 
 // oboGrant models an on-behalf-of authority grant. Production uses

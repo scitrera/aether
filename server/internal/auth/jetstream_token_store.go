@@ -50,7 +50,7 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 
-	"github.com/scitrera/aether/internal/router/natscodec"
+	"github.com/scitrera/aether/server/internal/router/natscodec"
 )
 
 // APITokensKVBucket is the NATS JetStream KV bucket name for API-token
