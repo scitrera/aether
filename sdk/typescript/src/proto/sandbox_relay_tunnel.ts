@@ -108,6 +108,7 @@ import type { ResolveAuthorityResponse as _aether_v1_ResolveAuthorityResponse, R
 import type { ResolvedAuthority as _aether_v1_ResolvedAuthority, ResolvedAuthority__Output as _aether_v1_ResolvedAuthority__Output } from './aether/v1/ResolvedAuthority';
 import type { ResolvedAuthorityInfo as _aether_v1_ResolvedAuthorityInfo, ResolvedAuthorityInfo__Output as _aether_v1_ResolvedAuthorityInfo__Output } from './aether/v1/ResolvedAuthorityInfo';
 import type { RetryPolicy as _aether_v1_RetryPolicy, RetryPolicy__Output as _aether_v1_RetryPolicy__Output } from './aether/v1/RetryPolicy';
+import type { SandboxRelayTunnelClient as _aether_v1_SandboxRelayTunnelClient, SandboxRelayTunnelDefinition as _aether_v1_SandboxRelayTunnelDefinition } from './aether/v1/SandboxRelayTunnel';
 import type { SendMessage as _aether_v1_SendMessage, SendMessage__Output as _aether_v1_SendMessage__Output } from './aether/v1/SendMessage';
 import type { ServiceIdentity as _aether_v1_ServiceIdentity, ServiceIdentity__Output as _aether_v1_ServiceIdentity__Output } from './aether/v1/ServiceIdentity';
 import type { SessionOperation as _aether_v1_SessionOperation, SessionOperation__Output as _aether_v1_SessionOperation__Output } from './aether/v1/SessionOperation';
@@ -133,6 +134,7 @@ import type { TaskQueryResponse as _aether_v1_TaskQueryResponse, TaskQueryRespon
 import type { TaskStatusChangedEvent as _aether_v1_TaskStatusChangedEvent, TaskStatusChangedEvent__Output as _aether_v1_TaskStatusChangedEvent__Output } from './aether/v1/TaskStatusChangedEvent';
 import type { TaskSubscriptionOperation as _aether_v1_TaskSubscriptionOperation, TaskSubscriptionOperation__Output as _aether_v1_TaskSubscriptionOperation__Output } from './aether/v1/TaskSubscriptionOperation';
 import type { TaskSubscriptionOperationResponse as _aether_v1_TaskSubscriptionOperationResponse, TaskSubscriptionOperationResponse__Output as _aether_v1_TaskSubscriptionOperationResponse__Output } from './aether/v1/TaskSubscriptionOperationResponse';
+import type { TenantEvent as _aether_v1_TenantEvent, TenantEvent__Output as _aether_v1_TenantEvent__Output } from './aether/v1/TenantEvent';
 import type { TokenCreateRequest as _aether_v1_TokenCreateRequest, TokenCreateRequest__Output as _aether_v1_TokenCreateRequest__Output } from './aether/v1/TokenCreateRequest';
 import type { TokenFilter as _aether_v1_TokenFilter, TokenFilter__Output as _aether_v1_TokenFilter__Output } from './aether/v1/TokenFilter';
 import type { TokenInfo as _aether_v1_TokenInfo, TokenInfo__Output as _aether_v1_TokenInfo__Output } from './aether/v1/TokenInfo';
@@ -141,10 +143,13 @@ import type { TokenResponse as _aether_v1_TokenResponse, TokenResponse__Output a
 import type { TunnelAck as _aether_v1_TunnelAck, TunnelAck__Output as _aether_v1_TunnelAck__Output } from './aether/v1/TunnelAck';
 import type { TunnelClose as _aether_v1_TunnelClose, TunnelClose__Output as _aether_v1_TunnelClose__Output } from './aether/v1/TunnelClose';
 import type { TunnelData as _aether_v1_TunnelData, TunnelData__Output as _aether_v1_TunnelData__Output } from './aether/v1/TunnelData';
+import type { TunnelFrame as _aether_v1_TunnelFrame, TunnelFrame__Output as _aether_v1_TunnelFrame__Output } from './aether/v1/TunnelFrame';
+import type { TunnelHello as _aether_v1_TunnelHello, TunnelHello__Output as _aether_v1_TunnelHello__Output } from './aether/v1/TunnelHello';
 import type { TunnelOpen as _aether_v1_TunnelOpen, TunnelOpen__Output as _aether_v1_TunnelOpen__Output } from './aether/v1/TunnelOpen';
 import type { UpstreamMessage as _aether_v1_UpstreamMessage, UpstreamMessage__Output as _aether_v1_UpstreamMessage__Output } from './aether/v1/UpstreamMessage';
 import type { UserIdentity as _aether_v1_UserIdentity, UserIdentity__Output as _aether_v1_UserIdentity__Output } from './aether/v1/UserIdentity';
 import type { WaitSpec as _aether_v1_WaitSpec, WaitSpec__Output as _aether_v1_WaitSpec__Output } from './aether/v1/WaitSpec';
+import type { WatchTenantsRequest as _aether_v1_WatchTenantsRequest, WatchTenantsRequest__Output as _aether_v1_WatchTenantsRequest__Output } from './aether/v1/WatchTenantsRequest';
 import type { WorkflowEngineIdentity as _aether_v1_WorkflowEngineIdentity, WorkflowEngineIdentity__Output as _aether_v1_WorkflowEngineIdentity__Output } from './aether/v1/WorkflowEngineIdentity';
 import type { WorkflowOperation as _aether_v1_WorkflowOperation, WorkflowOperation__Output as _aether_v1_WorkflowOperation__Output } from './aether/v1/WorkflowOperation';
 import type { WorkflowResponse as _aether_v1_WorkflowResponse, WorkflowResponse__Output as _aether_v1_WorkflowResponse__Output } from './aether/v1/WorkflowResponse';
@@ -275,6 +280,15 @@ export interface ProtoGrpcType {
       ResolvedAuthority: MessageTypeDefinition<_aether_v1_ResolvedAuthority, _aether_v1_ResolvedAuthority__Output>
       ResolvedAuthorityInfo: MessageTypeDefinition<_aether_v1_ResolvedAuthorityInfo, _aether_v1_ResolvedAuthorityInfo__Output>
       RetryPolicy: MessageTypeDefinition<_aether_v1_RetryPolicy, _aether_v1_RetryPolicy__Output>
+      /**
+       * SandboxRelayTunnel is the aggregator's relay-facing surface. A tenant-relay
+       * sidecar dials Tunnel() and announces its tenant via TunnelHello; the
+       * aggregator pairs that relay with a provider's AetherGateway.Connect stream
+       * for the same tenant and splices the two 1:1 (NOT a mux — each pair owns its
+       * own gateway session, lock, and session id). WatchTenants lets a provider
+       * learn which tenants currently have an online relay so it can dial in.
+       */
+      SandboxRelayTunnel: SubtypeConstructor<typeof grpc.Client, _aether_v1_SandboxRelayTunnelClient> & { service: _aether_v1_SandboxRelayTunnelDefinition }
       SendMessage: MessageTypeDefinition<_aether_v1_SendMessage, _aether_v1_SendMessage__Output>
       ServiceIdentity: MessageTypeDefinition<_aether_v1_ServiceIdentity, _aether_v1_ServiceIdentity__Output>
       SessionOperation: MessageTypeDefinition<_aether_v1_SessionOperation, _aether_v1_SessionOperation__Output>
@@ -304,6 +318,7 @@ export interface ProtoGrpcType {
       TaskStatusChangedEvent: MessageTypeDefinition<_aether_v1_TaskStatusChangedEvent, _aether_v1_TaskStatusChangedEvent__Output>
       TaskSubscriptionOperation: MessageTypeDefinition<_aether_v1_TaskSubscriptionOperation, _aether_v1_TaskSubscriptionOperation__Output>
       TaskSubscriptionOperationResponse: MessageTypeDefinition<_aether_v1_TaskSubscriptionOperationResponse, _aether_v1_TaskSubscriptionOperationResponse__Output>
+      TenantEvent: MessageTypeDefinition<_aether_v1_TenantEvent, _aether_v1_TenantEvent__Output>
       TokenCreateRequest: MessageTypeDefinition<_aether_v1_TokenCreateRequest, _aether_v1_TokenCreateRequest__Output>
       TokenFilter: MessageTypeDefinition<_aether_v1_TokenFilter, _aether_v1_TokenFilter__Output>
       TokenInfo: MessageTypeDefinition<_aether_v1_TokenInfo, _aether_v1_TokenInfo__Output>
@@ -312,11 +327,14 @@ export interface ProtoGrpcType {
       TunnelAck: MessageTypeDefinition<_aether_v1_TunnelAck, _aether_v1_TunnelAck__Output>
       TunnelClose: MessageTypeDefinition<_aether_v1_TunnelClose, _aether_v1_TunnelClose__Output>
       TunnelData: MessageTypeDefinition<_aether_v1_TunnelData, _aether_v1_TunnelData__Output>
+      TunnelFrame: MessageTypeDefinition<_aether_v1_TunnelFrame, _aether_v1_TunnelFrame__Output>
+      TunnelHello: MessageTypeDefinition<_aether_v1_TunnelHello, _aether_v1_TunnelHello__Output>
       TunnelOpen: MessageTypeDefinition<_aether_v1_TunnelOpen, _aether_v1_TunnelOpen__Output>
       UpstreamMessage: MessageTypeDefinition<_aether_v1_UpstreamMessage, _aether_v1_UpstreamMessage__Output>
       UserIdentity: MessageTypeDefinition<_aether_v1_UserIdentity, _aether_v1_UserIdentity__Output>
       WaitReason: EnumTypeDefinition
       WaitSpec: MessageTypeDefinition<_aether_v1_WaitSpec, _aether_v1_WaitSpec__Output>
+      WatchTenantsRequest: MessageTypeDefinition<_aether_v1_WatchTenantsRequest, _aether_v1_WatchTenantsRequest__Output>
       WorkflowEngineIdentity: MessageTypeDefinition<_aether_v1_WorkflowEngineIdentity, _aether_v1_WorkflowEngineIdentity__Output>
       WorkflowOperation: MessageTypeDefinition<_aether_v1_WorkflowOperation, _aether_v1_WorkflowOperation__Output>
       WorkflowResponse: MessageTypeDefinition<_aether_v1_WorkflowResponse, _aether_v1_WorkflowResponse__Output>

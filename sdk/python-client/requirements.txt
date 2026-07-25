@@ -1,11 +1,13 @@
 # Core runtime dependencies
 grpcio>=1.76.0
-protobuf>=6.33.2
+# Must not fall below the gencode version in proto/*_pb2.py (currently 6.33.5);
+# the generated runtime guard rejects an older runtime. See versions.yaml.
+protobuf>=6.33.5
 
 # Development dependencies (also specified in pyproject.toml under the "dev" extra)
 # For production installs, use: pip install scitrera-aether-client
 # For development installs, use: pip install -e .[dev]
-grpcio-tools>=1.76.0
+grpcio-tools>=1.81.1  # keep aligned with proto.toolchain.grpcio_tools in versions.yaml
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
 mypy>=1.8.0

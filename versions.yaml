@@ -30,11 +30,43 @@ preferred_versions:
   python:
     "grpcio": 1.81.1
     "grpcio-tools": 1.81.1
-    "protobuf": ">6"  # TODO: pin version that will be compatible with opentelemetry grpc
+    # Floor is set by the generated Python gencode version (see the proto block):
+    # protoc 33.5 emits gencode 6.33.5, and the runtime guard in *_pb2.py rejects
+    # any protobuf runtime older than the gencode that produced it. Raise this in
+    # lockstep whenever proto.toolchain.grpcio_tools moves.
+    "protobuf": ">=6.33.5"
     "pytest": 9.0.3
   typescript:
     "@grpc/grpc-js": "1.14.3"
     "@grpc/proto-loader": "0.8.1"
+
+# Protobuf/gRPC codegen. Run: compile-protos [--check]
+#
+# Every pin here is verified before any code is generated, because generated
+# artifacts embed the versions of the tools that produced them — an unpinned
+# compiler makes the proto drift check nondeterministic.
+#
+# protoc and grpcio-tools are two INDEPENDENT compilers (grpc_tools bundles its
+# own libprotoc), so they are kept deliberately aligned: grpcio-tools 1.81.1
+# bundles libprotoc 33.5, hence protoc 33.5 here. compile-protos cross-checks
+# the pair and fails if they diverge.
+proto:
+  dir: api/proto
+  files: [ aether.proto, sandbox_relay_tunnel.proto ]
+  toolchain:
+    protoc: "33.5"
+    protoc_gen_go: null            # derived from preferred_versions.go["google.golang.org/protobuf"]
+    protoc_gen_go_grpc: "v1.6.2"   # separate module; NOT derivable from google.golang.org/grpc
+    grpcio_tools: "1.81.1"
+    proto_loader: "0.8.1"
+  outputs:
+    go:
+      path: api/proto
+    python:
+      path: sdk/python-client/scitrera_aether_client/proto
+    typescript:
+      path: sdk/typescript/src/proto
+      package_dir: sdk/typescript
 
 project_rules:
   aether-gateway:
