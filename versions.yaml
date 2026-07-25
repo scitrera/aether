@@ -63,7 +63,15 @@ ci:
   # release, which is the same unpinned-tooling drift proto-check exists to
   # catch. Bump in lockstep with the proto toolchain when repo-tools changes
   # generated output.
-  repo_tools_source: "scitrera-repo-tools==0.1.17"
+  repo_tools_source: "scitrera-repo-tools==0.1.18"
+  # `push_branches` is deliberately unset, so develop stays in both the push and
+  # pull_request trigger lists and every check runs twice for a commit pushed to
+  # an open PR's branch. That is the intended trade: both runs complete and both
+  # report success, so the PR is unambiguously green and no push is ever
+  # unchecked. Setting `push_branches: [ main ]` would halve the jobs but leave
+  # pushes to develop uncovered whenever no PR is open. What we do NOT want is
+  # collapsing the pair via concurrency — a cancelled run reports as cancelled
+  # rather than success and can hold up a required check.
   # One `v*.*.*` tag drives every artifact, so the GitHub Release belongs to the
   # tag rather than to any single language's publish flow.
   github_release: true

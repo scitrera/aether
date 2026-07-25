@@ -12,12 +12,13 @@ on:
   workflow_call:
 
 concurrency:
-  # Keyed on the branch, not the ref: a push to a branch that already has an
-  # open PR fires both `push` and `pull_request`, and github.ref differs between
-  # them (refs/heads/X vs refs/pull/N/merge) so they would not otherwise
-  # collapse. github.head_ref is set only for pull_request events, so both
-  # resolve to the same branch name and the redundant run is cancelled.
-  group: test-python-${{ github.head_ref || github.ref_name }}
+  # github.ref is stable across pushes to the same PR (refs/pull/N/merge), so
+  # this still cancels a superseded run when you push again — the case where
+  # cancelling is the right outcome. It deliberately does NOT collapse the
+  # push and pull_request runs of one commit: that duplicate is avoided with
+  # ci.push_branches instead, because a cancelled run reports as cancelled
+  # rather than as success.
+  group: test-python-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
