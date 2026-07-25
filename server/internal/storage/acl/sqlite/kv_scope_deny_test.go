@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
+	aclstore "github.com/scitrera/aether/server/internal/storage/acl"
 	aclsqlite "github.com/scitrera/aether/server/internal/storage/acl/sqlite"
 	"github.com/scitrera/aether/server/pkg/models"
 )
@@ -92,6 +93,44 @@ func TestSQLiteKVScope_OtherScopesStillPermitted(t *testing.T) {
 		if !kvScopeAllowed(t, store, agent, scope) {
 			t.Errorf("agent was DENIED on kv_scope:%s — the deny must be limited to the " +
 				"two cross-agent shared per-user scopes", scope)
+		}
+	}
+}
+
+// The inert `_global` rule was REMOVED (migration 005 / postgres 030) rather
+// than repaired. Removal must be a no-op for access: _global was never reachable
+// via that rule (principal_id '_any_authenticated' matches no wildcard subject),
+// only via the *_workspace fallback policies — which are untouched.
+//
+// Repairing it instead would have GRANTED every authenticated principal
+// READ_WRITE on _global, access nobody holds today. This test pins that we did
+// not accidentally do that, and did not lose _global access either.
+func TestSQLiteGlobalWorkspace_InertRuleRemovedWithoutChangingAccess(t *testing.T) {
+	store := newKVScopeTestStore(t)
+	const accessRead = 10
+
+	// The dead row must be gone.
+	rules, err := store.ListRules(context.Background(), aclstore.RuleFilter{
+		PrincipalType: "wildcard",
+		PrincipalID:   "_any_authenticated",
+	})
+	if err == nil && len(rules) > 0 {
+		t.Errorf("inert '_any_authenticated' rules still present after migration: %d", len(rules))
+	}
+
+	// ...and _global is still reachable, via the fallback rather than the rule.
+	for _, p := range []models.Identity{
+		{Type: models.PrincipalUser, ID: "alice@example.com"},
+		{Type: models.PrincipalAgent, ID: "ag::some::agent"},
+	} {
+		decision, err := store.CheckAccess(context.Background(), p,
+			"workspace", "_global", "read", "_global", uuid.Nil, accessRead)
+		if err != nil {
+			t.Fatalf("CheckAccess(%s, workspace:_global): %v", p.Type, err)
+		}
+		if decision == nil || !decision.Allowed {
+			t.Errorf("%s LOST access to workspace:_global — removal was supposed to be a "+
+				"no-op (the fallback, not the rule, is what grants it)", p.Type)
 		}
 	}
 }
