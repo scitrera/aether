@@ -14,6 +14,11 @@ import (
 // first pending audit-submit request with the given response. The mock
 // server-side ack mirrors the gateway dispatch path: the response carries
 // the client_request_id that was registered with the pending map.
+//
+// Callers run this in a goroutine, so it reports failures with t.Error* rather
+// than t.Fatal*: t.Fatal calls runtime.Goexit, which is only valid on the test's
+// own goroutine. From here it would kill this goroutine without failing the test
+// promptly, leaving the caller to block until an unrelated timeout.
 func resolveFirstPendingAuditSubmit(t *testing.T, client *BaseClient, resp *pb.SubmitAuditEventResponse) {
 	t.Helper()
 	time.Sleep(10 * time.Millisecond)
@@ -24,13 +29,15 @@ func resolveFirstPendingAuditSubmit(t *testing.T, client *BaseClient, resp *pb.S
 	case msg := <-client.RequestQueue():
 		req := msg.GetSubmitAuditEvent()
 		if req == nil {
-			t.Fatalf("expected SubmitAuditEvent on the queue, got %T", msg.Payload)
+			t.Errorf("expected SubmitAuditEvent on the queue, got %T", msg.Payload)
+			return
 		}
 		if resp.GetClientRequestId() == "" {
 			resp.ClientRequestId = req.GetClientRequestId()
 		}
 	default:
-		t.Fatal("no upstream message queued")
+		t.Error("no upstream message queued")
+		return
 	}
 
 	client.pendingAuditSubmitRequests.Range(func(key, val any) bool {
