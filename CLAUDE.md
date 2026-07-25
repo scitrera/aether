@@ -26,7 +26,7 @@ This project is made by scitrera.ai. Therefore, the naming involves "scitrera"; 
   - server/go.mod, server/go.sum - Go module files
   - server/Dockerfile - Multi-stage build for gateway, cleanup, migrate, auth-proxy, init-secrets, workflow, aetherlite, and proxy-sidecar binaries
   - server/Makefile - Build/test/run targets (run from server/ directory)
-- scripts/ - Repo-wide scripts (compile_protos.sh)
+- scripts/ - Repo-wide scripts (compile-protos.py, update-versions.py — thin shims over scitrera-repo-tools)
 - refs/ - Reference materials (external open source code; exclude from general scans)
 - .claude - Claude configuration files
 - .slop - Directory to store random markdown files and notes that may be relevant but not necessarily
@@ -67,11 +67,22 @@ go test -v ./internal/gateway    # Run specific package tests with verbose outpu
 ```
 
 ### Generate Protobuf Code
-# may require: activate a Python virtualenv with grpcio-tools / mypy-protobuf installed,
-# ensure protoc-gen-go and protoc-gen-go-grpc are on PATH, then run scripts/compile_protos.sh
+Driven by the `proto:` block in `versions.yaml`, which pins every compiler
+(`protoc`, the Go plugins, `grpcio-tools`, `@grpc/proto-loader`). Those pins are
+verified before anything is generated, so a toolchain mismatch fails with the
+exact install command instead of producing artifacts whose embedded version
+headers drift from CI. `--check` is what `proto-check.yml` runs on PRs.
+
 ```bash
-./scripts/compile_protos.sh
+python scripts/compile-protos.py            # regenerate Go + Python + TypeScript
+python scripts/compile-protos.py --check    # verify only; exit 1 on drift
+python scripts/compile-protos.py --lang go  # one language (repeatable)
 ```
+
+Requires `protoc` and the Go plugins on PATH (`gofmt` too, from the Go
+toolchain), plus a virtualenv with the pinned `grpcio-tools` and
+`npm install` in `sdk/typescript`. If repo-tools runs outside that virtualenv,
+point it at the right interpreter with `--python .venv/bin/python`.
 
 ### Docker Build
 ```bash
