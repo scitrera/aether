@@ -129,10 +129,15 @@ ci:
       - id: GO-2026-5668
         reason: "docker cp symlink-swap empty-file race; no upstream fix; see SECURITY.md"
         projects: [ aether-sdk-go ]
-    # Verify that scripts/tag-release.sh actually cut api/, sdk/go/ and server/
-    # tags for the release. Flip to `push` — and drop tag-release.sh — once a
-    # real release has proven the wiring.
-    module_tags: verify
+    # The root `vX.Y.Z` tag is the whole release action: this job creates and
+    # pushes the api/, sdk/go/ and server/ module tags Go resolves against.
+    # Proven in `verify` mode on v0.2.2, where all four tags were cut by hand.
+    #
+    # Pushing only the root tag also sidesteps a GitHub limit that bit that
+    # release: pushing more than three tags at once produces no push event, so
+    # the four-tag push fired no workflows at all until the root tag was
+    # re-pushed on its own.
+    module_tags: push
   docker:
     # Empty to preserve build.yml's behavior: images build on a tag that was
     # already tested on its branch, with no inlined test gate.
