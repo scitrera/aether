@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from .client import BaseAetherClient
+from .admin_async import _build_agent_registration_info
 from .proto import aether_pb2
 
 
@@ -643,6 +644,53 @@ class AdminClient:
         """Get the registration details for a specific agent implementation."""
         op = aether_pb2.AgentOperation(
             op=aether_pb2.AgentOperation.GET,
+            implementation=implementation,
+        )
+        return self._client.agent_op(op, timeout=timeout)
+
+    def register_agent(self,
+                       implementation: str,
+                       orchestrator_profile: str = "",
+                       description: str = "",
+                       launch_params: Optional[dict] = None,
+                       capabilities: Optional[dict] = None,
+                       extensions: Optional[list] = None,
+                       resource_schema: Optional[list] = None,
+                       timeout: float = 10.0):
+        """Register a new agent implementation. See :meth:`AsyncAdminClient.register_agent`."""
+        op = aether_pb2.AgentOperation(
+            op=aether_pb2.AgentOperation.REGISTER,
+            agent=_build_agent_registration_info(
+                implementation, orchestrator_profile, description,
+                launch_params, capabilities, extensions, resource_schema,
+            ),
+        )
+        return self._client.agent_op(op, timeout=timeout)
+
+    def update_agent(self,
+                     implementation: str,
+                     orchestrator_profile: str = "",
+                     description: str = "",
+                     launch_params: Optional[dict] = None,
+                     capabilities: Optional[dict] = None,
+                     extensions: Optional[list] = None,
+                     resource_schema: Optional[list] = None,
+                     timeout: float = 10.0):
+        """Update (upsert) an agent registration. See :meth:`AsyncAdminClient.update_agent`."""
+        op = aether_pb2.AgentOperation(
+            op=aether_pb2.AgentOperation.UPDATE,
+            implementation=implementation,
+            agent=_build_agent_registration_info(
+                implementation, orchestrator_profile, description,
+                launch_params, capabilities, extensions, resource_schema,
+            ),
+        )
+        return self._client.agent_op(op, timeout=timeout)
+
+    def delete_agent(self, implementation: str, timeout: float = 10.0):
+        """Remove an agent implementation. See :meth:`AsyncAdminClient.delete_agent`."""
+        op = aether_pb2.AgentOperation(
+            op=aether_pb2.AgentOperation.DELETE,
             implementation=implementation,
         )
         return self._client.agent_op(op, timeout=timeout)

@@ -20,6 +20,43 @@ from .client_async import BaseAsyncAetherClient
 from .proto import aether_pb2
 
 
+def _build_agent_registration_info(
+    implementation: str,
+    orchestrator_profile: str = "",
+    description: str = "",
+    launch_params: Optional[dict] = None,
+    capabilities: Optional[dict] = None,
+    extensions: Optional[list] = None,
+    resource_schema: Optional[list] = None,
+) -> "aether_pb2.AgentRegistrationInfo":
+    """Build an ``AgentRegistrationInfo`` proto for register/update.
+
+    ``registered_at`` / ``updated_at`` are server-owned and never set here.
+    ``resource_schema`` accepts a list of dicts
+    ``{resource_type_prefix, permission_verbs: [...], resource_id_schema}`` or
+    pre-built :class:`aether_pb2.AgentResourceSchemaEntry` protos.
+    """
+    schema_entries = []
+    for entry in (resource_schema or []):
+        if isinstance(entry, aether_pb2.AgentResourceSchemaEntry):
+            schema_entries.append(entry)
+        else:
+            schema_entries.append(aether_pb2.AgentResourceSchemaEntry(
+                resource_type_prefix=entry.get("resource_type_prefix", ""),
+                permission_verbs=list(entry.get("permission_verbs", []) or []),
+                resource_id_schema=entry.get("resource_id_schema", "") or "",
+            ))
+    return aether_pb2.AgentRegistrationInfo(
+        implementation=implementation,
+        orchestrator_profile=orchestrator_profile or "",
+        description=description or "",
+        launch_params={str(k): str(v) for k, v in (launch_params or {}).items()},
+        capabilities={str(k): bool(v) for k, v in (capabilities or {}).items()},
+        extensions=list(extensions or []),
+        resource_schema=schema_entries,
+    )
+
+
 class AsyncAdminClient:
     """Asynchronous administrative client.
 
@@ -595,6 +632,57 @@ class AsyncAdminClient:
         """Get the registration details for a specific agent implementation."""
         op = aether_pb2.AgentOperation(
             op=aether_pb2.AgentOperation.GET,
+            implementation=implementation,
+        )
+        return await self._client.agent_op(op, timeout=timeout)
+
+    async def register_agent(self,
+                             implementation: str,
+                             orchestrator_profile: str = "",
+                             description: str = "",
+                             launch_params: Optional[dict] = None,
+                             capabilities: Optional[dict] = None,
+                             extensions: Optional[list] = None,
+                             resource_schema: Optional[list] = None,
+                             timeout: float = 10.0):
+        """Register a new agent implementation in the orchestration registry.
+
+        ``implementation`` is the unique registry key. See
+        :func:`_build_agent_registration_info` for the remaining fields.
+        """
+        op = aether_pb2.AgentOperation(
+            op=aether_pb2.AgentOperation.REGISTER,
+            agent=_build_agent_registration_info(
+                implementation, orchestrator_profile, description,
+                launch_params, capabilities, extensions, resource_schema,
+            ),
+        )
+        return await self._client.agent_op(op, timeout=timeout)
+
+    async def update_agent(self,
+                           implementation: str,
+                           orchestrator_profile: str = "",
+                           description: str = "",
+                           launch_params: Optional[dict] = None,
+                           capabilities: Optional[dict] = None,
+                           extensions: Optional[list] = None,
+                           resource_schema: Optional[list] = None,
+                           timeout: float = 10.0):
+        """Update (upsert) an existing agent registration by ``implementation``."""
+        op = aether_pb2.AgentOperation(
+            op=aether_pb2.AgentOperation.UPDATE,
+            implementation=implementation,
+            agent=_build_agent_registration_info(
+                implementation, orchestrator_profile, description,
+                launch_params, capabilities, extensions, resource_schema,
+            ),
+        )
+        return await self._client.agent_op(op, timeout=timeout)
+
+    async def delete_agent(self, implementation: str, timeout: float = 10.0):
+        """Remove an agent implementation from the orchestration registry."""
+        op = aether_pb2.AgentOperation(
+            op=aether_pb2.AgentOperation.DELETE,
             implementation=implementation,
         )
         return await self._client.agent_op(op, timeout=timeout)
