@@ -26,7 +26,8 @@ type Option func(*runOptions)
 // runOptions captures the configurable behaviour of Run. Held internal so
 // the option set can be extended without breaking callers.
 type runOptions struct {
-	identityResolver IdentityResolver
+	identityResolver  IdentityResolver
+	handlerMiddleware func(http.Handler) http.Handler
 }
 
 // WithIdentityResolver overrides the default IdentityResolver used by Run.
@@ -38,6 +39,25 @@ type runOptions struct {
 func WithIdentityResolver(r IdentityResolver) Option {
 	return func(o *runOptions) {
 		o.identityResolver = r
+	}
+}
+
+// WithHandlerMiddleware wraps the internal plane's HTTP handler.
+//
+// Exists so a caller can instrument this plane without this package taking on
+// the dependency: the middleware is supplied as a plain func, so tracing
+// libraries stay in the binary that wants them.
+//
+// This plane serves /auth/verify — the ext_authz call on the path of EVERY
+// request through the gateway — so it is the highest-value thing to trace and
+// was previously invisible.
+//
+// Applied to the outermost handler AFTER routes are registered. The wrapped
+// handler delegates to the mux by pointer, so routes attached later (notably
+// AttachLogin) are covered too.
+func WithHandlerMiddleware(mw func(http.Handler) http.Handler) Option {
+	return func(o *runOptions) {
+		o.handlerMiddleware = mw
 	}
 }
 
@@ -137,6 +157,10 @@ func Run(ctx context.Context, cfg *Config, opts ...Option) error {
 		return fmt.Errorf("attach login: %w", err)
 	}
 	defer loginCleanup()
+
+	// Applied after AttachLogin so the login routes are covered too. No-op when
+	// the option was not supplied.
+	server.WrapHandler(o.handlerMiddleware)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)

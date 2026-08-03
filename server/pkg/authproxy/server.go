@@ -27,6 +27,19 @@ type Server struct {
 // construction.
 func (s *Server) Mux() *http.ServeMux { return s.mux }
 
+// WrapHandler wraps the server's outermost HTTP handler with mw.
+//
+// Safe to call after routes are registered: the existing handler chain ends at
+// the mux POINTER, so handlers attached later (e.g. AttachLogin) are still
+// served through mw. No-op when mw is nil, so callers can pass an unset option
+// straight through.
+func (s *Server) WrapHandler(mw func(http.Handler) http.Handler) {
+	if mw == nil || s.httpServer == nil {
+		return
+	}
+	s.httpServer.Handler = mw(s.httpServer.Handler)
+}
+
 // NewServer creates a new auth-proxy server. In proxy mode it also
 // initialises a reverse proxy to the configured backend URL.
 func NewServer(cfg *Config, middleware *AuthMiddleware) (*Server, error) {
