@@ -860,17 +860,36 @@ func (h *KVHandler) handleIncrement(
 		return err
 	}
 
+	// Establish the window boundary ATOMICALLY, BEFORE incrementing. SetNX writes
+	// the key with its TTL only when absent, so a counter cannot come into
+	// existence without an expiry.
+	//
+	// This replaces a set-TTL-after-first-increment approach that was load-bearing
+	// and unsound: the expiry was applied only when some caller observed
+	// counterVal == 1, through a SEPARATE Set. Any key that began life another way
+	// — that Set failing, two first-increments racing so neither saw 1, or a key
+	// written by some other path — never received a TTL, incremented forever, and
+	// pinned its principal at "limit exceeded" permanently. Nothing self-healed,
+	// because the state lives here rather than in the caller: restarting the
+	// client, the server, or anything between them changed nothing.
+	//
+	// Observed in production 2026-08-05: a MemoryLayer per-user rate-limit counter
+	// stuck at 10078 against a limit of 10000, returning 429 indefinitely and
+	// surviving every restart. The old Set also clobbered the value back to "1",
+	// silently discarding concurrent increments.
+	if ttl > 0 {
+		if _, nxErr := h.kvStore.SetNX(ctx, identity, scope, key, "0", userID, workspace, ttl); nxErr != nil {
+			logging.Logger.Warn().Err(nxErr).Str("identity", identity.String()).Str("key", key).Msg("KV INCREMENT: SetNX window init failed; falling back to post-increment TTL")
+		}
+	}
+
 	counterVal, err := h.kvStore.Increment(ctx, identity, scope, key, userID, workspace)
 
-	// If a TTL is specified and this is the first increment (counterVal == 1),
-	// set the expiry on the key. We re-set the key with the string representation
-	// of the counter value so the TTL takes effect without losing the numeric value.
-	// NOTE: This two-step approach (INCR then EXPIRE via SET) is not fully atomic.
-	// For strict atomicity (e.g., sliding rate limit windows), a Lua script should
-	// be used instead. This is acceptable for fixed-window rate limit use cases
-	// where the window is established on the first increment.
+	// Fallback for the case where SetNX above failed: Increment may then have
+	// created the key with no expiry. counterVal == 1 proves the key was absent
+	// before this increment, so writing "1" with the TTL cannot lose a concurrent
+	// update. Without this a SetNX outage would reintroduce the permanent-pin bug.
 	if err == nil && ttl > 0 && counterVal == 1 {
-		// Only set TTL on the first increment to establish the window boundary
 		if setErr := h.kvStore.Set(ctx, identity, scope, key, "1", userID, workspace, ttl); setErr != nil {
 			logging.Logger.Error().Err(setErr).Str("identity", identity.String()).Str("key", key).Msg("KV INCREMENT: failed to set TTL after first increment")
 		}
