@@ -206,12 +206,26 @@ func (h *KVHandler) HandleKVOperation(
 	// to the tenant's internal KV. Like the WorkflowEngine, this only opens the
 	// type gate — every key it touches still requires an explicit ACL grant via
 	// checkKeyPermission (seeded for metrics::shard0 in acl_seed.py).
+	// Orchestrators are permitted for the same reason: they must read the tenant
+	// ProvisionSpec and per-tenant launcher credentials from KV in order to build
+	// a worker's environment. acl_seed.py already seeds NARROW grants for exactly
+	// that (orc::<impl>::* -> kv_key/provision/*, *ikv:provision:*, and
+	// *ikv:api_key:MODAL_*) — but those grants could never take effect, because
+	// this type gate rejected orchestrators before checkKeyPermission was ever
+	// consulted. The result was a worker launched with no environment: the agent
+	// came up and then failed to resolve its provider secrets. The gateway logged
+	// the real cause (PermissionDenied) while the orchestrator only ever saw a
+	// generic "[KV_ERROR] internal error processing KV operation".
+	//
+	// As with the WorkflowEngine and MetricsBridge above, this ONLY opens the type
+	// gate; every key an orchestrator touches still requires an explicit ACL grant.
 	if identity.Type != models.PrincipalAgent &&
 		identity.Type != models.PrincipalTask &&
 		identity.Type != models.PrincipalService &&
 		identity.Type != models.PrincipalWorkflowEngine &&
-		identity.Type != models.PrincipalMetricsBridge {
-		return status.Error(codes.PermissionDenied, "only agents, tasks, services, the metrics bridge, and the workflow engine can access KV store")
+		identity.Type != models.PrincipalMetricsBridge &&
+		identity.Type != models.PrincipalOrchestrator {
+		return status.Error(codes.PermissionDenied, "only agents, tasks, services, orchestrators, the metrics bridge, and the workflow engine can access KV store")
 	}
 
 	// Map proto enum scope to internal KVScope (default to workspace for backward compatibility)
