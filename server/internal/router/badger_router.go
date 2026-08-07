@@ -178,14 +178,33 @@ func (r *BadgerRouter) Publish(_ context.Context, topic string, payload []byte) 
 	copy(snapshot, list)
 	r.mu.RUnlock()
 
+	// A directed topic with NO live subscriber is the silent-loss case: the
+	// message is durably appended, the loop below simply does not execute, and
+	// Publish returns nil — so the caller (and the gateway's routeMessage,
+	// which only logs on publish *error*) sees a completely successful send
+	// while nothing was delivered. An agent that is connected but whose
+	// subscription never registered is indistinguishable from a healthy one
+	// without this. Warn rather than Debug: for an identity topic this is
+	// always a fault, not a normal state.
+	if len(snapshot) == 0 {
+		logging.Logger.Warn().Str("topic", topic).Uint64("seq", seq).
+			Msg("badger_router: published to topic with NO live subscribers (persisted only, not delivered)")
+	} else {
+		logging.Logger.Debug().Str("topic", topic).Uint64("seq", seq).
+			Int("subscribers", len(snapshot)).
+			Msg("badger_router: publish fan-out")
+	}
+
 	for _, s := range snapshot {
 		select {
 		case <-s.done:
-			// subscriber gone; skip
+			logging.Logger.Warn().Str("topic", topic).Str("consumer", s.name).Uint64("seq", seq).
+				Msg("badger_router: subscriber already done, dropping message")
 		case s.ch <- msgWithSeq{payload: payload, seq: seq}:
 			// delivered to drain goroutine
 		default:
-			logging.Logger.Warn().Str("topic", topic).Str("consumer", s.name).
+			logging.Logger.Warn().Str("topic", topic).Str("consumer", s.name).Uint64("seq", seq).
+				Int("buffer", cap(s.ch)).
 				Msg("badger_router: subscriber channel full, dropping message")
 		}
 	}
@@ -264,6 +283,13 @@ func (r *BadgerRouter) subscribe(topic, consumerName string, handler func([]byte
 	if exclusive {
 		lockKey := topic + "\x00" + consumerName
 		if _, loaded := r.exclusiveLocks.LoadOrStore(lockKey, struct{}{}); loaded {
+			// consumerName is the identity string, which is IDENTICAL across
+			// every incarnation of a given agent — so a lock leaked by a prior
+			// session blocks all future subscriptions to this topic until the
+			// gateway restarts. Log it here: the error is returned to a caller
+			// that may only surface it generically.
+			logging.Logger.Warn().Str("topic", topic).Str("consumer", consumerName).
+				Msg("badger_router: exclusive consumer already active; subscription REJECTED")
 			return nil, fmt.Errorf("badger_router: exclusive consumer %q already active on topic %q", consumerName, topic)
 		}
 	}
@@ -341,7 +367,17 @@ func (r *BadgerRouter) subscribe(topic, consumerName string, handler func([]byte
 	// we record replayedUpTo so drain can discard duplicates.
 	r.mu.Lock()
 	r.subs[topic] = append(r.subs[topic], s)
+	subCount := len(r.subs[topic])
 	r.mu.Unlock()
+
+	// Pairs with the fan-out log in Publish: together these answer "was anyone
+	// listening on the topic the message went to?" without having to infer it
+	// from the absence of other logs.
+	logging.Logger.Debug().
+		Str("topic", topic).Str("consumer", consumerName).
+		Bool("exclusive", exclusive).Int("policy", int(policy)).
+		Uint64("start_seq", startSeq).Int("subscribers", subCount).
+		Msg("badger_router: subscriber registered")
 
 	// Replay historical messages synchronously. Any concurrent Publish calls
 	// queue into s.ch. We track the highest sequence replayed so that drain
@@ -357,6 +393,14 @@ func (r *BadgerRouter) subscribe(topic, consumerName string, handler func([]byte
 	}
 	// Tell drain to skip any live messages that were already delivered by replay.
 	s.replayedUpTo = replayedUpTo
+
+	// A large replay on connect is itself a suspect: replay pushes straight at
+	// the handler, which enqueues non-blocking into the client's delivery
+	// buffer, so a backlog can shed the very messages that follow it.
+	logging.Logger.Debug().
+		Str("topic", topic).Str("consumer", consumerName).
+		Uint64("start_seq", startSeq).Uint64("replayed_up_to", replayedUpTo).
+		Msg("badger_router: replay complete")
 
 	// Persist the consumer offset for the replayed range. drain saves the offset
 	// per live message, but replay (the reconnect catch-up path) did not — so a
