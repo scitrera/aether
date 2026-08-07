@@ -499,11 +499,29 @@ func main() {
 		dispatcher = orchestration.NewPollingTaskDispatcher(taskStore)
 	}
 
+	// Quota defaults come from the `quotas:` config block, falling back to the
+	// same built-in values cmd/gateway uses. These were hardcoded, so the block
+	// was silently ignored in lite mode — and because the per-identity message
+	// rate also feeds the workspace rate limiter, a deployment could not raise
+	// its message throughput at all (the limit stuck at 100/s no matter what
+	// gateway.message_rate_limit or quotas.max_message_rate_per_identity said).
 	quotaDefaults := quota.DefaultQuotas{
-		MaxConnectionsPerWorkspace: 1000,
-		MaxMessageRatePerIdentity:  100,
-		MaxKVKeysPerNamespace:      10000,
-		MaxKVValueSize:             1048576,
+		MaxConnectionsPerWorkspace: cfg.Quotas.MaxConnectionsPerWorkspace,
+		MaxMessageRatePerIdentity:  cfg.Quotas.MaxMessageRatePerIdentity,
+		MaxKVKeysPerNamespace:      cfg.Quotas.MaxKVKeysPerNamespace,
+		MaxKVValueSize:             cfg.Quotas.MaxKVValueSize,
+	}
+	if quotaDefaults.MaxConnectionsPerWorkspace <= 0 {
+		quotaDefaults.MaxConnectionsPerWorkspace = 1000
+	}
+	if quotaDefaults.MaxMessageRatePerIdentity <= 0 {
+		quotaDefaults.MaxMessageRatePerIdentity = 100
+	}
+	if quotaDefaults.MaxKVKeysPerNamespace <= 0 {
+		quotaDefaults.MaxKVKeysPerNamespace = 10000
+	}
+	if quotaDefaults.MaxKVValueSize <= 0 {
+		quotaDefaults.MaxKVValueSize = 1048576 // 1MB
 	}
 	quotaManager := quota.NewMemoryQuotaManager(quotaDefaults)
 
@@ -561,6 +579,18 @@ func main() {
 	// the sender's workspace as the tenant scope.
 	if tenantID := os.Getenv("AETHER_TENANT_ID"); tenantID != "" {
 		gatewayOpts = append(gatewayOpts, gateway.WithGatewayTenantID(tenantID))
+	}
+
+	// Per-client message rate limiting. Without this the gateway keeps its
+	// built-in default (100/s, burst 200) and gateway.message_rate_limit is
+	// silently ignored in lite mode — the key applies only to the workspace
+	// limiter below, so raising it appears to do nothing. Mirrors cmd/gateway.
+	if cfg.Gateway.MessageRateLimit > 0 {
+		burst := cfg.Gateway.MessageRateBurst
+		if burst <= 0 {
+			burst = int(cfg.Gateway.MessageRateLimit * 2)
+		}
+		gatewayOpts = append(gatewayOpts, gateway.WithMessageRateLimit(cfg.Gateway.MessageRateLimit, burst))
 	}
 
 	// Workspace rate limiter.
