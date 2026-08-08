@@ -1106,6 +1106,63 @@ func TestBaseClient_GetTask(t *testing.T) {
 	}
 }
 
+func TestBaseClient_CreateTaskForwardsDurableCoordinationFields(t *testing.T) {
+	client, err := NewBaseClient(BaseClientConfig{ServerAddr: TestServerAddr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.running.Store(true)
+	completion := &pb.TaskCompletionEvent{Enabled: true, EventName: "child.done"}
+	if err := client.CreateTask("child", "routing", CreateTaskOptions{
+		AssignmentMode:  TaskAssignmentSelfAssign,
+		TaskClass:       pb.TaskClass_TASK_CLASS_BACKGROUND,
+		ContextID:       "session-1",
+		RetryPolicy:     &pb.RetryPolicy{MaxAttempts: 1},
+		Priority:        pb.TaskPriority_TASK_PRIORITY_HIGH,
+		IdempotencyKey:  "invocation-1",
+		CorrelationID:   "fanout-1",
+		RootTaskID:      "root-1",
+		CompletionEvent: completion,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	message := <-client.RequestQueue()
+	request := message.GetCreateTask()
+	if request == nil {
+		t.Fatal("missing CreateTaskRequest")
+	}
+	if request.GetTaskClass() != pb.TaskClass_TASK_CLASS_BACKGROUND || request.GetContextId() != "session-1" || request.GetIdempotencyKey() != "invocation-1" {
+		t.Fatalf("durable identity fields = class:%s context:%q idempotency:%q", request.GetTaskClass(), request.GetContextId(), request.GetIdempotencyKey())
+	}
+	if request.GetCorrelationId() != "fanout-1" || request.GetRootTaskId() != "root-1" {
+		t.Fatalf("coordination fields = correlation:%q root:%q", request.GetCorrelationId(), request.GetRootTaskId())
+	}
+	if request.GetRetryPolicy().GetMaxAttempts() != 1 || request.GetPriority() != pb.TaskPriority_TASK_PRIORITY_HIGH {
+		t.Fatalf("execution policy = retry:%+v priority:%s", request.GetRetryPolicy(), request.GetPriority())
+	}
+	if request.GetCompletionEvent().GetEventName() != "child.done" {
+		t.Fatalf("completion event = %+v", request.GetCompletionEvent())
+	}
+}
+
+func TestProtoTaskInfoToSDKIncludesCoordinationIdentity(t *testing.T) {
+	got := protoTaskInfoToSDK(&pb.TaskInfo{
+		TaskId:        "child-1",
+		ParentTaskId:  "parent-1",
+		TaskClass:     pb.TaskClass_TASK_CLASS_BACKGROUND,
+		ContextId:     "session-1",
+		Priority:      pb.TaskPriority_TASK_PRIORITY_HIGH,
+		CorrelationId: "fanout-1",
+		RootTaskId:    "root-1",
+	})
+	if got.ParentTaskID != "parent-1" || got.TaskClass != pb.TaskClass_TASK_CLASS_BACKGROUND.String() || got.ContextID != "session-1" {
+		t.Fatalf("task identity projection = %+v", got)
+	}
+	if got.Priority != pb.TaskPriority_TASK_PRIORITY_HIGH.String() || got.CorrelationID != "fanout-1" || got.RootTaskID != "root-1" {
+		t.Fatalf("task coordination projection = %+v", got)
+	}
+}
+
 func TestBaseClient_CancelTask(t *testing.T) {
 	cfg := BaseClientConfig{ServerAddr: TestServerAddr}
 	client, err := NewBaseClient(cfg)

@@ -723,6 +723,28 @@ type CreateTaskOptions struct {
 	// Default: TaskAssignmentSelfAssign.
 	AssignmentMode TaskAssignmentMode
 
+	// TaskClass is an optional UI presentation hint. It does not affect task
+	// scheduling or authorization.
+	TaskClass pb.TaskClass
+
+	// ContextID groups tasks within one logical session or conversation.
+	ContextID string
+
+	// IdempotencyKey makes task creation exactly-once under request retries. A
+	// duplicate create returns the existing task identity.
+	IdempotencyKey string
+
+	// CorrelationID groups fan-out tasks for joins and queries.
+	CorrelationID string
+
+	// RootTaskID identifies the top of a fan-out task tree. Empty lets the server
+	// derive the root from task identity and nesting.
+	RootTaskID string
+
+	// CompletionEvent optionally publishes terminal task state to the event
+	// plane for workflow joins and other consumers.
+	CompletionEvent *pb.TaskCompletionEvent
+
 	// TargetIdentity is an arbitrary principal address (e.g.
 	// "sv::sandbox-sidecar::<id>") that the gateway treats as the assignee
 	// when AssignmentMode is TARGETED and the destination is not an Agent.

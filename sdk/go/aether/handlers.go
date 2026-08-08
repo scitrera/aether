@@ -292,6 +292,24 @@ type TaskInfo struct {
 
 	// Metadata contains task-specific metadata.
 	Metadata map[string]string
+
+	// ParentTaskID is populated for native tasks created by a task principal.
+	ParentTaskID string
+
+	// TaskClass is the protobuf enum name for the task's UI presentation hint.
+	TaskClass string
+
+	// ContextID groups tasks within one logical session or conversation.
+	ContextID string
+
+	// Priority is the protobuf enum name for the persisted dispatch priority.
+	Priority string
+
+	// CorrelationID groups fan-out tasks for joins and queries.
+	CorrelationID string
+
+	// RootTaskID identifies the top of the task tree or fan-out run.
+	RootTaskID string
 }
 
 // TaskOperationResponse represents a response to a task operation.
