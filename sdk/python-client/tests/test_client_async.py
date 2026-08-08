@@ -457,6 +457,7 @@ class TestBaseAsyncAetherClientCreateTask:
             task_type="echo",
             workspace="test-workspace",
             metadata={"key": "value"},
+            parent_task_id="parent-123",
         )
 
         msg = client._request_queue.get_nowait()
@@ -465,6 +466,7 @@ class TestBaseAsyncAetherClientCreateTask:
         assert msg.create_task.workspace == "test-workspace"
         assert msg.create_task.assignment_mode == SELF_ASSIGN
         assert msg.create_task.metadata["key"] == "value"
+        assert msg.create_task.parent_task_id == "parent-123"
 
     @pytest.mark.asyncio
     async def test_create_task_targeted(self):
@@ -1585,9 +1587,12 @@ class TestAsyncResponseHandling:
             task_type="sandbox_lease",
             workspace="_apps",
             timeout=0.1,
+            parent_task_id="parent-sync",
         )
 
         assert result is None
+        msg = client._request_queue.get_nowait()
+        assert msg.create_task.parent_task_id == "parent-sync"
 
 
 # =============================================================================
@@ -2107,4 +2112,3 @@ class TestListenLoopErrorCorrelation:
         assert errors_received[0].code == "CONNECTION_ERROR"
         # Cleanup.
         fut.cancel()
-

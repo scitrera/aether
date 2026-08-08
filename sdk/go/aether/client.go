@@ -2414,6 +2414,7 @@ func (c *BaseClient) CreateTask(taskType, workspace string, opts CreateTaskOptio
 		CorrelationId:        opts.CorrelationID,
 		RootTaskId:           opts.RootTaskID,
 		CompletionEvent:      opts.CompletionEvent,
+		ParentTaskId:         opts.ParentTaskID,
 		Authorization:        opts.Authorization,
 	}
 	return c.Send(&pb.UpstreamMessage{
@@ -2452,6 +2453,7 @@ func (c *BaseClient) CreateTaskSync(ctx context.Context, taskType, workspace str
 		CorrelationId:        opts.CorrelationID,
 		RootTaskId:           opts.RootTaskID,
 		CompletionEvent:      opts.CompletionEvent,
+		ParentTaskId:         opts.ParentTaskID,
 		Authorization:        opts.Authorization,
 		RequestId:            requestID,
 	}

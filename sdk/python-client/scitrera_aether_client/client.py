@@ -1209,7 +1209,8 @@ class BaseAetherClient:
                     assignment_mode: int = SELF_ASSIGN,
                     context_id: str = "",
                     priority: int = 0,
-                    retry_policy: Optional[aether_pb2.RetryPolicy] = None) -> None:
+                    retry_policy: Optional[aether_pb2.RetryPolicy] = None,
+                    parent_task_id: str = "") -> None:
         """
         Create a new task.
 
@@ -1227,6 +1228,8 @@ class BaseAetherClient:
             priority: Optional dispatch priority (TaskPriority enum value). Higher
                 priority pending tasks are delivered before lower ones. 0 (UNSPECIFIED)
                 is normalized to NORMAL by the server.
+            parent_task_id: Optional active parent assigned to this calling identity.
+                The gateway validates and applies the binding only to this request.
         """
         if target_agent_id and assignment_mode == SELF_ASSIGN:
             assignment_mode = TARGETED
@@ -1244,6 +1247,7 @@ class BaseAetherClient:
             context_id=context_id,
             priority=priority,  # type: ignore[arg-type]
             retry_policy=retry_policy,
+            parent_task_id=parent_task_id,
         )
         self.request_queue.put(aether_pb2.UpstreamMessage(create_task=req))
 
@@ -1258,7 +1262,8 @@ class BaseAetherClient:
                          context_id: str = "",
                          priority: int = 0,
                          retry_policy: Optional[aether_pb2.RetryPolicy] = None,
-                         timeout: float = 10.0) -> Optional[aether_pb2.CreateTaskResponse]:
+                         timeout: float = 10.0,
+                         parent_task_id: str = "") -> Optional[aether_pb2.CreateTaskResponse]:
         """
         Create a new task and wait for the server's response containing the task_id.
 
@@ -1282,6 +1287,8 @@ class BaseAetherClient:
             context_id: Optional client-minted session identifier (A2A contextId). Tasks
                 sharing a context_id are groupable via TaskFilter.context_id.
             timeout: Timeout in seconds (default 10.0)
+            parent_task_id: Optional active parent assigned to this calling identity.
+                The gateway validates and applies the binding only to this request.
 
         Returns:
             CreateTaskResponse with task_id, status, etc., or None on timeout
@@ -1305,6 +1312,7 @@ class BaseAetherClient:
             request_id=request_id,
             priority=priority,  # type: ignore[arg-type]
             retry_policy=retry_policy,
+            parent_task_id=parent_task_id,
         )
         return self._send_sync_op(
             aether_pb2.UpstreamMessage(create_task=req), request_id, timeout,

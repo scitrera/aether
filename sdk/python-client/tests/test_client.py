@@ -513,6 +513,7 @@ class TestBaseAetherClientCreateTask:
             task_type="echo",
             workspace="test-workspace",
             metadata={"key": "value"},
+            parent_task_id="parent-123",
         )
 
         msg = client.request_queue.get_nowait()
@@ -521,6 +522,7 @@ class TestBaseAetherClientCreateTask:
         assert msg.create_task.workspace == "test-workspace"
         assert msg.create_task.assignment_mode == SELF_ASSIGN
         assert msg.create_task.metadata["key"] == "value"
+        assert msg.create_task.parent_task_id == "parent-123"
 
     def test_create_task_targeted(self):
         """Test task creation with targeted mode."""
@@ -1617,9 +1619,12 @@ class TestSyncCreateTask:
             task_type="sandbox_lease",
             workspace="_apps",
             timeout=0.1,
+            parent_task_id="parent-sync",
         )
 
         assert result is None
+        msg = client.request_queue.get_nowait()
+        assert msg.create_task.parent_task_id == "parent-sync"
 
     def test_create_task_sync_stamps_request_id_on_request(self):
         """Request enqueued for create_task_sync must carry a non-empty request_id.

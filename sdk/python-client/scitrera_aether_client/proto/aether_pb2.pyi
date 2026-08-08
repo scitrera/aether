@@ -833,7 +833,7 @@ class TaskCompletionEvent(_message.Message):
     def __init__(self, enabled: _Optional[bool] = ..., event_name: _Optional[str] = ..., on_statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ...) -> None: ...
 
 class CreateTaskRequest(_message.Message):
-    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id", "retry_policy", "priority", "idempotency_key", "correlation_id", "root_task_id", "completion_event")
+    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id", "retry_policy", "priority", "idempotency_key", "correlation_id", "root_task_id", "completion_event", "parent_task_id")
     class LaunchParamOverridesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -867,6 +867,7 @@ class CreateTaskRequest(_message.Message):
     CORRELATION_ID_FIELD_NUMBER: _ClassVar[int]
     ROOT_TASK_ID_FIELD_NUMBER: _ClassVar[int]
     COMPLETION_EVENT_FIELD_NUMBER: _ClassVar[int]
+    PARENT_TASK_ID_FIELD_NUMBER: _ClassVar[int]
     task_type: str
     workspace: str
     assignment_mode: TaskAssignmentMode
@@ -886,7 +887,8 @@ class CreateTaskRequest(_message.Message):
     correlation_id: str
     root_task_id: str
     completion_event: TaskCompletionEvent
-    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]] = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., idempotency_key: _Optional[str] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ..., completion_event: _Optional[_Union[TaskCompletionEvent, _Mapping]] = ...) -> None: ...
+    parent_task_id: str
+    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]] = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., idempotency_key: _Optional[str] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ..., completion_event: _Optional[_Union[TaskCompletionEvent, _Mapping]] = ..., parent_task_id: _Optional[str] = ...) -> None: ...
 
 class CreateTaskResponse(_message.Message):
     __slots__ = ("success", "task_id", "status", "error_code", "error_message", "request_id", "assigned_to", "task_token", "authority_grant_id")

@@ -95,6 +95,14 @@ export interface CreateTaskRequest {
    * reaches a (selected) terminal status. Absent/disabled = no emission.
    */
   'completionEvent'?: (_aether_v1_TaskCompletionEvent | null);
+  /**
+   * Optional native parent for a nested task created by a long-lived worker.
+   * The gateway accepts an explicit value only when the caller is the active
+   * parent task's assigned execution identity. This is a request-scoped binding:
+   * it may select a different assigned task than the connection's startup/task-
+   * token association. Empty preserves connection-associated parent inference.
+   */
+  'parentTaskId'?: (string);
 }
 
 export interface CreateTaskRequest__Output {
@@ -185,4 +193,12 @@ export interface CreateTaskRequest__Output {
    * reaches a (selected) terminal status. Absent/disabled = no emission.
    */
   'completionEvent': (_aether_v1_TaskCompletionEvent__Output | null);
+  /**
+   * Optional native parent for a nested task created by a long-lived worker.
+   * The gateway accepts an explicit value only when the caller is the active
+   * parent task's assigned execution identity. This is a request-scoped binding:
+   * it may select a different assigned task than the connection's startup/task-
+   * token association. Empty preserves connection-associated parent inference.
+   */
+  'parentTaskId': (string);
 }

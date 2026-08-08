@@ -269,6 +269,7 @@ export class TaskClient extends AetherClient {
         targetImplementation: opts.targetImplementation ?? "",
         launchParamOverrides: opts.launchParamOverrides ?? {},
         metadata: opts.metadata ?? {},
+        parentTaskId: opts.parentTaskId ?? "",
       },
     });
   }

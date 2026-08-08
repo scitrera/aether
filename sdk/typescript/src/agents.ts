@@ -66,6 +66,11 @@ export interface CreateTaskOptions {
   /** Assignment mode. Default: SelfAssign. */
   assignmentMode?: TaskAssignmentMode;
   /**
+   * Optional active parent assigned to this calling identity. The gateway
+   * validates and applies the binding only to this creation request.
+   */
+  parentTaskId?: string;
+  /**
    * Optional dispatch priority. Higher priority pending tasks are delivered
    * before lower ones. Defaults to Unspecified, which the server normalizes
    * to Normal.
@@ -393,6 +398,7 @@ export class AgentClient extends AetherClient {
         targetImplementation: opts.targetImplementation ?? "",
         launchParamOverrides: opts.launchParamOverrides ?? {},
         metadata: opts.metadata ?? {},
+        parentTaskId: opts.parentTaskId ?? "",
         priority: opts.priority ?? TaskPriority.Unspecified,
       },
     });

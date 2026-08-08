@@ -1123,6 +1123,7 @@ func TestBaseClient_CreateTaskForwardsDurableCoordinationFields(t *testing.T) {
 		CorrelationID:   "fanout-1",
 		RootTaskID:      "root-1",
 		CompletionEvent: completion,
+		ParentTaskID:    "parent-1",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1136,6 +1137,9 @@ func TestBaseClient_CreateTaskForwardsDurableCoordinationFields(t *testing.T) {
 	}
 	if request.GetCorrelationId() != "fanout-1" || request.GetRootTaskId() != "root-1" {
 		t.Fatalf("coordination fields = correlation:%q root:%q", request.GetCorrelationId(), request.GetRootTaskId())
+	}
+	if request.GetParentTaskId() != "parent-1" {
+		t.Fatalf("parent task id = %q", request.GetParentTaskId())
 	}
 	if request.GetRetryPolicy().GetMaxAttempts() != 1 || request.GetPriority() != pb.TaskPriority_TASK_PRIORITY_HIGH {
 		t.Fatalf("execution policy = retry:%+v priority:%s", request.GetRetryPolicy(), request.GetPriority())

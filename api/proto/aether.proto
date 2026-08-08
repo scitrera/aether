@@ -816,6 +816,13 @@ message CreateTaskRequest {
   // Optional "feed B" config: emit a domain event onto event::* when this task
   // reaches a (selected) terminal status. Absent/disabled = no emission.
   TaskCompletionEvent completion_event = 19;
+
+  // Optional native parent for a nested task created by a long-lived worker.
+  // The gateway accepts an explicit value only when the caller is the active
+  // parent task's assigned execution identity. This is a request-scoped binding:
+  // it may select a different assigned task than the connection's startup/task-
+  // token association. Empty preserves connection-associated parent inference.
+  string parent_task_id = 20;
 }
 
 // CreateTaskResponse is sent in response to CreateTaskRequest when the

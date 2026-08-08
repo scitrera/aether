@@ -582,6 +582,23 @@ client.CreateTask(aether.CreateTaskOptions{
 })
 ```
 
+A long-lived worker can request native hierarchy for work spawned while it is
+executing an Aether task:
+
+```go
+client.CreateTask(aether.CreateTaskOptions{
+    TaskType:       "nested-work",
+    Workspace:      "default",
+    AssignmentMode: aether.TaskAssignmentSelfAssign,
+    ParentTaskID:   activeParentTaskID,
+})
+```
+
+The gateway accepts `ParentTaskID` only when the parent is in the same workspace,
+is assigned to the calling identity, and is still assigned or running. The
+binding applies only to this request and does not change the connection's
+startup task association.
+
 ## Connection Configuration
 
 All clients support configurable connection behavior:

@@ -842,11 +842,22 @@ func taskGrantRenewalTarget(grant *acl.AuthorityGrant, now time.Time) (time.Time
 // The returned grant must still support further delegation (MayDelegate +
 // RemainingHops > 0); otherwise the caller proceeds as direct.
 func (s *GatewayServer) loadCallerTaskAuthority(ctx context.Context, client *ClientSession, actor models.Identity) (*acl.ResolvedAuthority, error) {
-	if client == nil || client.AssociatedTaskID == "" || s.acl == nil || s.taskStore == nil {
+	if client == nil {
+		return nil, nil
+	}
+	return s.loadTaskAuthorityForActor(ctx, client.AssociatedTaskID, actor)
+}
+
+// loadTaskAuthorityForActor resolves delegable authority from a specific task
+// after the caller-to-parent relationship has been independently validated.
+// It is used for request-scoped explicit parentage without changing the
+// long-lived connection's AssociatedTaskID.
+func (s *GatewayServer) loadTaskAuthorityForActor(ctx context.Context, taskID string, actor models.Identity) (*acl.ResolvedAuthority, error) {
+	if taskID == "" || s.acl == nil || s.taskStore == nil {
 		return nil, nil
 	}
 
-	task, err := s.taskStore.GetTask(ctx, client.AssociatedTaskID)
+	task, err := s.taskStore.GetTask(ctx, taskID)
 	if err != nil || task == nil {
 		return nil, nil
 	}

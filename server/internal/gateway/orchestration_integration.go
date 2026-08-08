@@ -316,6 +316,54 @@ const idemTaskTTL = 24 * time.Hour
 // task_id once creation succeeds.
 const idemTaskPlaceholder = "pending"
 
+const createTaskParentDenied = "parent task not found or not authorized"
+
+// resolveCreateTaskParent turns an optional wire parent_task_id into a native
+// task parent. Connection-associated parentage remains the zero-configuration
+// path. An explicit parent is a request-scoped execution binding for long-lived
+// workers and is accepted only for the exact assigned identity while the parent
+// is assigned or running. Every failure uses one info-hiding error.
+func (s *GatewayServer) resolveCreateTaskParent(
+	ctx context.Context,
+	client *ClientSession,
+	identity models.Identity,
+	workspace string,
+	requested string,
+) (string, *tasks.Task, error) {
+	requested = strings.TrimSpace(requested)
+	associated := ""
+	if client != nil {
+		associated = client.AssociatedTaskID
+	}
+	if requested == "" {
+		if associated == "" || s.taskStore == nil {
+			return associated, nil, nil
+		}
+		parent, err := s.taskStore.GetTask(ctx, associated)
+		if err != nil {
+			// Preserve the historical connection-associated behavior. The task
+			// service/store remains responsible for rejecting an invalid native
+			// parent; the lookup here is only for correlation inheritance.
+			return associated, nil, nil
+		}
+		return associated, parent, nil
+	}
+	if s.taskStore == nil {
+		return "", nil, fmt.Errorf(createTaskParentDenied)
+	}
+	parent, err := s.taskStore.GetTask(ctx, requested)
+	if err != nil || parent == nil {
+		return "", nil, fmt.Errorf(createTaskParentDenied)
+	}
+	if parent.Workspace != workspace || parent.AssignedTo != identity.String() {
+		return "", nil, fmt.Errorf(createTaskParentDenied)
+	}
+	if parent.Status != tasks.TaskStatusAssigned && parent.Status != tasks.TaskStatusRunning {
+		return "", nil, fmt.Errorf(createTaskParentDenied)
+	}
+	return requested, parent, nil
+}
+
 // handleCreateTask processes CreateTaskRequest messages
 func (s *GatewayServer) handleCreateTask(
 	ctx context.Context,
@@ -443,7 +491,15 @@ func (s *GatewayServer) handleCreateTask(
 		return nil
 	}
 
-	resolvedAuthority, err := s.resolveAuthorizationContext(ctx, client, identity, req.GetAuthorization())
+	parentTaskID, parentTask, err := s.resolveCreateTaskParent(ctx, client, identity, taskWorkspace, req.GetParentTaskId())
+	if err != nil {
+		s.logTaskCreateAudit(ctx, identity, client.SessionUUID, taskWorkspace, "", false, createTaskParentDenied, buildTaskCreateAuditMetadata(req, assignmentMode, taskWorkspace), nil)
+		sendClientError(client, "ERR_PERMISSION_DENIED", createTaskParentDenied)
+		sendCreateTaskResponse(false, "", "", "ERR_PERMISSION_DENIED", createTaskParentDenied, "")
+		return nil
+	}
+
+	resolvedAuthority, err := s.resolveAuthorizationContextForTask(ctx, client, identity, req.GetAuthorization(), parentTaskID)
 	if err != nil {
 		s.logTaskCreateAudit(ctx, identity, client.SessionUUID, taskWorkspace, "", false, "invalid authorization context: "+err.Error(), buildTaskCreateAuditMetadata(req, assignmentMode, taskWorkspace), nil)
 		sendClientError(client, "ERR_PERMISSION_DENIED", "invalid authorization context")
@@ -456,7 +512,7 @@ func (s *GatewayServer) handleCreateTask(
 	// AuthorizationContext, auto-derive from its task grant so the new task
 	// inherits the subject, root subject, and grant lineage.
 	if resolvedAuthority == nil {
-		inherited, inheritedErr := s.loadCallerTaskAuthority(ctx, client, identity)
+		inherited, inheritedErr := s.loadTaskAuthorityForActor(ctx, parentTaskID, identity)
 		if inheritedErr != nil {
 			logging.Logger.Warn().Err(inheritedErr).Str("identity", identity.String()).Msg("failed to load caller task authority for nested CreateTask")
 		}
@@ -502,6 +558,19 @@ func (s *GatewayServer) handleCreateTask(
 
 	// Create task request
 	metadata = applyResolvedAuthorityToTaskMetadata(metadata, resolvedAuthority)
+	correlationID := req.GetCorrelationId()
+	rootTaskID := req.GetRootTaskId()
+	if parentTask != nil {
+		if correlationID == "" {
+			correlationID = parentTask.CorrelationID
+		}
+		if rootTaskID == "" {
+			rootTaskID = parentTask.RootTaskID
+			if rootTaskID == "" {
+				rootTaskID = parentTask.TaskID
+			}
+		}
+	}
 	taskReq := &orchestration.CreateTaskRequest{
 		TaskType:             req.TaskType,
 		TaskClass:            int32(req.TaskClass),
@@ -513,11 +582,11 @@ func (s *GatewayServer) handleCreateTask(
 		Metadata:             metadata,
 		Payload:              req.Payload,
 		CreatorIdentity:      identity,
-		ParentTaskID:         client.AssociatedTaskID,
+		ParentTaskID:         parentTaskID,
 		RetryPolicy:          retryPolicyFromProto(req.GetRetryPolicy()),
 		Priority:             int32(req.GetPriority()),
-		CorrelationID:        req.GetCorrelationId(),
-		RootTaskID:           req.GetRootTaskId(),
+		CorrelationID:        correlationID,
+		RootTaskID:           rootTaskID,
 		CompletionEvent:      completionConfigFromProto(req.GetCompletionEvent()),
 	}
 	// Fix AA: seed the task's Authority.SubjectType/SubjectID from the resolved
@@ -706,6 +775,9 @@ func buildTaskCreateAuditMetadata(req *pb.CreateTaskRequest, assignmentMode, wor
 	}
 	if req.TargetImplementation != "" {
 		metadata["target_implementation"] = req.TargetImplementation
+	}
+	if req.ParentTaskId != "" {
+		metadata["parent_task_id"] = req.ParentTaskId
 	}
 	if len(req.LaunchParamOverrides) > 0 {
 		metadata["launch_param_overrides"] = len(req.LaunchParamOverrides)

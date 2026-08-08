@@ -446,6 +446,7 @@ func (c *AgentClient) CreateTask(opts CreateTaskOptions) error {
 				CorrelationId:        opts.CorrelationID,
 				RootTaskId:           opts.RootTaskID,
 				CompletionEvent:      opts.CompletionEvent,
+				ParentTaskId:         opts.ParentTaskID,
 			},
 		},
 	}

@@ -745,6 +745,14 @@ type CreateTaskOptions struct {
 	// plane for workflow joins and other consumers.
 	CompletionEvent *pb.TaskCompletionEvent
 
+	// ParentTaskID requests native parentage when a long-lived worker creates a
+	// nested task for a parent it is currently executing. The gateway validates
+	// that the caller is the active parent's assigned identity. It is a
+	// request-scoped binding and may select a different assigned task than the
+	// connection's startup/task-token association. Empty preserves
+	// connection-associated parent inference.
+	ParentTaskID string
+
 	// TargetIdentity is an arbitrary principal address (e.g.
 	// "sv::sandbox-sidecar::<id>") that the gateway treats as the assignee
 	// when AssignmentMode is TARGETED and the destination is not an Agent.

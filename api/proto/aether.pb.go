@@ -5858,8 +5858,14 @@ type CreateTaskRequest struct {
 	// Optional "feed B" config: emit a domain event onto event::* when this task
 	// reaches a (selected) terminal status. Absent/disabled = no emission.
 	CompletionEvent *TaskCompletionEvent `protobuf:"bytes,19,opt,name=completion_event,json=completionEvent,proto3" json:"completion_event,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Optional native parent for a nested task created by a long-lived worker.
+	// The gateway accepts an explicit value only when the caller is the active
+	// parent task's assigned execution identity. This is a request-scoped binding:
+	// it may select a different assigned task than the connection's startup/task-
+	// token association. Empty preserves connection-associated parent inference.
+	ParentTaskId  string `protobuf:"bytes,20,opt,name=parent_task_id,json=parentTaskId,proto3" json:"parent_task_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateTaskRequest) Reset() {
@@ -6023,6 +6029,13 @@ func (x *CreateTaskRequest) GetCompletionEvent() *TaskCompletionEvent {
 		return x.CompletionEvent
 	}
 	return nil
+}
+
+func (x *CreateTaskRequest) GetParentTaskId() string {
+	if x != nil {
+		return x.ParentTaskId
+	}
+	return ""
 }
 
 // CreateTaskResponse is sent in response to CreateTaskRequest when the
@@ -18554,7 +18567,7 @@ const file_aether_proto_rawDesc = "" +
 	"\n" +
 	"event_name\x18\x02 \x01(\tR\teventName\x126\n" +
 	"\von_statuses\x18\x03 \x03(\x0e2\x15.aether.v1.TaskStatusR\n" +
-	"onStatuses\"\xd9\b\n" +
+	"onStatuses\"\xff\b\n" +
 	"\x11CreateTaskRequest\x12\x1b\n" +
 	"\ttask_type\x18\x01 \x01(\tR\btaskType\x12\x1c\n" +
 	"\tworkspace\x18\x02 \x01(\tR\tworkspace\x12F\n" +
@@ -18579,7 +18592,8 @@ const file_aether_proto_rawDesc = "" +
 	"\x0ecorrelation_id\x18\x11 \x01(\tR\rcorrelationId\x12 \n" +
 	"\froot_task_id\x18\x12 \x01(\tR\n" +
 	"rootTaskId\x12I\n" +
-	"\x10completion_event\x18\x13 \x01(\v2\x1e.aether.v1.TaskCompletionEventR\x0fcompletionEvent\x1aG\n" +
+	"\x10completion_event\x18\x13 \x01(\v2\x1e.aether.v1.TaskCompletionEventR\x0fcompletionEvent\x12$\n" +
+	"\x0eparent_task_id\x18\x14 \x01(\tR\fparentTaskId\x1aG\n" +
 	"\x19LaunchParamOverridesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a;\n" +
