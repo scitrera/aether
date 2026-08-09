@@ -255,6 +255,10 @@ type TaskQueryResponse struct {
 
 	// TotalCount is the total number of tasks matching the filter.
 	TotalCount int32
+
+	// NextPageToken is the opaque cursor for the next LIST page. Empty means
+	// the server did not report another page. Clients must not interpret it.
+	NextPageToken string
 }
 
 // TaskInfo represents a task's information.

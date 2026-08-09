@@ -1533,6 +1533,51 @@ func protoTaskStatusToTasks(s pb.TaskStatus) tasks.TaskStatus {
 	}
 }
 
+// appendProtoTaskStatusFilter expands the coarser wire status projection back
+// to every persisted state that taskStatusToProto maps to it. Filter semantics
+// must round-trip the public projection: QUEUED includes pending, assigned, and
+// starting; FAILED includes failed and dead-letter tasks.
+func appendProtoTaskStatusFilter(dst []tasks.TaskStatus, status pb.TaskStatus) []tasks.TaskStatus {
+	var projected []tasks.TaskStatus
+	switch status {
+	case pb.TaskStatus_TASK_STATUS_QUEUED:
+		projected = []tasks.TaskStatus{
+			tasks.TaskStatusPending, tasks.TaskStatusAssigned, tasks.TaskStatusStarting,
+		}
+	case pb.TaskStatus_TASK_STATUS_FAILED:
+		projected = []tasks.TaskStatus{tasks.TaskStatusFailed, tasks.TaskStatusDLQ}
+	case pb.TaskStatus_TASK_STATUS_RUNNING,
+		pb.TaskStatus_TASK_STATUS_COMPLETED,
+		pb.TaskStatus_TASK_STATUS_CANCELLED,
+		pb.TaskStatus_TASK_STATUS_WAITING_INPUT,
+		pb.TaskStatus_TASK_STATUS_WAITING_AUTHORITY,
+		pb.TaskStatus_TASK_STATUS_WAITING_DEPENDENCY,
+		pb.TaskStatus_TASK_STATUS_HIBERNATED,
+		pb.TaskStatus_TASK_STATUS_REJECTED:
+		projected = []tasks.TaskStatus{protoTaskStatusToTasks(status)}
+	case pb.TaskStatus_TASK_STATUS_UNSPECIFIED:
+		return dst
+	default:
+		// Preserve the previous fail-closed behavior for an unknown concrete
+		// enum: include an impossible persisted status rather than silently
+		// broadening the query to every task.
+		projected = []tasks.TaskStatus{protoTaskStatusToTasks(status)}
+	}
+	for _, candidate := range projected {
+		seen := false
+		for _, existing := range dst {
+			if existing == candidate {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			dst = append(dst, candidate)
+		}
+	}
+	return dst
+}
+
 // completionConfigFromProto converts the proto TaskCompletionEvent into the
 // persisted model config. nil ⇒ nil (task did not opt into feed B). OnStatuses
 // are mapped through the canonical proto↔model status converter.
@@ -1843,13 +1888,10 @@ func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSessi
 			// Prefer repeated statuses over singular status
 			if len(query.Filter.Statuses) > 0 {
 				for _, s := range query.Filter.Statuses {
-					if s != pb.TaskStatus_TASK_STATUS_UNSPECIFIED {
-						filter.Statuses = append(filter.Statuses, protoTaskStatusToTasks(s))
-					}
+					filter.Statuses = appendProtoTaskStatusFilter(filter.Statuses, s)
 				}
 			} else if query.Filter.Status != pb.TaskStatus_TASK_STATUS_UNSPECIFIED {
-				status := protoTaskStatusToTasks(query.Filter.Status)
-				filter.Status = &status
+				filter.Statuses = appendProtoTaskStatusFilter(filter.Statuses, query.Filter.Status)
 			}
 			filter.Workspace = query.Filter.Workspace
 			filter.TaskType = query.Filter.TaskType
@@ -1871,9 +1913,8 @@ func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSessi
 			filter.CorrelationID = query.Filter.GetCorrelationId()
 			filter.RootTaskID = query.Filter.GetRootTaskId()
 			if len(query.Filter.ExcludeStatuses) > 0 {
-				filter.ExcludeStatuses = make([]tasks.TaskStatus, 0, len(query.Filter.ExcludeStatuses))
 				for _, s := range query.Filter.ExcludeStatuses {
-					filter.ExcludeStatuses = append(filter.ExcludeStatuses, protoTaskStatusToTasks(s))
+					filter.ExcludeStatuses = appendProtoTaskStatusFilter(filter.ExcludeStatuses, s)
 				}
 			}
 			// Phase 4 management-surface filters.

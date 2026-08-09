@@ -1464,7 +1464,7 @@ func TestBaseClient_DispatchResponse_TaskQueryResponse_RequestID(t *testing.T) {
 	ctx := context.Background()
 	response := &pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_TaskQuery{
-			TaskQuery: &pb.TaskQueryResponse{Success: true, TotalCount: 3},
+			TaskQuery: &pb.TaskQueryResponse{Success: true, TotalCount: 3, NextPageToken: "opaque-next-page"},
 		},
 	}
 
@@ -1480,6 +1480,9 @@ func TestBaseClient_DispatchResponse_TaskQueryResponse_RequestID(t *testing.T) {
 		}
 		if resp.TotalCount != 3 {
 			t.Errorf("TotalCount = %d, want 3", resp.TotalCount)
+		}
+		if resp.NextPageToken != "opaque-next-page" {
+			t.Errorf("NextPageToken = %q, want opaque-next-page", resp.NextPageToken)
 		}
 	default:
 		t.Error("Pending task query request should have been resolved")

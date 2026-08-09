@@ -2320,9 +2320,10 @@ func (c *BaseClient) handleProgressUpdate(ctx context.Context, pu *pb.ProgressUp
 // handleTaskQueryResponse processes a task query response from the server.
 func (c *BaseClient) handleTaskQueryResponse(ctx context.Context, resp *pb.TaskQueryResponse) error {
 	tqr := &TaskQueryResponse{
-		Success:    resp.GetSuccess(),
-		Error:      resp.GetError(),
-		TotalCount: resp.GetTotalCount(),
+		Success:       resp.GetSuccess(),
+		Error:         resp.GetError(),
+		TotalCount:    resp.GetTotalCount(),
+		NextPageToken: resp.GetNextPageToken(),
 	}
 	if t := resp.GetTask(); t != nil {
 		tqr.Task = protoTaskInfoToSDK(t)
