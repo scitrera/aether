@@ -1186,19 +1186,38 @@ func TestBaseClient_CreateTaskForwardsDurableCoordinationFields(t *testing.T) {
 
 func TestProtoTaskInfoToSDKIncludesCoordinationIdentity(t *testing.T) {
 	got := protoTaskInfoToSDK(&pb.TaskInfo{
-		TaskId:        "child-1",
-		ParentTaskId:  "parent-1",
-		TaskClass:     pb.TaskClass_TASK_CLASS_BACKGROUND,
-		ContextId:     "session-1",
-		Priority:      pb.TaskPriority_TASK_PRIORITY_HIGH,
-		CorrelationId: "fanout-1",
-		RootTaskId:    "root-1",
+		TaskId:                 "child-1",
+		ParentTaskId:           "parent-1",
+		TaskClass:              pb.TaskClass_TASK_CLASS_BACKGROUND,
+		ContextId:              "session-1",
+		Priority:               pb.TaskPriority_TASK_PRIORITY_HIGH,
+		CorrelationId:          "fanout-1",
+		RootTaskId:             "root-1",
+		AuthorityMode:          "on_behalf_of",
+		SubjectType:            "user",
+		SubjectId:              "alice",
+		RootSubjectType:        "user",
+		RootSubjectId:          "alice",
+		AuthorityGrantId:       "grant-task",
+		RootAuthorityGrantId:   "grant-root",
+		ParentAuthorityGrantId: "grant-parent",
+		CreatorActorId:         "agent-parent",
+		DisconnectedAt:         1234,
+		GraceWindowMs:          45000,
 	})
 	if got.ParentTaskID != "parent-1" || got.TaskClass != pb.TaskClass_TASK_CLASS_BACKGROUND.String() || got.ContextID != "session-1" {
 		t.Fatalf("task identity projection = %+v", got)
 	}
 	if got.Priority != pb.TaskPriority_TASK_PRIORITY_HIGH.String() || got.CorrelationID != "fanout-1" || got.RootTaskID != "root-1" {
 		t.Fatalf("task coordination projection = %+v", got)
+	}
+	if got.AuthorityMode != "on_behalf_of" || got.SubjectType != "user" || got.SubjectID != "alice" ||
+		got.RootSubjectType != "user" || got.RootSubjectID != "alice" || got.AuthorityGrantID != "grant-task" ||
+		got.RootAuthorityGrantID != "grant-root" || got.ParentAuthorityGrantID != "grant-parent" || got.CreatorActorID != "agent-parent" {
+		t.Fatalf("task authority projection = %+v", got)
+	}
+	if got.DisconnectedAt != 1234 || got.GraceWindowMS != 45000 {
+		t.Fatalf("task disconnect projection = %+v", got)
 	}
 }
 

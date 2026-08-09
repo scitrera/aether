@@ -298,6 +298,19 @@ type TaskInfo struct {
 	// Metadata contains task-specific metadata.
 	Metadata map[string]string
 
+	// AuthorityMode is the persisted task authority mode (direct or
+	// on_behalf_of). The remaining authority fields are public-safe lineage
+	// projections already present on the wire TaskInfo.
+	AuthorityMode          string
+	SubjectType            string
+	SubjectID              string
+	RootSubjectType        string
+	RootSubjectID          string
+	AuthorityGrantID       string
+	RootAuthorityGrantID   string
+	ParentAuthorityGrantID string
+	CreatorActorID         string
+
 	// ParentTaskID is populated for native tasks created by a task principal.
 	ParentTaskID string
 
@@ -315,6 +328,12 @@ type TaskInfo struct {
 
 	// RootTaskID identifies the top of the task tree or fan-out run.
 	RootTaskID string
+
+	// DisconnectedAt and GraceWindowMS expose the task's persisted
+	// connection-as-heartbeat state. DisconnectedAt is Unix seconds; zero means
+	// the assigned worker is currently connected.
+	DisconnectedAt int64
+	GraceWindowMS  int64
 }
 
 // TaskOperationResponse represents a response to a task operation.
