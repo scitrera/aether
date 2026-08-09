@@ -2373,14 +2373,15 @@ func (c *BaseClient) handleTaskOperationResponse(ctx context.Context, resp *pb.T
 // handleCreateTaskResponse processes a CreateTaskResponse from the server.
 func (c *BaseClient) handleCreateTaskResponse(ctx context.Context, resp *pb.CreateTaskResponse) error {
 	ctr := &CreateTaskResponse{
-		Success:      resp.GetSuccess(),
-		TaskID:       resp.GetTaskId(),
-		Status:       resp.GetStatus(),
-		ErrorCode:    resp.GetErrorCode(),
-		ErrorMessage: resp.GetErrorMessage(),
-		RequestId:    resp.GetRequestId(),
-		AssignedTo:   resp.GetAssignedTo(),
-		TaskToken:    resp.GetTaskToken(),
+		Success:          resp.GetSuccess(),
+		TaskID:           resp.GetTaskId(),
+		Status:           resp.GetStatus(),
+		ErrorCode:        resp.GetErrorCode(),
+		ErrorMessage:     resp.GetErrorMessage(),
+		RequestId:        resp.GetRequestId(),
+		AssignedTo:       resp.GetAssignedTo(),
+		TaskToken:        resp.GetTaskToken(),
+		AuthorityGrantID: resp.GetAuthorityGrantId(),
 	}
 
 	// Route to correlated pending request if available.

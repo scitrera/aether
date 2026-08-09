@@ -611,6 +611,11 @@ type CreateTaskResponse struct {
 	// connect as TargetIdentity. Empty when the task did not request a
 	// token (no TargetIdentity) or the issue-token check denied it.
 	TaskToken string
+
+	// AuthorityGrantID is the task-scoped grant derived from the creator's OBO
+	// authorization. Forward it when delivering the task's work envelope so the
+	// assignee acts with the exact task scope instead of a long-lived grant.
+	AuthorityGrantID string
 }
 
 // CreateTaskResponseHandler handles create task responses.

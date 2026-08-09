@@ -1038,6 +1038,27 @@ func TestBaseClient_DispatchResponse_TaskAssignment(t *testing.T) {
 // Task Lifecycle Tests
 // =============================================================================
 
+func TestBaseClient_CreateTaskResponseMapsAuthorityGrantID(t *testing.T) {
+	client, err := NewBaseClient(BaseClientConfig{ServerAddr: TestServerAddr})
+	if err != nil {
+		t.Fatalf("NewBaseClient() error = %v", err)
+	}
+	responses := client.RegisterPendingCreateTaskRequest("create-authority")
+	if err := client.handleCreateTaskResponse(context.Background(), &pb.CreateTaskResponse{
+		Success: true, TaskId: "task-123", RequestId: "create-authority", AuthorityGrantId: "grant-task-123",
+	}); err != nil {
+		t.Fatalf("handleCreateTaskResponse() error = %v", err)
+	}
+	select {
+	case response := <-responses:
+		if response.AuthorityGrantID != "grant-task-123" {
+			t.Fatalf("AuthorityGrantID = %q, want grant-task-123", response.AuthorityGrantID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for create-task response")
+	}
+}
+
 func TestBaseClient_QueryTasks(t *testing.T) {
 	cfg := BaseClientConfig{ServerAddr: TestServerAddr}
 	client, err := NewBaseClient(cfg)
