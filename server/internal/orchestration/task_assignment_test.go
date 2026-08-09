@@ -1056,6 +1056,127 @@ func TestCancelStaleInteractiveTasks(t *testing.T) {
 	assertStatus("old-terminal", tasks.TaskStatusCompleted)   // already terminal
 }
 
+type alwaysOfflineSessionRegistry struct{}
+
+func (alwaysOfflineSessionRegistry) IsOnline(models.Identity) bool { return false }
+
+func (alwaysOfflineSessionRegistry) IsActive(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+type alwaysOnlineSessionRegistry struct{}
+
+func (alwaysOnlineSessionRegistry) IsOnline(models.Identity) bool { return true }
+
+func (alwaysOnlineSessionRegistry) IsActive(context.Context, string) (bool, error) {
+	return true, nil
+}
+
+func TestReconcileOrphanedTasksDefersMarkedDisconnectsToGraceReaper(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orch_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+
+	ctx := context.Background()
+	const agentID = "ag::ws-test::worker::one"
+	createTask := func(id string, status tasks.TaskStatus) {
+		t.Helper()
+		if err := taskStore.CreateTask(ctx, &tasks.Task{
+			TaskID: id, TaskType: "chat_message", Workspace: "ws-test",
+			Status: status, TargetAgentID: agentID,
+			TaskClass: taskClassInteractive, GraceWindowMs: DefaultGraceWindowMs(taskClassInteractive),
+		}); err != nil {
+			t.Fatalf("CreateTask(%s): %v", id, err)
+		}
+	}
+	createTask("within-disconnect-grace", tasks.TaskStatusRunning)
+	createTask("unmarked-long-lived-agent-task", tasks.TaskStatusRunning)
+	createTask("offline-starting-task", tasks.TaskStatusStarting)
+	if err := taskStore.MarkTaskDisconnected(ctx, "within-disconnect-grace", time.Now()); err != nil {
+		t.Fatalf("MarkTaskDisconnected: %v", err)
+	}
+
+	service := NewTaskAssignmentService(taskStore, nil, alwaysOfflineSessionRegistry{}, nil, nil)
+	reconciled, err := service.ReconcileOrphanedTasks(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileOrphanedTasks: %v", err)
+	}
+	if reconciled != 2 {
+		t.Fatalf("reconciled = %d, want 1 disconnect marker and 1 failed starting task", reconciled)
+	}
+
+	withinGrace, err := taskStore.GetTask(ctx, "within-disconnect-grace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withinGrace.Status != tasks.TaskStatusRunning || withinGrace.DisconnectedAt == nil {
+		t.Fatalf("marked disconnect was not preserved for recovery: %+v", withinGrace)
+	}
+	backfilled, err := taskStore.GetTask(ctx, "unmarked-long-lived-agent-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backfilled.Status != tasks.TaskStatusRunning || backfilled.DisconnectedAt == nil {
+		t.Fatalf("long-lived agent task did not gain a recovery marker: %+v", backfilled)
+	}
+	starting, err := taskStore.GetTask(ctx, "offline-starting-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if starting.Status != tasks.TaskStatusFailed {
+		t.Fatalf("offline starting task status = %q, want failed", starting.Status)
+	}
+}
+
+func TestReconcileOrphanedTasksClearsMarkerAfterLongLivedOwnerReconnects(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orch_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+
+	ctx := context.Background()
+	const taskID = "reconnected-long-lived-agent-task"
+	if err := taskStore.CreateTask(ctx, &tasks.Task{
+		TaskID: taskID, TaskType: "chat_message", Workspace: "ws-test",
+		Status: tasks.TaskStatusRunning, TargetAgentID: "ag::ws-test::worker::one",
+		TaskClass: taskClassInteractive, GraceWindowMs: DefaultGraceWindowMs(taskClassInteractive),
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := taskStore.MarkTaskDisconnected(ctx, taskID, time.Now()); err != nil {
+		t.Fatalf("MarkTaskDisconnected: %v", err)
+	}
+
+	service := NewTaskAssignmentService(taskStore, nil, alwaysOnlineSessionRegistry{}, nil, nil)
+	reconciled, err := service.ReconcileOrphanedTasks(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileOrphanedTasks: %v", err)
+	}
+	if reconciled != 1 {
+		t.Fatalf("reconciled = %d, want cleared disconnect marker", reconciled)
+	}
+	got, err := taskStore.GetTask(ctx, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != tasks.TaskStatusRunning || got.DisconnectedAt != nil {
+		t.Fatalf("reconnected task was not restored: %+v", got)
+	}
+}
+
 // TestCancelTask_RetiresQueueRowDirectlyWithoutDispatcher is the root-cause
 // regression guard: CancelTask must retire the orchestrated_task_queue row
 // directly through the store even when tas.dispatcher is nil (the cleanup

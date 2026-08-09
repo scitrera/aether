@@ -3,6 +3,7 @@ package orchestration
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/scitrera/aether/server/internal/logging"
@@ -88,7 +89,14 @@ func (r *DisconnectReaper) scan(ctx context.Context) {
 			continue
 		}
 		// Race protection: maybe the worker reconnected between SELECT and now.
-		if r.sessions != nil && r.sessions.HasActiveSessionForTask(ctx, t.TaskID) {
+		// Long-lived agent streams are not necessarily associated with each task
+		// they claim, so check both the task-bound session and assigned identity.
+		active, probeErr := r.hasActiveOwnerSession(ctx, t)
+		if probeErr != nil {
+			logging.Logger.Warn().Err(probeErr).Str("task_id", t.TaskID).Msg("disconnect reaper: owner liveness check failed; preserving task")
+			continue
+		}
+		if active {
 			// Reconnect happened — clear the marker (defensive; the connect
 			// path also clears it).
 			if clearErr := r.taskStore.ClearTaskDisconnected(ctx, t.TaskID); clearErr != nil {
@@ -107,4 +115,21 @@ func (r *DisconnectReaper) scan(ctx context.Context) {
 			Int64("grace_ms", t.GraceWindowMs).
 			Msg("disconnect reaper: task failed past grace window")
 	}
+}
+
+func (r *DisconnectReaper) hasActiveOwnerSession(ctx context.Context, task *tasks.Task) (bool, error) {
+	if r.sessions != nil && r.sessions.HasActiveSessionForTask(ctx, task.TaskID) {
+		return true, nil
+	}
+	if r.taskService == nil || r.taskService.sessionRegistry == nil {
+		return false, nil
+	}
+	identity := strings.TrimSpace(task.AssignedTo)
+	if identity == "" {
+		identity = strings.TrimSpace(task.TargetAgentID)
+	}
+	if identity == "" {
+		return false, nil
+	}
+	return r.taskService.sessionRegistry.IsActive(ctx, identity)
 }

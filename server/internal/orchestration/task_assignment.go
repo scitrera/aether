@@ -1364,7 +1364,13 @@ func (tas *TaskAssignmentService) reconcileTasksByStatus(
 			continue
 		}
 
+		markedDisconnected := task.DisconnectedAt != nil && task.GraceWindowMs > 0
 		if identity == "" {
+			// A marked task is already owned by DisconnectReaper. Preserve its
+			// grace window even if the generic projection cannot resolve an owner.
+			if markedDisconnected {
+				continue
+			}
 			if err := tas.FailTask(ctx, task.TaskID, emptyIdentityFailReason); err != nil {
 				logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Msg("reconcile: failed to mark task as failed (no identity)")
 			} else {
@@ -1380,7 +1386,37 @@ func (tas *TaskAssignmentService) reconcileTasksByStatus(
 			continue
 		}
 
+		// A running task with an explicit disconnect marker is owned by the
+		// DisconnectReaper. If the long-lived owner is online again, clear the
+		// marker now; otherwise leave the task recoverable for its grace window.
+		if markedDisconnected {
+			if active {
+				if err := tas.ClearTaskDisconnected(ctx, task.TaskID); err != nil {
+					logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Str(entityLogKey, identity).Msg("reconcile: failed to clear recovered task disconnect marker")
+				} else {
+					logging.Logger.Info().Str("task_id", task.TaskID).Str(entityLogKey, identity).Msg("reconcile: cleared recovered task disconnect marker")
+					reconciled++
+				}
+			}
+			continue
+		}
+
 		if !active {
+			// Long-lived agent connections are not associated with every task they
+			// claim after startup, so the stream-close path cannot always stamp those
+			// task IDs directly. Backfill the marker here and let DisconnectReaper
+			// enforce the same per-task grace window. This sweep may run again while
+			// the task is disconnected; MarkTaskDisconnected and the marked-task path
+			// above make that path idempotent.
+			if task.Status == tasks.TaskStatusRunning && task.GraceWindowMs > 0 {
+				if err := tas.MarkTaskDisconnected(ctx, task.TaskID, time.Now().UTC()); err != nil {
+					logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Str(entityLogKey, identity).Msg("reconcile: failed to mark task disconnected")
+				} else {
+					logging.Logger.Info().Str("task_id", task.TaskID).Str(entityLogKey, identity).Int64("grace_ms", task.GraceWindowMs).Msg("reconcile: marked orphaned running task disconnected for grace recovery")
+					reconciled++
+				}
+				continue
+			}
 			if err := tas.FailTask(ctx, task.TaskID, offlineFailReason); err != nil {
 				logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Msg("reconcile: failed to mark task as failed")
 			} else {
