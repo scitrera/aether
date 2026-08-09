@@ -157,6 +157,11 @@ type TaskAssignment struct {
 
 	// Payload is optional binary data carried from the task creator.
 	Payload []byte
+
+	// Authorization is the task-scoped on-behalf-of authority prepared by the
+	// gateway for this assignee. The grant is audience-bound to the assigned
+	// executor/task and is revoked with the task lifecycle.
+	Authorization *pb.AuthorizationContext
 }
 
 // CheckpointResponse represents a response to a checkpoint operation.

@@ -893,6 +893,12 @@ message TaskAssignment {
 
   // Hibernation rehydration: session id to resume. Empty = fresh session.
   string resume_session_id = 14;
+
+  // Task-scoped on-behalf-of authority prepared for the assigned executor.
+  // The grant is audience-bound to this assignee/task and is revoked with the
+  // task lifecycle. It is delivered on the typed execution plane rather than
+  // requiring workers to parse server-enriched metadata.
+  AuthorizationContext authorization = 15;
 }
 
 // ============================================================================

@@ -120,6 +120,8 @@ export type {
   ErrorResponse,
   ConnectionAck,
   TaskAssignment,
+  TaskAssignmentAuthorization,
+  TaskAssignmentResolvedAuthority,
   // KV types
   KVResponse,
   KVGetOptions,

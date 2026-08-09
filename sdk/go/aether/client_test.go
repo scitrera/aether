@@ -991,6 +991,11 @@ func TestBaseClient_DispatchResponse_TaskAssignment(t *testing.T) {
 
 	ctx := context.Background()
 	response := newMockTaskAssignment("task-123", "process", "ag.test.worker.inst")
+	response.GetTaskAssignment().Authorization = &pb.AuthorizationContext{
+		AuthorityMode: "on_behalf_of",
+		GrantId:       "grant-task-123",
+		Subject:       &pb.PrincipalRef{PrincipalType: "user", PrincipalId: "alice"},
+	}
 
 	err = client.dispatchResponse(ctx, response)
 	if err != nil {
@@ -1014,9 +1019,18 @@ func TestBaseClient_DispatchResponse_TaskAssignment(t *testing.T) {
 	}
 	tracker.mu.Lock()
 	got := len(tracker.tasks)
+	var assignment *TaskAssignment
+	if got == 1 {
+		assignment = tracker.tasks[0]
+	}
 	tracker.mu.Unlock()
 	if got != 1 {
 		t.Errorf("Task assignment handler called %d times, want 1", got)
+	}
+	if assignment == nil || assignment.Authorization == nil ||
+		assignment.Authorization.GetGrantId() != "grant-task-123" ||
+		assignment.Authorization.GetSubject().GetPrincipalId() != "alice" {
+		t.Errorf("Task assignment authorization = %#v", assignment)
 	}
 }
 

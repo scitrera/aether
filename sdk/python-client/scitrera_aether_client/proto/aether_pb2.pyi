@@ -913,7 +913,7 @@ class CreateTaskResponse(_message.Message):
     def __init__(self, success: _Optional[bool] = ..., task_id: _Optional[str] = ..., status: _Optional[str] = ..., error_code: _Optional[str] = ..., error_message: _Optional[str] = ..., request_id: _Optional[str] = ..., assigned_to: _Optional[str] = ..., task_token: _Optional[str] = ..., authority_grant_id: _Optional[str] = ...) -> None: ...
 
 class TaskAssignment(_message.Message):
-    __slots__ = ("task_id", "task_type", "assigned_to", "metadata", "assigned_at", "profile", "launch_params", "target_implementation", "workspace", "specifier", "payload", "task_class", "checkpoint_key", "resume_session_id")
+    __slots__ = ("task_id", "task_type", "assigned_to", "metadata", "assigned_at", "profile", "launch_params", "target_implementation", "workspace", "specifier", "payload", "task_class", "checkpoint_key", "resume_session_id", "authorization")
     class MetadataEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -942,6 +942,7 @@ class TaskAssignment(_message.Message):
     TASK_CLASS_FIELD_NUMBER: _ClassVar[int]
     CHECKPOINT_KEY_FIELD_NUMBER: _ClassVar[int]
     RESUME_SESSION_ID_FIELD_NUMBER: _ClassVar[int]
+    AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
     task_id: str
     task_type: str
     assigned_to: str
@@ -956,7 +957,8 @@ class TaskAssignment(_message.Message):
     task_class: TaskClass
     checkpoint_key: str
     resume_session_id: str
-    def __init__(self, task_id: _Optional[str] = ..., task_type: _Optional[str] = ..., assigned_to: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., assigned_at: _Optional[int] = ..., profile: _Optional[str] = ..., launch_params: _Optional[_Mapping[str, str]] = ..., target_implementation: _Optional[str] = ..., workspace: _Optional[str] = ..., specifier: _Optional[str] = ..., payload: _Optional[bytes] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., checkpoint_key: _Optional[str] = ..., resume_session_id: _Optional[str] = ...) -> None: ...
+    authorization: AuthorizationContext
+    def __init__(self, task_id: _Optional[str] = ..., task_type: _Optional[str] = ..., assigned_to: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., assigned_at: _Optional[int] = ..., profile: _Optional[str] = ..., launch_params: _Optional[_Mapping[str, str]] = ..., target_implementation: _Optional[str] = ..., workspace: _Optional[str] = ..., specifier: _Optional[str] = ..., payload: _Optional[bytes] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., checkpoint_key: _Optional[str] = ..., resume_session_id: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ...) -> None: ...
 
 class CheckpointOperation(_message.Message):
     __slots__ = ("op", "key", "data", "ttl", "request_id")

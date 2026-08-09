@@ -1,6 +1,7 @@
 // Original file: aether.proto
 
 import type { TaskClass as _aether_v1_TaskClass, TaskClass__Output as _aether_v1_TaskClass__Output } from '../../aether/v1/TaskClass';
+import type { AuthorizationContext as _aether_v1_AuthorizationContext, AuthorizationContext__Output as _aether_v1_AuthorizationContext__Output } from '../../aether/v1/AuthorizationContext';
 import type { Long } from '@grpc/proto-loader';
 
 export interface TaskAssignment {
@@ -53,6 +54,13 @@ export interface TaskAssignment {
    * Hibernation rehydration: session id to resume. Empty = fresh session.
    */
   'resumeSessionId'?: (string);
+  /**
+   * Task-scoped on-behalf-of authority prepared for the assigned executor.
+   * The grant is audience-bound to this assignee/task and is revoked with the
+   * task lifecycle. It is delivered on the typed execution plane rather than
+   * requiring workers to parse server-enriched metadata.
+   */
+  'authorization'?: (_aether_v1_AuthorizationContext | null);
 }
 
 export interface TaskAssignment__Output {
@@ -105,4 +113,11 @@ export interface TaskAssignment__Output {
    * Hibernation rehydration: session id to resume. Empty = fresh session.
    */
   'resumeSessionId': (string);
+  /**
+   * Task-scoped on-behalf-of authority prepared for the assigned executor.
+   * The grant is audience-bound to this assignee/task and is revoked with the
+   * task lifecycle. It is delivered on the typed execution plane rather than
+   * requiring workers to parse server-enriched metadata.
+   */
+  'authorization': (_aether_v1_AuthorizationContext__Output | null);
 }

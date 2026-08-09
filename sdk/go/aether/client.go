@@ -2195,6 +2195,7 @@ func (c *BaseClient) handleTaskAssignment(ctx context.Context, ta *pb.TaskAssign
 		Workspace:            ta.GetWorkspace(),
 		Specifier:            ta.GetSpecifier(),
 		Payload:              ta.GetPayload(),
+		Authorization:        ta.GetAuthorization(),
 	}
 
 	// Convert Unix timestamp if present

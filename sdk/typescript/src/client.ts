@@ -1092,6 +1092,22 @@ export class AetherClient {
 
     if (data["taskAssignment"] || data["task_assignment"]) {
       const ta = (data["taskAssignment"] ?? data["task_assignment"]) as Record<string, unknown>;
+      const rawAuthorization = ta["authorization"];
+      const authorization = rawAuthorization && typeof rawAuthorization === "object"
+        ? rawAuthorization as Record<string, unknown>
+        : undefined;
+      const rawSubject = authorization?.["subject"];
+      const subject = rawSubject && typeof rawSubject === "object"
+        ? rawSubject as Record<string, unknown>
+        : undefined;
+      const rawResolved = authorization?.["resolved"];
+      const resolved = rawResolved && typeof rawResolved === "object"
+        ? rawResolved as Record<string, unknown>
+        : undefined;
+      const rawRootSubject = resolved?.["rootSubject"] ?? resolved?.["root_subject"];
+      const rootSubject = rawRootSubject && typeof rawRootSubject === "object"
+        ? rawRootSubject as Record<string, unknown>
+        : undefined;
       const assignment: TaskAssignment = {
         taskId: String(ta["taskId"] ?? ta["task_id"] ?? ""),
         taskType: String(ta["taskType"] ?? ta["task_type"] ?? ""),
@@ -1103,6 +1119,31 @@ export class AetherClient {
         targetImplementation: String(ta["targetImplementation"] ?? ta["target_implementation"] ?? ""),
         workspace: String(ta["workspace"] ?? ""),
         specifier: String(ta["specifier"] ?? ""),
+        payload: ta["payload"] instanceof Uint8Array ? new Uint8Array(ta["payload"]) : new Uint8Array(),
+        taskClass: Number(ta["taskClass"] ?? ta["task_class"] ?? 0),
+        checkpointKey: String(ta["checkpointKey"] ?? ta["checkpoint_key"] ?? ""),
+        resumeSessionId: String(ta["resumeSessionId"] ?? ta["resume_session_id"] ?? ""),
+        authorization: authorization ? {
+          authorityMode: String(authorization["authorityMode"] ?? authorization["authority_mode"] ?? ""),
+          subject: subject ? {
+            principalType: String(subject["principalType"] ?? subject["principal_type"] ?? ""),
+            principalId: String(subject["principalId"] ?? subject["principal_id"] ?? ""),
+          } : undefined,
+          grantId: String(authorization["grantId"] ?? authorization["grant_id"] ?? ""),
+          resolved: resolved ? {
+            rootSubject: rootSubject ? {
+              principalType: String(rootSubject["principalType"] ?? rootSubject["principal_type"] ?? ""),
+              principalId: String(rootSubject["principalId"] ?? rootSubject["principal_id"] ?? ""),
+            } : undefined,
+            audienceType: String(resolved["audienceType"] ?? resolved["audience_type"] ?? ""),
+            audienceId: String(resolved["audienceId"] ?? resolved["audience_id"] ?? ""),
+            maxAccessLevel: Number(resolved["maxAccessLevel"] ?? resolved["max_access_level"] ?? 0),
+            workspaceScope: Array.isArray(resolved["workspaceScope"] ?? resolved["workspace_scope"])
+              ? ((resolved["workspaceScope"] ?? resolved["workspace_scope"]) as unknown[]).map(String)
+              : [],
+            expiresAtMs: Number(resolved["expiresAtMs"] ?? resolved["expires_at_ms"] ?? 0),
+          } : undefined,
+        } : undefined,
       };
       this._onTaskAssignment(assignment);
       return;

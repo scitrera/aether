@@ -214,6 +214,25 @@ export interface ConnectionAck {
 /**
  * A task assignment received by orchestrators.
  */
+export interface TaskAssignmentResolvedAuthority {
+  readonly rootSubject?: AuthorityGrantPrincipalRef;
+  readonly audienceType: string;
+  readonly audienceId: string;
+  readonly maxAccessLevel: number;
+  readonly workspaceScope: string[];
+  readonly expiresAtMs: number;
+}
+
+/**
+ * Task-scoped authority prepared by the gateway for the assigned executor.
+ */
+export interface TaskAssignmentAuthorization {
+  readonly authorityMode: string;
+  readonly subject?: AuthorityGrantPrincipalRef;
+  readonly grantId: string;
+  readonly resolved?: TaskAssignmentResolvedAuthority;
+}
+
 export interface TaskAssignment {
   readonly taskId: string;
   readonly taskType: string;
@@ -225,6 +244,11 @@ export interface TaskAssignment {
   readonly targetImplementation: string;
   readonly workspace: string;
   readonly specifier: string;
+  readonly payload: Uint8Array;
+  readonly taskClass: number;
+  readonly checkpointKey: string;
+  readonly resumeSessionId: string;
+  readonly authorization?: TaskAssignmentAuthorization;
 }
 
 // =============================================================================

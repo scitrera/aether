@@ -237,6 +237,7 @@ func (s *GatewayServer) deliverQueuedTasksToAgent(
 				Payload:    task.Payload,
 			}
 			applyHibernationHandoffToAssignment(assignment, task.Metadata)
+			applyTaskAuthorizationToAssignment(assignment, task)
 
 			err := client.SafeSend(&pb.DownstreamMessage{
 				Payload: &pb.DownstreamMessage_TaskAssignment{
@@ -279,6 +280,7 @@ func (s *GatewayServer) deliverQueuedTasksToAgent(
 				Payload:    task.Payload,
 			}
 			applyHibernationHandoffToAssignment(assignment, task.Metadata)
+			applyTaskAuthorizationToAssignment(assignment, task)
 
 			if sendErr := client.SafeSend(&pb.DownstreamMessage{
 				Payload: &pb.DownstreamMessage_TaskAssignment{
@@ -730,6 +732,13 @@ func (s *GatewayServer) handleCreateTask(
 
 		// Get target client session
 		if targetClient := s.getClientByIdentity(targetIdentity); targetClient != nil {
+			assignedTask, taskErr := s.taskStore.GetTask(ctx, response.TaskID)
+			if taskErr != nil {
+				_ = s.orchestration.TaskService.CancelTask(ctx, response.TaskID)
+				sendClientError(client, "ERR_TASK_CREATE_FAILED", "unable to load assigned task authority")
+				sendCreateTaskResponse(false, "", "", "ERR_TASK_CREATE_FAILED", "unable to load assigned task authority", "")
+				return taskErr
+			}
 			assignment := &pb.TaskAssignment{
 				TaskId:     response.TaskID,
 				TaskType:   req.TaskType,
@@ -740,6 +749,7 @@ func (s *GatewayServer) handleCreateTask(
 				Payload:    req.Payload,
 			}
 			applyHibernationHandoffToAssignment(assignment, taskReq.Metadata)
+			applyTaskAuthorizationToAssignment(assignment, assignedTask)
 
 			err := targetClient.SafeSend(&pb.DownstreamMessage{
 				Payload: &pb.DownstreamMessage_TaskAssignment{
@@ -1034,6 +1044,31 @@ func applyHibernationHandoffToAssignment(assignment *pb.TaskAssignment, metadata
 			assignment.ResumeSessionId = s
 		}
 	}
+}
+
+// applyTaskAuthorizationToAssignment projects the authoritative, assignee-
+// bound task grant onto the typed assignment surface. It deliberately reads
+// Task.Authority rather than the metadata mirror, which is retained only for
+// audit and backward compatibility.
+func applyTaskAuthorizationToAssignment(assignment *pb.TaskAssignment, task *tasks.ExtendedTask) {
+	if assignment == nil || task == nil {
+		return
+	}
+	authority := task.Authority
+	if authority.AuthorityGrantID == "" && authority.SubjectType == "" && authority.SubjectID == "" {
+		return
+	}
+	authorization := &pb.AuthorizationContext{
+		AuthorityMode: authority.Mode,
+		GrantId:       authority.AuthorityGrantID,
+	}
+	if authority.SubjectType != "" || authority.SubjectID != "" {
+		authorization.Subject = &pb.PrincipalRef{
+			PrincipalType: authority.SubjectType,
+			PrincipalId:   authority.SubjectID,
+		}
+	}
+	assignment.Authorization = authorization
 }
 
 // configureOrchestratorDispatcher sets up the callback for the orchestrator task dispatcher
@@ -1431,6 +1466,7 @@ func (s *GatewayServer) deliverPoolTaskToWorker(ctx context.Context, taskID, tar
 		Payload:    payload,
 	}
 	applyHibernationHandoffToAssignment(assignment, task.Metadata)
+	applyTaskAuthorizationToAssignment(assignment, task)
 
 	err = worker.SafeSend(&pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_TaskAssignment{

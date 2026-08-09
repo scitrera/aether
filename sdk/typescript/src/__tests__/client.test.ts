@@ -127,6 +127,59 @@ describe("TaskAssignmentMode", () => {
   });
 });
 
+describe("TaskAssignment delivery", () => {
+  it("maps payload, resume fields, and typed authorization", () => {
+    const client = new AetherClient({ address: "localhost:50051" });
+    let received: Parameters<Parameters<typeof client.onTaskAssignment>[0]>[0] | undefined;
+    client.onTaskAssignment((assignment) => {
+      received = assignment;
+    });
+
+    (client as any)._handleDownstreamMessage({
+      taskAssignment: {
+        taskId: "task-1",
+        taskType: "worker",
+        assignedTo: "ag::prod::worker::one",
+        payload: new Uint8Array([1, 2, 3]),
+        taskClass: 2,
+        checkpointKey: "checkpoint-1",
+        resumeSessionId: "session-1",
+        authorization: {
+          authorityMode: "on_behalf_of",
+          subject: { principalType: "user", principalId: "alice" },
+          grantId: "grant-1",
+          resolved: {
+            rootSubject: { principalType: "user", principalId: "alice" },
+            audienceType: "task",
+            audienceId: "task-1",
+            maxAccessLevel: 20,
+            workspaceScope: ["prod"],
+            expiresAtMs: 1234,
+          },
+        },
+      },
+    });
+
+    expect(received?.payload).toEqual(new Uint8Array([1, 2, 3]));
+    expect(received?.taskClass).toBe(2);
+    expect(received?.checkpointKey).toBe("checkpoint-1");
+    expect(received?.resumeSessionId).toBe("session-1");
+    expect(received?.authorization).toEqual({
+      authorityMode: "on_behalf_of",
+      subject: { principalType: "user", principalId: "alice" },
+      grantId: "grant-1",
+      resolved: {
+        rootSubject: { principalType: "user", principalId: "alice" },
+        audienceType: "task",
+        audienceId: "task-1",
+        maxAccessLevel: 20,
+        workspaceScope: ["prod"],
+        expiresAtMs: 1234,
+      },
+    });
+  });
+});
+
 describe("SignalType", () => {
   it("has expected values", () => {
     expect(SignalType.ForceDisconnect).toBe(0);
