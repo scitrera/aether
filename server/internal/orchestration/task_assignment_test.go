@@ -1072,6 +1072,41 @@ func (alwaysOnlineSessionRegistry) IsActive(context.Context, string) (bool, erro
 	return true, nil
 }
 
+func TestTargetedOnlineAgentDoesNotRequireOrchestrationRegistration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "targeted_online.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+	service := NewTaskAssignmentService(taskStore, nil, alwaysOnlineSessionRegistry{}, nil, nil)
+	target := "ag::default::ad-hoc-worker::schedule-1"
+	response, err := service.CreateTask(context.Background(), &CreateTaskRequest{
+		TaskType: "scheduled", Workspace: "default", AssignmentMode: "targeted",
+		TargetAgentID: target,
+		CreatorIdentity: models.Identity{
+			Type: models.PrincipalAgent, Workspace: "_system", Implementation: "workflow", Specifier: "shard0",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response == nil || response.AssignedTo != target || response.Status != "assigned" {
+		t.Fatalf("targeted response = %+v", response)
+	}
+	stored, err := taskStore.GetTask(context.Background(), response.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.AssignedTo != target || stored.Status != tasks.TaskStatusAssigned {
+		t.Fatalf("stored targeted task = %+v", stored)
+	}
+}
+
 func TestReconcileOrphanedTasksDefersMarkedDisconnectsToGraceReaper(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "orch_tasks.db")
 	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")

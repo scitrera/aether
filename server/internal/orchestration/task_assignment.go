@@ -369,15 +369,6 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 		return nil, fmt.Errorf("invalid target_agent_id: %w", err)
 	}
 
-	// REQUIRED: Validate target agent implementation exists in registry
-	exists, err := tas.agentRegistry.Exists(ctx, targetIdentity.Implementation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check agent registry: %w", err)
-	}
-	if !exists {
-		return nil, fmt.Errorf("target agent implementation '%s' not found in registry", targetIdentity.Implementation)
-	}
-
 	taskID := uuid.New().String()
 
 	task := &tasks.ExtendedTask{
@@ -402,6 +393,22 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 	applyRetryPolicyToTask(task)
 	applyCorrelationToTask(task, req)
 
+	// A connected exact identity is already authoritative evidence that the
+	// target can consume the task. Requiring an orchestration registry entry in
+	// that case rejects durable tasks for ad-hoc/static workers even though no
+	// launch is needed. Offline targets still require a registered implementation
+	// before this service can ask an orchestrator to start them.
+	isOnline := tas.sessionRegistry.IsOnline(targetIdentity)
+	if !isOnline {
+		exists, err := tas.agentRegistry.Exists(ctx, targetIdentity.Implementation)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check agent registry: %w", err)
+		}
+		if !exists {
+			return nil, fmt.Errorf("target agent implementation '%s' not found in registry", targetIdentity.Implementation)
+		}
+	}
+
 	// Special case: if this IS a startup task (e.g., from admin API), go directly to
 	// createOrchestratedStartupTask which handles all duplicate prevention:
 	// - Checks if agent is already online
@@ -422,9 +429,6 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 			Message:          "Startup task sent to orchestrator",
 		}, nil
 	}
-
-	// Check if target agent is online
-	isOnline := tas.sessionRegistry.IsOnline(targetIdentity)
 
 	if isOnline {
 		// Agent online: create task as pending, then assign

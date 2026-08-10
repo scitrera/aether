@@ -22,7 +22,15 @@ type ActionDef struct {
 	// create_task fields
 	TaskType             string `json:"task_type,omitempty" yaml:"task_type,omitempty"`
 	TargetImplementation string `json:"target_implementation,omitempty" yaml:"target_implementation,omitempty"`
-	Payload              any    `json:"payload,omitempty" yaml:"payload,omitempty"`
+	// TargetAgentID selects TARGETED assignment when a schedule must run on one
+	// concrete worker (for example, a worker-authoritative filesystem view).
+	// Empty preserves the historical implementation-pooled assignment.
+	TargetAgentID string `json:"target_agent_id,omitempty" yaml:"target_agent_id,omitempty"`
+	Payload       any    `json:"payload,omitempty" yaml:"payload,omitempty"`
+	// PayloadEncoding controls how Payload becomes CreateTaskRequest.payload.
+	// Empty or "msgpack" preserves the historical wire encoding; "json" is for
+	// versioned task envelopes shared with non-msgpack consumers.
+	PayloadEncoding string `json:"payload_encoding,omitempty" yaml:"payload_encoding,omitempty"`
 	// Optional retry policy for create_task actions. When set, the task
 	// store re-pends the task with a policy-driven next_retry_at on
 	// FailTask. Omitted = legacy hard-coded max_retries=3 behavior.
@@ -123,33 +131,57 @@ func (e *Executor) dispatchMessage(action *ActionDef) error {
 
 // dispatchCreateTask creates an Aether task from a schedule action.
 func (e *Executor) dispatchCreateTask(action *ActionDef) error {
-	if action.TaskType == "" {
-		return fmt.Errorf("task_type is required for create_task action")
+	request, err := buildCreateTaskRequest(action, e.defaultWorkspace)
+	if err != nil {
+		return err
 	}
 
+	log.Debug().
+		Str("task_type", request.TaskType).
+		Str("workspace", request.Workspace).
+		Str("target_impl", request.TargetImplementation).
+		Str("target_agent", request.TargetAgentId).
+		Msg("dispatching create_task action")
+	return e.client.Send(&pb.UpstreamMessage{
+		Payload: &pb.UpstreamMessage_CreateTask{CreateTask: request},
+	})
+}
+
+func buildCreateTaskRequest(action *ActionDef, defaultWorkspace string) (*pb.CreateTaskRequest, error) {
+	if action == nil {
+		return nil, fmt.Errorf("create_task action is required")
+	}
+	if action.TaskType == "" {
+		return nil, fmt.Errorf("task_type is required for create_task action")
+	}
 	workspace := action.Workspace
 	if workspace == "" {
-		workspace = e.defaultWorkspace
+		workspace = defaultWorkspace
 	}
-
 	var payload []byte
 	if action.Payload != nil {
 		var err error
-		payload, err = msgpack.Marshal(action.Payload)
-		if err != nil {
-			return fmt.Errorf("msgpack marshal create_task payload: %w", err)
+		switch action.PayloadEncoding {
+		case "", "msgpack":
+			payload, err = msgpack.Marshal(action.Payload)
+			if err != nil {
+				return nil, fmt.Errorf("msgpack marshal create_task payload: %w", err)
+			}
+		case "json":
+			payload, err = json.Marshal(action.Payload)
+			if err != nil {
+				return nil, fmt.Errorf("JSON marshal create_task payload: %w", err)
+			}
+		default:
+			return nil, fmt.Errorf("unsupported create_task payload_encoding %q", action.PayloadEncoding)
 		}
 	}
-
-	targetImpl := action.TargetImplementation
-	metadata := action.Metadata
-
-	log.Debug().
-		Str("task_type", action.TaskType).
-		Str("workspace", workspace).
-		Str("target_impl", targetImpl).
-		Msg("dispatching create_task action")
-
+	assignmentMode := pb.TaskAssignmentMode_POOL
+	targetImplementation := action.TargetImplementation
+	if action.TargetAgentID != "" {
+		assignmentMode = pb.TaskAssignmentMode_TARGETED
+		targetImplementation = ""
+	}
 	var completion *pb.TaskCompletionEvent
 	if action.CompletionEvent != nil {
 		completion = &pb.TaskCompletionEvent{
@@ -157,8 +189,20 @@ func (e *Executor) dispatchCreateTask(action *ActionDef) error {
 			EventName: action.CompletionEvent.EventName,
 		}
 	}
-
-	return e.CreateTaskWithType(workspace, action.TaskType, targetImpl, metadata, payload, action.Retry, action.IdempotencyKey, action.CorrelationID, completion)
+	return &pb.CreateTaskRequest{
+		TaskType:             action.TaskType,
+		Workspace:            workspace,
+		AssignmentMode:       assignmentMode,
+		TargetImplementation: targetImplementation,
+		TargetAgentId:        action.TargetAgentID,
+		Metadata:             action.Metadata,
+		Payload:              payload,
+		RetryPolicy:          retryConfigToProto(action.Retry),
+		IdempotencyKey:       action.IdempotencyKey,
+		CorrelationId:        action.CorrelationID,
+		CompletionEvent:      completion,
+		TaskClass:            pb.TaskClass_TASK_CLASS_BACKGROUND,
+	}, nil
 }
 
 // EmitEvent publishes a synthetic event onto the event plane (event.*) as a
@@ -252,6 +296,8 @@ func (e *Executor) DispatchTransformResult(result *TransformResult) error {
 		Metadata:             result.Metadata,
 		TaskType:             result.TaskType,
 		TargetImplementation: result.TargetImplementation,
+		TargetAgentID:        result.TargetAgentID,
+		PayloadEncoding:      result.PayloadEncoding,
 		Payload:              result.Payload,
 		CorrelationID:        result.CorrelationID,
 		CompletionEvent:      result.CompletionEvent,
