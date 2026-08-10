@@ -593,6 +593,12 @@ func (s *Store) UpsertSchedule(ctx context.Context, sc *Schedule) error {
 		ON CONFLICT (id) DO UPDATE SET
 			name = EXCLUDED.name,
 			workspace = EXCLUDED.workspace,
+			next_fire_at = CASE
+				WHEN workflow_schedules.schedule_type <> EXCLUDED.schedule_type
+					OR workflow_schedules.schedule_expr <> EXCLUDED.schedule_expr
+				THEN EXCLUDED.next_fire_at
+				ELSE workflow_schedules.next_fire_at
+			END,
 			schedule_type = EXCLUDED.schedule_type,
 			schedule_expr = EXCLUDED.schedule_expr,
 			action = EXCLUDED.action,

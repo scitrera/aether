@@ -197,7 +197,22 @@ type CreateTaskRequest struct {
 	// CompletionEvent, when non-nil, opts the task into "feed B": the server emits
 	// a domain event onto event::* when the task reaches a selected terminal status.
 	CompletionEvent *tasks.TaskCompletionConfig
+
+	// TargetOfflinePolicy controls TARGETED creation when the exact target is
+	// absent. Zero preserves the released orchestration behavior.
+	TargetOfflinePolicy TargetOfflinePolicy
 }
+
+// TargetOfflinePolicy is kept independent from protobuf types so the task
+// assignment service remains transport-neutral.
+type TargetOfflinePolicy int32
+
+const (
+	TargetOfflinePolicyUnspecified TargetOfflinePolicy = iota
+	TargetOfflinePolicyOrchestrate
+	TargetOfflinePolicyQueue
+	TargetOfflinePolicyReject
+)
 
 // principalTypeStringForTask maps a models.PrincipalType to the lowercase
 // canonical string form used in task Authority columns ("user", "agent",
@@ -362,6 +377,11 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 	if req.TargetAgentID == "" {
 		return nil, fmt.Errorf("target_agent_id required for targeted assignment")
 	}
+	switch req.TargetOfflinePolicy {
+	case TargetOfflinePolicyUnspecified, TargetOfflinePolicyOrchestrate, TargetOfflinePolicyQueue, TargetOfflinePolicyReject:
+	default:
+		return nil, fmt.Errorf("unsupported target offline policy %d", req.TargetOfflinePolicy)
+	}
 
 	// Parse target agent identity
 	targetIdentity, err := models.ParseIdentity(req.TargetAgentID)
@@ -400,12 +420,21 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 	// before this service can ask an orchestrator to start them.
 	isOnline := tas.sessionRegistry.IsOnline(targetIdentity)
 	if !isOnline {
-		exists, err := tas.agentRegistry.Exists(ctx, targetIdentity.Implementation)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check agent registry: %w", err)
-		}
-		if !exists {
-			return nil, fmt.Errorf("target agent implementation '%s' not found in registry", targetIdentity.Implementation)
+		switch req.TargetOfflinePolicy {
+		case TargetOfflinePolicyUnspecified, TargetOfflinePolicyOrchestrate:
+			exists, err := tas.agentRegistry.Exists(ctx, targetIdentity.Implementation)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check agent registry: %w", err)
+			}
+			if !exists {
+				return nil, fmt.Errorf("target agent implementation '%s' not found in registry", targetIdentity.Implementation)
+			}
+		case TargetOfflinePolicyQueue:
+			if req.TaskType == "agent_startup" {
+				return nil, fmt.Errorf("target offline policy queue is not valid for agent_startup tasks")
+			}
+		case TargetOfflinePolicyReject:
+			return nil, fmt.Errorf("target agent %q is offline", req.TargetAgentID)
 		}
 	}
 
@@ -448,6 +477,21 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 			Status:     "assigned",
 			AssignedTo: req.TargetAgentID,
 			Message:    "Task assigned to online agent",
+		}, nil
+	}
+
+	if req.TargetOfflinePolicy == TargetOfflinePolicyQueue {
+		// Static workers have no orchestration registry entry by design. Persist
+		// the exact-target task and let the existing reconnect delivery path claim
+		// it when that identity next appears.
+		task.QueuedForStartup = true
+		if err := tas.taskStore.CreateTask(ctx, task); err != nil {
+			return nil, fmt.Errorf("failed to create queued targeted task: %w", err)
+		}
+		logging.Logger.Info().Str("task_id", taskID).Str("agent_id", req.TargetAgentID).Msg("queued task for offline static agent")
+		return &CreateTaskResponse{
+			TaskID: taskID, Status: "pending", QueuedForStartup: true,
+			Message: "Task queued until the target agent reconnects",
 		}, nil
 	}
 

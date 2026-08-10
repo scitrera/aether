@@ -6,6 +6,7 @@ import type { TaskClass as _aether_v1_TaskClass, TaskClass__Output as _aether_v1
 import type { RetryPolicy as _aether_v1_RetryPolicy, RetryPolicy__Output as _aether_v1_RetryPolicy__Output } from '../../aether/v1/RetryPolicy';
 import type { TaskPriority as _aether_v1_TaskPriority, TaskPriority__Output as _aether_v1_TaskPriority__Output } from '../../aether/v1/TaskPriority';
 import type { TaskCompletionEvent as _aether_v1_TaskCompletionEvent, TaskCompletionEvent__Output as _aether_v1_TaskCompletionEvent__Output } from '../../aether/v1/TaskCompletionEvent';
+import type { TargetOfflinePolicy as _aether_v1_TargetOfflinePolicy, TargetOfflinePolicy__Output as _aether_v1_TargetOfflinePolicy__Output } from '../../aether/v1/TargetOfflinePolicy';
 
 export interface CreateTaskRequest {
   'taskType'?: (string);
@@ -103,6 +104,12 @@ export interface CreateTaskRequest {
    * token association. Empty preserves connection-associated parent inference.
    */
   'parentTaskId'?: (string);
+  /**
+   * TARGETED mode only. QUEUE persists the task for delivery when the exact
+   * static worker reconnects, without requiring an orchestration registry
+   * entry. REJECT fails task creation while the worker is absent.
+   */
+  'targetOfflinePolicy'?: (_aether_v1_TargetOfflinePolicy);
 }
 
 export interface CreateTaskRequest__Output {
@@ -201,4 +208,10 @@ export interface CreateTaskRequest__Output {
    * token association. Empty preserves connection-associated parent inference.
    */
   'parentTaskId': (string);
+  /**
+   * TARGETED mode only. QUEUE persists the task for delivery when the exact
+   * static worker reconnects, without requiring an orchestration registry
+   * entry. REJECT fails task creation while the worker is absent.
+   */
+  'targetOfflinePolicy': (_aether_v1_TargetOfflinePolicy__Output);
 }

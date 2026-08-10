@@ -38,6 +38,7 @@ from scitrera_aether_client._common import (
     OPAQUE,
     SELF_ASSIGN,
     TARGETED,
+    TARGET_OFFLINE_QUEUE,
 )
 from scitrera_aether_client.exceptions import (
     AuthenticationError,
@@ -477,12 +478,14 @@ class TestBaseAsyncAetherClientCreateTask:
             task_type="process",
             workspace="test-workspace",
             target_agent_id="agent-123",
+            target_offline_policy=TARGET_OFFLINE_QUEUE,
         )
 
         msg = client._request_queue.get_nowait()
         assert msg.HasField("create_task")
         assert msg.create_task.assignment_mode == TARGETED
         assert msg.create_task.target_agent_id == "agent-123"
+        assert msg.create_task.target_offline_policy == TARGET_OFFLINE_QUEUE
 
     @pytest.mark.asyncio
     async def test_create_task_with_launch_params(self):

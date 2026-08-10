@@ -38,6 +38,7 @@ from scitrera_aether_client._common import (
     OPAQUE,
     SELF_ASSIGN,
     TARGETED,
+    TARGET_OFFLINE_QUEUE,
     create_topic_agent,
     create_topic_service,
     create_topic_task,
@@ -532,12 +533,14 @@ class TestBaseAetherClientCreateTask:
             task_type="process",
             workspace="test-workspace",
             target_agent_id="agent-123",
+            target_offline_policy=TARGET_OFFLINE_QUEUE,
         )
 
         msg = client.request_queue.get_nowait()
         assert msg.HasField("create_task")
         assert msg.create_task.assignment_mode == TARGETED
         assert msg.create_task.target_agent_id == "agent-123"
+        assert msg.create_task.target_offline_policy == TARGET_OFFLINE_QUEUE
 
     def test_create_task_with_launch_params(self):
         """Test task creation with launch parameter overrides."""

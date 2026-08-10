@@ -297,6 +297,7 @@ export interface ProtoGrpcType {
       SubmitAuditEventRequest: MessageTypeDefinition<_aether_v1_SubmitAuditEventRequest, _aether_v1_SubmitAuditEventRequest__Output>
       SubmitAuditEventResponse: MessageTypeDefinition<_aether_v1_SubmitAuditEventResponse, _aether_v1_SubmitAuditEventResponse__Output>
       SwitchWorkspace: MessageTypeDefinition<_aether_v1_SwitchWorkspace, _aether_v1_SwitchWorkspace__Output>
+      TargetOfflinePolicy: EnumTypeDefinition
       TaskAssignment: MessageTypeDefinition<_aether_v1_TaskAssignment, _aether_v1_TaskAssignment__Output>
       TaskAssignmentMode: EnumTypeDefinition
       TaskAuthorityRequestEventRelay: MessageTypeDefinition<_aether_v1_TaskAuthorityRequestEventRelay, _aether_v1_TaskAuthorityRequestEventRelay__Output>

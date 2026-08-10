@@ -26,7 +26,11 @@ type ActionDef struct {
 	// concrete worker (for example, a worker-authoritative filesystem view).
 	// Empty preserves the historical implementation-pooled assignment.
 	TargetAgentID string `json:"target_agent_id,omitempty" yaml:"target_agent_id,omitempty"`
-	Payload       any    `json:"payload,omitempty" yaml:"payload,omitempty"`
+	// TargetOfflinePolicy controls exact-target behavior while that identity is
+	// disconnected: orchestrate, queue, or reject. Empty preserves the released
+	// orchestration behavior.
+	TargetOfflinePolicy string `json:"target_offline_policy,omitempty" yaml:"target_offline_policy,omitempty"`
+	Payload             any    `json:"payload,omitempty" yaml:"payload,omitempty"`
 	// PayloadEncoding controls how Payload becomes CreateTaskRequest.payload.
 	// Empty or "msgpack" preserves the historical wire encoding; "json" is for
 	// versioned task envelopes shared with non-msgpack consumers.
@@ -182,6 +186,13 @@ func buildCreateTaskRequest(action *ActionDef, defaultWorkspace string) (*pb.Cre
 		assignmentMode = pb.TaskAssignmentMode_TARGETED
 		targetImplementation = ""
 	}
+	offlinePolicy, err := targetOfflinePolicyToProto(action.TargetOfflinePolicy)
+	if err != nil {
+		return nil, err
+	}
+	if offlinePolicy != pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_UNSPECIFIED && assignmentMode != pb.TaskAssignmentMode_TARGETED {
+		return nil, fmt.Errorf("target_offline_policy requires target_agent_id")
+	}
 	var completion *pb.TaskCompletionEvent
 	if action.CompletionEvent != nil {
 		completion = &pb.TaskCompletionEvent{
@@ -202,7 +213,23 @@ func buildCreateTaskRequest(action *ActionDef, defaultWorkspace string) (*pb.Cre
 		CorrelationId:        action.CorrelationID,
 		CompletionEvent:      completion,
 		TaskClass:            pb.TaskClass_TASK_CLASS_BACKGROUND,
+		TargetOfflinePolicy:  offlinePolicy,
 	}, nil
+}
+
+func targetOfflinePolicyToProto(value string) (pb.TargetOfflinePolicy, error) {
+	switch value {
+	case "":
+		return pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_UNSPECIFIED, nil
+	case "orchestrate":
+		return pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_ORCHESTRATE, nil
+	case "queue":
+		return pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_QUEUE, nil
+	case "reject":
+		return pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_REJECT, nil
+	default:
+		return pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_UNSPECIFIED, fmt.Errorf("unsupported target_offline_policy %q", value)
+	}
 }
 
 // EmitEvent publishes a synthetic event onto the event plane (event.*) as a

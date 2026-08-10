@@ -105,6 +105,18 @@ export enum TaskAssignmentMode {
 }
 
 /**
+ * TARGETED task behavior while the exact target identity is disconnected.
+ * Unspecified preserves orchestration; Queue waits for a static worker to
+ * reconnect; Reject fails creation.
+ */
+export enum TargetOfflinePolicy {
+  Unspecified = 0,
+  Orchestrate = 1,
+  Queue = 2,
+  Reject = 3,
+}
+
+/**
  * Dispatch priority for tasks. Higher priority pending tasks are delivered
  * before lower ones (ties break FIFO). Values are spaced to allow inserting
  * new levels later. Unspecified (0) is normalized to Normal by the server.

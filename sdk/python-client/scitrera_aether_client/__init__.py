@@ -24,6 +24,10 @@ from ._common import (
     SELF_ASSIGN,
     TARGETED,
     POOL,
+    TARGET_OFFLINE_UNSPECIFIED,
+    TARGET_OFFLINE_ORCHESTRATE,
+    TARGET_OFFLINE_QUEUE,
+    TARGET_OFFLINE_REJECT,
 
     # KV operation type constants
     KV_GET,

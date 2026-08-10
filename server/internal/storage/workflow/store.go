@@ -221,7 +221,9 @@ type Store interface {
 	GetSchedule(ctx context.Context, id string) (*Schedule, error)
 
 	// UpsertSchedule inserts a new schedule row, or updates the existing
-	// row with the same id, preserving created_at across updates.
+	// row with the same id, preserving created_at and last_fired_at. It keeps
+	// next_fire_at for payload-only changes and replaces it when the schedule
+	// type or expression changes.
 	// Populates sc.CreatedAt and sc.UpdatedAt from the RETURNING clause.
 	UpsertSchedule(ctx context.Context, sc *Schedule) error
 

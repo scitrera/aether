@@ -235,6 +235,34 @@ func runSchedulesRoundTrip(t *testing.T, store wfstore.Store) {
 		t.Fatalf("GetSchedule.Name: got %+v want name-%s", got, id)
 	}
 
+	payloadOnlyNext := next.Add(time.Hour)
+	sc.Action = json.RawMessage(`{"hint":"updated"}`)
+	sc.NextFireAt = &payloadOnlyNext
+	if err := store.UpsertSchedule(ctx, sc); err != nil {
+		t.Fatalf("UpsertSchedule payload-only: %v", err)
+	}
+	got, err = store.GetSchedule(ctx, id)
+	if err != nil || got == nil || got.NextFireAt == nil {
+		t.Fatalf("GetSchedule after payload-only upsert: got=%+v err=%v", got, err)
+	}
+	if !got.NextFireAt.Equal(next) {
+		t.Fatalf("payload-only upsert moved next fire: got=%v want=%v", got.NextFireAt, next)
+	}
+
+	reconfiguredNext := next.Add(2 * time.Hour)
+	sc.ScheduleExpr = "15m"
+	sc.NextFireAt = &reconfiguredNext
+	if err := store.UpsertSchedule(ctx, sc); err != nil {
+		t.Fatalf("UpsertSchedule reconfigured: %v", err)
+	}
+	got, err = store.GetSchedule(ctx, id)
+	if err != nil || got == nil || got.NextFireAt == nil {
+		t.Fatalf("GetSchedule after reconfigured upsert: got=%+v err=%v", got, err)
+	}
+	if !got.NextFireAt.Equal(reconfiguredNext) {
+		t.Fatalf("reconfigured upsert retained stale next fire: got=%v want=%v", got.NextFireAt, reconfiguredNext)
+	}
+
 	listed, err := store.ListSchedules(ctx, "ws-"+id)
 	if err != nil {
 		t.Fatalf("ListSchedules: %v", err)

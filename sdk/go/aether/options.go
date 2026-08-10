@@ -704,6 +704,11 @@ type CreateTaskOptions struct {
 	// Required for TaskAssignmentTargeted mode.
 	TargetAgentID string
 
+	// TargetOfflinePolicy controls TARGETED creation while the exact target is
+	// disconnected. UNSPECIFIED preserves orchestration; QUEUE waits for a
+	// static worker reconnect; REJECT fails creation.
+	TargetOfflinePolicy pb.TargetOfflinePolicy
+
 	// TargetImplementation is the agent implementation type for pool assignment.
 	// Required for TaskAssignmentPool mode. When set and AssignmentMode is
 	// not explicitly specified, the mode is automatically set to POOL.

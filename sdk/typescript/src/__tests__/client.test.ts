@@ -5,6 +5,7 @@ import {
   MessageType,
   KVScope,
   TaskAssignmentMode,
+  TargetOfflinePolicy,
   SignalType,
   // Topic helpers
   agentTopic,
@@ -95,6 +96,15 @@ describe("PrincipalType", () => {
     expect(PrincipalType.WorkflowEngine).toBe("workflow_engine");
     expect(PrincipalType.MetricsBridge).toBe("metrics_bridge");
     expect(PrincipalType.Orchestrator).toBe("orchestrator");
+  });
+});
+
+describe("TargetOfflinePolicy", () => {
+  it("matches the protobuf wire values", () => {
+    expect(TargetOfflinePolicy.Unspecified).toBe(0);
+    expect(TargetOfflinePolicy.Orchestrate).toBe(1);
+    expect(TargetOfflinePolicy.Queue).toBe(2);
+    expect(TargetOfflinePolicy.Reject).toBe(3);
   });
 });
 

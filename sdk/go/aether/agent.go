@@ -432,6 +432,7 @@ func (c *AgentClient) CreateTask(opts CreateTaskOptions) error {
 				Workspace:            workspace,
 				AssignmentMode:       pbMode,
 				TargetAgentId:        opts.TargetAgentID,
+				TargetOfflinePolicy:  opts.TargetOfflinePolicy,
 				TargetImplementation: opts.TargetImplementation,
 				LaunchParamOverrides: opts.LaunchParamOverrides,
 				Metadata:             opts.Metadata,

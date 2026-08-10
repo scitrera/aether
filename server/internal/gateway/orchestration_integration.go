@@ -590,6 +590,7 @@ func (s *GatewayServer) handleCreateTask(
 		CorrelationID:        correlationID,
 		RootTaskID:           rootTaskID,
 		CompletionEvent:      completionConfigFromProto(req.GetCompletionEvent()),
+		TargetOfflinePolicy:  orchestration.TargetOfflinePolicy(req.GetTargetOfflinePolicy()),
 	}
 	// Fix AA: seed the task's Authority.SubjectType/SubjectID from the resolved
 	// OBO subject so downstream consumers (buildTaskContext →

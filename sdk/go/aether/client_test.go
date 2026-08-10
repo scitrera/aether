@@ -1149,16 +1149,18 @@ func TestBaseClient_CreateTaskForwardsDurableCoordinationFields(t *testing.T) {
 	client.running.Store(true)
 	completion := &pb.TaskCompletionEvent{Enabled: true, EventName: "child.done"}
 	if err := client.CreateTask("child", "routing", CreateTaskOptions{
-		AssignmentMode:  TaskAssignmentSelfAssign,
-		TaskClass:       pb.TaskClass_TASK_CLASS_BACKGROUND,
-		ContextID:       "session-1",
-		RetryPolicy:     &pb.RetryPolicy{MaxAttempts: 1},
-		Priority:        pb.TaskPriority_TASK_PRIORITY_HIGH,
-		IdempotencyKey:  "invocation-1",
-		CorrelationID:   "fanout-1",
-		RootTaskID:      "root-1",
-		CompletionEvent: completion,
-		ParentTaskID:    "parent-1",
+		AssignmentMode:      TaskAssignmentTargeted,
+		TargetAgentID:       "ag::routing::worker::static-1",
+		TargetOfflinePolicy: pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_QUEUE,
+		TaskClass:           pb.TaskClass_TASK_CLASS_BACKGROUND,
+		ContextID:           "session-1",
+		RetryPolicy:         &pb.RetryPolicy{MaxAttempts: 1},
+		Priority:            pb.TaskPriority_TASK_PRIORITY_HIGH,
+		IdempotencyKey:      "invocation-1",
+		CorrelationID:       "fanout-1",
+		RootTaskID:          "root-1",
+		CompletionEvent:     completion,
+		ParentTaskID:        "parent-1",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1175,6 +1177,9 @@ func TestBaseClient_CreateTaskForwardsDurableCoordinationFields(t *testing.T) {
 	}
 	if request.GetParentTaskId() != "parent-1" {
 		t.Fatalf("parent task id = %q", request.GetParentTaskId())
+	}
+	if request.GetTargetOfflinePolicy() != pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_QUEUE {
+		t.Fatalf("target offline policy = %s", request.GetTargetOfflinePolicy())
 	}
 	if request.GetRetryPolicy().GetMaxAttempts() != 1 || request.GetPriority() != pb.TaskPriority_TASK_PRIORITY_HIGH {
 		t.Fatalf("execution policy = retry:%+v priority:%s", request.GetRetryPolicy(), request.GetPriority())

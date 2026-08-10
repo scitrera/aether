@@ -108,6 +108,7 @@ export {
   MessageType,
   KVScope,
   TaskAssignmentMode,
+  TargetOfflinePolicy,
   SignalType,
 } from "./types.js";
 

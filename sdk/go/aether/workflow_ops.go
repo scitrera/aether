@@ -181,8 +181,9 @@ func (w *WorkflowOps) CreateSchedule(ctx context.Context, data []byte) (*Workflo
 }
 
 // UpsertSchedule creates or updates a schedule idempotently from JSON data.
-// If a schedule with the given ID exists, its configuration is updated but
-// next_fire_at and last_fired_at are preserved.
+// If a schedule with the given ID exists, its configuration and last_fired_at
+// are preserved. next_fire_at is preserved for payload-only changes and
+// recomputed when schedule_type or schedule_expr changes.
 func (w *WorkflowOps) UpsertSchedule(ctx context.Context, data []byte) (*WorkflowResponse, error) {
 	return w.SendOpSync(ctx, &pb.WorkflowOperation{
 		Op:   pb.WorkflowOperation_UPSERT_SCHEDULE,

@@ -37,6 +37,7 @@ from ._common import (
     SELF_ASSIGN,
     TARGETED,
     POOL,
+    TARGET_OFFLINE_UNSPECIFIED,
     _scope_to_proto,
     _env_tls_kwargs_filter,
 )
@@ -1620,7 +1621,8 @@ class BaseAsyncAetherClient:
                           context_id: str = "",
                           priority: int = 0,
                           retry_policy: Optional[aether_pb2.RetryPolicy] = None,
-                          parent_task_id: str = "") -> None:
+                          parent_task_id: str = "",
+                          target_offline_policy: int = TARGET_OFFLINE_UNSPECIFIED) -> None:
         """
         Create a new task.
 
@@ -1640,6 +1642,8 @@ class BaseAsyncAetherClient:
                 sharing a context_id are groupable via TaskFilter.context_id.
             parent_task_id: Optional active parent assigned to this calling identity.
                 The gateway validates and applies the binding only to this request.
+            target_offline_policy: TARGETED behavior while the exact target is
+                disconnected. Defaults to orchestration-compatible UNSPECIFIED.
         """
         if target_agent_id and assignment_mode == SELF_ASSIGN:
             assignment_mode = TARGETED
@@ -1660,6 +1664,7 @@ class BaseAsyncAetherClient:
             priority=priority,  # type: ignore[arg-type]
             retry_policy=retry_policy,
             parent_task_id=parent_task_id,
+            target_offline_policy=target_offline_policy,  # type: ignore[arg-type]
         )
         await self._request_queue.put(aether_pb2.UpstreamMessage(create_task=req))
 
@@ -1677,7 +1682,8 @@ class BaseAsyncAetherClient:
                                priority: int = 0,
                                retry_policy: Optional[aether_pb2.RetryPolicy] = None,
                                timeout: float = 10.0,
-                               parent_task_id: str = "") -> Optional[aether_pb2.CreateTaskResponse]:
+                               parent_task_id: str = "",
+                               target_offline_policy: int = TARGET_OFFLINE_UNSPECIFIED) -> Optional[aether_pb2.CreateTaskResponse]:
         """
         Create a new task and wait for the server's response containing the task_id.
 
@@ -1705,6 +1711,8 @@ class BaseAsyncAetherClient:
             timeout: Timeout in seconds (default 10.0)
             parent_task_id: Optional active parent assigned to this calling identity.
                 The gateway validates and applies the binding only to this request.
+            target_offline_policy: TARGETED behavior while the exact target is
+                disconnected. Defaults to orchestration-compatible UNSPECIFIED.
 
         Returns:
             CreateTaskResponse with task_id, status, etc., or None on timeout
@@ -1731,6 +1739,7 @@ class BaseAsyncAetherClient:
             priority=priority,  # type: ignore[arg-type]
             retry_policy=retry_policy,
             parent_task_id=parent_task_id,
+            target_offline_policy=target_offline_policy,  # type: ignore[arg-type]
         )
         return await self._send_sync_op(
             aether_pb2.UpstreamMessage(create_task=req), request_id, timeout,

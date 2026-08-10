@@ -9,10 +9,11 @@ import (
 
 func TestBuildCreateTaskRequestTargetsExactAgentWithJSONPayload(t *testing.T) {
 	action := &ActionDef{
-		Type:            "create_task",
-		TaskType:        "agent-harness.scheduled-turn.v1",
-		TargetAgentID:   "ag::default::agent-harness::worker-1",
-		PayloadEncoding: "json",
+		Type:                "create_task",
+		TaskType:            "agent-harness.scheduled-turn.v1",
+		TargetAgentID:       "ag::default::agent-harness::worker-1",
+		TargetOfflinePolicy: "queue",
+		PayloadEncoding:     "json",
 		Payload: map[string]any{
 			"schema": "agent-harness.scheduled-turn.v1",
 			"binding": map[string]any{
@@ -32,6 +33,9 @@ func TestBuildCreateTaskRequestTargetsExactAgentWithJSONPayload(t *testing.T) {
 	}
 	if request.TargetAgentId != action.TargetAgentID || request.TargetImplementation != "" {
 		t.Fatalf("target agent=%q implementation=%q", request.TargetAgentId, request.TargetImplementation)
+	}
+	if request.TargetOfflinePolicy != pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_QUEUE {
+		t.Fatalf("target offline policy = %v", request.TargetOfflinePolicy)
 	}
 	if request.TaskClass != pb.TaskClass_TASK_CLASS_BACKGROUND {
 		t.Fatalf("task class = %v", request.TaskClass)
@@ -66,5 +70,24 @@ func TestBuildCreateTaskRequestRejectsUnknownPayloadEncoding(t *testing.T) {
 	}, "default")
 	if err == nil {
 		t.Fatal("unknown payload encoding was accepted")
+	}
+}
+
+func TestBuildCreateTaskRequestRejectsInvalidOfflinePolicy(t *testing.T) {
+	for name, action := range map[string]*ActionDef{
+		"unknown": {
+			Type: "create_task", TaskType: "bad", TargetAgentID: "ag::default::worker::one",
+			TargetOfflinePolicy: "eventually",
+		},
+		"without exact target": {
+			Type: "create_task", TaskType: "bad", TargetImplementation: "worker",
+			TargetOfflinePolicy: "queue",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := buildCreateTaskRequest(action, "default"); err == nil {
+				t.Fatal("invalid target offline policy was accepted")
+			}
+		})
 	}
 }

@@ -10,7 +10,7 @@
 
 import { AetherClient } from "./client.js";
 import type { AetherClientOptions } from "./client.js";
-import { MessageType, TaskAssignmentMode } from "./types.js";
+import { MessageType, TargetOfflinePolicy, TaskAssignmentMode } from "./types.js";
 import { InvalidArgumentError } from "./errors.js";
 import {
   agentTopic,
@@ -266,6 +266,7 @@ export class TaskClient extends AetherClient {
         workspace,
         assignmentMode,
         targetAgentId: opts.targetAgentId ?? "",
+        targetOfflinePolicy: opts.targetOfflinePolicy ?? TargetOfflinePolicy.Unspecified,
         targetImplementation: opts.targetImplementation ?? "",
         launchParamOverrides: opts.launchParamOverrides ?? {},
         metadata: opts.metadata ?? {},
