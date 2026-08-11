@@ -370,6 +370,8 @@ behavior.
 
 ## See also
 
+- [runtime-access-checks.md](runtime-access-checks.md) — portable streaming
+  access checks, ordered batches, checked sends, and trusted decision receipts.
 - [aetherlite.md](aetherlite.md) — single-binary deployment mode; all ACL and
   audit features described here are fully supported in AetherLite.
 - [on-behalf-of-acl-design.md](on-behalf-of-acl-design.md) — authority grant

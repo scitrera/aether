@@ -65,6 +65,10 @@ import type {
   TokenInfo,
   AuditSubmitResponse,
   AuditSubmitResponseHandler,
+  AuthorizationContext,
+  ResourceAccessRequest,
+  AccessDecisionReceipt,
+  PrincipalRef,
 } from "./types.js";
 import { MessageType, KVScope, SignalType } from "./types.js";
 import {
@@ -262,6 +266,8 @@ export class AetherClient {
   private _pendingWorkflowRequests = new Map<string, (response: WorkflowResponse) => void>();
   private _pendingAuditSubmitRequests = new Map<string, (response: AuditSubmitResponse) => void>();
   private _pendingTokenRequests = new Map<string, (response: TokenResponse) => void>();
+  private _pendingAccessCheckRequests = new Map<string, (response: { success: boolean; error: string; decision?: AccessDecisionReceipt }) => void>();
+  private _pendingBatchAccessCheckRequests = new Map<string, (response: { success: boolean; error: string; decisions: AccessDecisionReceipt[] }) => void>();
 
   // Proxy HTTP pending requests: request_id → resolver
   // @internal
@@ -487,7 +493,50 @@ export class AetherClient {
         targetTopic: message.targetTopic,
         payload: message.payload,
         messageType: message.messageType ?? MessageType.Opaque,
+        appWorkspace: message.appWorkspace ?? "",
+        authorization: message.authorization,
+        checkedAccess: message.checkedAccess,
       },
+    });
+  }
+
+  /** Evaluate one exact logical resource. Denial resolves normally with allowed=false. */
+  checkAccess(access: ResourceAccessRequest, authorization?: AuthorizationContext, timeout = 10000): Promise<AccessDecisionReceipt> {
+    const requestId = this.nextRequestId();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._pendingAccessCheckRequests.delete(requestId);
+        reject(new Error("access check timed out"));
+      }, timeout);
+      this._pendingAccessCheckRequests.set(requestId, (response) => {
+        clearTimeout(timer);
+        if (!response.success || !response.decision) {
+          reject(new InvalidArgumentError(response.error || "access check failed", "access"));
+          return;
+        }
+        resolve(response.decision);
+      });
+      this._sendUpstream({ accessCheck: { requestId, access, authorization } });
+    });
+  }
+
+  /** Evaluate 1-100 exact logical resources, preserving input order. */
+  batchCheckAccess(access: ResourceAccessRequest[], authorization?: AuthorizationContext, timeout = 10000): Promise<AccessDecisionReceipt[]> {
+    const requestId = this.nextRequestId();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._pendingBatchAccessCheckRequests.delete(requestId);
+        reject(new Error("batch access check timed out"));
+      }, timeout);
+      this._pendingBatchAccessCheckRequests.set(requestId, (response) => {
+        clearTimeout(timer);
+        if (!response.success) {
+          reject(new InvalidArgumentError(response.error || "batch access check failed", "access"));
+          return;
+        }
+        resolve(response.decisions);
+      });
+      this._sendUpstream({ batchAccessCheck: { requestId, access, authorization } });
     });
   }
 
@@ -989,6 +1038,9 @@ export class AetherClient {
         sourceTopic: String(msg["sourceTopic"] ?? msg["source_topic"] ?? ""),
         payload: msg["payload"] instanceof Uint8Array ? msg["payload"] : new Uint8Array(),
         messageType: Number(msg["messageType"] ?? msg["message_type"] ?? 0),
+        workspace: String(msg["workspace"] ?? ""),
+        onBehalfSubject: this._parsePrincipalRef(msg["onBehalfSubject"] ?? msg["on_behalf_subject"]),
+        accessReceipt: this._parseAccessReceipt(msg["accessReceipt"] ?? msg["access_receipt"]),
         receivedAt: new Date(),
       };
       this._onMessage(incoming);
@@ -1330,6 +1382,31 @@ export class AetherClient {
         pending(response);
       } else {
         this._onAuthorityGrantResponse(response);
+      }
+      return;
+    }
+
+    if (data["accessCheckResponse"] || data["access_check_response"]) {
+      const raw = (data["accessCheckResponse"] ?? data["access_check_response"]) as Record<string, unknown>;
+      const requestId = String(raw["requestId"] ?? raw["request_id"] ?? "");
+      const receipt = this._parseAccessReceipt(raw["decision"]);
+      const pending = this._pendingAccessCheckRequests.get(requestId);
+      if (pending) {
+        this._pendingAccessCheckRequests.delete(requestId);
+        pending({ success: Boolean(raw["success"]), error: String(raw["error"] ?? ""), decision: receipt });
+      }
+      return;
+    }
+
+    if (data["batchAccessCheckResponse"] || data["batch_access_check_response"]) {
+      const raw = (data["batchAccessCheckResponse"] ?? data["batch_access_check_response"]) as Record<string, unknown>;
+      const requestId = String(raw["requestId"] ?? raw["request_id"] ?? "");
+      const rawDecisions = Array.isArray(raw["decisions"]) ? raw["decisions"] as unknown[] : [];
+      const decisions = rawDecisions.map((item) => this._parseAccessReceipt(item)).filter((item): item is AccessDecisionReceipt => item !== undefined);
+      const pending = this._pendingBatchAccessCheckRequests.get(requestId);
+      if (pending) {
+        this._pendingBatchAccessCheckRequests.delete(requestId);
+        pending({ success: Boolean(raw["success"]), error: String(raw["error"] ?? ""), decisions });
       }
       return;
     }
@@ -1793,6 +1870,48 @@ export class AetherClient {
         messageType,
       },
     });
+  }
+
+  private _parsePrincipalRef(value: unknown): PrincipalRef | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const raw = value as Record<string, unknown>;
+    const principalType = String(raw["principalType"] ?? raw["principal_type"] ?? "");
+    const principalId = String(raw["principalId"] ?? raw["principal_id"] ?? "");
+    return principalType && principalId ? { principalType, principalId } : undefined;
+  }
+
+  private _parseAccessRequest(value: unknown): ResourceAccessRequest {
+    const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    return {
+      resourceType: String(raw["resourceType"] ?? raw["resource_type"] ?? ""),
+      resourceId: String(raw["resourceId"] ?? raw["resource_id"] ?? ""),
+      operation: String(raw["operation"] ?? ""),
+      workspace: String(raw["workspace"] ?? ""),
+      requiredAccessLevel: Number(raw["requiredAccessLevel"] ?? raw["required_access_level"] ?? 0),
+      correlationId: String(raw["correlationId"] ?? raw["correlation_id"] ?? ""),
+    };
+  }
+
+  private _parseAccessReceipt(value: unknown): AccessDecisionReceipt | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const raw = value as Record<string, unknown>;
+    return {
+      decisionId: String(raw["decisionId"] ?? raw["decision_id"] ?? ""),
+      request: this._parseAccessRequest(raw["request"]),
+      allowed: Boolean(raw["allowed"]),
+      decision: String(raw["decision"] ?? ""),
+      effectiveAccessLevel: Number(raw["effectiveAccessLevel"] ?? raw["effective_access_level"] ?? 0),
+      actor: this._parsePrincipalRef(raw["actor"]),
+      subject: this._parsePrincipalRef(raw["subject"]),
+      rootSubject: this._parsePrincipalRef(raw["rootSubject"] ?? raw["root_subject"]),
+      authorityMode: String(raw["authorityMode"] ?? raw["authority_mode"] ?? ""),
+      grantId: String(raw["grantId"] ?? raw["grant_id"] ?? ""),
+      rootGrantId: String(raw["rootGrantId"] ?? raw["root_grant_id"] ?? ""),
+      evaluatedAtMs: Number(raw["evaluatedAtMs"] ?? raw["evaluated_at_ms"] ?? 0),
+      expiresAtMs: Number(raw["expiresAtMs"] ?? raw["expires_at_ms"] ?? 0),
+      denialCode: String(raw["denialCode"] ?? raw["denial_code"] ?? ""),
+      deliveryTarget: String(raw["deliveryTarget"] ?? raw["delivery_target"] ?? ""),
+    };
   }
 
   // ===========================================================================

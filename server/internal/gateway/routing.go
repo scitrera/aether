@@ -365,6 +365,34 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 		return
 	}
 
+	// 0b.1 Optional exact logical-resource authorization. This is additive to
+	// the route ACL above: reaching a provider topic does not imply permission
+	// to invoke every tool or bind every execution view behind it. In OBO mode
+	// this check evaluates the subject intersected with the validated grant and
+	// deliberately does not use the route check's actor-first fallback.
+	var accessReceipt *pb.AccessDecisionReceipt
+	if checked := msg.GetCheckedAccess(); checked != nil {
+		if validateErr := validateResourceAccessRequest(checked); validateErr != nil {
+			logging.Logger.Warn().Str("from", sender.ToTopic()).Str("to", msg.TargetTopic).Err(validateErr).Msg("invalid checked message access request")
+			messageErrors.WithLabelValues(sender.Workspace, "checked_access_invalid").Inc()
+			sendClientError(client, "ERR_INVALID_ACCESS_REQUEST", validateErr.Error())
+			return
+		}
+		accessReceipt, err = evaluateResourceAccess(ctx, s.acl, sender, resolvedAuthority, sessionUUID, checked, msg.TargetTopic, time.Now())
+		if err != nil {
+			logging.Logger.Warn().Str("from", sender.ToTopic()).Str("to", msg.TargetTopic).Err(err).Msg("checked message access evaluation failed")
+			messageErrors.WithLabelValues(sender.Workspace, "checked_access_failed").Inc()
+			sendClientError(client, "ERR_AUTHORIZATION_UNAVAILABLE", "checked access evaluation unavailable", withRetryable(true))
+			return
+		}
+		if !accessReceipt.GetAllowed() {
+			logging.Logger.Warn().Str("from", sender.ToTopic()).Str("to", msg.TargetTopic).Str("resource_type", checked.GetResourceType()).Str("resource_id", checked.GetResourceId()).Msg("checked message access denied")
+			messageErrors.WithLabelValues(sender.Workspace, "checked_access_denied").Inc()
+			sendClientError(client, "ERR_PERMISSION_DENIED", "not authorized for checked logical resource")
+			return
+		}
+	}
+
 	// 0c. Metric negative-delta authorization. Runs after authority resolution
 	// so on-behalf-of grants (subject's capability/metric_credit) are honored, and
 	// so the rejection audit row carries full authority lineage.
@@ -473,10 +501,12 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 		effectiveWorkspace = sender.Workspace
 	}
 	envelope := &pb.MessageEnvelope{
-		Source:      sender.ToTopic(),
-		Payload:     msg.Payload,
-		MessageType: msg.MessageType,
-		TimestampMs: now.UnixMilli(),
+		Source:        sender.ToTopic(),
+		Payload:       msg.Payload,
+		MessageType:   msg.MessageType,
+		TimestampMs:   now.UnixMilli(),
+		Workspace:     effectiveWorkspace,
+		AccessReceipt: accessReceipt,
 	}
 	if effectiveWorkspace != "" {
 		// Always allocate the map only when we have data — avoids inflating

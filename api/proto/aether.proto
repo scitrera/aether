@@ -44,6 +44,8 @@ message UpstreamMessage {
     SubmitAuditEventRequest submit_audit_event = 29;
     AuthorityRequestOperation authority_request_op = 30;
     TaskSubscriptionOperation task_subscription_op = 31;
+    AccessCheckOperation access_check = 33;
+    BatchAccessCheckOperation batch_access_check = 34;
   }
   // Phase 6: URIs of extensions active on this specific message. When the
   // receiver does not support a URI listed here and the extension was
@@ -94,6 +96,8 @@ message DownstreamMessage {
     TaskHibernated task_hibernated = 35;
     TaskSubscriptionOperationResponse task_subscription_response = 36;
     TaskEvent task_event = 37;
+    AccessCheckResponse access_check_response = 39;
+    BatchAccessCheckResponse batch_access_check_response = 40;
   }
   // Phase 6: URIs of extensions active on this specific message. Same
   // semantics as UpstreamMessage.active_extensions: receivers reject when
@@ -357,6 +361,11 @@ message SendMessage {
   // secondary once authproxy-issued root grants are used as the primary
   // scope source.
   string app_workspace = 5;
+  // Optional exact logical-resource check evaluated in addition to ordinary
+  // topic-route authorization. On allow, the resulting receipt is attached to
+  // the trusted MessageEnvelope/IncomingMessage metadata; on deny, nothing is
+  // published. Existing sends without this field retain their current path.
+  ResourceAccessRequest checked_access = 6;
 }
 
 enum MessageType {
@@ -605,6 +614,9 @@ message IncomingMessage {
   // for, distinct from the sending identity in source_topic. Empty for direct
   // (non-OBO) sends. See MessageEnvelope.on_behalf_subject.
   PrincipalRef on_behalf_subject = 5;
+  // Gateway-authored receipt from SendMessage.checked_access. Never populated
+  // from the application payload.
+  AccessDecisionReceipt access_receipt = 6;
 }
 
 message ConfigSnapshot {
@@ -2924,6 +2936,8 @@ message MessageEnvelope {
   // need to *act for* the subject use the task authority-grant path
   // (CreateTaskResponse.authority_grant_id), not this field.
   PrincipalRef on_behalf_subject = 7;
+  // Gateway-authored exact-resource decision propagated to the recipient.
+  AccessDecisionReceipt access_receipt = 8;
 }
 
 // =========================================================================
@@ -3345,4 +3359,73 @@ message TaskChildLifecycleEvent {
 // task. Just embeds the existing event type.
 message TaskAuthorityRequestEventRelay {
   AuthorityRequestEvent event = 1;
+}
+
+// =============================================================================
+// Portable runtime logical-resource authorization
+// =============================================================================
+
+// ResourceAccessRequest is the portable runtime authorization tuple evaluated
+// by the gateway. It is intentionally independent of any tool protocol: the
+// same primitive gates workspace views, catalog providers/entries, and future
+// logical resources. All string fields are required except workspace.
+message ResourceAccessRequest {
+  string resource_type = 1;
+  string resource_id = 2;
+  string operation = 3;
+  string workspace = 4;
+  int32 required_access_level = 5;
+  // Caller-generated correlation binding for a single logical action. A
+  // recipient compares this value with its application payload/request.
+  string correlation_id = 6;
+}
+
+// AccessDecisionReceipt is gateway-authored transport metadata. Receivers may
+// trust it only when it arrived in the Aether envelope, never when an
+// equivalent object appears inside an application payload.
+message AccessDecisionReceipt {
+  string decision_id = 1;
+  ResourceAccessRequest request = 2;
+  bool allowed = 3;
+  string decision = 4;                 // "ALLOW" or "DENY"
+  int32 effective_access_level = 5;
+  PrincipalRef actor = 6;              // authenticated connected principal
+  PrincipalRef subject = 7;            // populated for on-behalf-of checks
+  PrincipalRef root_subject = 8;       // populated when the grant records one
+  string authority_mode = 9;           // "direct" or "on_behalf_of"
+  string grant_id = 10;
+  string root_grant_id = 11;
+  int64 evaluated_at_ms = 12;
+  int64 expires_at_ms = 13;
+  string denial_code = 14;             // stable code; empty for allowed checks
+  // Populated only for checked SendMessage. This binds the receipt to the
+  // concrete post-wildcard-resolution target that received the envelope.
+  string delivery_target = 15;
+}
+
+message AccessCheckOperation {
+  string request_id = 1;
+  ResourceAccessRequest access = 2;
+  AuthorizationContext authorization = 3;
+}
+
+message AccessCheckResponse {
+  string request_id = 1;
+  bool success = 2;                    // evaluation completed; denial is success
+  string error = 3;
+  AccessDecisionReceipt decision = 4;
+}
+
+message BatchAccessCheckOperation {
+  string request_id = 1;
+  repeated ResourceAccessRequest access = 2;
+  AuthorizationContext authorization = 3;
+}
+
+message BatchAccessCheckResponse {
+  string request_id = 1;
+  bool success = 2;
+  string error = 3;
+  // Same order and cardinality as BatchAccessCheckOperation.access.
+  repeated AccessDecisionReceipt decisions = 4;
 }

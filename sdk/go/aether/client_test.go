@@ -480,12 +480,21 @@ func TestSendWithOptions_ThreadsAuthorization(t *testing.T) {
 		Subject:       &pb.PrincipalRef{PrincipalType: "user", PrincipalId: "alice@example.com"},
 		GrantId:       "grant-123",
 	}
+	checked := &pb.ResourceAccessRequest{
+		ResourceType:        "tool-catalog/entry",
+		ResourceId:          "provider-1/tool-1",
+		Operation:           "invoke",
+		Workspace:           "workspace-1",
+		RequiredAccessLevel: 20,
+		CorrelationId:       "call-1",
+	}
 	c := newRunningClient()
 	if err := c.SendWithOptions(SendMessageOptions{
 		TargetTopic:   "test.topic",
 		Payload:       []byte("hi"),
 		MessageType:   MessageTypeChat,
 		Authorization: authz,
+		CheckedAccess: checked,
 	}); err != nil {
 		t.Fatalf("SendWithOptions() error = %v", err)
 	}
@@ -495,6 +504,9 @@ func TestSendWithOptions_ThreadsAuthorization(t *testing.T) {
 	}
 	if got := send.GetAuthorization().GetSubject().GetPrincipalId(); got != "alice@example.com" {
 		t.Errorf("authorization subject = %q, want alice@example.com", got)
+	}
+	if got := send.GetCheckedAccess().GetCorrelationId(); got != "call-1" {
+		t.Errorf("checked access correlation = %q, want call-1", got)
 	}
 
 	// Bare send (no authorization) stays nil.
@@ -506,8 +518,8 @@ func TestSendWithOptions_ThreadsAuthorization(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SendWithOptions() error = %v", err)
 	}
-	if send := dequeueSend(c2); send.GetAuthorization() != nil {
-		t.Error("bare send must not assume an OBO authorization")
+	if send := dequeueSend(c2); send.GetAuthorization() != nil || send.GetCheckedAccess() != nil {
+		t.Error("bare send must not assume authorization or an exact resource check")
 	}
 }
 
@@ -785,6 +797,13 @@ func TestBaseClient_DispatchResponse_IncomingMessage(t *testing.T) {
 
 	ctx := context.Background()
 	response := newMockIncomingMessage("ag.test.impl.spec", testPayload())
+	incoming := response.GetMsg()
+	incoming.Workspace = "workspace-1"
+	incoming.AccessReceipt = &pb.AccessDecisionReceipt{
+		DecisionId: "decision-1",
+		Allowed:    true,
+		Request:    &pb.ResourceAccessRequest{CorrelationId: "call-1"},
+	}
 
 	err = client.dispatchResponse(ctx, response)
 	if err != nil {
@@ -793,6 +812,12 @@ func TestBaseClient_DispatchResponse_IncomingMessage(t *testing.T) {
 
 	if tracker.MessageCount() != 1 {
 		t.Errorf("Message handler called %d times, want 1", tracker.MessageCount())
+	}
+	if got := tracker.messages[0].Workspace; got != "workspace-1" {
+		t.Errorf("Message.Workspace = %q, want workspace-1", got)
+	}
+	if got := tracker.messages[0].AccessReceipt.GetRequest().GetCorrelationId(); got != "call-1" {
+		t.Errorf("Message.AccessReceipt correlation = %q, want call-1", got)
 	}
 }
 

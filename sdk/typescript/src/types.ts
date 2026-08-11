@@ -156,6 +156,12 @@ export interface IncomingMessage {
   readonly payload: Uint8Array;
   /** The type of the message (Chat, Control, ToolCall, Event, Metric). */
   readonly messageType?: number;
+  /** Gateway-verified workspace context, when one applies. */
+  readonly workspace: string;
+  /** Gateway-resolved OBO subject, when the sender acted for another principal. */
+  readonly onBehalfSubject?: PrincipalRef;
+  /** Gateway-authored exact-resource receipt for a checked send. */
+  readonly accessReceipt?: AccessDecisionReceipt;
   /** Local timestamp when the message was received. */
   readonly receivedAt: Date;
 }
@@ -170,6 +176,54 @@ export interface OutgoingMessage {
   payload: Uint8Array;
   /** The type of message. Defaults to Chat. */
   messageType?: MessageType;
+  /** Optional user/application workspace context. */
+  appWorkspace?: string;
+  /** Optional on-behalf-of authority context. */
+  authorization?: AuthorizationContext;
+  /** Optional exact logical-resource check, additive to topic authorization. */
+  checkedAccess?: ResourceAccessRequest;
+}
+
+/** Stable principal reference used by runtime authorization metadata. */
+export interface PrincipalRef {
+  readonly principalType: string;
+  readonly principalId: string;
+}
+
+/** Caller-supplied direct or on-behalf-of authorization context. */
+export interface AuthorizationContext {
+  readonly authorityMode: string;
+  readonly subject?: PrincipalRef;
+  readonly grantId?: string;
+}
+
+/** Exact logical-resource tuple evaluated by the Aether gateway. */
+export interface ResourceAccessRequest {
+  readonly resourceType: string;
+  readonly resourceId: string;
+  readonly operation: string;
+  readonly workspace?: string;
+  readonly requiredAccessLevel: number;
+  readonly correlationId: string;
+}
+
+/** Gateway-authored, short-lived result of one exact resource check. */
+export interface AccessDecisionReceipt {
+  readonly decisionId: string;
+  readonly request: ResourceAccessRequest;
+  readonly allowed: boolean;
+  readonly decision: string;
+  readonly effectiveAccessLevel: number;
+  readonly actor?: PrincipalRef;
+  readonly subject?: PrincipalRef;
+  readonly rootSubject?: PrincipalRef;
+  readonly authorityMode: string;
+  readonly grantId: string;
+  readonly rootGrantId: string;
+  readonly evaluatedAtMs: number;
+  readonly expiresAtMs: number;
+  readonly denialCode: string;
+  readonly deliveryTarget: string;
 }
 
 /**

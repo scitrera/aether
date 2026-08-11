@@ -799,6 +799,12 @@ class BaseAsyncAetherClient:
                     pending = self._pending_requests.pop(req_id, None) if req_id else None
                     if pending and not pending.done():
                         pending.set_result(resp)
+                elif payload_type in ("access_check_response", "batch_access_check_response"):
+                    resp = getattr(response, payload_type)
+                    req_id = resp.request_id
+                    pending = self._pending_requests.pop(req_id, None) if req_id else None
+                    if pending and not pending.done():
+                        pending.set_result(resp)
                 elif payload_type == "resolve_authority_response":
                     resp = response.resolve_authority_response
                     req_id = resp.request_id
@@ -1227,7 +1233,8 @@ class BaseAsyncAetherClient:
     async def _send_message(self, target_topic: str, payload: bytes,
                             message_type: int = aether_pb2.OPAQUE,
                             authorization: Optional[aether_pb2.AuthorizationContext] = None,
-                            app_workspace: str = ""):
+                            app_workspace: str = "",
+                            checked_access: Optional[aether_pb2.ResourceAccessRequest] = None):
         """Send a message to a target topic.
 
         If ``authorization`` is provided, the message is authorized against the
@@ -1243,10 +1250,54 @@ class BaseAsyncAetherClient:
             target_topic=target_topic,
             payload=payload,
             message_type=message_type,  # type: ignore[arg-type]
-            authorization=authorization,
             app_workspace=app_workspace,
         )
+        if authorization is not None:
+            msg.authorization.CopyFrom(authorization)
+        if checked_access is not None:
+            msg.checked_access.CopyFrom(checked_access)
         await self._request_queue.put(aether_pb2.UpstreamMessage(send=msg))
+
+    async def send_checked_message(self, target_topic: str, payload: bytes,
+                                   checked_access: aether_pb2.ResourceAccessRequest,
+                                   message_type: int = aether_pb2.OPAQUE,
+                                   authorization: Optional[aether_pb2.AuthorizationContext] = None,
+                                   app_workspace: str = "") -> None:
+        """Send only when the gateway allows ``checked_access``."""
+        await self._send_message(target_topic, payload, message_type,
+                                 authorization, app_workspace, checked_access)
+
+    async def check_access(self, access: aether_pb2.ResourceAccessRequest,
+                           authorization: Optional[aether_pb2.AuthorizationContext] = None,
+                           timeout: float = 10.0):
+        """Evaluate one logical resource; denial returns an allowed=false receipt."""
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.AccessCheckOperation(request_id=request_id, access=access)
+        if authorization is not None:
+            op.authorization.CopyFrom(authorization)
+        response = await self._send_sync_op(
+            aether_pb2.UpstreamMessage(access_check=op), request_id, timeout)
+        if response is None:
+            return None
+        if not response.success:
+            raise InvalidArgumentError(response.error, code="ACCESS_CHECK_FAILED")
+        return response.decision
+
+    async def batch_check_access(self, access: List[aether_pb2.ResourceAccessRequest],
+                                 authorization: Optional[aether_pb2.AuthorizationContext] = None,
+                                 timeout: float = 10.0):
+        """Evaluate 1-100 resources and return ordered decision receipts."""
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.BatchAccessCheckOperation(request_id=request_id, access=access)
+        if authorization is not None:
+            op.authorization.CopyFrom(authorization)
+        response = await self._send_sync_op(
+            aether_pb2.UpstreamMessage(batch_access_check=op), request_id, timeout)
+        if response is None:
+            return None
+        if not response.success:
+            raise InvalidArgumentError(response.error, code="BATCH_ACCESS_CHECK_FAILED")
+        return list(response.decisions)
 
     async def _switch_workspace(self, new_workspace_id: str):
         """Switch to a different workspace."""

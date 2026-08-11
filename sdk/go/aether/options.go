@@ -872,6 +872,12 @@ type SendMessageOptions struct {
 	// context set via WithOBOAuthorization, or build the *pb.AuthorizationContext
 	// directly. Nil ⇒ direct (non-OBO) send.
 	Authorization *pb.AuthorizationContext
+
+	// CheckedAccess optionally asks the gateway to authorize an exact logical
+	// resource in addition to the destination topic. An allowed decision is
+	// delivered to the recipient as gateway-authored AccessReceipt metadata;
+	// a denied decision prevents publication.
+	CheckedAccess *pb.ResourceAccessRequest
 }
 
 // =============================================================================

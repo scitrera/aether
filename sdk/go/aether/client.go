@@ -122,6 +122,8 @@ type BaseClient struct {
 	pendingSessionRequests          pendingRequests[*SessionOperationResponse]
 	pendingAuditSubmitRequests      pendingRequests[*pb.SubmitAuditEventResponse]
 	pendingAuditQueryRequests       pendingRequests[*pb.AuditQueryResponse]
+	pendingAccessCheckRequests      pendingRequests[*pb.AccessCheckResponse]
+	pendingBatchAccessCheckRequests pendingRequests[*pb.BatchAccessCheckResponse]
 	requestIDCounter                atomic.Uint64
 
 	// rawDownstreamTap, when non-nil, is invoked for every downstream
@@ -981,6 +983,9 @@ func (c *BaseClient) SendWithOptions(opts SendMessageOptions) error {
 	// send never assumes an OBO context.
 	if opts.Authorization != nil {
 		send.Authorization = opts.Authorization
+	}
+	if opts.CheckedAccess != nil {
+		send.CheckedAccess = opts.CheckedAccess
 	}
 	return c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_Send{Send: send},
@@ -1908,6 +1913,14 @@ func (c *BaseClient) dispatchResponse(ctx context.Context, response *pb.Downstre
 	case *pb.DownstreamMessage_AuditResponse:
 		return c.handleAuditQueryResponse(ctx, payload.AuditResponse)
 
+	case *pb.DownstreamMessage_AccessCheckResponse:
+		c.pendingAccessCheckRequests.Resolve(payload.AccessCheckResponse.GetRequestId(), payload.AccessCheckResponse)
+		return nil
+
+	case *pb.DownstreamMessage_BatchAccessCheckResponse:
+		c.pendingBatchAccessCheckRequests.Resolve(payload.BatchAccessCheckResponse.GetRequestId(), payload.BatchAccessCheckResponse)
+		return nil
+
 	case *pb.DownstreamMessage_CreateTask:
 		return c.handleCreateTaskResponse(ctx, payload.CreateTask)
 
@@ -1982,6 +1995,8 @@ func (c *BaseClient) handleIncomingMessage(ctx context.Context, msg *pb.Incoming
 		SourceTopic:     msg.GetSourceTopic(),
 		Payload:         msg.GetPayload(),
 		MessageType:     msg.GetMessageType(),
+		Workspace:       msg.GetWorkspace(),
+		AccessReceipt:   msg.GetAccessReceipt(),
 		OnBehalfSubject: msg.GetOnBehalfSubject(),
 		ReceivedAt:      time.Now(),
 	}

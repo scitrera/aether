@@ -34,11 +34,14 @@ const (
 	ResourceTypeAdmin = models.ResourceTypeAdmin
 	// ResourceTypeCapability gates runtime capabilities (e.g.
 	// "capability/metric_credit", "capability/resolve_authority").
-	ResourceTypeCapability  = models.ResourceTypeCapability
-	ResourceTypeTask        = models.ResourceTypeTask
-	ResourceTypeKVScope     = models.ResourceTypeKVScope
-	ResourceTypeKVKey       = models.ResourceTypeKVKey
-	ResourceTypeServiceImpl = models.ResourceTypeServiceImpl
+	ResourceTypeCapability             = models.ResourceTypeCapability
+	ResourceTypeTask                   = models.ResourceTypeTask
+	ResourceTypeKVScope                = models.ResourceTypeKVScope
+	ResourceTypeKVKey                  = models.ResourceTypeKVKey
+	ResourceTypeServiceImpl            = models.ResourceTypeServiceImpl
+	ResourceTypeWorkspaceExecutionView = models.ResourceTypeWorkspaceExecutionView
+	ResourceTypeToolCatalogProvider    = models.ResourceTypeToolCatalogProvider
+	ResourceTypeToolCatalogEntry       = models.ResourceTypeToolCatalogEntry
 )
 
 // Principal type strings for ACL database operations. These are the lowercase

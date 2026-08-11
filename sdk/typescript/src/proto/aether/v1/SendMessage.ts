@@ -2,6 +2,7 @@
 
 import type { MessageType as _aether_v1_MessageType, MessageType__Output as _aether_v1_MessageType__Output } from '../../aether/v1/MessageType';
 import type { AuthorizationContext as _aether_v1_AuthorizationContext, AuthorizationContext__Output as _aether_v1_AuthorizationContext__Output } from '../../aether/v1/AuthorizationContext';
+import type { ResourceAccessRequest as _aether_v1_ResourceAccessRequest, ResourceAccessRequest__Output as _aether_v1_ResourceAccessRequest__Output } from '../../aether/v1/ResourceAccessRequest';
 
 export interface SendMessage {
   'targetTopic'?: (string);
@@ -19,6 +20,13 @@ export interface SendMessage {
    * scope source.
    */
   'appWorkspace'?: (string);
+  /**
+   * Optional exact logical-resource check evaluated in addition to ordinary
+   * topic-route authorization. On allow, the resulting receipt is attached to
+   * the trusted MessageEnvelope/IncomingMessage metadata; on deny, nothing is
+   * published. Existing sends without this field retain their current path.
+   */
+  'checkedAccess'?: (_aether_v1_ResourceAccessRequest | null);
 }
 
 export interface SendMessage__Output {
@@ -37,4 +45,11 @@ export interface SendMessage__Output {
    * scope source.
    */
   'appWorkspace': (string);
+  /**
+   * Optional exact logical-resource check evaluated in addition to ordinary
+   * topic-route authorization. On allow, the resulting receipt is attached to
+   * the trusted MessageEnvelope/IncomingMessage metadata; on deny, nothing is
+   * published. Existing sends without this field retain their current path.
+   */
+  'checkedAccess': (_aether_v1_ResourceAccessRequest__Output | null);
 }

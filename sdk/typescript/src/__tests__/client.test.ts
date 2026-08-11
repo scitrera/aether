@@ -190,6 +190,79 @@ describe("TaskAssignment delivery", () => {
   });
 });
 
+describe("runtime access checks", () => {
+  const access = {
+    resourceType: "tool-catalog/entry",
+    resourceId: "provider-1/tool-1",
+    operation: "invoke",
+    workspace: "workspace-1",
+    requiredAccessLevel: 20,
+    correlationId: "call-1",
+  };
+
+  it("correlates a single denial as a normal decision", async () => {
+    const client = new AetherClient({ address: "localhost:50051" });
+    let upstream: any;
+    (client as any)._stream = { write: (message: any) => { upstream = message; } };
+
+    const result = client.checkAccess(access);
+    const requestId = upstream.accessCheck.requestId;
+    expect(upstream.accessCheck.access).toEqual(access);
+
+    (client as any)._handleDownstreamMessage({
+      accessCheckResponse: {
+        requestId,
+        success: true,
+        decision: {
+          decisionId: "decision-1",
+          request: access,
+          allowed: false,
+          decision: "DENY",
+          denialCode: "access_denied",
+          expiresAtMs: "1786478400000",
+        },
+      },
+    });
+
+    await expect(result).resolves.toMatchObject({
+      decisionId: "decision-1",
+      allowed: false,
+      denialCode: "access_denied",
+      request: access,
+    });
+  });
+
+  it("surfaces workspace, OBO subject, and checked-send receipt", () => {
+    const client = new AetherClient({ address: "localhost:50051" });
+    let received: any;
+    client.onMessage((message) => { received = message; });
+
+    (client as any)._handleDownstreamMessage({
+      msg: {
+        sourceTopic: "sv::tools::one",
+        payload: new Uint8Array([1]),
+        workspace: "workspace-1",
+        onBehalfSubject: { principalType: "user", principalId: "user-1" },
+        accessReceipt: {
+          decisionId: "decision-1",
+          request: access,
+          allowed: true,
+          decision: "ALLOW",
+          deliveryTarget: "sv::tools::one",
+        },
+      },
+    });
+
+    expect(received.workspace).toBe("workspace-1");
+    expect(received.onBehalfSubject).toEqual({ principalType: "user", principalId: "user-1" });
+    expect(received.accessReceipt).toMatchObject({
+      decisionId: "decision-1",
+      allowed: true,
+      deliveryTarget: "sv::tools::one",
+    });
+  });
+});
+
 describe("SignalType", () => {
   it("has expected values", () => {
     expect(SignalType.ForceDisconnect).toBe(0);

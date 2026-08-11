@@ -2,6 +2,7 @@
 
 import type { MessageType as _aether_v1_MessageType, MessageType__Output as _aether_v1_MessageType__Output } from '../../aether/v1/MessageType';
 import type { PrincipalRef as _aether_v1_PrincipalRef, PrincipalRef__Output as _aether_v1_PrincipalRef__Output } from '../../aether/v1/PrincipalRef';
+import type { AccessDecisionReceipt as _aether_v1_AccessDecisionReceipt, AccessDecisionReceipt__Output as _aether_v1_AccessDecisionReceipt__Output } from '../../aether/v1/AccessDecisionReceipt';
 
 export interface IncomingMessage {
   'sourceTopic'?: (string);
@@ -28,6 +29,11 @@ export interface IncomingMessage {
    * (non-OBO) sends. See MessageEnvelope.on_behalf_subject.
    */
   'onBehalfSubject'?: (_aether_v1_PrincipalRef | null);
+  /**
+   * Gateway-authored receipt from SendMessage.checked_access. Never populated
+   * from the application payload.
+   */
+  'accessReceipt'?: (_aether_v1_AccessDecisionReceipt | null);
 }
 
 export interface IncomingMessage__Output {
@@ -55,4 +61,9 @@ export interface IncomingMessage__Output {
    * (non-OBO) sends. See MessageEnvelope.on_behalf_subject.
    */
   'onBehalfSubject': (_aether_v1_PrincipalRef__Output | null);
+  /**
+   * Gateway-authored receipt from SendMessage.checked_access. Never populated
+   * from the application payload.
+   */
+  'accessReceipt': (_aether_v1_AccessDecisionReceipt__Output | null);
 }

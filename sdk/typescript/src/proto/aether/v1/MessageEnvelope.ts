@@ -2,6 +2,7 @@
 
 import type { MessageType as _aether_v1_MessageType, MessageType__Output as _aether_v1_MessageType__Output } from '../../aether/v1/MessageType';
 import type { PrincipalRef as _aether_v1_PrincipalRef, PrincipalRef__Output as _aether_v1_PrincipalRef__Output } from '../../aether/v1/PrincipalRef';
+import type { AccessDecisionReceipt as _aether_v1_AccessDecisionReceipt, AccessDecisionReceipt__Output as _aether_v1_AccessDecisionReceipt__Output } from '../../aether/v1/AccessDecisionReceipt';
 import type { Long } from '@grpc/proto-loader';
 
 /**
@@ -62,6 +63,10 @@ export interface MessageEnvelope {
    * (CreateTaskResponse.authority_grant_id), not this field.
    */
   'onBehalfSubject'?: (_aether_v1_PrincipalRef | null);
+  /**
+   * Gateway-authored exact-resource decision propagated to the recipient.
+   */
+  'accessReceipt'?: (_aether_v1_AccessDecisionReceipt | null);
 }
 
 /**
@@ -122,4 +127,8 @@ export interface MessageEnvelope__Output {
    * (CreateTaskResponse.authority_grant_id), not this field.
    */
   'onBehalfSubject': (_aether_v1_PrincipalRef__Output | null);
+  /**
+   * Gateway-authored exact-resource decision propagated to the recipient.
+   */
+  'accessReceipt': (_aether_v1_AccessDecisionReceipt__Output | null);
 }

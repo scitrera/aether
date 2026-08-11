@@ -121,15 +121,18 @@ const (
 // Resource types — acl_rules.resource_type values. Aliased from
 // pkg/models.ResourceType* via the legacy package.
 const (
-	ResourceTypeWorkspace   = legacy.ResourceTypeWorkspace
-	ResourceTypeAgent       = legacy.ResourceTypeAgent
-	ResourceTypePermission  = legacy.ResourceTypePermission // deprecated: prefer Admin/Capability
-	ResourceTypeAdmin       = legacy.ResourceTypeAdmin
-	ResourceTypeCapability  = legacy.ResourceTypeCapability
-	ResourceTypeTask        = legacy.ResourceTypeTask
-	ResourceTypeKVScope     = legacy.ResourceTypeKVScope
-	ResourceTypeKVKey       = legacy.ResourceTypeKVKey
-	ResourceTypeServiceImpl = legacy.ResourceTypeServiceImpl
+	ResourceTypeWorkspace              = legacy.ResourceTypeWorkspace
+	ResourceTypeAgent                  = legacy.ResourceTypeAgent
+	ResourceTypePermission             = legacy.ResourceTypePermission // deprecated: prefer Admin/Capability
+	ResourceTypeAdmin                  = legacy.ResourceTypeAdmin
+	ResourceTypeCapability             = legacy.ResourceTypeCapability
+	ResourceTypeTask                   = legacy.ResourceTypeTask
+	ResourceTypeKVScope                = legacy.ResourceTypeKVScope
+	ResourceTypeKVKey                  = legacy.ResourceTypeKVKey
+	ResourceTypeServiceImpl            = legacy.ResourceTypeServiceImpl
+	ResourceTypeWorkspaceExecutionView = legacy.ResourceTypeWorkspaceExecutionView
+	ResourceTypeToolCatalogProvider    = legacy.ResourceTypeToolCatalogProvider
+	ResourceTypeToolCatalogEntry       = legacy.ResourceTypeToolCatalogEntry
 )
 
 // Principal types — acl_rules.principal_type values (canonical lowercase).

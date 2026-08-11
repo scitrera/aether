@@ -116,6 +116,10 @@ export type {
   // Message structures
   IncomingMessage,
   OutgoingMessage,
+  PrincipalRef,
+  AuthorizationContext,
+  ResourceAccessRequest,
+  AccessDecisionReceipt,
   ConfigSnapshot,
   Signal,
   ErrorResponse,

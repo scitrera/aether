@@ -33,6 +33,15 @@ type Message struct {
 	// MessageType is the type of the message (CHAT, CONTROL, TOOL_CALL, EVENT, METRIC).
 	MessageType pb.MessageType
 
+	// Workspace is the gateway-verified logical workspace context for this
+	// message, when one applies.
+	Workspace string
+
+	// AccessReceipt is gateway-authored metadata for a checked send. Nil for
+	// ordinary sends. Consumers should validate its correlation ID, resource,
+	// delivery target, and expiry before acting on it.
+	AccessReceipt *pb.AccessDecisionReceipt
+
 	// OnBehalfSubject is the gateway-resolved on-behalf-of subject the message
 	// was sent for, when the sender supplied an OBO AuthorizationContext.
 	// Gateway-set and spoof-proof (like SourceTopic). Nil for direct (non-OBO)
