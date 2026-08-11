@@ -445,21 +445,36 @@ func (s *Store) GetStepByTaskID(ctx context.Context, taskID string) (*StepState,
 // =============================================================================
 
 type Schedule struct {
-	ID            string          `json:"id"`
-	Name          string          `json:"name"`
-	Workspace     string          `json:"workspace"`
-	ScheduleType  string          `json:"schedule_type"`
-	ScheduleExpr  string          `json:"schedule_expr"`
-	Action        json.RawMessage `json:"action"`
-	WorkflowID    string          `json:"workflow_id"`
-	Enabled       bool            `json:"enabled"`
-	NextFireAt    *time.Time      `json:"next_fire_at,omitempty"`
-	LastFiredAt   *time.Time      `json:"last_fired_at,omitempty"`
-	MissPolicy    string          `json:"miss_policy"`
-	MaxConcurrent int             `json:"max_concurrent"` // 0 = unlimited; 1 = don't fire if previous still running
-	ActiveTaskID  string          `json:"active_task_id"` // Tracks currently running task (for max_concurrent=1)
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	ID             string              `json:"id"`
+	Name           string              `json:"name"`
+	Workspace      string              `json:"workspace"`
+	ScheduleType   string              `json:"schedule_type"`
+	ScheduleExpr   string              `json:"schedule_expr"`
+	Action         json.RawMessage     `json:"action"`
+	WorkflowID     string              `json:"workflow_id"`
+	Enabled        bool                `json:"enabled"`
+	NextFireAt     *time.Time          `json:"next_fire_at,omitempty"`
+	LastFiredAt    *time.Time          `json:"last_fired_at,omitempty"`
+	LastOccurrence *ScheduleOccurrence `json:"last_occurrence,omitempty"`
+	MissPolicy     string              `json:"miss_policy"`
+	MaxConcurrent  int                 `json:"max_concurrent"` // 0 = unlimited; 1 = don't fire if previous still running
+	ActiveTaskID   string              `json:"active_task_id"` // Tracks currently running task (for max_concurrent=1)
+	CreatedAt      time.Time           `json:"created_at"`
+	UpdatedAt      time.Time           `json:"updated_at"`
+}
+
+// ScheduleOccurrence is the bounded authoritative summary of the latest
+// scheduler decision. DispatchedAt is nil when the occurrence was skipped and
+// no action/task exists. BacklogCount is capped; BacklogTruncated says more due
+// occurrences existed beyond the reported count.
+type ScheduleOccurrence struct {
+	ScheduledFor     time.Time  `json:"scheduled_for"`
+	DispatchedAt     *time.Time `json:"dispatched_at,omitempty"`
+	Disposition      string     `json:"disposition"`
+	Reason           string     `json:"reason,omitempty"`
+	BacklogCount     int        `json:"backlog_count"`
+	BacklogTruncated bool       `json:"backlog_truncated"`
+	BacklogIndex     int        `json:"backlog_index"`
 }
 
 const (
@@ -471,6 +486,14 @@ const (
 	ScheduleMissPolicySkip     = "skip"
 	ScheduleMissPolicyFireOnce = "fire_once"
 	ScheduleMissPolicyFireAll  = "fire_all"
+
+	ScheduleDispositionOrdinary  = "ordinary"
+	ScheduleDispositionSkipped   = "skipped"
+	ScheduleDispositionCoalesced = "coalesced"
+	ScheduleDispositionCatchUp   = "catch_up"
+
+	ScheduleSkipReasonMissPolicy    = "miss_policy"
+	ScheduleSkipReasonMaxConcurrent = "max_concurrent"
 )
 
 func validScheduleMissPolicy(policy string) bool {
@@ -480,7 +503,9 @@ func validScheduleMissPolicy(policy string) bool {
 func (s *Store) GetDueSchedules(ctx context.Context, now time.Time) ([]Schedule, error) {
 	query := `
 		SELECT id, name, workspace, schedule_type, schedule_expr, action,
-		       COALESCE(workflow_id, ''), enabled, next_fire_at, last_fired_at, miss_policy,
+		       COALESCE(workflow_id, ''), enabled, next_fire_at, last_fired_at,
+		       last_occurrence_at, last_occurrence_disposition, last_occurrence_reason,
+		       last_backlog_count, last_backlog_truncated, last_backlog_index, miss_policy,
 		       max_concurrent, COALESCE(active_task_id, ''),
 		       created_at, updated_at
 		FROM workflow_schedules
@@ -498,13 +523,8 @@ func (s *Store) GetDueSchedules(ctx context.Context, now time.Time) ([]Schedule,
 
 	var schedules []Schedule
 	for rows.Next() {
-		var sc Schedule
-		if err := rows.Scan(
-			&sc.ID, &sc.Name, &sc.Workspace, &sc.ScheduleType, &sc.ScheduleExpr, &sc.Action,
-			&sc.WorkflowID, &sc.Enabled, &sc.NextFireAt, &sc.LastFiredAt, &sc.MissPolicy,
-			&sc.MaxConcurrent, &sc.ActiveTaskID,
-			&sc.CreatedAt, &sc.UpdatedAt,
-		); err != nil {
+		sc, err := scanSchedule(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan schedule: %w", err)
 		}
 		schedules = append(schedules, sc)
@@ -512,9 +532,16 @@ func (s *Store) GetDueSchedules(ctx context.Context, now time.Time) ([]Schedule,
 	return schedules, rows.Err()
 }
 
-func (s *Store) UpdateScheduleAfterFire(ctx context.Context, id string, lastFired time.Time, nextFire *time.Time) error {
-	query := `UPDATE workflow_schedules SET last_fired_at = $2, next_fire_at = $3 WHERE id = $1`
-	_, err := s.db.ExecContext(ctx, query, id, lastFired, nextFire)
+func (s *Store) RecordScheduleOccurrence(ctx context.Context, id string, occurrence ScheduleOccurrence, nextFire *time.Time) error {
+	query := `UPDATE workflow_schedules SET
+		last_fired_at = COALESCE($2, last_fired_at), next_fire_at = $3,
+		last_occurrence_at = $4, last_occurrence_disposition = $5,
+		last_occurrence_reason = $6, last_backlog_count = $7,
+		last_backlog_truncated = $8, last_backlog_index = $9
+		WHERE id = $1`
+	_, err := s.db.ExecContext(ctx, query, id, occurrence.DispatchedAt, nextFire,
+		occurrence.ScheduledFor, occurrence.Disposition, occurrence.Reason,
+		occurrence.BacklogCount, occurrence.BacklogTruncated, occurrence.BacklogIndex)
 	return err
 }
 
@@ -539,7 +566,9 @@ func (s *Store) DeleteSchedule(ctx context.Context, id string) error {
 func (s *Store) ListSchedules(ctx context.Context, workspace string) ([]Schedule, error) {
 	query := `
 		SELECT id, name, workspace, schedule_type, schedule_expr, action,
-		       COALESCE(workflow_id, ''), enabled, next_fire_at, last_fired_at, miss_policy,
+		       COALESCE(workflow_id, ''), enabled, next_fire_at, last_fired_at,
+		       last_occurrence_at, last_occurrence_disposition, last_occurrence_reason,
+		       last_backlog_count, last_backlog_truncated, last_backlog_index, miss_policy,
 		       max_concurrent, COALESCE(active_task_id, ''),
 		       created_at, updated_at
 		FROM workflow_schedules
@@ -554,13 +583,8 @@ func (s *Store) ListSchedules(ctx context.Context, workspace string) ([]Schedule
 
 	var schedules []Schedule
 	for rows.Next() {
-		var sc Schedule
-		if err := rows.Scan(
-			&sc.ID, &sc.Name, &sc.Workspace, &sc.ScheduleType, &sc.ScheduleExpr, &sc.Action,
-			&sc.WorkflowID, &sc.Enabled, &sc.NextFireAt, &sc.LastFiredAt, &sc.MissPolicy,
-			&sc.MaxConcurrent, &sc.ActiveTaskID,
-			&sc.CreatedAt, &sc.UpdatedAt,
-		); err != nil {
+		sc, err := scanSchedule(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan schedule: %w", err)
 		}
 		schedules = append(schedules, sc)
@@ -571,19 +595,15 @@ func (s *Store) ListSchedules(ctx context.Context, workspace string) ([]Schedule
 func (s *Store) GetSchedule(ctx context.Context, id string) (*Schedule, error) {
 	query := `
 		SELECT id, name, workspace, schedule_type, schedule_expr, action,
-		       COALESCE(workflow_id, ''), enabled, next_fire_at, last_fired_at, miss_policy,
+		       COALESCE(workflow_id, ''), enabled, next_fire_at, last_fired_at,
+		       last_occurrence_at, last_occurrence_disposition, last_occurrence_reason,
+		       last_backlog_count, last_backlog_truncated, last_backlog_index, miss_policy,
 		       max_concurrent, COALESCE(active_task_id, ''),
 		       created_at, updated_at
 		FROM workflow_schedules
 		WHERE id = $1
 	`
-	var sc Schedule
-	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&sc.ID, &sc.Name, &sc.Workspace, &sc.ScheduleType, &sc.ScheduleExpr, &sc.Action,
-		&sc.WorkflowID, &sc.Enabled, &sc.NextFireAt, &sc.LastFiredAt, &sc.MissPolicy,
-		&sc.MaxConcurrent, &sc.ActiveTaskID,
-		&sc.CreatedAt, &sc.UpdatedAt,
-	)
+	sc, err := scanSchedule(s.db.QueryRowContext(ctx, query, id))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -591,6 +611,38 @@ func (s *Store) GetSchedule(ctx context.Context, id string) (*Schedule, error) {
 		return nil, fmt.Errorf("get schedule: %w", err)
 	}
 	return &sc, nil
+}
+
+type scheduleScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanSchedule(scanner scheduleScanner) (Schedule, error) {
+	var sc Schedule
+	var occurrenceAt sql.NullTime
+	var disposition, reason string
+	var backlogCount, backlogIndex int
+	var backlogTruncated bool
+	err := scanner.Scan(
+		&sc.ID, &sc.Name, &sc.Workspace, &sc.ScheduleType, &sc.ScheduleExpr, &sc.Action,
+		&sc.WorkflowID, &sc.Enabled, &sc.NextFireAt, &sc.LastFiredAt,
+		&occurrenceAt, &disposition, &reason, &backlogCount, &backlogTruncated, &backlogIndex, &sc.MissPolicy,
+		&sc.MaxConcurrent, &sc.ActiveTaskID, &sc.CreatedAt, &sc.UpdatedAt,
+	)
+	if err != nil {
+		return Schedule{}, err
+	}
+	if occurrenceAt.Valid {
+		sc.LastOccurrence = &ScheduleOccurrence{
+			ScheduledFor: occurrenceAt.Time, Disposition: disposition, Reason: reason,
+			BacklogCount: backlogCount, BacklogTruncated: backlogTruncated, BacklogIndex: backlogIndex,
+		}
+		if disposition != ScheduleDispositionSkipped && sc.LastFiredAt != nil {
+			dispatchedAt := *sc.LastFiredAt
+			sc.LastOccurrence.DispatchedAt = &dispatchedAt
+		}
+	}
+	return sc, nil
 }
 
 func (s *Store) UpsertSchedule(ctx context.Context, sc *Schedule) error {

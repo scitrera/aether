@@ -235,6 +235,43 @@ func runSchedulesRoundTrip(t *testing.T, store wfstore.Store) {
 		t.Fatalf("GetSchedule.Name: got %+v want name-%s", got, id)
 	}
 
+	dispatchedAt := time.Now().UTC().Truncate(time.Second)
+	coalescedAt := next.Add(-10 * time.Minute)
+	occurrence := wfstore.ScheduleOccurrence{
+		ScheduledFor: coalescedAt, DispatchedAt: &dispatchedAt,
+		Disposition:  wfstore.ScheduleDispositionCoalesced,
+		BacklogCount: 4, BacklogIndex: 1,
+	}
+	if err := store.RecordScheduleOccurrence(ctx, id, occurrence, &next); err != nil {
+		t.Fatalf("RecordScheduleOccurrence fired: %v", err)
+	}
+	got, err = store.GetSchedule(ctx, id)
+	if err != nil || got == nil || got.LastFiredAt == nil || !got.LastFiredAt.Equal(dispatchedAt) || got.LastOccurrence == nil {
+		t.Fatalf("GetSchedule after fired occurrence: got=%+v err=%v", got, err)
+	}
+	if got.LastOccurrence.Disposition != wfstore.ScheduleDispositionCoalesced || got.LastOccurrence.BacklogCount != 4 ||
+		got.LastOccurrence.DispatchedAt == nil || !got.LastOccurrence.DispatchedAt.Equal(dispatchedAt) {
+		t.Fatalf("fired occurrence = %+v", got.LastOccurrence)
+	}
+
+	skippedAt := next.Add(-5 * time.Minute)
+	skipped := wfstore.ScheduleOccurrence{
+		ScheduledFor: skippedAt, Disposition: wfstore.ScheduleDispositionSkipped,
+		Reason: wfstore.ScheduleSkipReasonMissPolicy, BacklogCount: 101, BacklogTruncated: true,
+	}
+	if err := store.RecordScheduleOccurrence(ctx, id, skipped, &next); err != nil {
+		t.Fatalf("RecordScheduleOccurrence skipped: %v", err)
+	}
+	got, err = store.GetSchedule(ctx, id)
+	if err != nil || got == nil || got.LastFiredAt == nil || !got.LastFiredAt.Equal(dispatchedAt) || got.LastOccurrence == nil {
+		t.Fatalf("GetSchedule after skipped occurrence: got=%+v err=%v", got, err)
+	}
+	if got.LastOccurrence.Disposition != wfstore.ScheduleDispositionSkipped ||
+		got.LastOccurrence.Reason != wfstore.ScheduleSkipReasonMissPolicy || got.LastOccurrence.DispatchedAt != nil ||
+		got.LastOccurrence.BacklogCount != 101 || !got.LastOccurrence.BacklogTruncated {
+		t.Fatalf("skipped occurrence = %+v", got.LastOccurrence)
+	}
+
 	payloadOnlyNext := next.Add(time.Hour)
 	sc.Action = json.RawMessage(`{"hint":"updated"}`)
 	sc.NextFireAt = &payloadOnlyNext
@@ -247,6 +284,9 @@ func runSchedulesRoundTrip(t *testing.T, store wfstore.Store) {
 	}
 	if !got.NextFireAt.Equal(next) {
 		t.Fatalf("payload-only upsert moved next fire: got=%v want=%v", got.NextFireAt, next)
+	}
+	if got.LastOccurrence == nil || got.LastOccurrence.Disposition != wfstore.ScheduleDispositionSkipped {
+		t.Fatalf("payload-only upsert discarded occurrence state: %+v", got.LastOccurrence)
 	}
 
 	reconfiguredNext := next.Add(2 * time.Hour)

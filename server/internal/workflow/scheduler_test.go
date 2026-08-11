@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -11,8 +12,8 @@ import (
 )
 
 type scheduleCursorUpdate struct {
-	lastFired time.Time
-	nextFire  *time.Time
+	occurrence ScheduleOccurrence
+	nextFire   *time.Time
 }
 
 type schedulePollStore struct {
@@ -25,13 +26,13 @@ func (s *schedulePollStore) GetDueSchedules(context.Context, time.Time) ([]Sched
 	return append([]Schedule(nil), s.due...), nil
 }
 
-func (s *schedulePollStore) UpdateScheduleAfterFire(_ context.Context, _ string, lastFired time.Time, nextFire *time.Time) error {
+func (s *schedulePollStore) RecordScheduleOccurrence(_ context.Context, _ string, occurrence ScheduleOccurrence, nextFire *time.Time) error {
 	var nextCopy *time.Time
 	if nextFire != nil {
 		value := *nextFire
 		nextCopy = &value
 	}
-	s.updates = append(s.updates, scheduleCursorUpdate{lastFired: lastFired, nextFire: nextCopy})
+	s.updates = append(s.updates, scheduleCursorUpdate{occurrence: occurrence, nextFire: nextCopy})
 	return nil
 }
 
@@ -116,6 +117,18 @@ func TestSchedulerPollSkipFiresSingleDueOccurrenceButDropsBacklog(t *testing.T) 
 			if len(store.updates) != 1 || store.updates[0].nextFire == nil || !store.updates[0].nextFire.After(now) {
 				t.Fatalf("cursor updates = %+v, want one future cursor", store.updates)
 			}
+			wantDisposition := ScheduleDispositionOrdinary
+			wantReason := ""
+			wantBacklog := 1
+			if wantFires == 0 {
+				wantDisposition = ScheduleDispositionSkipped
+				wantReason = ScheduleSkipReasonMissPolicy
+				wantBacklog = 2
+			}
+			got := store.updates[0].occurrence
+			if got.Disposition != wantDisposition || got.Reason != wantReason || got.BacklogCount != wantBacklog || got.BacklogTruncated {
+				t.Fatalf("occurrence = %+v", got)
+			}
 		})
 	}
 }
@@ -136,7 +149,11 @@ func TestSchedulerPollFireOnceCoalescesWithDeterministicOccurrenceIdentity(t *te
 		action.Metadata[scheduleMetadataID] != schedule.ID ||
 		action.Metadata[scheduleMetadataScheduledFor] != wantScheduledFor ||
 		action.Metadata[scheduleMetadataDispatchedAt] != now.Format(time.RFC3339Nano) ||
-		action.Metadata[scheduleMetadataMissPolicy] != "fire_once" {
+		action.Metadata[scheduleMetadataMissPolicy] != "fire_once" ||
+		action.Metadata[scheduleMetadataDisposition] != ScheduleDispositionCoalesced ||
+		action.Metadata[scheduleMetadataBacklogCount] != "3" ||
+		action.Metadata[scheduleMetadataBacklogTruncated] != "false" ||
+		action.Metadata[scheduleMetadataBacklogIndex] != "1" {
 		t.Fatalf("scheduled action metadata = %#v", action.Metadata)
 	}
 	wantKey := scheduleOccurrenceIdempotencyKey(schedule, *schedule.NextFireAt)
@@ -145,6 +162,9 @@ func TestSchedulerPollFireOnceCoalescesWithDeterministicOccurrenceIdentity(t *te
 	}
 	if len(store.updates) != 1 || store.updates[0].nextFire == nil || !store.updates[0].nextFire.After(now) {
 		t.Fatalf("cursor updates = %+v, want one future cursor", store.updates)
+	}
+	if got := store.updates[0].occurrence; got.Disposition != ScheduleDispositionCoalesced || got.BacklogCount != 3 || got.BacklogIndex != 1 {
+		t.Fatalf("coalesced occurrence = %+v", got)
 	}
 
 	// A response-loss retry of the same durable cursor produces the same key,
@@ -173,6 +193,11 @@ func TestSchedulerPollFireAllAdvancesEveryOccurrenceWithoutDiscardingCappedBackl
 			t.Fatalf("occurrence %d idempotency key = %q", i, action.IdempotencyKey)
 		}
 		seenKeys[action.IdempotencyKey] = struct{}{}
+		if action.Metadata[scheduleMetadataDisposition] != ScheduleDispositionCatchUp ||
+			action.Metadata[scheduleMetadataBacklogCount] != "3" ||
+			action.Metadata[scheduleMetadataBacklogIndex] != strconv.Itoa(i+1) {
+			t.Fatalf("catch-up occurrence %d metadata = %#v", i, action.Metadata)
+		}
 	}
 	if last := store.updates[len(store.updates)-1].nextFire; last == nil || !last.After(now) {
 		t.Fatalf("final cursor = %v, want future", last)
@@ -188,6 +213,29 @@ func TestSchedulerPollFireAllAdvancesEveryOccurrenceWithoutDiscardingCappedBackl
 	}
 	if last := largeStore.updates[len(largeStore.updates)-1].nextFire; last == nil || last.After(now) {
 		t.Fatalf("capped cursor = %v, want retained due backlog", last)
+	}
+	if got := largeStore.updates[len(largeStore.updates)-1].occurrence; got.Disposition != ScheduleDispositionCatchUp ||
+		got.BacklogCount != maxScheduleCatchUpPerPoll+1 || !got.BacklogTruncated || got.BacklogIndex != maxScheduleCatchUpPerPoll {
+		t.Fatalf("bounded catch-up occurrence = %+v", got)
+	}
+}
+
+func TestSchedulerPollRecordsMaxConcurrentSkipWithoutOverwritingARealFire(t *testing.T) {
+	now := time.Date(2026, 8, 10, 18, 0, 0, 0, time.UTC)
+	schedule := dueCreateTaskSchedule(now, 90*time.Second, ScheduleMissPolicyFireAll)
+	schedule.MaxConcurrent = 1
+	schedule.ActiveTaskID = now.Add(-10 * time.Second).Format(time.RFC3339)
+	scheduler, store, dispatcher := newSchedulePollHarness(now, schedule)
+	if err := scheduler.poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatcher.actions) != 0 || len(store.updates) != 1 {
+		t.Fatalf("actions/updates = %d/%d", len(dispatcher.actions), len(store.updates))
+	}
+	got := store.updates[0].occurrence
+	if got.DispatchedAt != nil || got.Disposition != ScheduleDispositionSkipped ||
+		got.Reason != ScheduleSkipReasonMaxConcurrent || got.BacklogCount != 2 {
+		t.Fatalf("max-concurrent occurrence = %+v", got)
 	}
 }
 

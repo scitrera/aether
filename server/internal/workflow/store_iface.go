@@ -68,7 +68,7 @@ type WorkflowStore interface {
 	ListSchedules(ctx context.Context, workspace string) ([]Schedule, error)
 	GetSchedule(ctx context.Context, id string) (*Schedule, error)
 	UpsertSchedule(ctx context.Context, sc *Schedule) error
-	UpdateScheduleAfterFire(ctx context.Context, id string, lastFired time.Time, nextFire *time.Time) error
+	RecordScheduleOccurrence(ctx context.Context, id string, occurrence ScheduleOccurrence, nextFire *time.Time) error
 	SetScheduleActiveTask(ctx context.Context, scheduleID, taskID string) error
 
 	// Joins
