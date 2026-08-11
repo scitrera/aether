@@ -391,6 +391,26 @@ A leader-gated ticker (`scheduler.go`) polls on `GetSchedulerPollInterval()`:
 Both run only on the elected leader (`IsLeader()`), so deadline sweeps fire once
 cluster-wide.
 
+Recurring schedules have three explicit missed-fire policies:
+
+- `skip` (the API default when omitted) fires an ordinary single due occurrence,
+  but discards a backlog with multiple due occurrences and advances to the next
+  future time;
+- `fire_once` coalesces all due occurrences into one dispatch;
+- `fire_all` dispatches every due occurrence, advancing the durable cursor after
+  each success in batches of at most 100. A backlog larger than one batch stays
+  due for the next poll rather than being discarded.
+
+Create/upsert rejects any other value. The runtime conservatively treats an
+unrecognized value already present in storage as `fire_once`.
+
+Scheduled `create_task` actions receive `aether.schedule.id`,
+`aether.schedule.scheduled_for`, `aether.schedule.dispatched_at`, and
+`aether.schedule.miss_policy` metadata. Unless the declaration supplies its own
+key, the scheduler also derives an idempotency key from the workspace, schedule
+ID, and occurrence timestamp. This makes dispatch retry safe if task creation
+succeeds but advancing the schedule cursor fails.
+
 ---
 
 ## 5. DAG engine & state machines (existing)

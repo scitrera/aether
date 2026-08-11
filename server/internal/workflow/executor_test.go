@@ -1,10 +1,15 @@
 package workflow
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
+	sdk "github.com/scitrera/aether/sdk/go/aether"
 )
 
 func TestBuildCreateTaskRequestTargetsExactAgentWithJSONPayload(t *testing.T) {
@@ -87,6 +92,56 @@ func TestBuildCreateTaskRequestRejectsInvalidOfflinePolicy(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if _, err := buildCreateTaskRequest(action, "default"); err == nil {
 				t.Fatal("invalid target offline policy was accepted")
+			}
+		})
+	}
+}
+
+func TestDispatchScheduledActionConfirmsTaskCreation(t *testing.T) {
+	var gotOptions sdk.CreateTaskOptions
+	executor := &Executor{
+		defaultWorkspace: "default",
+		createScheduledTaskSync: func(_ context.Context, taskType, workspace string, options sdk.CreateTaskOptions, timeout time.Duration) (*sdk.CreateTaskResponse, error) {
+			if taskType != "scheduled" || workspace != "workspace-a" || timeout != scheduledTaskCreateTimeout {
+				t.Fatalf("create args = %q %q %v", taskType, workspace, timeout)
+			}
+			gotOptions = options
+			return &sdk.CreateTaskResponse{Success: true, TaskID: "task-1"}, nil
+		},
+	}
+	action := &ActionDef{
+		Type: "create_task", TaskType: "scheduled", Workspace: "workspace-a",
+		TargetAgentID: "ag::workspace-a::worker::one", TargetOfflinePolicy: "queue",
+		PayloadEncoding: "json", Payload: map[string]string{"run": "one"},
+		Metadata: map[string]string{"scheduled_for": "now"}, IdempotencyKey: "occurrence-1",
+	}
+	if err := executor.DispatchScheduledAction(context.Background(), action); err != nil {
+		t.Fatal(err)
+	}
+	if gotOptions.AssignmentMode != sdk.TaskAssignmentTargeted ||
+		gotOptions.TargetAgentID != action.TargetAgentID ||
+		gotOptions.TargetOfflinePolicy != pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_QUEUE ||
+		gotOptions.IdempotencyKey != action.IdempotencyKey ||
+		gotOptions.TaskClass != pb.TaskClass_TASK_CLASS_BACKGROUND ||
+		!json.Valid(gotOptions.Payload) {
+		t.Fatalf("confirmed create options = %#v", gotOptions)
+	}
+}
+
+func TestDispatchScheduledActionDoesNotConfirmRejectedOrUncertainCreation(t *testing.T) {
+	for name, create := range map[string]func(context.Context, string, string, sdk.CreateTaskOptions, time.Duration) (*sdk.CreateTaskResponse, error){
+		"rejected": func(context.Context, string, string, sdk.CreateTaskOptions, time.Duration) (*sdk.CreateTaskResponse, error) {
+			return &sdk.CreateTaskResponse{Success: false, ErrorMessage: "denied"}, nil
+		},
+		"response lost": func(context.Context, string, string, sdk.CreateTaskOptions, time.Duration) (*sdk.CreateTaskResponse, error) {
+			return nil, errors.New("timeout")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			executor := &Executor{defaultWorkspace: "default", createScheduledTaskSync: create}
+			err := executor.DispatchScheduledAction(context.Background(), &ActionDef{Type: "create_task", TaskType: "scheduled"})
+			if err == nil || (name == "rejected" && !strings.Contains(err.Error(), "denied")) {
+				t.Fatalf("dispatch error = %v", err)
 			}
 		})
 	}

@@ -1,8 +1,10 @@
 package workflow
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/vmihailenco/msgpack/v5"
@@ -10,6 +12,8 @@ import (
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/sdk/go/aether"
 )
+
+const scheduledTaskCreateTimeout = 10 * time.Second
 
 // ActionDef defines an action to dispatch to an agent via Aether.
 type ActionDef struct {
@@ -73,15 +77,19 @@ type ToolCallPayload struct {
 
 // Executor dispatches actions to agents via the Aether SDK.
 type Executor struct {
-	client           *aether.WorkflowEngineClient
-	defaultWorkspace string
+	client                  *aether.WorkflowEngineClient
+	defaultWorkspace        string
+	createScheduledTaskSync func(context.Context, string, string, aether.CreateTaskOptions, time.Duration) (*aether.CreateTaskResponse, error)
 }
 
 func NewExecutor(client *aether.WorkflowEngineClient, defaultWorkspace string) *Executor {
-	return &Executor{
-		client:           client,
-		defaultWorkspace: defaultWorkspace,
+	executor := &Executor{
+		client: client, defaultWorkspace: defaultWorkspace,
 	}
+	if client != nil {
+		executor.createScheduledTaskSync = client.CreateTaskSync
+	}
+	return executor
 }
 
 // DispatchAction routes an action based on its Type field.
@@ -94,6 +102,62 @@ func (e *Executor) DispatchAction(action *ActionDef) error {
 	default:
 		return fmt.Errorf("unknown action type: %s", action.Type)
 	}
+}
+
+// DispatchScheduledAction confirms scheduled task creation before the scheduler
+// advances its durable occurrence cursor. A lost response leaves the cursor due;
+// the retry uses the scheduler's per-occurrence idempotency key and converges on
+// the already-created task instead of creating a duplicate. Non-task actions
+// retain their existing dispatch behavior.
+func (e *Executor) DispatchScheduledAction(ctx context.Context, action *ActionDef) error {
+	if action == nil {
+		return fmt.Errorf("scheduled action is required")
+	}
+	if action.Type != "create_task" {
+		return e.DispatchAction(action)
+	}
+	request, err := buildCreateTaskRequest(action, e.defaultWorkspace)
+	if err != nil {
+		return err
+	}
+	createTask := e.createScheduledTaskSync
+	if createTask == nil {
+		if e.client == nil {
+			return fmt.Errorf("scheduled task client is not configured")
+		}
+		createTask = e.client.CreateTaskSync
+	}
+	response, err := createTask(ctx, request.TaskType, request.Workspace, aether.CreateTaskOptions{
+		TargetAgentID:        request.TargetAgentId,
+		TargetOfflinePolicy:  request.TargetOfflinePolicy,
+		TargetIdentity:       request.TargetIdentity,
+		TargetImplementation: request.TargetImplementation,
+		LaunchParamOverrides: request.LaunchParamOverrides,
+		Metadata:             request.Metadata,
+		Payload:              request.Payload,
+		AssignmentMode:       aether.TaskAssignmentMode(request.AssignmentMode.String()),
+		TaskClass:            request.TaskClass,
+		ContextID:            request.ContextId,
+		RetryPolicy:          request.RetryPolicy,
+		Priority:             request.Priority,
+		IdempotencyKey:       request.IdempotencyKey,
+		CorrelationID:        request.CorrelationId,
+		RootTaskID:           request.RootTaskId,
+		CompletionEvent:      request.CompletionEvent,
+		ParentTaskID:         request.ParentTaskId,
+		Authorization:        request.Authorization,
+	}, scheduledTaskCreateTimeout)
+	if err != nil {
+		return fmt.Errorf("confirm scheduled task creation: %w", err)
+	}
+	if response == nil || !response.Success {
+		message := "no response"
+		if response != nil && response.ErrorMessage != "" {
+			message = response.ErrorMessage
+		}
+		return fmt.Errorf("scheduled task creation was rejected: %s", message)
+	}
+	return nil
 }
 
 // dispatchMessage sends a tool call message to the target agent.

@@ -337,7 +337,11 @@ func (s *AdminServer) createSchedule(w http.ResponseWriter, r *http.Request) {
 		sc.Workspace = "*"
 	}
 	if sc.MissPolicy == "" {
-		sc.MissPolicy = "skip"
+		sc.MissPolicy = ScheduleMissPolicySkip
+	}
+	if !validScheduleMissPolicy(sc.MissPolicy) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "miss_policy must be skip, fire_once, or fire_all"})
+		return
 	}
 	sc.Enabled = true
 

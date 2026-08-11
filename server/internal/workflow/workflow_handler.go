@@ -313,7 +313,10 @@ func (s *Server) handleCreateSchedule(ctx context.Context, op *pb.WorkflowOperat
 		sc.Workspace = "*"
 	}
 	if sc.MissPolicy == "" {
-		sc.MissPolicy = "skip"
+		sc.MissPolicy = ScheduleMissPolicySkip
+	}
+	if !validScheduleMissPolicy(sc.MissPolicy) {
+		return errResponse(op.RequestId, "miss_policy must be skip, fire_once, or fire_all"), nil
 	}
 	sc.Enabled = true
 
@@ -351,7 +354,10 @@ func (s *Server) handleUpsertSchedule(ctx context.Context, op *pb.WorkflowOperat
 		sc.Workspace = "*"
 	}
 	if sc.MissPolicy == "" {
-		sc.MissPolicy = "skip"
+		sc.MissPolicy = ScheduleMissPolicySkip
+	}
+	if !validScheduleMissPolicy(sc.MissPolicy) {
+		return errResponse(op.RequestId, "miss_policy must be skip, fire_once, or fire_all"), nil
 	}
 	sc.Enabled = true
 

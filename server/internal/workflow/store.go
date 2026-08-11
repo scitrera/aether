@@ -467,7 +467,15 @@ const (
 	ScheduleTypeInterval     = "interval"
 	ScheduleTypeOnce         = "once"
 	ScheduleTypeEventDelayed = "event_delayed"
+
+	ScheduleMissPolicySkip     = "skip"
+	ScheduleMissPolicyFireOnce = "fire_once"
+	ScheduleMissPolicyFireAll  = "fire_all"
 )
+
+func validScheduleMissPolicy(policy string) bool {
+	return policy == ScheduleMissPolicySkip || policy == ScheduleMissPolicyFireOnce || policy == ScheduleMissPolicyFireAll
+}
 
 func (s *Store) GetDueSchedules(ctx context.Context, now time.Time) ([]Schedule, error) {
 	query := `
