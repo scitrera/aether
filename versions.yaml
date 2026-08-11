@@ -156,7 +156,7 @@ docker:
       version_from: aether-gateway
     aetherlite:
       context: server
-      dockerfile: server/Dockerfile.aetherlite-dev
+      dockerfile: server/Dockerfile.aetherlite
       needs: aether
       version_from: aether-gateway
     aetherlite-dev:

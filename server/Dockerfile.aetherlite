@@ -1,0 +1,12 @@
+# AetherLite — embedded single-binary deployment.
+#
+# The general Aether image already contains the aetherlite binary. This wrapper
+# selects it as the runtime while retaining the shared certificates, timezone
+# data, non-root user, and health check. Clear the gateway image's default
+# config argument: AetherLite may run from environment/defaults or accept its
+# own config explicitly at `docker run` time.
+ARG BASE_IMAGE=ghcr.io/scitrera/aether:latest
+FROM ${BASE_IMAGE}
+
+ENTRYPOINT ["aetherlite"]
+CMD []

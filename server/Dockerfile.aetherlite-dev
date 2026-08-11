@@ -1,9 +1,9 @@
-# AetherLite — easy-start embedded mode -- preconfigured development version
-# Shares all layers with the base aetherlite image
+# AetherLite — easy-start embedded mode, preconfigured for development.
+# Shares all layers with the base aetherlite image and inherits its entrypoint.
 ARG BASE_IMAGE=ghcr.io/scitrera/aetherlite:latest
 FROM ${BASE_IMAGE}
 
 # !! DEVELOPMENT ONLY !! Not for production deployment. Hardcodes dev-mode + insecure admin.
 ENV AETHER_ALLOW_DEV_MODE=true \
-    AETHERLITE_DEV=true \
-    AETHERLITE_INSECURE_ADMIN=true
+    AETHER_DEV=true \
+    AETHER_INSECURE_ADMIN=true

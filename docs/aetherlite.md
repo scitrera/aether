@@ -55,6 +55,28 @@ AETHER_ALLOW_DEV_MODE=true ./aetherlite --data-dir /var/lib/aether-lite --insecu
 > `--lite` (or `mode: lite`) is set. Use `cmd/aetherlite` for embedded
 > single-binary deployments.
 
+### Option 2: Container images
+
+The normal image selects the `aetherlite` entrypoint but does not weaken its
+security defaults. Supply production configuration and secrets explicitly:
+
+```bash
+docker run --rm ghcr.io/scitrera/aetherlite:latest --help
+```
+
+For loopback-only local development, the `dev-*` tags additionally set
+`AETHER_ALLOW_DEV_MODE=true`, `AETHER_DEV=true`, and
+`AETHER_INSECURE_ADMIN=true`:
+
+```bash
+docker run --rm -p 127.0.0.1:50051:50051 \
+  -p 127.0.0.1:31880:31880 \
+  ghcr.io/scitrera/aetherlite:dev-latest
+```
+
+The development tags deliberately enable unauthenticated administration and
+must not be exposed to an untrusted network or used in production.
+
 ## Data Directory Layout
 
 AetherLite stores all persistent state under a single directory:
