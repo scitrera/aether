@@ -3,9 +3,11 @@ package gateway
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
+	"github.com/scitrera/aether/server/internal/acl"
 	"github.com/scitrera/aether/server/pkg/models"
 )
 
@@ -102,5 +104,31 @@ func TestWorkflowScheduleGrantRemainingHopsAccountsForPoolSelection(t *testing.T
 	}
 	if got := workflowScheduleGrantRemainingHops(workflowScheduleAccess{targeted: false}, scope); got != 3 {
 		t.Fatalf("pool schedule remaining hops = %d, want 3", got)
+	}
+}
+
+func TestIntersectWorkflowScheduleSourceLifetime(t *testing.T) {
+	now := time.Now().UTC()
+	parent := &acl.AuthorityGrant{
+		ExpiresAt:      now.Add(time.Hour),
+		RenewableUntil: now.Add(2 * time.Hour),
+	}
+	request := acl.CreateAuthorityGrantRequest{
+		ExpiresAt:      now.Add(24 * time.Hour),
+		RenewableUntil: now.Add(48 * time.Hour),
+	}
+
+	intersectWorkflowScheduleSourceLifetime(&request, parent)
+	if !request.ExpiresAt.Equal(parent.ExpiresAt) || !request.RenewableUntil.Equal(parent.RenewableUntil) {
+		t.Fatalf("lifetime was not intersected with source: expires=%v renewable=%v", request.ExpiresAt, request.RenewableUntil)
+	}
+
+	shorter := acl.CreateAuthorityGrantRequest{
+		ExpiresAt:      now.Add(5 * time.Minute),
+		RenewableUntil: now.Add(10 * time.Minute),
+	}
+	intersectWorkflowScheduleSourceLifetime(&shorter, parent)
+	if !shorter.ExpiresAt.Equal(now.Add(5*time.Minute)) || !shorter.RenewableUntil.Equal(now.Add(10*time.Minute)) {
+		t.Fatalf("shorter requested lifetime changed: expires=%v renewable=%v", shorter.ExpiresAt, shorter.RenewableUntil)
 	}
 }

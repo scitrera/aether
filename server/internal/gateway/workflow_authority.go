@@ -117,6 +117,11 @@ func (s *GatewayServer) prepareWorkflowOperation(ctx context.Context, client *Cl
 	if err != nil {
 		return nil, nil, err
 	}
+	// Source-bound grants are intersected with the parent lifetime during mint.
+	// Canonicalize the forwarded scope before hashing it so the workflow engine
+	// persists a policy digest that describes the authority it actually holds.
+	scope.ExpiresAt = grant.ExpiresAt.Unix()
+	scope.RenewableUntil = grant.RenewableUntil.Unix()
 	rootGrantID := grant.RootGrantID
 	if rootGrantID == "" {
 		rootGrantID = grant.GrantID
@@ -266,6 +271,7 @@ func (s *GatewayServer) mintWorkflowScheduleGrant(ctx context.Context, client *C
 		if source == nil || source.Grant == nil {
 			return nil, fmt.Errorf("source-bound workflow schedule authority requires OBO authority")
 		}
+		intersectWorkflowScheduleSourceLifetime(&request, source.Grant)
 		parentGrantID := source.Grant.GrantID
 		request.ParentGrantID = &parentGrantID
 		request.RootSubject = workflowRootSubject(source)
@@ -303,6 +309,18 @@ func (s *GatewayServer) mintWorkflowScheduleGrant(ctx context.Context, client *C
 		"lifetime_mode":        scope.GetLifetimeMode().String(),
 	})
 	return grant, nil
+}
+
+func intersectWorkflowScheduleSourceLifetime(request *acl.CreateAuthorityGrantRequest, source *acl.AuthorityGrant) {
+	if request == nil || source == nil {
+		return
+	}
+	if request.ExpiresAt.After(source.ExpiresAt) {
+		request.ExpiresAt = source.ExpiresAt
+	}
+	if request.RenewableUntil.After(source.RenewableUntil) {
+		request.RenewableUntil = source.RenewableUntil
+	}
 }
 
 func workflowRootSubject(source *acl.ResolvedAuthority) *models.Identity {
