@@ -569,20 +569,22 @@ class ResolvedAuthorityInfo(_message.Message):
     def __init__(self, root_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., max_access_level: _Optional[int] = ..., workspace_scope: _Optional[_Iterable[str]] = ..., expires_at_ms: _Optional[int] = ...) -> None: ...
 
 class SendMessage(_message.Message):
-    __slots__ = ("target_topic", "payload", "message_type", "authorization", "app_workspace", "checked_access")
+    __slots__ = ("target_topic", "payload", "message_type", "authorization", "app_workspace", "checked_access", "forward_authorization")
     TARGET_TOPIC_FIELD_NUMBER: _ClassVar[int]
     PAYLOAD_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_TYPE_FIELD_NUMBER: _ClassVar[int]
     AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
     APP_WORKSPACE_FIELD_NUMBER: _ClassVar[int]
     CHECKED_ACCESS_FIELD_NUMBER: _ClassVar[int]
+    FORWARD_AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
     target_topic: str
     payload: bytes
     message_type: MessageType
     authorization: AuthorizationContext
     app_workspace: str
     checked_access: ResourceAccessRequest
-    def __init__(self, target_topic: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., app_workspace: _Optional[str] = ..., checked_access: _Optional[_Union[ResourceAccessRequest, _Mapping]] = ...) -> None: ...
+    forward_authorization: bool
+    def __init__(self, target_topic: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., app_workspace: _Optional[str] = ..., checked_access: _Optional[_Union[ResourceAccessRequest, _Mapping]] = ..., forward_authorization: _Optional[bool] = ...) -> None: ...
 
 class Metric(_message.Message):
     __slots__ = ("trace_id", "entries", "metadata", "client_timestamp_ms")
@@ -733,20 +735,34 @@ class KVResponse(_message.Message):
     def __init__(self, success: _Optional[bool] = ..., value: _Optional[bytes] = ..., keys: _Optional[_Iterable[str]] = ..., kv_map: _Optional[_Mapping[str, bytes]] = ..., request_id: _Optional[str] = ..., counter_value: _Optional[int] = ..., applied: _Optional[bool] = ..., next_cursor: _Optional[str] = ..., has_more: _Optional[bool] = ...) -> None: ...
 
 class IncomingMessage(_message.Message):
-    __slots__ = ("source_topic", "payload", "message_type", "workspace", "on_behalf_subject", "access_receipt")
+    __slots__ = ("source_topic", "payload", "message_type", "workspace", "on_behalf_subject", "access_receipt", "forwarded_authorization")
     SOURCE_TOPIC_FIELD_NUMBER: _ClassVar[int]
     PAYLOAD_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_TYPE_FIELD_NUMBER: _ClassVar[int]
     WORKSPACE_FIELD_NUMBER: _ClassVar[int]
     ON_BEHALF_SUBJECT_FIELD_NUMBER: _ClassVar[int]
     ACCESS_RECEIPT_FIELD_NUMBER: _ClassVar[int]
+    FORWARDED_AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
     source_topic: str
     payload: bytes
     message_type: MessageType
     workspace: str
     on_behalf_subject: PrincipalRef
     access_receipt: AccessDecisionReceipt
-    def __init__(self, source_topic: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., workspace: _Optional[str] = ..., on_behalf_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., access_receipt: _Optional[_Union[AccessDecisionReceipt, _Mapping]] = ...) -> None: ...
+    forwarded_authorization: ForwardedAuthorization
+    def __init__(self, source_topic: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., workspace: _Optional[str] = ..., on_behalf_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., access_receipt: _Optional[_Union[AccessDecisionReceipt, _Mapping]] = ..., forwarded_authorization: _Optional[_Union[ForwardedAuthorization, _Mapping]] = ...) -> None: ...
+
+class ForwardedAuthorization(_message.Message):
+    __slots__ = ("authorization", "root_grant_id", "expires_at_ms", "delivery_target")
+    AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
+    ROOT_GRANT_ID_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_MS_FIELD_NUMBER: _ClassVar[int]
+    DELIVERY_TARGET_FIELD_NUMBER: _ClassVar[int]
+    authorization: AuthorizationContext
+    root_grant_id: str
+    expires_at_ms: int
+    delivery_target: str
+    def __init__(self, authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., root_grant_id: _Optional[str] = ..., expires_at_ms: _Optional[int] = ..., delivery_target: _Optional[str] = ...) -> None: ...
 
 class ConfigSnapshot(_message.Message):
     __slots__ = ("kv", "global_kv", "task_context", "workspace_exclusive_kv", "global_exclusive_kv")
@@ -856,7 +872,7 @@ class TaskCompletionEvent(_message.Message):
     def __init__(self, enabled: _Optional[bool] = ..., event_name: _Optional[str] = ..., on_statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ...) -> None: ...
 
 class CreateTaskRequest(_message.Message):
-    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id", "retry_policy", "priority", "idempotency_key", "correlation_id", "root_task_id", "completion_event", "parent_task_id", "target_offline_policy")
+    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id", "retry_policy", "priority", "idempotency_key", "correlation_id", "root_task_id", "completion_event", "parent_task_id", "target_offline_policy", "required_downstream_authority_hops")
     class LaunchParamOverridesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -892,6 +908,7 @@ class CreateTaskRequest(_message.Message):
     COMPLETION_EVENT_FIELD_NUMBER: _ClassVar[int]
     PARENT_TASK_ID_FIELD_NUMBER: _ClassVar[int]
     TARGET_OFFLINE_POLICY_FIELD_NUMBER: _ClassVar[int]
+    REQUIRED_DOWNSTREAM_AUTHORITY_HOPS_FIELD_NUMBER: _ClassVar[int]
     task_type: str
     workspace: str
     assignment_mode: TaskAssignmentMode
@@ -913,7 +930,8 @@ class CreateTaskRequest(_message.Message):
     completion_event: TaskCompletionEvent
     parent_task_id: str
     target_offline_policy: TargetOfflinePolicy
-    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]] = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., idempotency_key: _Optional[str] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ..., completion_event: _Optional[_Union[TaskCompletionEvent, _Mapping]] = ..., parent_task_id: _Optional[str] = ..., target_offline_policy: _Optional[_Union[TargetOfflinePolicy, str]] = ...) -> None: ...
+    required_downstream_authority_hops: int
+    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]] = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., idempotency_key: _Optional[str] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ..., completion_event: _Optional[_Union[TaskCompletionEvent, _Mapping]] = ..., parent_task_id: _Optional[str] = ..., target_offline_policy: _Optional[_Union[TargetOfflinePolicy, str]] = ..., required_downstream_authority_hops: _Optional[int] = ...) -> None: ...
 
 class CreateTaskResponse(_message.Message):
     __slots__ = ("success", "task_id", "status", "error_code", "error_message", "request_id", "assigned_to", "task_token", "authority_grant_id")
@@ -3125,7 +3143,7 @@ class WorkflowResponse(_message.Message):
     def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., data: _Optional[bytes] = ..., total_count: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class MessageEnvelope(_message.Message):
-    __slots__ = ("source", "payload", "message_type", "timestamp_ms", "metadata", "workspace", "on_behalf_subject", "access_receipt")
+    __slots__ = ("source", "payload", "message_type", "timestamp_ms", "metadata", "workspace", "on_behalf_subject", "access_receipt", "forwarded_authorization")
     class MetadataEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -3141,6 +3159,7 @@ class MessageEnvelope(_message.Message):
     WORKSPACE_FIELD_NUMBER: _ClassVar[int]
     ON_BEHALF_SUBJECT_FIELD_NUMBER: _ClassVar[int]
     ACCESS_RECEIPT_FIELD_NUMBER: _ClassVar[int]
+    FORWARDED_AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
     source: str
     payload: bytes
     message_type: MessageType
@@ -3149,7 +3168,8 @@ class MessageEnvelope(_message.Message):
     workspace: str
     on_behalf_subject: PrincipalRef
     access_receipt: AccessDecisionReceipt
-    def __init__(self, source: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., timestamp_ms: _Optional[int] = ..., metadata: _Optional[_Mapping[str, str]] = ..., workspace: _Optional[str] = ..., on_behalf_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., access_receipt: _Optional[_Union[AccessDecisionReceipt, _Mapping]] = ...) -> None: ...
+    forwarded_authorization: ForwardedAuthorization
+    def __init__(self, source: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., timestamp_ms: _Optional[int] = ..., metadata: _Optional[_Mapping[str, str]] = ..., workspace: _Optional[str] = ..., on_behalf_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., access_receipt: _Optional[_Union[AccessDecisionReceipt, _Mapping]] = ..., forwarded_authorization: _Optional[_Union[ForwardedAuthorization, _Mapping]] = ...) -> None: ...
 
 class AuditQuery(_message.Message):
     __slots__ = ("request_id", "start_time", "end_time", "event_type", "actor_type", "actor_id", "resource_type", "resource_id", "operation", "workspace", "only_failures", "limit", "offset", "subject_type", "subject_id", "authority_mode", "authority_grant_id", "authorization", "exclude_actor_types", "exclude_workspaces", "exclude_service_direct")

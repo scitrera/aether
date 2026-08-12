@@ -393,6 +393,28 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 		}
 	}
 
+	// Authority continuation is explicit and fail-closed. At this point the
+	// route target is concrete, the sender's OBO context has been validated,
+	// and both the route and optional exact-resource checks have passed.
+	var forwardedAuthorization *pb.ForwardedAuthorization
+	if msg.GetForwardAuthorization() {
+		forwardedAuthorization, err = s.deriveMessageAuthorityContinuation(ctx, resolvedAuthority, msg.TargetTopic, sessionUUID)
+		if err != nil {
+			logging.Logger.Warn().Str("from", sender.ToTopic()).Str("to", msg.TargetTopic).Err(err).Msg("message authority continuation denied")
+			messageErrors.WithLabelValues(sender.Workspace, "authority_continuation_denied").Inc()
+			event := audit.NewMessageEvent(string(sender.Type), sender.String(), audit.OpMessageRouteFailed, msg.TargetTopic, sender.Workspace, sessionUUID, false, err.Error(), map[string]interface{}{
+				"from":          sender.ToTopic(),
+				"to":            msg.TargetTopic,
+				"message_type":  msg.MessageType.String(),
+				"denied_reason": "authority_continuation_denied",
+			})
+			applyResolvedAuthorityToAuditEvent(event, resolvedAuthority)
+			s.auditLog(ctx, event)
+			sendClientError(client, "ERR_AUTHORITY_CONTINUATION_DENIED", "unable to forward authorization to message recipient")
+			return
+		}
+	}
+
 	// 0c. Metric negative-delta authorization. Runs after authority resolution
 	// so on-behalf-of grants (subject's capability/metric_credit) are honored, and
 	// so the rejection audit row carries full authority lineage.
@@ -501,12 +523,13 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 		effectiveWorkspace = sender.Workspace
 	}
 	envelope := &pb.MessageEnvelope{
-		Source:        sender.ToTopic(),
-		Payload:       msg.Payload,
-		MessageType:   msg.MessageType,
-		TimestampMs:   now.UnixMilli(),
-		Workspace:     effectiveWorkspace,
-		AccessReceipt: accessReceipt,
+		Source:                 sender.ToTopic(),
+		Payload:                msg.Payload,
+		MessageType:            msg.MessageType,
+		TimestampMs:            now.UnixMilli(),
+		Workspace:              effectiveWorkspace,
+		AccessReceipt:          accessReceipt,
+		ForwardedAuthorization: forwardedAuthorization,
 	}
 	if effectiveWorkspace != "" {
 		// Always allocate the map only when we have data — avoids inflating

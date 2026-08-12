@@ -49,6 +49,11 @@ type Message struct {
 	// from the sending identity in SourceTopic.
 	OnBehalfSubject *pb.PrincipalRef
 
+	// ForwardedAuthorization is a gateway-derived, target-bound leaf authority
+	// grant for this recipient. Nil for sends that did not explicitly request
+	// continuation. Use Authorization with CheckAccess or BatchCheckAccess.
+	ForwardedAuthorization *pb.ForwardedAuthorization
+
 	// ReceivedAt is the local time when the message was received.
 	ReceivedAt time.Time
 }

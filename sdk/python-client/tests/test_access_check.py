@@ -46,11 +46,15 @@ def test_sync_checked_send_wires_authority_and_access_request():
         grant_id="grant-1",
     )
 
-    client.send_checked_message("sv::tools", b"payload", _request(), authorization=authorization)
+    client.send_checked_message(
+        "sv::tools", b"payload", _request(),
+        authorization=authorization, forward_authorization=True,
+    )
 
     upstream = client.request_queue.get_nowait()
     assert upstream.send.checked_access.resource_id == "provider-1/tool-1"
     assert upstream.send.authorization.grant_id == "grant-1"
+    assert upstream.send.forward_authorization is True
 
 
 @pytest.mark.asyncio

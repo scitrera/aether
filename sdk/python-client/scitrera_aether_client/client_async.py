@@ -1234,7 +1234,8 @@ class BaseAsyncAetherClient:
                             message_type: int = aether_pb2.OPAQUE,
                             authorization: Optional[aether_pb2.AuthorizationContext] = None,
                             app_workspace: str = "",
-                            checked_access: Optional[aether_pb2.ResourceAccessRequest] = None):
+                            checked_access: Optional[aether_pb2.ResourceAccessRequest] = None,
+                            forward_authorization: bool = False):
         """Send a message to a target topic.
 
         If ``authorization`` is provided, the message is authorized against the
@@ -1251,6 +1252,7 @@ class BaseAsyncAetherClient:
             payload=payload,
             message_type=message_type,  # type: ignore[arg-type]
             app_workspace=app_workspace,
+            forward_authorization=forward_authorization,
         )
         if authorization is not None:
             msg.authorization.CopyFrom(authorization)
@@ -1262,10 +1264,12 @@ class BaseAsyncAetherClient:
                                    checked_access: aether_pb2.ResourceAccessRequest,
                                    message_type: int = aether_pb2.OPAQUE,
                                    authorization: Optional[aether_pb2.AuthorizationContext] = None,
-                                   app_workspace: str = "") -> None:
+                                   app_workspace: str = "",
+                                   forward_authorization: bool = False) -> None:
         """Send only when the gateway allows ``checked_access``."""
         await self._send_message(target_topic, payload, message_type,
-                                 authorization, app_workspace, checked_access)
+                                 authorization, app_workspace, checked_access,
+                                 forward_authorization)
 
     async def check_access(self, access: aether_pb2.ResourceAccessRequest,
                            authorization: Optional[aether_pb2.AuthorizationContext] = None,
@@ -1673,6 +1677,7 @@ class BaseAsyncAetherClient:
                           priority: int = 0,
                           retry_policy: Optional[aether_pb2.RetryPolicy] = None,
                           parent_task_id: str = "",
+                          required_downstream_authority_hops: int = 0,
                           target_offline_policy: int = TARGET_OFFLINE_UNSPECIFIED) -> None:
         """
         Create a new task.
@@ -1715,6 +1720,7 @@ class BaseAsyncAetherClient:
             priority=priority,  # type: ignore[arg-type]
             retry_policy=retry_policy,
             parent_task_id=parent_task_id,
+            required_downstream_authority_hops=required_downstream_authority_hops,
             target_offline_policy=target_offline_policy,  # type: ignore[arg-type]
         )
         await self._request_queue.put(aether_pb2.UpstreamMessage(create_task=req))
@@ -1734,6 +1740,7 @@ class BaseAsyncAetherClient:
                                retry_policy: Optional[aether_pb2.RetryPolicy] = None,
                                timeout: float = 10.0,
                                parent_task_id: str = "",
+                               required_downstream_authority_hops: int = 0,
                                target_offline_policy: int = TARGET_OFFLINE_UNSPECIFIED) -> Optional[aether_pb2.CreateTaskResponse]:
         """
         Create a new task and wait for the server's response containing the task_id.
@@ -1790,6 +1797,7 @@ class BaseAsyncAetherClient:
             priority=priority,  # type: ignore[arg-type]
             retry_policy=retry_policy,
             parent_task_id=parent_task_id,
+            required_downstream_authority_hops=required_downstream_authority_hops,
             target_offline_policy=target_offline_policy,  # type: ignore[arg-type]
         )
         return await self._send_sync_op(

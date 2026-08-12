@@ -82,6 +82,7 @@ import type { ErrorResponse as _aether_v1_ErrorResponse, ErrorResponse__Output a
 import type { ExtensionDeclaration as _aether_v1_ExtensionDeclaration, ExtensionDeclaration__Output as _aether_v1_ExtensionDeclaration__Output } from './aether/v1/ExtensionDeclaration';
 import type { FlowEdge as _aether_v1_FlowEdge, FlowEdge__Output as _aether_v1_FlowEdge__Output } from './aether/v1/FlowEdge';
 import type { FlowNode as _aether_v1_FlowNode, FlowNode__Output as _aether_v1_FlowNode__Output } from './aether/v1/FlowNode';
+import type { ForwardedAuthorization as _aether_v1_ForwardedAuthorization, ForwardedAuthorization__Output as _aether_v1_ForwardedAuthorization__Output } from './aether/v1/ForwardedAuthorization';
 import type { GatewayInfo as _aether_v1_GatewayInfo, GatewayInfo__Output as _aether_v1_GatewayInfo__Output } from './aether/v1/GatewayInfo';
 import type { GatewayStats as _aether_v1_GatewayStats, GatewayStats__Output as _aether_v1_GatewayStats__Output } from './aether/v1/GatewayStats';
 import type { HealthCheck as _aether_v1_HealthCheck, HealthCheck__Output as _aether_v1_HealthCheck__Output } from './aether/v1/HealthCheck';
@@ -255,6 +256,7 @@ export interface ProtoGrpcType {
       ExtensionDeclaration: MessageTypeDefinition<_aether_v1_ExtensionDeclaration, _aether_v1_ExtensionDeclaration__Output>
       FlowEdge: MessageTypeDefinition<_aether_v1_FlowEdge, _aether_v1_FlowEdge__Output>
       FlowNode: MessageTypeDefinition<_aether_v1_FlowNode, _aether_v1_FlowNode__Output>
+      ForwardedAuthorization: MessageTypeDefinition<_aether_v1_ForwardedAuthorization, _aether_v1_ForwardedAuthorization__Output>
       GatewayInfo: MessageTypeDefinition<_aether_v1_GatewayInfo, _aether_v1_GatewayInfo__Output>
       GatewayStats: MessageTypeDefinition<_aether_v1_GatewayStats, _aether_v1_GatewayStats__Output>
       HealthCheck: MessageTypeDefinition<_aether_v1_HealthCheck, _aether_v1_HealthCheck__Output>

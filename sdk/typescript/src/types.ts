@@ -162,6 +162,8 @@ export interface IncomingMessage {
   readonly onBehalfSubject?: PrincipalRef;
   /** Gateway-authored exact-resource receipt for a checked send. */
   readonly accessReceipt?: AccessDecisionReceipt;
+  /** Gateway-derived leaf authority for this exact service recipient. */
+  readonly forwardedAuthorization?: ForwardedAuthorization;
   /** Local timestamp when the message was received. */
   readonly receivedAt: Date;
 }
@@ -182,6 +184,8 @@ export interface OutgoingMessage {
   authorization?: AuthorizationContext;
   /** Optional exact logical-resource check, additive to topic authorization. */
   checkedAccess?: ResourceAccessRequest;
+  /** Explicitly derive and attach target-bound authority for the recipient. */
+  forwardAuthorization?: boolean;
 }
 
 /** Stable principal reference used by runtime authorization metadata. */
@@ -195,6 +199,14 @@ export interface AuthorizationContext {
   readonly authorityMode: string;
   readonly subject?: PrincipalRef;
   readonly grantId?: string;
+}
+
+/** Gateway-derived, target-bound authorization continuation. */
+export interface ForwardedAuthorization {
+  readonly authorization: AuthorizationContext;
+  readonly rootGrantId: string;
+  readonly expiresAtMs: number;
+  readonly deliveryTarget: string;
 }
 
 /** Exact logical-resource tuple evaluated by the Aether gateway. */

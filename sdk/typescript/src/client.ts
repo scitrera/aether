@@ -496,6 +496,7 @@ export class AetherClient {
         appWorkspace: message.appWorkspace ?? "",
         authorization: message.authorization,
         checkedAccess: message.checkedAccess,
+        forwardAuthorization: message.forwardAuthorization ?? false,
       },
     });
   }
@@ -1041,6 +1042,7 @@ export class AetherClient {
         workspace: String(msg["workspace"] ?? ""),
         onBehalfSubject: this._parsePrincipalRef(msg["onBehalfSubject"] ?? msg["on_behalf_subject"]),
         accessReceipt: this._parseAccessReceipt(msg["accessReceipt"] ?? msg["access_receipt"]),
+        forwardedAuthorization: this._parseForwardedAuthorization(msg["forwardedAuthorization"] ?? msg["forwarded_authorization"]),
         receivedAt: new Date(),
       };
       this._onMessage(incoming);
@@ -1878,6 +1880,26 @@ export class AetherClient {
     const principalType = String(raw["principalType"] ?? raw["principal_type"] ?? "");
     const principalId = String(raw["principalId"] ?? raw["principal_id"] ?? "");
     return principalType && principalId ? { principalType, principalId } : undefined;
+  }
+
+  private _parseForwardedAuthorization(value: unknown): import("./types.js").ForwardedAuthorization | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const raw = value as Record<string, unknown>;
+    const authRaw = raw["authorization"];
+    if (!authRaw || typeof authRaw !== "object") return undefined;
+    const auth = authRaw as Record<string, unknown>;
+    const authorization: AuthorizationContext = {
+      authorityMode: String(auth["authorityMode"] ?? auth["authority_mode"] ?? ""),
+      subject: this._parsePrincipalRef(auth["subject"]),
+      grantId: String(auth["grantId"] ?? auth["grant_id"] ?? ""),
+    };
+    if (!authorization.authorityMode || !authorization.grantId) return undefined;
+    return {
+      authorization,
+      rootGrantId: String(raw["rootGrantId"] ?? raw["root_grant_id"] ?? ""),
+      expiresAtMs: Number(raw["expiresAtMs"] ?? raw["expires_at_ms"] ?? 0),
+      deliveryTarget: String(raw["deliveryTarget"] ?? raw["delivery_target"] ?? ""),
+    };
   }
 
   private _parseAccessRequest(value: unknown): ResourceAccessRequest {

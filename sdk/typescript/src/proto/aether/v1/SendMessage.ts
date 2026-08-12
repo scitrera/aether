@@ -27,6 +27,16 @@ export interface SendMessage {
    * published. Existing sends without this field retain their current path.
    */
   'checkedAccess'?: (_aether_v1_ResourceAccessRequest | null);
+  /**
+   * Explicitly request a gateway-derived, short-lived authorization context
+   * for the resolved recipient. The gateway only honors this when the send is
+   * already operating under a validated OBO grant with delegation capacity.
+   * For sv::{implementation} targets, wildcard resolution happens first and
+   * the child grant is bound to the concrete service instance. The recipient
+   * receives the result in IncomingMessage.forwarded_authorization; payload
+   * data can never populate that trusted field.
+   */
+  'forwardAuthorization'?: (boolean);
 }
 
 export interface SendMessage__Output {
@@ -52,4 +62,14 @@ export interface SendMessage__Output {
    * published. Existing sends without this field retain their current path.
    */
   'checkedAccess': (_aether_v1_ResourceAccessRequest__Output | null);
+  /**
+   * Explicitly request a gateway-derived, short-lived authorization context
+   * for the resolved recipient. The gateway only honors this when the send is
+   * already operating under a validated OBO grant with delegation capacity.
+   * For sv::{implementation} targets, wildcard resolution happens first and
+   * the child grant is bound to the concrete service instance. The recipient
+   * receives the result in IncomingMessage.forwarded_authorization; payload
+   * data can never populate that trusted field.
+   */
+  'forwardAuthorization': (boolean);
 }

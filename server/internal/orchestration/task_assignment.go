@@ -201,6 +201,11 @@ type CreateTaskRequest struct {
 	// TargetOfflinePolicy controls TARGETED creation when the exact target is
 	// absent. Zero preserves the released orchestration behavior.
 	TargetOfflinePolicy TargetOfflinePolicy
+
+	// RequiredDownstreamAuthorityHops is the delegation capacity the final
+	// execution identity must retain after task authority is established.
+	// Transport validation currently limits this to 0 or 1.
+	RequiredDownstreamAuthorityHops int
 }
 
 // TargetOfflinePolicy is kept independent from protobuf types so the task

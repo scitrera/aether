@@ -250,6 +250,16 @@ describe("runtime access checks", () => {
           decision: "ALLOW",
           deliveryTarget: "sv::tools::one",
         },
+        forwardedAuthorization: {
+          authorization: {
+            authorityMode: "on_behalf_of",
+            subject: { principalType: "user", principalId: "user-1" },
+            grantId: "child-grant-1",
+          },
+          rootGrantId: "root-grant-1",
+          expiresAtMs: "1786478400000",
+          deliveryTarget: "sv::tools::one",
+        },
       },
     });
 
@@ -260,6 +270,25 @@ describe("runtime access checks", () => {
       allowed: true,
       deliveryTarget: "sv::tools::one",
     });
+    expect(received.forwardedAuthorization).toMatchObject({
+      authorization: { grantId: "child-grant-1" },
+      rootGrantId: "root-grant-1",
+      expiresAtMs: 1786478400000,
+      deliveryTarget: "sv::tools::one",
+    });
+  });
+
+  it("threads an explicit authority-continuation request onto sends", async () => {
+    const client = new AetherClient({ address: "localhost:50051" });
+    let upstream: any;
+    (client as any)._connected = true;
+    (client as any)._stream = { write: (message: any) => { upstream = message; } };
+    await client.send({
+      targetTopic: "sv::tool-catalog",
+      payload: new Uint8Array([1]),
+      forwardAuthorization: true,
+    });
+    expect(upstream.send.forwardAuthorization).toBe(true);
   });
 });
 

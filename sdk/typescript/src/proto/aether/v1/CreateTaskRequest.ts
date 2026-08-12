@@ -110,6 +110,14 @@ export interface CreateTaskRequest {
    * entry. REJECT fails task creation while the worker is absent.
    */
   'targetOfflinePolicy'?: (_aether_v1_TargetOfflinePolicy);
+  /**
+   * Minimum delegation capacity the task's final execution identity must
+   * retain after task-authority setup. Currently 0 or 1. Set to 1 when the
+   * worker must perform one explicit downstream authorization continuation
+   * (for example, Sahara querying the tool catalog under the user's authority).
+   * In POOL mode the gateway reserves the additional anchor-to-assignee hop.
+   */
+  'requiredDownstreamAuthorityHops'?: (number);
 }
 
 export interface CreateTaskRequest__Output {
@@ -214,4 +222,12 @@ export interface CreateTaskRequest__Output {
    * entry. REJECT fails task creation while the worker is absent.
    */
   'targetOfflinePolicy': (_aether_v1_TargetOfflinePolicy__Output);
+  /**
+   * Minimum delegation capacity the task's final execution identity must
+   * retain after task-authority setup. Currently 0 or 1. Set to 1 when the
+   * worker must perform one explicit downstream authorization continuation
+   * (for example, Sahara querying the tool catalog under the user's authority).
+   * In POOL mode the gateway reserves the additional anchor-to-assignee hop.
+   */
+  'requiredDownstreamAuthorityHops': (number);
 }

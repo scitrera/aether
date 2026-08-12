@@ -758,6 +758,11 @@ type CreateTaskOptions struct {
 	// connection-associated parent inference.
 	ParentTaskID string
 
+	// RequiredDownstreamAuthorityHops asks the gateway to preserve this many
+	// delegation hops on the task's final execution identity. Currently 0 or 1.
+	// Set to 1 when the worker must explicitly forward authority to one service.
+	RequiredDownstreamAuthorityHops uint32
+
 	// TargetIdentity is an arbitrary principal address (e.g.
 	// "sv::sandbox-sidecar::<id>") that the gateway treats as the assignee
 	// when AssignmentMode is TARGETED and the destination is not an Agent.
@@ -878,6 +883,12 @@ type SendMessageOptions struct {
 	// delivered to the recipient as gateway-authored AccessReceipt metadata;
 	// a denied decision prevents publication.
 	CheckedAccess *pb.ResourceAccessRequest
+
+	// ForwardAuthorization asks the gateway to derive a short-lived,
+	// non-delegable child grant for the concrete service recipient and attach it
+	// as trusted ForwardedAuthorization metadata. It requires resolved OBO
+	// authority with at least one remaining delegation hop.
+	ForwardAuthorization bool
 }
 
 // =============================================================================

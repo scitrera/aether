@@ -134,7 +134,7 @@ func TestNestedCreateTaskDerivesAuthority(t *testing.T) {
 		nestedTaskID,
 		"child-work",
 		"targeted",
-		false,
+		0,
 	)
 	if err != nil {
 		t.Fatalf("createTaskAuthorityGrant(nested) error = %v", err)

@@ -327,6 +327,7 @@ export class UserClient extends AetherClient {
         launchParamOverrides: opts.launchParamOverrides ?? {},
         metadata: opts.metadata ?? {},
         parentTaskId: opts.parentTaskId ?? "",
+        requiredDownstreamAuthorityHops: opts.requiredDownstreamAuthorityHops ?? 0,
       },
     });
   }

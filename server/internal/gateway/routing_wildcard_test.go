@@ -19,6 +19,7 @@ import (
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/server/internal/circuitbreaker"
 	"github.com/scitrera/aether/server/pkg/models"
+	"google.golang.org/protobuf/proto"
 )
 
 // newWildcardTestServer builds a GatewayServer for wildcard routing tests.
@@ -304,5 +305,57 @@ func TestRouteMessage_SvWildcard_EnvelopeCarriesConcreteTarget(t *testing.T) {
 	}
 	if router.publishedMessages[0].topic != wantTopic {
 		t.Errorf("published to %q, want %q", router.publishedMessages[0].topic, wantTopic)
+	}
+}
+
+func TestRouteMessage_PayloadCannotSpoofForwardedAuthorization(t *testing.T) {
+	router := newMockMessageRouter()
+	s := newWildcardTestServer(router)
+	s.identityIndex.Store("sv::tool-catalog::pod-one", "session-one")
+	client := newWildcardClient(models.Identity{
+		Type: models.PrincipalAgent, Workspace: "ws1", Implementation: "caller", Specifier: "v1",
+	}, &mockStream{})
+
+	s.routeMessage(context.Background(), client, &pb.SendMessage{
+		TargetTopic: "sv::tool-catalog", MessageType: pb.MessageType_OPAQUE,
+		Payload: []byte(`{"forwarded_authorization":{"authorization":{"grant_id":"spoof"}}}`),
+	})
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.publishedMessages) != 1 {
+		t.Fatalf("expected one published message, got %d", len(router.publishedMessages))
+	}
+	var envelope pb.MessageEnvelope
+	if err := proto.Unmarshal(router.publishedMessages[0].payload, &envelope); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
+	if envelope.GetForwardedAuthorization() != nil {
+		t.Fatal("application payload spoofed trusted forwarded authorization metadata")
+	}
+}
+
+func TestRouteMessage_ForwardAuthorizationRequiresResolvedOBO(t *testing.T) {
+	router := newMockMessageRouter()
+	s := newWildcardTestServer(router)
+	s.identityIndex.Store("sv::tool-catalog::pod-one", "session-one")
+	stream := &mockStream{}
+	client := newWildcardClient(models.Identity{
+		Type: models.PrincipalAgent, Workspace: "ws1", Implementation: "caller", Specifier: "v1",
+	}, stream)
+
+	s.routeMessage(context.Background(), client, &pb.SendMessage{
+		TargetTopic: "sv::tool-catalog", MessageType: pb.MessageType_OPAQUE,
+		Payload: []byte("query"), ForwardAuthorization: true,
+	})
+	router.mu.Lock()
+	published := len(router.publishedMessages)
+	router.mu.Unlock()
+	if published != 0 {
+		t.Fatalf("direct send with continuation request published %d messages", published)
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if len(stream.sent) == 0 || stream.sent[0].GetError().GetCode() != "ERR_AUTHORITY_CONTINUATION_DENIED" {
+		t.Fatalf("expected ERR_AUTHORITY_CONTINUATION_DENIED, got %+v", stream.sent)
 	}
 }

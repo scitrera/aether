@@ -366,6 +366,15 @@ message SendMessage {
   // the trusted MessageEnvelope/IncomingMessage metadata; on deny, nothing is
   // published. Existing sends without this field retain their current path.
   ResourceAccessRequest checked_access = 6;
+
+  // Explicitly request a gateway-derived, short-lived authorization context
+  // for the resolved recipient. The gateway only honors this when the send is
+  // already operating under a validated OBO grant with delegation capacity.
+  // For sv::{implementation} targets, wildcard resolution happens first and
+  // the child grant is bound to the concrete service instance. The recipient
+  // receives the result in IncomingMessage.forwarded_authorization; payload
+  // data can never populate that trusted field.
+  bool forward_authorization = 7;
 }
 
 enum MessageType {
@@ -617,6 +626,23 @@ message IncomingMessage {
   // Gateway-authored receipt from SendMessage.checked_access. Never populated
   // from the application payload.
   AccessDecisionReceipt access_receipt = 6;
+
+  // Gateway-derived authority continuation for this exact delivery target.
+  // Populated only when SendMessage.forward_authorization was explicitly set
+  // and the sender's resolved grant could delegate. Recipients can pass the
+  // authorization context to CheckAccess / BatchCheckAccess; root_grant_id,
+  // expiry, and delivery_target are trusted binding/audit metadata.
+  ForwardedAuthorization forwarded_authorization = 7;
+}
+
+// Trusted authorization continuation carried outside the application payload.
+// The child grant is non-delegable, scope-attenuated to its parent, short-lived,
+// and linked into the parent's revocation cascade.
+message ForwardedAuthorization {
+  AuthorizationContext authorization = 1;
+  string root_grant_id = 2;
+  int64 expires_at_ms = 3;
+  string delivery_target = 4;
 }
 
 message ConfigSnapshot {
@@ -850,6 +876,13 @@ message CreateTaskRequest {
   // static worker reconnects, without requiring an orchestration registry
   // entry. REJECT fails task creation while the worker is absent.
   TargetOfflinePolicy target_offline_policy = 21;
+
+  // Minimum delegation capacity the task's final execution identity must
+  // retain after task-authority setup. Currently 0 or 1. Set to 1 when the
+  // worker must perform one explicit downstream authorization continuation
+  // (for example, Sahara querying the tool catalog under the user's authority).
+  // In POOL mode the gateway reserves the additional anchor-to-assignee hop.
+  uint32 required_downstream_authority_hops = 22;
 }
 
 // CreateTaskResponse is sent in response to CreateTaskRequest when the
@@ -2938,6 +2971,10 @@ message MessageEnvelope {
   PrincipalRef on_behalf_subject = 7;
   // Gateway-authored exact-resource decision propagated to the recipient.
   AccessDecisionReceipt access_receipt = 8;
+
+  // Gateway-authored authority continuation. This internal envelope field is
+  // copied to IncomingMessage and is never accepted from application payloads.
+  ForwardedAuthorization forwarded_authorization = 9;
 }
 
 // =========================================================================

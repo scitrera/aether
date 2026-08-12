@@ -1685,6 +1685,7 @@ class TestSyncCreateTask:
                 task_type="sandbox_lease",
                 workspace="default",
                 authorization=auth,
+                required_downstream_authority_hops=1,
                 timeout=0.05,
             )
 
@@ -1699,6 +1700,7 @@ class TestSyncCreateTask:
         assert req_auth.grant_id == "grant-abc"
         assert req_auth.subject.principal_type == "user"
         assert req_auth.subject.principal_id == "alice@example.com"
+        assert msg.create_task.required_downstream_authority_hops == 1
 
         thread.join()
 

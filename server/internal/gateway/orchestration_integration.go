@@ -431,6 +431,12 @@ func (s *GatewayServer) handleCreateTask(
 			},
 		})
 	}
+	if req.GetRequiredDownstreamAuthorityHops() > 1 {
+		errMsg := "required_downstream_authority_hops currently supports only 0 or 1"
+		sendClientError(client, "ERR_INVALID_ARGUMENT", errMsg)
+		sendCreateTaskResponse(false, "", "", "ERR_INVALID_ARGUMENT", errMsg, "")
+		return nil
+	}
 
 	if s.orchestration == nil || s.orchestration.TaskService == nil {
 		s.logTaskCreateAudit(ctx, identity, client.SessionUUID, taskWorkspace, "", false, "orchestration task assignment not enabled", buildTaskCreateAuditMetadata(req, "", taskWorkspace), nil)
@@ -520,6 +526,13 @@ func (s *GatewayServer) handleCreateTask(
 		}
 		resolvedAuthority = inherited
 	}
+	if req.GetRequiredDownstreamAuthorityHops() > 0 && resolvedAuthority == nil {
+		errMsg := "required downstream authority hops require on-behalf-of task authority"
+		s.logTaskCreateAudit(ctx, identity, client.SessionUUID, taskWorkspace, "", false, errMsg, buildTaskCreateAuditMetadata(req, assignmentMode, taskWorkspace), nil)
+		sendClientError(client, "ERR_AUTHORITY_REQUIRED", errMsg)
+		sendCreateTaskResponse(false, "", "", "ERR_AUTHORITY_REQUIRED", errMsg, "")
+		return nil
+	}
 
 	// The WorkflowEngine is a system principal whose core function is to create
 	// tasks in response to events, in any workspace it routes for. It holds no
@@ -574,23 +587,24 @@ func (s *GatewayServer) handleCreateTask(
 		}
 	}
 	taskReq := &orchestration.CreateTaskRequest{
-		TaskType:             req.TaskType,
-		TaskClass:            int32(req.TaskClass),
-		Workspace:            taskWorkspace,
-		AssignmentMode:       assignmentMode,
-		TargetAgentID:        req.TargetAgentId,
-		TargetImplementation: req.TargetImplementation,
-		LaunchParamOverrides: launchParamOverrides,
-		Metadata:             metadata,
-		Payload:              req.Payload,
-		CreatorIdentity:      identity,
-		ParentTaskID:         parentTaskID,
-		RetryPolicy:          retryPolicyFromProto(req.GetRetryPolicy()),
-		Priority:             int32(req.GetPriority()),
-		CorrelationID:        correlationID,
-		RootTaskID:           rootTaskID,
-		CompletionEvent:      completionConfigFromProto(req.GetCompletionEvent()),
-		TargetOfflinePolicy:  orchestration.TargetOfflinePolicy(req.GetTargetOfflinePolicy()),
+		TaskType:                        req.TaskType,
+		TaskClass:                       int32(req.TaskClass),
+		Workspace:                       taskWorkspace,
+		AssignmentMode:                  assignmentMode,
+		TargetAgentID:                   req.TargetAgentId,
+		TargetImplementation:            req.TargetImplementation,
+		LaunchParamOverrides:            launchParamOverrides,
+		Metadata:                        metadata,
+		Payload:                         req.Payload,
+		CreatorIdentity:                 identity,
+		ParentTaskID:                    parentTaskID,
+		RetryPolicy:                     retryPolicyFromProto(req.GetRetryPolicy()),
+		Priority:                        int32(req.GetPriority()),
+		CorrelationID:                   correlationID,
+		RootTaskID:                      rootTaskID,
+		CompletionEvent:                 completionConfigFromProto(req.GetCompletionEvent()),
+		TargetOfflinePolicy:             orchestration.TargetOfflinePolicy(req.GetTargetOfflinePolicy()),
+		RequiredDownstreamAuthorityHops: int(req.GetRequiredDownstreamAuthorityHops()),
 	}
 	// Fix AA: seed the task's Authority.SubjectType/SubjectID from the resolved
 	// OBO subject so downstream consumers (buildTaskContext →
@@ -789,6 +803,9 @@ func buildTaskCreateAuditMetadata(req *pb.CreateTaskRequest, assignmentMode, wor
 	}
 	if req.ParentTaskId != "" {
 		metadata["parent_task_id"] = req.ParentTaskId
+	}
+	if req.GetRequiredDownstreamAuthorityHops() > 0 {
+		metadata["required_downstream_authority_hops"] = req.GetRequiredDownstreamAuthorityHops()
 	}
 	if len(req.LaunchParamOverrides) > 0 {
 		metadata["launch_param_overrides"] = len(req.LaunchParamOverrides)

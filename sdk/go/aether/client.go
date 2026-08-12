@@ -987,6 +987,7 @@ func (c *BaseClient) SendWithOptions(opts SendMessageOptions) error {
 	if opts.CheckedAccess != nil {
 		send.CheckedAccess = opts.CheckedAccess
 	}
+	send.ForwardAuthorization = opts.ForwardAuthorization
 	return c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_Send{Send: send},
 	})
@@ -1992,13 +1993,14 @@ func (c *BaseClient) dispatchResponse(ctx context.Context, response *pb.Downstre
 func (c *BaseClient) handleIncomingMessage(ctx context.Context, msg *pb.IncomingMessage) error {
 	// Convert to high-level Message type
 	message := &Message{
-		SourceTopic:     msg.GetSourceTopic(),
-		Payload:         msg.GetPayload(),
-		MessageType:     msg.GetMessageType(),
-		Workspace:       msg.GetWorkspace(),
-		AccessReceipt:   msg.GetAccessReceipt(),
-		OnBehalfSubject: msg.GetOnBehalfSubject(),
-		ReceivedAt:      time.Now(),
+		SourceTopic:            msg.GetSourceTopic(),
+		Payload:                msg.GetPayload(),
+		MessageType:            msg.GetMessageType(),
+		Workspace:              msg.GetWorkspace(),
+		AccessReceipt:          msg.GetAccessReceipt(),
+		OnBehalfSubject:        msg.GetOnBehalfSubject(),
+		ForwardedAuthorization: msg.GetForwardedAuthorization(),
+		ReceivedAt:             time.Now(),
 	}
 
 	// Dispatch to generic message handler
@@ -2415,26 +2417,27 @@ func (c *BaseClient) handleCreateTaskResponse(ctx context.Context, resp *pb.Crea
 // The server will not send a response; use CreateTaskSync when you need the task_id.
 func (c *BaseClient) CreateTask(taskType, workspace string, opts CreateTaskOptions) error {
 	req := &pb.CreateTaskRequest{
-		TaskType:             taskType,
-		Workspace:            workspace,
-		AssignmentMode:       pb.TaskAssignmentMode(pb.TaskAssignmentMode_value[string(opts.AssignmentMode)]),
-		TargetAgentId:        opts.TargetAgentID,
-		TargetOfflinePolicy:  opts.TargetOfflinePolicy,
-		TargetIdentity:       opts.TargetIdentity,
-		TargetImplementation: opts.TargetImplementation,
-		LaunchParamOverrides: opts.LaunchParamOverrides,
-		Metadata:             opts.Metadata,
-		Payload:              opts.Payload,
-		TaskClass:            opts.TaskClass,
-		ContextId:            opts.ContextID,
-		RetryPolicy:          opts.RetryPolicy,
-		Priority:             opts.Priority,
-		IdempotencyKey:       opts.IdempotencyKey,
-		CorrelationId:        opts.CorrelationID,
-		RootTaskId:           opts.RootTaskID,
-		CompletionEvent:      opts.CompletionEvent,
-		ParentTaskId:         opts.ParentTaskID,
-		Authorization:        opts.Authorization,
+		TaskType:                        taskType,
+		Workspace:                       workspace,
+		AssignmentMode:                  pb.TaskAssignmentMode(pb.TaskAssignmentMode_value[string(opts.AssignmentMode)]),
+		TargetAgentId:                   opts.TargetAgentID,
+		TargetOfflinePolicy:             opts.TargetOfflinePolicy,
+		TargetIdentity:                  opts.TargetIdentity,
+		TargetImplementation:            opts.TargetImplementation,
+		LaunchParamOverrides:            opts.LaunchParamOverrides,
+		Metadata:                        opts.Metadata,
+		Payload:                         opts.Payload,
+		TaskClass:                       opts.TaskClass,
+		ContextId:                       opts.ContextID,
+		RetryPolicy:                     opts.RetryPolicy,
+		Priority:                        opts.Priority,
+		IdempotencyKey:                  opts.IdempotencyKey,
+		CorrelationId:                   opts.CorrelationID,
+		RootTaskId:                      opts.RootTaskID,
+		CompletionEvent:                 opts.CompletionEvent,
+		ParentTaskId:                    opts.ParentTaskID,
+		RequiredDownstreamAuthorityHops: opts.RequiredDownstreamAuthorityHops,
+		Authorization:                   opts.Authorization,
 	}
 	return c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_CreateTask{CreateTask: req},
@@ -2455,27 +2458,28 @@ func (c *BaseClient) CreateTaskSync(ctx context.Context, taskType, workspace str
 	defer c.pendingCreateTaskRequests.Delete(requestID)
 
 	req := &pb.CreateTaskRequest{
-		TaskType:             taskType,
-		Workspace:            workspace,
-		AssignmentMode:       pb.TaskAssignmentMode(pb.TaskAssignmentMode_value[string(opts.AssignmentMode)]),
-		TargetAgentId:        opts.TargetAgentID,
-		TargetOfflinePolicy:  opts.TargetOfflinePolicy,
-		TargetIdentity:       opts.TargetIdentity,
-		TargetImplementation: opts.TargetImplementation,
-		LaunchParamOverrides: opts.LaunchParamOverrides,
-		Metadata:             opts.Metadata,
-		Payload:              opts.Payload,
-		TaskClass:            opts.TaskClass,
-		ContextId:            opts.ContextID,
-		RetryPolicy:          opts.RetryPolicy,
-		Priority:             opts.Priority,
-		IdempotencyKey:       opts.IdempotencyKey,
-		CorrelationId:        opts.CorrelationID,
-		RootTaskId:           opts.RootTaskID,
-		CompletionEvent:      opts.CompletionEvent,
-		ParentTaskId:         opts.ParentTaskID,
-		Authorization:        opts.Authorization,
-		RequestId:            requestID,
+		TaskType:                        taskType,
+		Workspace:                       workspace,
+		AssignmentMode:                  pb.TaskAssignmentMode(pb.TaskAssignmentMode_value[string(opts.AssignmentMode)]),
+		TargetAgentId:                   opts.TargetAgentID,
+		TargetOfflinePolicy:             opts.TargetOfflinePolicy,
+		TargetIdentity:                  opts.TargetIdentity,
+		TargetImplementation:            opts.TargetImplementation,
+		LaunchParamOverrides:            opts.LaunchParamOverrides,
+		Metadata:                        opts.Metadata,
+		Payload:                         opts.Payload,
+		TaskClass:                       opts.TaskClass,
+		ContextId:                       opts.ContextID,
+		RetryPolicy:                     opts.RetryPolicy,
+		Priority:                        opts.Priority,
+		IdempotencyKey:                  opts.IdempotencyKey,
+		CorrelationId:                   opts.CorrelationID,
+		RootTaskId:                      opts.RootTaskID,
+		CompletionEvent:                 opts.CompletionEvent,
+		ParentTaskId:                    opts.ParentTaskID,
+		RequiredDownstreamAuthorityHops: opts.RequiredDownstreamAuthorityHops,
+		Authorization:                   opts.Authorization,
+		RequestId:                       requestID,
 	}
 	if err := c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_CreateTask{CreateTask: req},

@@ -3,6 +3,7 @@
 import type { MessageType as _aether_v1_MessageType, MessageType__Output as _aether_v1_MessageType__Output } from '../../aether/v1/MessageType';
 import type { PrincipalRef as _aether_v1_PrincipalRef, PrincipalRef__Output as _aether_v1_PrincipalRef__Output } from '../../aether/v1/PrincipalRef';
 import type { AccessDecisionReceipt as _aether_v1_AccessDecisionReceipt, AccessDecisionReceipt__Output as _aether_v1_AccessDecisionReceipt__Output } from '../../aether/v1/AccessDecisionReceipt';
+import type { ForwardedAuthorization as _aether_v1_ForwardedAuthorization, ForwardedAuthorization__Output as _aether_v1_ForwardedAuthorization__Output } from '../../aether/v1/ForwardedAuthorization';
 
 export interface IncomingMessage {
   'sourceTopic'?: (string);
@@ -34,6 +35,14 @@ export interface IncomingMessage {
    * from the application payload.
    */
   'accessReceipt'?: (_aether_v1_AccessDecisionReceipt | null);
+  /**
+   * Gateway-derived authority continuation for this exact delivery target.
+   * Populated only when SendMessage.forward_authorization was explicitly set
+   * and the sender's resolved grant could delegate. Recipients can pass the
+   * authorization context to CheckAccess / BatchCheckAccess; root_grant_id,
+   * expiry, and delivery_target are trusted binding/audit metadata.
+   */
+  'forwardedAuthorization'?: (_aether_v1_ForwardedAuthorization | null);
 }
 
 export interface IncomingMessage__Output {
@@ -66,4 +75,12 @@ export interface IncomingMessage__Output {
    * from the application payload.
    */
   'accessReceipt': (_aether_v1_AccessDecisionReceipt__Output | null);
+  /**
+   * Gateway-derived authority continuation for this exact delivery target.
+   * Populated only when SendMessage.forward_authorization was explicitly set
+   * and the sender's resolved grant could delegate. Recipients can pass the
+   * authorization context to CheckAccess / BatchCheckAccess; root_grant_id,
+   * expiry, and delivery_target are trusted binding/audit metadata.
+   */
+  'forwardedAuthorization': (_aether_v1_ForwardedAuthorization__Output | null);
 }

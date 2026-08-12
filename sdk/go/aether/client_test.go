@@ -490,11 +490,12 @@ func TestSendWithOptions_ThreadsAuthorization(t *testing.T) {
 	}
 	c := newRunningClient()
 	if err := c.SendWithOptions(SendMessageOptions{
-		TargetTopic:   "test.topic",
-		Payload:       []byte("hi"),
-		MessageType:   MessageTypeChat,
-		Authorization: authz,
-		CheckedAccess: checked,
+		TargetTopic:          "test.topic",
+		Payload:              []byte("hi"),
+		MessageType:          MessageTypeChat,
+		Authorization:        authz,
+		CheckedAccess:        checked,
+		ForwardAuthorization: true,
 	}); err != nil {
 		t.Fatalf("SendWithOptions() error = %v", err)
 	}
@@ -508,6 +509,9 @@ func TestSendWithOptions_ThreadsAuthorization(t *testing.T) {
 	if got := send.GetCheckedAccess().GetCorrelationId(); got != "call-1" {
 		t.Errorf("checked access correlation = %q, want call-1", got)
 	}
+	if !send.GetForwardAuthorization() {
+		t.Error("expected forward_authorization on SendMessage")
+	}
 
 	// Bare send (no authorization) stays nil.
 	c2 := newRunningClient()
@@ -518,7 +522,7 @@ func TestSendWithOptions_ThreadsAuthorization(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SendWithOptions() error = %v", err)
 	}
-	if send := dequeueSend(c2); send.GetAuthorization() != nil || send.GetCheckedAccess() != nil {
+	if send := dequeueSend(c2); send.GetAuthorization() != nil || send.GetCheckedAccess() != nil || send.GetForwardAuthorization() {
 		t.Error("bare send must not assume authorization or an exact resource check")
 	}
 }
@@ -804,6 +808,10 @@ func TestBaseClient_DispatchResponse_IncomingMessage(t *testing.T) {
 		Allowed:    true,
 		Request:    &pb.ResourceAccessRequest{CorrelationId: "call-1"},
 	}
+	incoming.ForwardedAuthorization = &pb.ForwardedAuthorization{
+		Authorization: &pb.AuthorizationContext{GrantId: "child-grant-1"},
+		RootGrantId:   "root-grant-1", DeliveryTarget: "sv::tools::one",
+	}
 
 	err = client.dispatchResponse(ctx, response)
 	if err != nil {
@@ -818,6 +826,9 @@ func TestBaseClient_DispatchResponse_IncomingMessage(t *testing.T) {
 	}
 	if got := tracker.messages[0].AccessReceipt.GetRequest().GetCorrelationId(); got != "call-1" {
 		t.Errorf("Message.AccessReceipt correlation = %q, want call-1", got)
+	}
+	if got := tracker.messages[0].ForwardedAuthorization.GetRootGrantId(); got != "root-grant-1" {
+		t.Errorf("Message.ForwardedAuthorization root = %q, want root-grant-1", got)
 	}
 }
 
@@ -1174,18 +1185,19 @@ func TestBaseClient_CreateTaskForwardsDurableCoordinationFields(t *testing.T) {
 	client.running.Store(true)
 	completion := &pb.TaskCompletionEvent{Enabled: true, EventName: "child.done"}
 	if err := client.CreateTask("child", "routing", CreateTaskOptions{
-		AssignmentMode:      TaskAssignmentTargeted,
-		TargetAgentID:       "ag::routing::worker::static-1",
-		TargetOfflinePolicy: pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_QUEUE,
-		TaskClass:           pb.TaskClass_TASK_CLASS_BACKGROUND,
-		ContextID:           "session-1",
-		RetryPolicy:         &pb.RetryPolicy{MaxAttempts: 1},
-		Priority:            pb.TaskPriority_TASK_PRIORITY_HIGH,
-		IdempotencyKey:      "invocation-1",
-		CorrelationID:       "fanout-1",
-		RootTaskID:          "root-1",
-		CompletionEvent:     completion,
-		ParentTaskID:        "parent-1",
+		AssignmentMode:                  TaskAssignmentTargeted,
+		TargetAgentID:                   "ag::routing::worker::static-1",
+		TargetOfflinePolicy:             pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_QUEUE,
+		TaskClass:                       pb.TaskClass_TASK_CLASS_BACKGROUND,
+		ContextID:                       "session-1",
+		RetryPolicy:                     &pb.RetryPolicy{MaxAttempts: 1},
+		Priority:                        pb.TaskPriority_TASK_PRIORITY_HIGH,
+		IdempotencyKey:                  "invocation-1",
+		CorrelationID:                   "fanout-1",
+		RootTaskID:                      "root-1",
+		CompletionEvent:                 completion,
+		ParentTaskID:                    "parent-1",
+		RequiredDownstreamAuthorityHops: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1202,6 +1214,9 @@ func TestBaseClient_CreateTaskForwardsDurableCoordinationFields(t *testing.T) {
 	}
 	if request.GetParentTaskId() != "parent-1" {
 		t.Fatalf("parent task id = %q", request.GetParentTaskId())
+	}
+	if request.GetRequiredDownstreamAuthorityHops() != 1 {
+		t.Fatalf("required downstream authority hops = %d", request.GetRequiredDownstreamAuthorityHops())
 	}
 	if request.GetTargetOfflinePolicy() != pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_QUEUE {
 		t.Fatalf("target offline policy = %s", request.GetTargetOfflinePolicy())

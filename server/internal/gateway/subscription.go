@@ -256,11 +256,12 @@ func (s *GatewayServer) createMessageHandler(client *ClientSession) func([]byte)
 		client.DeliverWithPriority(client.deriveDeliverCtx(), aether.PriorityRequest, &pb.DownstreamMessage{
 			Payload: &pb.DownstreamMessage_Msg{
 				Msg: &pb.IncomingMessage{
-					SourceTopic:   parsed.env.Source,
-					Payload:       parsed.env.Payload,
-					MessageType:   parsed.env.MessageType,
-					Workspace:     parsed.env.GetWorkspace(),
-					AccessReceipt: parsed.env.GetAccessReceipt(),
+					SourceTopic:            parsed.env.Source,
+					Payload:                parsed.env.Payload,
+					MessageType:            parsed.env.MessageType,
+					Workspace:              parsed.env.GetWorkspace(),
+					AccessReceipt:          parsed.env.GetAccessReceipt(),
+					ForwardedAuthorization: parsed.env.GetForwardedAuthorization(),
 					// Mirror the gateway-stamped OBO subject onto delivery so the
 					// recipient can identify the user the message was sent for.
 					OnBehalfSubject: parsed.env.GetOnBehalfSubject(),

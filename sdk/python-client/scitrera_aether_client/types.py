@@ -427,6 +427,7 @@ class IncomingMessageLike(Protocol):
     payload: bytes
     workspace: str
     access_receipt: aether_pb2.AccessDecisionReceipt
+    forwarded_authorization: aether_pb2.ForwardedAuthorization
 
 
 @runtime_checkable
