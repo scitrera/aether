@@ -5,7 +5,8 @@ AetherLite is a deployment mode for Aether that replaces all external services w
 Scheduled task actions can optionally retain private, bounded OBO authority;
 see [Workflow schedule authority](workflow-schedule-authority.md). Production
 mode requires explicit `workflow/schedule` ACL grants. `--dev` enables the
-permissive user fallback for local testing.
+permissive user and agent fallbacks needed for local clients and worker-owned
+schedule reconciliation.
 
 ## When to Use AetherLite
 

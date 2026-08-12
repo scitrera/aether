@@ -17,8 +17,9 @@ Create/upsert/delete also require an exact schedule ID matching the JSON
 definition. The gateway checks the canonical resource
 `workflow/schedule:workspaces/{workspace}/schedules/{schedule}` at read or
 manage level. Production deployments must grant this resource explicitly.
-AetherLite and the full gateway grant user schedule management only when their
-explicit `--dev` mode is enabled.
+AetherLite and the full gateway grant user and agent schedule management only
+when their explicit `--dev` mode is enabled, supporting local user clients and
+worker-owned reconciliation without weakening production defaults.
 
 Clients may send:
 

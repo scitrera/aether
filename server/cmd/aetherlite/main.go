@@ -645,9 +645,11 @@ func main() {
 		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite acl store")
 	}
 	if *devMode {
-		category := aclcore.RuleCategory(aclcore.PrincipalTypeUser, aclcore.ResourceTypeWorkflowSchedule)
-		if err := sharedACLService.SetFallbackPolicy(ctx, category, aclcore.AccessManage, aclcore.SystemPrincipal); err != nil {
-			logging.Logger.Fatal().Err(err).Str("category", category).Msg("failed to enable development workflow schedule access")
+		for _, principalType := range []string{aclcore.PrincipalTypeUser, aclcore.PrincipalTypeAgent} {
+			category := aclcore.RuleCategory(principalType, aclcore.ResourceTypeWorkflowSchedule)
+			if err := sharedACLService.SetFallbackPolicy(ctx, category, aclcore.AccessManage, aclcore.SystemPrincipal); err != nil {
+				logging.Logger.Fatal().Err(err).Str("category", category).Msg("failed to enable development workflow schedule access")
+			}
 		}
 	}
 

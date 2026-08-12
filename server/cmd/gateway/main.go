@@ -632,9 +632,11 @@ func main() {
 	if db != nil {
 		sharedACLService = aclpg.NewWithSharedAudit(db, auditLogger, db, cfg.Gateway.GatewayID)
 		if *devMode {
-			category := aclcore.RuleCategory(aclcore.PrincipalTypeUser, aclcore.ResourceTypeWorkflowSchedule)
-			if err := sharedACLService.SetFallbackPolicy(context.Background(), category, aclcore.AccessManage, aclcore.SystemPrincipal); err != nil {
-				logging.Logger.Fatal().Err(err).Str("category", category).Msg("failed to enable development workflow schedule access")
+			for _, principalType := range []string{aclcore.PrincipalTypeUser, aclcore.PrincipalTypeAgent} {
+				category := aclcore.RuleCategory(principalType, aclcore.ResourceTypeWorkflowSchedule)
+				if err := sharedACLService.SetFallbackPolicy(context.Background(), category, aclcore.AccessManage, aclcore.SystemPrincipal); err != nil {
+					logging.Logger.Fatal().Err(err).Str("category", category).Msg("failed to enable development workflow schedule access")
+				}
 			}
 		}
 		gatewayOpts = append(gatewayOpts, gateway.WithACLService(sharedACLService))
