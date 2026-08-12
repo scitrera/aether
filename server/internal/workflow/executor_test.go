@@ -114,17 +114,37 @@ func TestDispatchScheduledActionConfirmsTaskCreation(t *testing.T) {
 		TargetAgentID: "ag::workspace-a::worker::one", TargetOfflinePolicy: "queue",
 		PayloadEncoding: "json", Payload: map[string]string{"run": "one"},
 		Metadata: map[string]string{"scheduled_for": "now"}, IdempotencyKey: "occurrence-1",
+		RequireTaskAuthority: true, RequiredDownstreamAuthorityHops: 1,
 	}
-	if err := executor.DispatchScheduledAction(context.Background(), action); err != nil {
+	authorization := &pb.AuthorizationContext{AuthorityMode: "on_behalf_of", GrantId: "schedule-grant"}
+	if err := executor.DispatchScheduledAction(context.Background(), action, "schedule-test", authorization); err != nil {
 		t.Fatal(err)
 	}
 	if gotOptions.AssignmentMode != sdk.TaskAssignmentTargeted ||
 		gotOptions.TargetAgentID != action.TargetAgentID ||
 		gotOptions.TargetOfflinePolicy != pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_QUEUE ||
 		gotOptions.IdempotencyKey != action.IdempotencyKey ||
+		gotOptions.Authorization != authorization || gotOptions.OriginatingScheduleID != "schedule-test" ||
+		gotOptions.RequiredDownstreamAuthorityHops != 1 ||
 		gotOptions.TaskClass != pb.TaskClass_TASK_CLASS_BACKGROUND ||
 		!json.Valid(gotOptions.Payload) {
 		t.Fatalf("confirmed create options = %#v", gotOptions)
+	}
+}
+
+func TestDispatchScheduledActionClassifiesPermanentAuthorityRejection(t *testing.T) {
+	executor := &Executor{
+		defaultWorkspace: "default",
+		createScheduledTaskSync: func(context.Context, string, string, sdk.CreateTaskOptions, time.Duration) (*sdk.CreateTaskResponse, error) {
+			return &sdk.CreateTaskResponse{Success: false, ErrorCode: "ERR_AUTHORITY_INVALID", ErrorMessage: "revoked"}, nil
+		},
+	}
+	err := executor.DispatchScheduledAction(context.Background(), &ActionDef{
+		Type: "create_task", TaskType: "scheduled", RequireTaskAuthority: true,
+	}, "schedule-test", &pb.AuthorizationContext{GrantId: "grant"})
+	var authorityErr *ScheduleAuthorityInvalidError
+	if !errors.As(err, &authorityErr) || authorityErr.Code != "ERR_AUTHORITY_INVALID" {
+		t.Fatalf("dispatch error = %T %v", err, err)
 	}
 }
 
@@ -139,7 +159,7 @@ func TestDispatchScheduledActionDoesNotConfirmRejectedOrUncertainCreation(t *tes
 	} {
 		t.Run(name, func(t *testing.T) {
 			executor := &Executor{defaultWorkspace: "default", createScheduledTaskSync: create}
-			err := executor.DispatchScheduledAction(context.Background(), &ActionDef{Type: "create_task", TaskType: "scheduled"})
+			err := executor.DispatchScheduledAction(context.Background(), &ActionDef{Type: "create_task", TaskType: "scheduled"}, "schedule-test", nil)
 			if err == nil || (name == "rejected" && !strings.Contains(err.Error(), "denied")) {
 				t.Fatalf("dispatch error = %v", err)
 			}

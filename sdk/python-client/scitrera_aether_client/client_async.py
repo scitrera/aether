@@ -3878,12 +3878,14 @@ class BaseAsyncAetherClient:
 
     async def create_schedule(self, schedule_id: str, name: str,
                               schedule_type: str, schedule_expr: str,
+                              workspace: str,
                               action: Optional[dict] = None,
                               workflow_id: str = "",
-                              workspace: str = "*",
                               miss_policy: str = "skip",
                               max_concurrent: int = 0,
-                              timeout: float = 10.0):
+                              timeout: float = 10.0,
+                              authorization: Optional[aether_pb2.AuthorizationContext] = None,
+                              authority_scope: Optional[aether_pb2.WorkflowScheduleAuthorityScope] = None):
         """Create a new schedule.
 
         Args:
@@ -3893,7 +3895,7 @@ class BaseAsyncAetherClient:
             schedule_expr: Cron expression, Go duration (e.g. "21600s"), or RFC3339 timestamp.
             action: Action definition dict (required if no workflow_id).
             workflow_id: Workflow ID to trigger (required if no action).
-            workspace: Workspace scope (default "*").
+            workspace: Exact workspace scope.
             miss_policy: "skip", "fire_once", or "fire_all" (default "skip").
             max_concurrent: Max concurrent executions; 0=unlimited, 1=no overlap (default 0).
             timeout: RPC timeout in seconds.
@@ -3902,6 +3904,8 @@ class BaseAsyncAetherClient:
             WorkflowResponse protobuf or None on timeout.
         """
         import json as _json
+        if not workspace or workspace == "*":
+            raise ValueError("an exact workflow schedule workspace is required")
         data = {
             "id": schedule_id,
             "name": name,
@@ -3918,18 +3922,26 @@ class BaseAsyncAetherClient:
 
         op = aether_pb2.WorkflowOperation(
             op=aether_pb2.WorkflowOperation.CREATE_SCHEDULE,
+            id=schedule_id,
+            workspace=workspace,
             data=_json.dumps(data).encode(),
         )
+        if authorization is not None:
+            op.authorization.CopyFrom(authorization)
+        if authority_scope is not None:
+            op.schedule_authority_scope.CopyFrom(authority_scope)
         return await self.workflow_op(op, timeout=timeout)
 
     async def upsert_schedule(self, schedule_id: str, name: str,
                               schedule_type: str, schedule_expr: str,
+                              workspace: str,
                               action: Optional[dict] = None,
                               workflow_id: str = "",
-                              workspace: str = "*",
                               miss_policy: str = "skip",
                               max_concurrent: int = 0,
-                              timeout: float = 10.0):
+                              timeout: float = 10.0,
+                              authorization: Optional[aether_pb2.AuthorizationContext] = None,
+                              authority_scope: Optional[aether_pb2.WorkflowScheduleAuthorityScope] = None):
         """Create or update a schedule idempotently.
 
         Same parameters as create_schedule. If a schedule with the given ID
@@ -3940,6 +3952,8 @@ class BaseAsyncAetherClient:
             WorkflowResponse protobuf or None on timeout.
         """
         import json as _json
+        if not workspace or workspace == "*":
+            raise ValueError("an exact workflow schedule workspace is required")
         data = {
             "id": schedule_id,
             "name": name,
@@ -3956,32 +3970,50 @@ class BaseAsyncAetherClient:
 
         op = aether_pb2.WorkflowOperation(
             op=aether_pb2.WorkflowOperation.UPSERT_SCHEDULE,
+            id=schedule_id,
+            workspace=workspace,
             data=_json.dumps(data).encode(),
         )
+        if authorization is not None:
+            op.authorization.CopyFrom(authorization)
+        if authority_scope is not None:
+            op.schedule_authority_scope.CopyFrom(authority_scope)
         return await self.workflow_op(op, timeout=timeout)
 
-    async def delete_schedule(self, schedule_id: str, timeout: float = 10.0):
+    async def delete_schedule(self, schedule_id: str, workspace: str,
+                              timeout: float = 10.0,
+                              authorization: Optional[aether_pb2.AuthorizationContext] = None):
         """Delete a schedule by ID.
 
         Returns:
             WorkflowResponse protobuf or None on timeout.
         """
+        if not workspace or workspace == "*":
+            raise ValueError("an exact workflow schedule workspace is required")
         op = aether_pb2.WorkflowOperation(
             op=aether_pb2.WorkflowOperation.DELETE_SCHEDULE,
             id=schedule_id,
+            workspace=workspace,
         )
+        if authorization is not None:
+            op.authorization.CopyFrom(authorization)
         return await self.workflow_op(op, timeout=timeout)
 
-    async def list_schedules(self, workspace: str = "*", timeout: float = 10.0):
+    async def list_schedules(self, workspace: str, timeout: float = 10.0,
+                             authorization: Optional[aether_pb2.AuthorizationContext] = None):
         """List all schedules for a workspace.
 
         Returns:
             WorkflowResponse protobuf or None on timeout.
         """
+        if not workspace or workspace == "*":
+            raise ValueError("an exact workflow schedule workspace is required")
         op = aether_pb2.WorkflowOperation(
             op=aether_pb2.WorkflowOperation.LIST_SCHEDULES,
             workspace=workspace,
         )
+        if authorization is not None:
+            op.authorization.CopyFrom(authorization)
         return await self.workflow_op(op, timeout=timeout)
 
     async def close(self):

@@ -17,9 +17,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	pb "github.com/scitrera/aether/api/proto"
 	wfstore "github.com/scitrera/aether/server/internal/storage/workflow"
 	wfpg "github.com/scitrera/aether/server/internal/storage/workflow/postgres"
 	wfsqlite "github.com/scitrera/aether/server/internal/storage/workflow/sqlite"
@@ -219,6 +221,16 @@ func runSchedulesRoundTrip(t *testing.T, store wfstore.Store) {
 		NextFireAt:    &next,
 		MissPolicy:    "skip",
 		MaxConcurrent: 1,
+		Authority: &wfstore.ScheduleAuthority{
+			Authorization: &pb.AuthorizationContext{
+				AuthorityMode: "on_behalf_of",
+				Subject:       &pb.PrincipalRef{PrincipalType: "user", PrincipalId: "user-" + id},
+				GrantId:       "grant-" + id,
+			},
+			RootGrantID: "root-" + id, SourceGrantID: "source-" + id,
+			ExpiresAt: next.Add(24 * time.Hour), PolicyDigest: "sha256:test", PolicyVersion: 1,
+			LifetimeMode: pb.WorkflowAuthorityLifetimeMode_WORKFLOW_AUTHORITY_LIFETIME_DURABLE,
+		},
 	}
 	if err := store.CreateSchedule(ctx, sc); err != nil {
 		t.Fatalf("CreateSchedule: %v", err)
@@ -233,6 +245,17 @@ func runSchedulesRoundTrip(t *testing.T, store wfstore.Store) {
 	}
 	if got == nil || got.Name != "name-"+id {
 		t.Fatalf("GetSchedule.Name: got %+v want name-%s", got, id)
+	}
+	if got.Authority == nil || got.Authority.Authorization.GetGrantId() != "grant-"+id ||
+		got.Authority.PolicyVersion != 1 || got.Authority.PolicyDigest != "sha256:test" {
+		t.Fatalf("GetSchedule.Authority: got %+v", got.Authority)
+	}
+	publicJSON, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal public schedule: %v", err)
+	}
+	if strings.Contains(string(publicJSON), "grant-"+id) || strings.Contains(string(publicJSON), "sha256:test") {
+		t.Fatalf("private schedule authority leaked into JSON: %s", publicJSON)
 	}
 
 	dispatchedAt := time.Now().UTC().Truncate(time.Second)
@@ -309,6 +332,20 @@ func runSchedulesRoundTrip(t *testing.T, store wfstore.Store) {
 	}
 	if !containsSchedule(listed, id) {
 		t.Fatalf("ListSchedules did not include %s", id)
+	}
+	if err := store.SetScheduleAuthorityBlocked(ctx, id, "revoked"); err != nil {
+		t.Fatalf("SetScheduleAuthorityBlocked: %v", err)
+	}
+	got, err = store.GetSchedule(ctx, id)
+	if err != nil || got == nil || got.Authority == nil || !got.Authority.Blocked || got.Authority.BlockedReason != "revoked" {
+		t.Fatalf("blocked schedule authority: got=%+v err=%v", got, err)
+	}
+	due, err := store.GetDueSchedules(ctx, reconfiguredNext.Add(time.Second))
+	if err != nil {
+		t.Fatalf("GetDueSchedules blocked: %v", err)
+	}
+	if containsSchedule(due, id) {
+		t.Fatalf("blocked schedule %s was returned as due", id)
 	}
 
 	if err := store.DeleteSchedule(ctx, id); err != nil {

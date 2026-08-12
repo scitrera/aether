@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	pb "github.com/scitrera/aether/api/proto"
 )
 
 type scheduleCursorUpdate struct {
@@ -18,8 +19,9 @@ type scheduleCursorUpdate struct {
 
 type schedulePollStore struct {
 	WorkflowStore
-	due     []Schedule
-	updates []scheduleCursorUpdate
+	due           []Schedule
+	updates       []scheduleCursorUpdate
+	blockedReason string
 }
 
 func (s *schedulePollStore) GetDueSchedules(context.Context, time.Time) ([]Schedule, error) {
@@ -40,19 +42,65 @@ func (s *schedulePollStore) GetDueJoinDeadlines(context.Context, time.Time) ([]J
 	return nil, nil
 }
 
+func (s *schedulePollStore) SetScheduleAuthorityBlocked(_ context.Context, _ string, reason string) error {
+	s.blockedReason = reason
+	return nil
+}
+
 type recordingScheduleDispatcher struct {
 	actions []*ActionDef
 	failAt  int
+	err     error
 }
 
-func (d *recordingScheduleDispatcher) DispatchScheduledAction(_ context.Context, action *ActionDef) error {
+func (d *recordingScheduleDispatcher) DispatchScheduledAction(_ context.Context, action *ActionDef, _ string, _ *pb.AuthorizationContext) error {
 	if d.failAt > 0 && len(d.actions)+1 == d.failAt {
+		if d.err != nil {
+			return d.err
+		}
 		return errors.New("injected dispatch failure")
 	}
 	copy := *action
 	copy.Metadata = cloneStringMap(action.Metadata)
 	d.actions = append(d.actions, &copy)
 	return nil
+}
+
+func TestSchedulerBlocksPermanentAuthorityFailureAndRecordsNoTaskSkip(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
+	schedule := dueCreateTaskSchedule(now, 0, ScheduleMissPolicyFireOnce)
+	var action ActionDef
+	if err := json.Unmarshal(schedule.Action, &action); err != nil {
+		t.Fatal(err)
+	}
+	action.RequireTaskAuthority = true
+	schedule.Action, _ = json.Marshal(action)
+
+	scheduler, store, dispatcher := newSchedulePollHarness(now, schedule)
+	dispatcher.failAt = 1
+	dispatcher.err = &ScheduleAuthorityInvalidError{Code: "ERR_AUTHORITY_INVALID", Message: "revoked"}
+	if err := scheduler.poll(context.Background()); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if store.blockedReason == "" || len(store.updates) != 1 {
+		t.Fatalf("blockedReason=%q updates=%+v", store.blockedReason, store.updates)
+	}
+	if got := store.updates[0].occurrence; got.Disposition != ScheduleDispositionSkipped ||
+		got.Reason != ScheduleSkipReasonAuthorityInvalid || got.DispatchedAt != nil {
+		t.Fatalf("authority skip occurrence = %+v", got)
+	}
+}
+
+func TestSchedulerLeavesTransientFailureDue(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
+	scheduler, store, dispatcher := newSchedulePollHarness(now, dueCreateTaskSchedule(now, 0, ScheduleMissPolicyFireOnce))
+	dispatcher.failAt = 1
+	if err := scheduler.poll(context.Background()); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if store.blockedReason != "" || len(store.updates) != 0 {
+		t.Fatalf("transient failure advanced or blocked schedule: reason=%q updates=%+v", store.blockedReason, store.updates)
+	}
 }
 
 func newSchedulePollHarness(now time.Time, schedule Schedule) (*Scheduler, *schedulePollStore, *recordingScheduleDispatcher) {

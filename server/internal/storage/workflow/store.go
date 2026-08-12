@@ -237,6 +237,10 @@ type Store interface {
 	// max_concurrent=1 enforcement path.
 	SetScheduleActiveTask(ctx context.Context, scheduleID, taskID string) error
 
+	// SetScheduleAuthorityBlocked prevents future dispatch after a permanent
+	// schedule-authority failure. Re-authorizing through upsert clears it.
+	SetScheduleAuthorityBlocked(ctx context.Context, scheduleID, reason string) error
+
 	// =========================================================================
 	// Joins — workflow_joins table
 	// =========================================================================

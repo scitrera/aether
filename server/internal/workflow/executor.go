@@ -57,6 +57,14 @@ type ActionDef struct {
 	// CompletionEvent opts the spawned task into "feed B": it emits a domain
 	// event onto the event plane at its terminal status, which a join can gather.
 	CompletionEvent *CompletionEventConfig `json:"completion_event,omitempty" yaml:"completion_event,omitempty"`
+	// RequireTaskAuthority makes the schedule fail closed unless it has a
+	// private gateway-minted authority envelope. The envelope is stored outside
+	// this action JSON and is attached only to the CreateTask transport request.
+	RequireTaskAuthority bool `json:"require_task_authority,omitempty" yaml:"require_task_authority,omitempty"`
+	// RequiredDownstreamAuthorityHops reserves delegation capacity on the task
+	// grant established for the scheduled task. Transport currently accepts 0
+	// or 1.
+	RequiredDownstreamAuthorityHops uint32 `json:"required_downstream_authority_hops,omitempty" yaml:"required_downstream_authority_hops,omitempty"`
 }
 
 // CompletionEventConfig is the create_task-destination form of a task's feed-B
@@ -80,6 +88,21 @@ type Executor struct {
 	client                  *aether.WorkflowEngineClient
 	defaultWorkspace        string
 	createScheduledTaskSync func(context.Context, string, string, aether.CreateTaskOptions, time.Duration) (*aether.CreateTaskResponse, error)
+}
+
+// ScheduleAuthorityInvalidError marks a permanent authorization failure. The
+// scheduler blocks the schedule and records a no-task skip instead of retrying
+// the same invalid credential on every poll.
+type ScheduleAuthorityInvalidError struct {
+	Code    string
+	Message string
+}
+
+func (e *ScheduleAuthorityInvalidError) Error() string {
+	if e.Code == "" {
+		return e.Message
+	}
+	return e.Code + ": " + e.Message
 }
 
 func NewExecutor(client *aether.WorkflowEngineClient, defaultWorkspace string) *Executor {
@@ -109,12 +132,15 @@ func (e *Executor) DispatchAction(action *ActionDef) error {
 // the retry uses the scheduler's per-occurrence idempotency key and converges on
 // the already-created task instead of creating a duplicate. Non-task actions
 // retain their existing dispatch behavior.
-func (e *Executor) DispatchScheduledAction(ctx context.Context, action *ActionDef) error {
+func (e *Executor) DispatchScheduledAction(ctx context.Context, action *ActionDef, scheduleID string, authorization *pb.AuthorizationContext) error {
 	if action == nil {
 		return fmt.Errorf("scheduled action is required")
 	}
 	if action.Type != "create_task" {
 		return e.DispatchAction(action)
+	}
+	if action.RequireTaskAuthority && authorization == nil {
+		return &ScheduleAuthorityInvalidError{Code: "ERR_AUTHORITY_REQUIRED", Message: "schedule action requires task authority"}
 	}
 	request, err := buildCreateTaskRequest(action, e.defaultWorkspace)
 	if err != nil {
@@ -128,24 +154,26 @@ func (e *Executor) DispatchScheduledAction(ctx context.Context, action *ActionDe
 		createTask = e.client.CreateTaskSync
 	}
 	response, err := createTask(ctx, request.TaskType, request.Workspace, aether.CreateTaskOptions{
-		TargetAgentID:        request.TargetAgentId,
-		TargetOfflinePolicy:  request.TargetOfflinePolicy,
-		TargetIdentity:       request.TargetIdentity,
-		TargetImplementation: request.TargetImplementation,
-		LaunchParamOverrides: request.LaunchParamOverrides,
-		Metadata:             request.Metadata,
-		Payload:              request.Payload,
-		AssignmentMode:       aether.TaskAssignmentMode(request.AssignmentMode.String()),
-		TaskClass:            request.TaskClass,
-		ContextID:            request.ContextId,
-		RetryPolicy:          request.RetryPolicy,
-		Priority:             request.Priority,
-		IdempotencyKey:       request.IdempotencyKey,
-		CorrelationID:        request.CorrelationId,
-		RootTaskID:           request.RootTaskId,
-		CompletionEvent:      request.CompletionEvent,
-		ParentTaskID:         request.ParentTaskId,
-		Authorization:        request.Authorization,
+		TargetAgentID:                   request.TargetAgentId,
+		TargetOfflinePolicy:             request.TargetOfflinePolicy,
+		TargetIdentity:                  request.TargetIdentity,
+		TargetImplementation:            request.TargetImplementation,
+		LaunchParamOverrides:            request.LaunchParamOverrides,
+		Metadata:                        request.Metadata,
+		Payload:                         request.Payload,
+		AssignmentMode:                  aether.TaskAssignmentMode(request.AssignmentMode.String()),
+		TaskClass:                       request.TaskClass,
+		ContextID:                       request.ContextId,
+		RetryPolicy:                     request.RetryPolicy,
+		Priority:                        request.Priority,
+		IdempotencyKey:                  request.IdempotencyKey,
+		CorrelationID:                   request.CorrelationId,
+		RootTaskID:                      request.RootTaskId,
+		CompletionEvent:                 request.CompletionEvent,
+		ParentTaskID:                    request.ParentTaskId,
+		Authorization:                   authorization,
+		RequiredDownstreamAuthorityHops: action.RequiredDownstreamAuthorityHops,
+		OriginatingScheduleID:           scheduleID,
 	}, scheduledTaskCreateTimeout)
 	if err != nil {
 		return fmt.Errorf("confirm scheduled task creation: %w", err)
@@ -155,9 +183,21 @@ func (e *Executor) DispatchScheduledAction(ctx context.Context, action *ActionDe
 		if response != nil && response.ErrorMessage != "" {
 			message = response.ErrorMessage
 		}
+		if response != nil && isPermanentScheduleAuthorityCode(response.ErrorCode) {
+			return &ScheduleAuthorityInvalidError{Code: response.ErrorCode, Message: message}
+		}
 		return fmt.Errorf("scheduled task creation was rejected: %s", message)
 	}
 	return nil
+}
+
+func isPermanentScheduleAuthorityCode(code string) bool {
+	switch code {
+	case "ERR_AUTHORITY_INVALID", "ERR_AUTHORITY_REQUIRED", "ERR_PERMISSION_DENIED":
+		return true
+	default:
+		return false
+	}
 }
 
 // dispatchMessage sends a tool call message to the target agent.
@@ -265,19 +305,20 @@ func buildCreateTaskRequest(action *ActionDef, defaultWorkspace string) (*pb.Cre
 		}
 	}
 	return &pb.CreateTaskRequest{
-		TaskType:             action.TaskType,
-		Workspace:            workspace,
-		AssignmentMode:       assignmentMode,
-		TargetImplementation: targetImplementation,
-		TargetAgentId:        action.TargetAgentID,
-		Metadata:             action.Metadata,
-		Payload:              payload,
-		RetryPolicy:          retryConfigToProto(action.Retry),
-		IdempotencyKey:       action.IdempotencyKey,
-		CorrelationId:        action.CorrelationID,
-		CompletionEvent:      completion,
-		TaskClass:            pb.TaskClass_TASK_CLASS_BACKGROUND,
-		TargetOfflinePolicy:  offlinePolicy,
+		TaskType:                        action.TaskType,
+		Workspace:                       workspace,
+		AssignmentMode:                  assignmentMode,
+		TargetImplementation:            targetImplementation,
+		TargetAgentId:                   action.TargetAgentID,
+		Metadata:                        action.Metadata,
+		Payload:                         payload,
+		RetryPolicy:                     retryConfigToProto(action.Retry),
+		IdempotencyKey:                  action.IdempotencyKey,
+		CorrelationId:                   action.CorrelationID,
+		CompletionEvent:                 completion,
+		TaskClass:                       pb.TaskClass_TASK_CLASS_BACKGROUND,
+		TargetOfflinePolicy:             offlinePolicy,
+		RequiredDownstreamAuthorityHops: action.RequiredDownstreamAuthorityHops,
 	}, nil
 }
 

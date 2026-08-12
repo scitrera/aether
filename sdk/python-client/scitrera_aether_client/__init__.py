@@ -1,5 +1,8 @@
 __version__ = "0.2.3"
 
+# Current deterministic WorkflowScheduleAuthorityScope policy shape.
+WORKFLOW_SCHEDULE_AUTHORITY_POLICY_VERSION = 1
+
 # Import the proxy module for its side effect: installs the
 # ``ProxyHttpResponse`` / ``ProxyHttpBodyChunk`` dispatcher hook on
 # ``BaseAetherClient._do_connect`` and ``BaseAsyncAetherClient._do_connect``.

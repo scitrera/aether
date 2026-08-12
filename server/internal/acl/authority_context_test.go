@@ -50,11 +50,32 @@ func TestValidateGrantAudience(t *testing.T) {
 				Actor: actor,
 			},
 		},
+		{
+			name:  "workflow schedule audience matches exact engine context",
+			grant: AuthorityGrant{AudienceType: AuthorityAudienceWorkflowSchedule, AudienceID: "sched-a"},
+			audience: GrantAudienceContext{
+				Actor: models.Identity{Type: models.PrincipalWorkflowEngine}, WorkflowScheduleID: "sched-a",
+			},
+		},
+		{
+			name:     "workflow schedule audience rejects ordinary actor",
+			grant:    AuthorityGrant{AudienceType: AuthorityAudienceWorkflowSchedule, AudienceID: "sched-a"},
+			audience: GrantAudienceContext{Actor: actor, WorkflowScheduleID: "sched-a"},
+			wantErr:  ErrAuthorityGrantAudienceMismatch,
+		},
+		{
+			name:  "workflow schedule audience rejects different schedule",
+			grant: AuthorityGrant{AudienceType: AuthorityAudienceWorkflowSchedule, AudienceID: "sched-a"},
+			audience: GrantAudienceContext{
+				Actor: models.Identity{Type: models.PrincipalWorkflowEngine}, WorkflowScheduleID: "sched-b",
+			},
+			wantErr: ErrAuthorityGrantAudienceMismatch,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateGrantAudience(&tt.grant, actor, tt.audience)
+			err := validateGrantAudience(&tt.grant, tt.audience.Actor, tt.audience)
 			if err != tt.wantErr {
 				t.Fatalf("validateGrantAudience() error = %v, want %v", err, tt.wantErr)
 			}

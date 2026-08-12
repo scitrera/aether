@@ -1,5 +1,8 @@
 // Original file: aether.proto
 
+import type { AuthorizationContext as _aether_v1_AuthorizationContext, AuthorizationContext__Output as _aether_v1_AuthorizationContext__Output } from '../../aether/v1/AuthorizationContext';
+import type { WorkflowScheduleAuthorityScope as _aether_v1_WorkflowScheduleAuthorityScope, WorkflowScheduleAuthorityScope__Output as _aether_v1_WorkflowScheduleAuthorityScope__Output } from '../../aether/v1/WorkflowScheduleAuthorityScope';
+import type { WorkflowRequestContext as _aether_v1_WorkflowRequestContext, WorkflowRequestContext__Output as _aether_v1_WorkflowRequestContext__Output } from '../../aether/v1/WorkflowRequestContext';
 
 // Original file: aether.proto
 
@@ -183,6 +186,21 @@ export interface WorkflowOperation {
    * For LIST_EXECUTIONS
    */
   'statusFilter'?: (string);
+  /**
+   * Optional caller OBO authority. Resolved by the gateway before the request
+   * is authorized and forwarded.
+   */
+  'authorization'?: (_aether_v1_AuthorizationContext | null);
+  /**
+   * Optional requested authority for CREATE_SCHEDULE / UPSERT_SCHEDULE. The
+   * gateway derives or mints the exact WorkflowEngine schedule grant and
+   * forwards only the resulting trusted request_context.
+   */
+  'scheduleAuthorityScope'?: (_aether_v1_WorkflowScheduleAuthorityScope | null);
+  /**
+   * Gateway-authored; caller values are always discarded.
+   */
+  'requestContext'?: (_aether_v1_WorkflowRequestContext | null);
 }
 
 /**
@@ -217,4 +235,19 @@ export interface WorkflowOperation__Output {
    * For LIST_EXECUTIONS
    */
   'statusFilter': (string);
+  /**
+   * Optional caller OBO authority. Resolved by the gateway before the request
+   * is authorized and forwarded.
+   */
+  'authorization': (_aether_v1_AuthorizationContext__Output | null);
+  /**
+   * Optional requested authority for CREATE_SCHEDULE / UPSERT_SCHEDULE. The
+   * gateway derives or mints the exact WorkflowEngine schedule grant and
+   * forwards only the resulting trusted request_context.
+   */
+  'scheduleAuthorityScope': (_aether_v1_WorkflowScheduleAuthorityScope__Output | null);
+  /**
+   * Gateway-authored; caller values are always discarded.
+   */
+  'requestContext': (_aether_v1_WorkflowRequestContext__Output | null);
 }

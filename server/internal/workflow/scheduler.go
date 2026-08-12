@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"time"
 
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
+	pb "github.com/scitrera/aether/api/proto"
 )
 
 const (
@@ -26,7 +28,7 @@ const (
 )
 
 type scheduleActionDispatcher interface {
-	DispatchScheduledAction(ctx context.Context, action *ActionDef) error
+	DispatchScheduledAction(ctx context.Context, action *ActionDef, scheduleID string, authorization *pb.AuthorizationContext) error
 }
 
 // joinDeadlineHandler fires the timeout path for an open join whose deadline
@@ -154,6 +156,9 @@ func (s *Scheduler) poll(ctx context.Context) error {
 					BacklogCount: backlogCount, BacklogTruncated: backlogTruncated, BacklogIndex: i + 1,
 				}
 				if err := s.fire(ctx, sc, decision); err != nil {
+					if s.blockOnPermanentAuthorityError(ctx, sc, decision, err, now) {
+						break
+					}
 					log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to fire schedule (fire_all)")
 					break
 				}
@@ -182,6 +187,9 @@ func (s *Scheduler) poll(ctx context.Context) error {
 			BacklogCount: backlogCount, BacklogTruncated: backlogTruncated, BacklogIndex: 1,
 		}
 		if err := s.fire(ctx, sc, decision); err != nil {
+			if s.blockOnPermanentAuthorityError(ctx, sc, decision, err, now) {
+				continue
+			}
 			log.Error().Err(err).
 				Str("schedule_id", sc.ID).
 				Str("name", sc.Name).
@@ -212,6 +220,25 @@ func (s *Scheduler) poll(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (s *Scheduler) blockOnPermanentAuthorityError(ctx context.Context, sc Schedule, occurrence ScheduleOccurrence, dispatchErr error, now time.Time) bool {
+	var authorityErr *ScheduleAuthorityInvalidError
+	if !errors.As(dispatchErr, &authorityErr) {
+		return false
+	}
+	reason := authorityErr.Error()
+	if err := s.store.SetScheduleAuthorityBlocked(ctx, sc.ID, reason); err != nil {
+		log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to block schedule with invalid authority")
+		return true
+	}
+	nextFire := s.advanceToFuture(sc, now)
+	if err := s.recordSkipped(ctx, sc, occurrence.ScheduledFor, nextFire,
+		ScheduleSkipReasonAuthorityInvalid, occurrence.BacklogCount, occurrence.BacklogTruncated); err != nil {
+		log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to record schedule authority skip")
+	}
+	log.Warn().Err(dispatchErr).Str("schedule_id", sc.ID).Msg("blocked schedule after permanent authority failure")
+	return true
 }
 
 // measureBacklog returns the bounded number of occurrences due at this poll.
@@ -298,7 +325,14 @@ func (s *Scheduler) fire(ctx context.Context, sc Schedule, occurrence ScheduleOc
 		action.IdempotencyKey = scheduleOccurrenceIdempotencyKey(sc, occurrence.ScheduledFor)
 	}
 
-	if err := s.executor.DispatchScheduledAction(ctx, &action); err != nil {
+	var authorization *pb.AuthorizationContext
+	if sc.Authority != nil {
+		if !sc.Authority.ExpiresAt.After(s.now()) {
+			return &ScheduleAuthorityInvalidError{Code: "ERR_AUTHORITY_INVALID", Message: "workflow schedule authority expired"}
+		}
+		authorization = sc.Authority.Authorization
+	}
+	if err := s.executor.DispatchScheduledAction(ctx, &action, sc.ID, authorization); err != nil {
 		return err
 	}
 

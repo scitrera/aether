@@ -125,6 +125,11 @@ class ProgressKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     PROGRESS_KIND_CHAT: _ClassVar[ProgressKind]
     PROGRESS_KIND_APP: _ClassVar[ProgressKind]
     PROGRESS_KIND_TASK: _ClassVar[ProgressKind]
+
+class WorkflowAuthorityLifetimeMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    WORKFLOW_AUTHORITY_LIFETIME_SOURCE_BOUND: _ClassVar[WorkflowAuthorityLifetimeMode]
+    WORKFLOW_AUTHORITY_LIFETIME_DURABLE: _ClassVar[WorkflowAuthorityLifetimeMode]
 MESSAGE_TYPE_UNSPECIFIED: MessageType
 CHAT: MessageType
 CONTROL: MessageType
@@ -202,6 +207,8 @@ PROGRESS_KIND_UNSPECIFIED: ProgressKind
 PROGRESS_KIND_CHAT: ProgressKind
 PROGRESS_KIND_APP: ProgressKind
 PROGRESS_KIND_TASK: ProgressKind
+WORKFLOW_AUTHORITY_LIFETIME_SOURCE_BOUND: WorkflowAuthorityLifetimeMode
+WORKFLOW_AUTHORITY_LIFETIME_DURABLE: WorkflowAuthorityLifetimeMode
 
 class UpstreamMessage(_message.Message):
     __slots__ = ("init", "send", "switch_workspace", "kv_op", "create_task", "checkpoint_op", "admin_query", "session_op", "task_query", "task_op", "workspace_op", "agent_op", "acl_op", "progress", "workflow_op", "workflow_response", "token_op", "audit_query", "authority_grant_op", "proxy_http_request", "proxy_http_body_chunk", "tunnel_open", "tunnel_data", "tunnel_close", "proxy_http_response", "tunnel_ack", "resolve_authority_request", "connection_status_request", "submit_audit_event", "authority_request_op", "task_subscription_op", "access_check", "batch_access_check", "active_extensions")
@@ -872,7 +879,7 @@ class TaskCompletionEvent(_message.Message):
     def __init__(self, enabled: _Optional[bool] = ..., event_name: _Optional[str] = ..., on_statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ...) -> None: ...
 
 class CreateTaskRequest(_message.Message):
-    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id", "retry_policy", "priority", "idempotency_key", "correlation_id", "root_task_id", "completion_event", "parent_task_id", "target_offline_policy", "required_downstream_authority_hops")
+    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id", "retry_policy", "priority", "idempotency_key", "correlation_id", "root_task_id", "completion_event", "parent_task_id", "target_offline_policy", "required_downstream_authority_hops", "originating_schedule_id")
     class LaunchParamOverridesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -909,6 +916,7 @@ class CreateTaskRequest(_message.Message):
     PARENT_TASK_ID_FIELD_NUMBER: _ClassVar[int]
     TARGET_OFFLINE_POLICY_FIELD_NUMBER: _ClassVar[int]
     REQUIRED_DOWNSTREAM_AUTHORITY_HOPS_FIELD_NUMBER: _ClassVar[int]
+    ORIGINATING_SCHEDULE_ID_FIELD_NUMBER: _ClassVar[int]
     task_type: str
     workspace: str
     assignment_mode: TaskAssignmentMode
@@ -931,7 +939,8 @@ class CreateTaskRequest(_message.Message):
     parent_task_id: str
     target_offline_policy: TargetOfflinePolicy
     required_downstream_authority_hops: int
-    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]] = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., idempotency_key: _Optional[str] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ..., completion_event: _Optional[_Union[TaskCompletionEvent, _Mapping]] = ..., parent_task_id: _Optional[str] = ..., target_offline_policy: _Optional[_Union[TargetOfflinePolicy, str]] = ..., required_downstream_authority_hops: _Optional[int] = ...) -> None: ...
+    originating_schedule_id: str
+    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]] = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., idempotency_key: _Optional[str] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ..., completion_event: _Optional[_Union[TaskCompletionEvent, _Mapping]] = ..., parent_task_id: _Optional[str] = ..., target_offline_policy: _Optional[_Union[TargetOfflinePolicy, str]] = ..., required_downstream_authority_hops: _Optional[int] = ..., originating_schedule_id: _Optional[str] = ...) -> None: ...
 
 class CreateTaskResponse(_message.Message):
     __slots__ = ("success", "task_id", "status", "error_code", "error_message", "request_id", "assigned_to", "task_token", "authority_grant_id")
@@ -2415,7 +2424,7 @@ class ACLResponse(_message.Message):
     def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., message: _Optional[str] = ..., rule: _Optional[_Union[ACLRuleInfo, _Mapping]] = ..., rules: _Optional[_Iterable[_Union[ACLRuleInfo, _Mapping]]] = ..., total_rules: _Optional[int] = ..., fallback_policy: _Optional[_Union[ACLFallbackPolicyInfo, _Mapping]] = ..., audit_entries: _Optional[_Iterable[_Union[ACLAuditEntryInfo, _Mapping]]] = ..., total_audit_entries: _Optional[int] = ..., cleanup_result: _Optional[_Union[ACLCleanupResult, _Mapping]] = ..., authority_grant: _Optional[_Union[ACLAuthorityGrantInfo, _Mapping]] = ..., authority_grants: _Optional[_Iterable[_Union[ACLAuthorityGrantInfo, _Mapping]]] = ..., total_authority_grants: _Optional[int] = ..., request_id: _Optional[str] = ..., group: _Optional[_Union[ACLGroupInfo, _Mapping]] = ..., groups: _Optional[_Iterable[_Union[ACLGroupInfo, _Mapping]]] = ..., role: _Optional[_Union[ACLRoleInfo, _Mapping]] = ..., roles: _Optional[_Iterable[_Union[ACLRoleInfo, _Mapping]]] = ..., group_members: _Optional[_Iterable[_Union[ACLGroupMemberInfo, _Mapping]]] = ..., role_assignments: _Optional[_Iterable[_Union[ACLRoleAssignmentInfo, _Mapping]]] = ..., explanation: _Optional[_Union[ACLAccessExplanationInfo, _Mapping]] = ...) -> None: ...
 
 class AuthorityGrantOperation(_message.Message):
-    __slots__ = ("op", "grant_id", "exchange_request", "derive_request", "renew_request", "request_id", "list_request", "batch_exchange_request", "derive_for_target_request")
+    __slots__ = ("op", "grant_id", "exchange_request", "derive_request", "renew_request", "request_id", "list_request", "batch_exchange_request", "derive_for_target_request", "workflow_schedule_id")
     class OpType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         EXCHANGE: _ClassVar[AuthorityGrantOperation.OpType]
@@ -2445,6 +2454,7 @@ class AuthorityGrantOperation(_message.Message):
     LIST_REQUEST_FIELD_NUMBER: _ClassVar[int]
     BATCH_EXCHANGE_REQUEST_FIELD_NUMBER: _ClassVar[int]
     DERIVE_FOR_TARGET_REQUEST_FIELD_NUMBER: _ClassVar[int]
+    WORKFLOW_SCHEDULE_ID_FIELD_NUMBER: _ClassVar[int]
     op: AuthorityGrantOperation.OpType
     grant_id: str
     exchange_request: AuthorityGrantExchangeRequest
@@ -2454,7 +2464,8 @@ class AuthorityGrantOperation(_message.Message):
     list_request: AuthorityGrantListRequest
     batch_exchange_request: AuthorityGrantBatchExchangeRequest
     derive_for_target_request: AuthorityGrantDeriveForTargetRequest
-    def __init__(self, op: _Optional[_Union[AuthorityGrantOperation.OpType, str]] = ..., grant_id: _Optional[str] = ..., exchange_request: _Optional[_Union[AuthorityGrantExchangeRequest, _Mapping]] = ..., derive_request: _Optional[_Union[AuthorityGrantDeriveRequest, _Mapping]] = ..., renew_request: _Optional[_Union[ACLRenewAuthorityGrantRequest, _Mapping]] = ..., request_id: _Optional[str] = ..., list_request: _Optional[_Union[AuthorityGrantListRequest, _Mapping]] = ..., batch_exchange_request: _Optional[_Union[AuthorityGrantBatchExchangeRequest, _Mapping]] = ..., derive_for_target_request: _Optional[_Union[AuthorityGrantDeriveForTargetRequest, _Mapping]] = ...) -> None: ...
+    workflow_schedule_id: str
+    def __init__(self, op: _Optional[_Union[AuthorityGrantOperation.OpType, str]] = ..., grant_id: _Optional[str] = ..., exchange_request: _Optional[_Union[AuthorityGrantExchangeRequest, _Mapping]] = ..., derive_request: _Optional[_Union[AuthorityGrantDeriveRequest, _Mapping]] = ..., renew_request: _Optional[_Union[ACLRenewAuthorityGrantRequest, _Mapping]] = ..., request_id: _Optional[str] = ..., list_request: _Optional[_Union[AuthorityGrantListRequest, _Mapping]] = ..., batch_exchange_request: _Optional[_Union[AuthorityGrantBatchExchangeRequest, _Mapping]] = ..., derive_for_target_request: _Optional[_Union[AuthorityGrantDeriveForTargetRequest, _Mapping]] = ..., workflow_schedule_id: _Optional[str] = ...) -> None: ...
 
 class AuthorityGrantExchangeRequest(_message.Message):
     __slots__ = ("source_session_id", "workspace_scope", "resource_scope", "operation_scope", "max_access_level", "audience_type", "audience_id", "valid_while_audience_active", "expires_at", "renewable_until", "may_delegate", "remaining_hops", "reason", "metadata")
@@ -3052,8 +3063,54 @@ class ProgressUpdate(_message.Message):
     kind: ProgressKind
     def __init__(self, source: _Optional[str] = ..., task_id: _Optional[str] = ..., state: _Optional[str] = ..., completion: _Optional[float] = ..., summary: _Optional[str] = ..., step: _Optional[_Union[ProgressStep, _Mapping]] = ..., timestamp_ms: _Optional[int] = ..., workspace: _Optional[str] = ..., request_id: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., recipient: _Optional[str] = ..., kind: _Optional[_Union[ProgressKind, str]] = ...) -> None: ...
 
+class WorkflowScheduleAuthorityScope(_message.Message):
+    __slots__ = ("workspace_scope", "resource_scope", "operation_scope", "max_access_level", "expires_at", "renewable_until", "required_task_authority_hops", "lifetime_mode", "policy_version")
+    WORKSPACE_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    OPERATION_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    MAX_ACCESS_LEVEL_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    RENEWABLE_UNTIL_FIELD_NUMBER: _ClassVar[int]
+    REQUIRED_TASK_AUTHORITY_HOPS_FIELD_NUMBER: _ClassVar[int]
+    LIFETIME_MODE_FIELD_NUMBER: _ClassVar[int]
+    POLICY_VERSION_FIELD_NUMBER: _ClassVar[int]
+    workspace_scope: _containers.RepeatedScalarFieldContainer[str]
+    resource_scope: _containers.RepeatedCompositeFieldContainer[ACLAuthorityGrantResourceScopeEntry]
+    operation_scope: _containers.RepeatedScalarFieldContainer[str]
+    max_access_level: int
+    expires_at: int
+    renewable_until: int
+    required_task_authority_hops: int
+    lifetime_mode: WorkflowAuthorityLifetimeMode
+    policy_version: int
+    def __init__(self, workspace_scope: _Optional[_Iterable[str]] = ..., resource_scope: _Optional[_Iterable[_Union[ACLAuthorityGrantResourceScopeEntry, _Mapping]]] = ..., operation_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ..., expires_at: _Optional[int] = ..., renewable_until: _Optional[int] = ..., required_task_authority_hops: _Optional[int] = ..., lifetime_mode: _Optional[_Union[WorkflowAuthorityLifetimeMode, str]] = ..., policy_version: _Optional[int] = ...) -> None: ...
+
+class WorkflowRequestContext(_message.Message):
+    __slots__ = ("actor", "subject", "actor_session_id", "schedule_authorization", "root_grant_id", "source_grant_id", "expires_at_ms", "policy_digest", "lifetime_mode", "policy_version")
+    ACTOR_FIELD_NUMBER: _ClassVar[int]
+    SUBJECT_FIELD_NUMBER: _ClassVar[int]
+    ACTOR_SESSION_ID_FIELD_NUMBER: _ClassVar[int]
+    SCHEDULE_AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
+    ROOT_GRANT_ID_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_GRANT_ID_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_MS_FIELD_NUMBER: _ClassVar[int]
+    POLICY_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    LIFETIME_MODE_FIELD_NUMBER: _ClassVar[int]
+    POLICY_VERSION_FIELD_NUMBER: _ClassVar[int]
+    actor: PrincipalRef
+    subject: PrincipalRef
+    actor_session_id: str
+    schedule_authorization: AuthorizationContext
+    root_grant_id: str
+    source_grant_id: str
+    expires_at_ms: int
+    policy_digest: str
+    lifetime_mode: WorkflowAuthorityLifetimeMode
+    policy_version: int
+    def __init__(self, actor: _Optional[_Union[PrincipalRef, _Mapping]] = ..., subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., actor_session_id: _Optional[str] = ..., schedule_authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., root_grant_id: _Optional[str] = ..., source_grant_id: _Optional[str] = ..., expires_at_ms: _Optional[int] = ..., policy_digest: _Optional[str] = ..., lifetime_mode: _Optional[_Union[WorkflowAuthorityLifetimeMode, str]] = ..., policy_version: _Optional[int] = ...) -> None: ...
+
 class WorkflowOperation(_message.Message):
-    __slots__ = ("op", "id", "secondary_id", "workspace", "data", "request_id", "status_filter")
+    __slots__ = ("op", "id", "secondary_id", "workspace", "data", "request_id", "status_filter", "authorization", "schedule_authority_scope", "request_context")
     class OpType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         LIST_RULES: _ClassVar[WorkflowOperation.OpType]
@@ -3117,6 +3174,9 @@ class WorkflowOperation(_message.Message):
     DATA_FIELD_NUMBER: _ClassVar[int]
     REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FILTER_FIELD_NUMBER: _ClassVar[int]
+    AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
+    SCHEDULE_AUTHORITY_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    REQUEST_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     op: WorkflowOperation.OpType
     id: str
     secondary_id: str
@@ -3124,7 +3184,10 @@ class WorkflowOperation(_message.Message):
     data: bytes
     request_id: str
     status_filter: str
-    def __init__(self, op: _Optional[_Union[WorkflowOperation.OpType, str]] = ..., id: _Optional[str] = ..., secondary_id: _Optional[str] = ..., workspace: _Optional[str] = ..., data: _Optional[bytes] = ..., request_id: _Optional[str] = ..., status_filter: _Optional[str] = ...) -> None: ...
+    authorization: AuthorizationContext
+    schedule_authority_scope: WorkflowScheduleAuthorityScope
+    request_context: WorkflowRequestContext
+    def __init__(self, op: _Optional[_Union[WorkflowOperation.OpType, str]] = ..., id: _Optional[str] = ..., secondary_id: _Optional[str] = ..., workspace: _Optional[str] = ..., data: _Optional[bytes] = ..., request_id: _Optional[str] = ..., status_filter: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., schedule_authority_scope: _Optional[_Union[WorkflowScheduleAuthorityScope, _Mapping]] = ..., request_context: _Optional[_Union[WorkflowRequestContext, _Mapping]] = ...) -> None: ...
 
 class WorkflowResponse(_message.Message):
     __slots__ = ("success", "error", "message", "data", "total_count", "request_id")

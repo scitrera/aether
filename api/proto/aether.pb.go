@@ -864,6 +864,52 @@ func (ProgressKind) EnumDescriptor() ([]byte, []int) {
 	return file_aether_proto_rawDescGZIP(), []int{13}
 }
 
+type WorkflowAuthorityLifetimeMode int32
+
+const (
+	WorkflowAuthorityLifetimeMode_WORKFLOW_AUTHORITY_LIFETIME_SOURCE_BOUND WorkflowAuthorityLifetimeMode = 0
+	WorkflowAuthorityLifetimeMode_WORKFLOW_AUTHORITY_LIFETIME_DURABLE      WorkflowAuthorityLifetimeMode = 1
+)
+
+// Enum value maps for WorkflowAuthorityLifetimeMode.
+var (
+	WorkflowAuthorityLifetimeMode_name = map[int32]string{
+		0: "WORKFLOW_AUTHORITY_LIFETIME_SOURCE_BOUND",
+		1: "WORKFLOW_AUTHORITY_LIFETIME_DURABLE",
+	}
+	WorkflowAuthorityLifetimeMode_value = map[string]int32{
+		"WORKFLOW_AUTHORITY_LIFETIME_SOURCE_BOUND": 0,
+		"WORKFLOW_AUTHORITY_LIFETIME_DURABLE":      1,
+	}
+)
+
+func (x WorkflowAuthorityLifetimeMode) Enum() *WorkflowAuthorityLifetimeMode {
+	p := new(WorkflowAuthorityLifetimeMode)
+	*p = x
+	return p
+}
+
+func (x WorkflowAuthorityLifetimeMode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (WorkflowAuthorityLifetimeMode) Descriptor() protoreflect.EnumDescriptor {
+	return file_aether_proto_enumTypes[14].Descriptor()
+}
+
+func (WorkflowAuthorityLifetimeMode) Type() protoreflect.EnumType {
+	return &file_aether_proto_enumTypes[14]
+}
+
+func (x WorkflowAuthorityLifetimeMode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use WorkflowAuthorityLifetimeMode.Descriptor instead.
+func (WorkflowAuthorityLifetimeMode) EnumDescriptor() ([]byte, []int) {
+	return file_aether_proto_rawDescGZIP(), []int{14}
+}
+
 type KVOperation_OpType int32
 
 const (
@@ -949,11 +995,11 @@ func (x KVOperation_OpType) String() string {
 }
 
 func (KVOperation_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[14].Descriptor()
+	return file_aether_proto_enumTypes[15].Descriptor()
 }
 
 func (KVOperation_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[14]
+	return &file_aether_proto_enumTypes[15]
 }
 
 func (x KVOperation_OpType) Number() protoreflect.EnumNumber {
@@ -1030,11 +1076,11 @@ func (x KVOperation_Scope) String() string {
 }
 
 func (KVOperation_Scope) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[15].Descriptor()
+	return file_aether_proto_enumTypes[16].Descriptor()
 }
 
 func (KVOperation_Scope) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[15]
+	return &file_aether_proto_enumTypes[16]
 }
 
 func (x KVOperation_Scope) Number() protoreflect.EnumNumber {
@@ -1076,11 +1122,11 @@ func (x Signal_SignalType) String() string {
 }
 
 func (Signal_SignalType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[16].Descriptor()
+	return file_aether_proto_enumTypes[17].Descriptor()
 }
 
 func (Signal_SignalType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[16]
+	return &file_aether_proto_enumTypes[17]
 }
 
 func (x Signal_SignalType) Number() protoreflect.EnumNumber {
@@ -1128,11 +1174,11 @@ func (x CheckpointOperation_OpType) String() string {
 }
 
 func (CheckpointOperation_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[17].Descriptor()
+	return file_aether_proto_enumTypes[18].Descriptor()
 }
 
 func (CheckpointOperation_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[17]
+	return &file_aether_proto_enumTypes[18]
 }
 
 func (x CheckpointOperation_OpType) Number() protoreflect.EnumNumber {
@@ -1183,11 +1229,11 @@ func (x AdminQuery_OpType) String() string {
 }
 
 func (AdminQuery_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[18].Descriptor()
+	return file_aether_proto_enumTypes[19].Descriptor()
 }
 
 func (AdminQuery_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[18]
+	return &file_aether_proto_enumTypes[19]
 }
 
 func (x AdminQuery_OpType) Number() protoreflect.EnumNumber {
@@ -1232,11 +1278,11 @@ func (x SessionOperation_OpType) String() string {
 }
 
 func (SessionOperation_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[19].Descriptor()
+	return file_aether_proto_enumTypes[20].Descriptor()
 }
 
 func (SessionOperation_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[19]
+	return &file_aether_proto_enumTypes[20]
 }
 
 func (x SessionOperation_OpType) Number() protoreflect.EnumNumber {
@@ -1278,11 +1324,11 @@ func (x TaskQuery_OpType) String() string {
 }
 
 func (TaskQuery_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[20].Descriptor()
+	return file_aether_proto_enumTypes[21].Descriptor()
 }
 
 func (TaskQuery_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[20]
+	return &file_aether_proto_enumTypes[21]
 }
 
 func (x TaskQuery_OpType) Number() protoreflect.EnumNumber {
@@ -1345,11 +1391,11 @@ func (x TaskOperation_OpType) String() string {
 }
 
 func (TaskOperation_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[21].Descriptor()
+	return file_aether_proto_enumTypes[22].Descriptor()
 }
 
 func (TaskOperation_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[21]
+	return &file_aether_proto_enumTypes[22]
 }
 
 func (x TaskOperation_OpType) Number() protoreflect.EnumNumber {
@@ -1403,11 +1449,11 @@ func (x WorkspaceOperation_OpType) String() string {
 }
 
 func (WorkspaceOperation_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[22].Descriptor()
+	return file_aether_proto_enumTypes[23].Descriptor()
 }
 
 func (WorkspaceOperation_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[22]
+	return &file_aether_proto_enumTypes[23]
 }
 
 func (x WorkspaceOperation_OpType) Number() protoreflect.EnumNumber {
@@ -1464,11 +1510,11 @@ func (x AgentOperation_OpType) String() string {
 }
 
 func (AgentOperation_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[23].Descriptor()
+	return file_aether_proto_enumTypes[24].Descriptor()
 }
 
 func (AgentOperation_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[23]
+	return &file_aether_proto_enumTypes[24]
 }
 
 func (x AgentOperation_OpType) Number() protoreflect.EnumNumber {
@@ -1584,11 +1630,11 @@ func (x ACLOperation_OpType) String() string {
 }
 
 func (ACLOperation_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[24].Descriptor()
+	return file_aether_proto_enumTypes[25].Descriptor()
 }
 
 func (ACLOperation_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[24]
+	return &file_aether_proto_enumTypes[25]
 }
 
 func (x ACLOperation_OpType) Number() protoreflect.EnumNumber {
@@ -1651,11 +1697,11 @@ func (x AuthorityGrantOperation_OpType) String() string {
 }
 
 func (AuthorityGrantOperation_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[25].Descriptor()
+	return file_aether_proto_enumTypes[26].Descriptor()
 }
 
 func (AuthorityGrantOperation_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[25]
+	return &file_aether_proto_enumTypes[26]
 }
 
 func (x AuthorityGrantOperation_OpType) Number() protoreflect.EnumNumber {
@@ -1700,11 +1746,11 @@ func (x ResolveAuthorityRequestPayload_Decision) String() string {
 }
 
 func (ResolveAuthorityRequestPayload_Decision) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[26].Descriptor()
+	return file_aether_proto_enumTypes[27].Descriptor()
 }
 
 func (ResolveAuthorityRequestPayload_Decision) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[26]
+	return &file_aether_proto_enumTypes[27]
 }
 
 func (x ResolveAuthorityRequestPayload_Decision) Number() protoreflect.EnumNumber {
@@ -1758,11 +1804,11 @@ func (x AuthorityRequestOperation_OpType) String() string {
 }
 
 func (AuthorityRequestOperation_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[27].Descriptor()
+	return file_aether_proto_enumTypes[28].Descriptor()
 }
 
 func (AuthorityRequestOperation_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[27]
+	return &file_aether_proto_enumTypes[28]
 }
 
 func (x AuthorityRequestOperation_OpType) Number() protoreflect.EnumNumber {
@@ -1816,11 +1862,11 @@ func (x AuthorityRequestEvent_EventType) String() string {
 }
 
 func (AuthorityRequestEvent_EventType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[28].Descriptor()
+	return file_aether_proto_enumTypes[29].Descriptor()
 }
 
 func (AuthorityRequestEvent_EventType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[28]
+	return &file_aether_proto_enumTypes[29]
 }
 
 func (x AuthorityRequestEvent_EventType) Number() protoreflect.EnumNumber {
@@ -1871,11 +1917,11 @@ func (x TokenOperation_OpType) String() string {
 }
 
 func (TokenOperation_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[29].Descriptor()
+	return file_aether_proto_enumTypes[30].Descriptor()
 }
 
 func (TokenOperation_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[29]
+	return &file_aether_proto_enumTypes[30]
 }
 
 func (x TokenOperation_OpType) Number() protoreflect.EnumNumber {
@@ -2000,11 +2046,11 @@ func (x WorkflowOperation_OpType) String() string {
 }
 
 func (WorkflowOperation_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[30].Descriptor()
+	return file_aether_proto_enumTypes[31].Descriptor()
 }
 
 func (WorkflowOperation_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[30]
+	return &file_aether_proto_enumTypes[31]
 }
 
 func (x WorkflowOperation_OpType) Number() protoreflect.EnumNumber {
@@ -2013,7 +2059,7 @@ func (x WorkflowOperation_OpType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use WorkflowOperation_OpType.Descriptor instead.
 func (WorkflowOperation_OpType) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{122, 0}
+	return file_aether_proto_rawDescGZIP(), []int{124, 0}
 }
 
 type ProxyError_Kind int32
@@ -2064,11 +2110,11 @@ func (x ProxyError_Kind) String() string {
 }
 
 func (ProxyError_Kind) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[31].Descriptor()
+	return file_aether_proto_enumTypes[32].Descriptor()
 }
 
 func (ProxyError_Kind) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[31]
+	return &file_aether_proto_enumTypes[32]
 }
 
 func (x ProxyError_Kind) Number() protoreflect.EnumNumber {
@@ -2077,7 +2123,7 @@ func (x ProxyError_Kind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ProxyError_Kind.Descriptor instead.
 func (ProxyError_Kind) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{133, 0}
+	return file_aether_proto_rawDescGZIP(), []int{135, 0}
 }
 
 type TunnelOpen_Protocol int32
@@ -2113,11 +2159,11 @@ func (x TunnelOpen_Protocol) String() string {
 }
 
 func (TunnelOpen_Protocol) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[32].Descriptor()
+	return file_aether_proto_enumTypes[33].Descriptor()
 }
 
 func (TunnelOpen_Protocol) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[32]
+	return &file_aether_proto_enumTypes[33]
 }
 
 func (x TunnelOpen_Protocol) Number() protoreflect.EnumNumber {
@@ -2126,7 +2172,7 @@ func (x TunnelOpen_Protocol) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TunnelOpen_Protocol.Descriptor instead.
 func (TunnelOpen_Protocol) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{134, 0}
+	return file_aether_proto_rawDescGZIP(), []int{136, 0}
 }
 
 type TunnelClose_Reason int32
@@ -2168,11 +2214,11 @@ func (x TunnelClose_Reason) String() string {
 }
 
 func (TunnelClose_Reason) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[33].Descriptor()
+	return file_aether_proto_enumTypes[34].Descriptor()
 }
 
 func (TunnelClose_Reason) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[33]
+	return &file_aether_proto_enumTypes[34]
 }
 
 func (x TunnelClose_Reason) Number() protoreflect.EnumNumber {
@@ -2181,7 +2227,7 @@ func (x TunnelClose_Reason) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TunnelClose_Reason.Descriptor instead.
 func (TunnelClose_Reason) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{136, 0}
+	return file_aether_proto_rawDescGZIP(), []int{138, 0}
 }
 
 type TaskSubscriptionOperation_OpType int32
@@ -2217,11 +2263,11 @@ func (x TaskSubscriptionOperation_OpType) String() string {
 }
 
 func (TaskSubscriptionOperation_OpType) Descriptor() protoreflect.EnumDescriptor {
-	return file_aether_proto_enumTypes[34].Descriptor()
+	return file_aether_proto_enumTypes[35].Descriptor()
 }
 
 func (TaskSubscriptionOperation_OpType) Type() protoreflect.EnumType {
-	return &file_aether_proto_enumTypes[34]
+	return &file_aether_proto_enumTypes[35]
 }
 
 func (x TaskSubscriptionOperation_OpType) Number() protoreflect.EnumNumber {
@@ -2230,7 +2276,7 @@ func (x TaskSubscriptionOperation_OpType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TaskSubscriptionOperation_OpType.Descriptor instead.
 func (TaskSubscriptionOperation_OpType) EnumDescriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{144, 0}
+	return file_aether_proto_rawDescGZIP(), []int{146, 0}
 }
 
 type UpstreamMessage struct {
@@ -6114,8 +6160,13 @@ type CreateTaskRequest struct {
 	// (for example, Sahara querying the tool catalog under the user's authority).
 	// In POOL mode the gateway reserves the additional anchor-to-assignee hop.
 	RequiredDownstreamAuthorityHops uint32 `protobuf:"varint,22,opt,name=required_downstream_authority_hops,json=requiredDownstreamAuthorityHops,proto3" json:"required_downstream_authority_hops,omitempty"`
-	unknownFields                   protoimpl.UnknownFields
-	sizeCache                       protoimpl.SizeCache
+	// WorkflowEngine-only authority audience binding. The gateway accepts this
+	// field only from the authenticated WorkflowEngine principal and requires it
+	// to match a workflow_schedule audience on authorization. Ordinary task
+	// creators must leave it empty.
+	OriginatingScheduleId string `protobuf:"bytes,23,opt,name=originating_schedule_id,json=originatingScheduleId,proto3" json:"originating_schedule_id,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *CreateTaskRequest) Reset() {
@@ -6300,6 +6351,13 @@ func (x *CreateTaskRequest) GetRequiredDownstreamAuthorityHops() uint32 {
 		return x.RequiredDownstreamAuthorityHops
 	}
 	return 0
+}
+
+func (x *CreateTaskRequest) GetOriginatingScheduleId() string {
+	if x != nil {
+		return x.OriginatingScheduleId
+	}
+	return ""
 }
 
 // CreateTaskResponse is sent in response to CreateTaskRequest when the
@@ -12908,8 +12966,11 @@ type AuthorityGrantOperation struct {
 	BatchExchangeRequest *AuthorityGrantBatchExchangeRequest `protobuf:"bytes,8,opt,name=batch_exchange_request,json=batchExchangeRequest,proto3" json:"batch_exchange_request,omitempty"`
 	// For DERIVE_FOR_TARGET
 	DeriveForTargetRequest *AuthorityGrantDeriveForTargetRequest `protobuf:"bytes,9,opt,name=derive_for_target_request,json=deriveForTargetRequest,proto3" json:"derive_for_target_request,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// WorkflowEngine-only audience context for GET/REVOKE of a
+	// workflow_schedule grant. Ignored for other actors and operations.
+	WorkflowScheduleId string `protobuf:"bytes,10,opt,name=workflow_schedule_id,json=workflowScheduleId,proto3" json:"workflow_schedule_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AuthorityGrantOperation) Reset() {
@@ -13003,6 +13064,13 @@ func (x *AuthorityGrantOperation) GetDeriveForTargetRequest() *AuthorityGrantDer
 		return x.DeriveForTargetRequest
 	}
 	return nil
+}
+
+func (x *AuthorityGrantOperation) GetWorkflowScheduleId() string {
+	if x != nil {
+		return x.WorkflowScheduleId
+	}
+	return ""
 }
 
 // AuthorityGrantExchangeRequest bootstraps a grant for the current actor.
@@ -15706,26 +15774,271 @@ func (x *ProgressUpdate) GetKind() ProgressKind {
 	return ProgressKind_PROGRESS_KIND_UNSPECIFIED
 }
 
+// Requested ceiling for the private authority attached to one schedule. The
+// gateway validates/attenuates this against the authenticated caller context;
+// the WorkflowEngine never trusts it directly and never stores it in action
+// JSON. Empty resource or operation scope is invalid.
+type WorkflowScheduleAuthorityScope struct {
+	state                     protoimpl.MessageState                 `protogen:"open.v1"`
+	WorkspaceScope            []string                               `protobuf:"bytes,1,rep,name=workspace_scope,json=workspaceScope,proto3" json:"workspace_scope,omitempty"`
+	ResourceScope             []*ACLAuthorityGrantResourceScopeEntry `protobuf:"bytes,2,rep,name=resource_scope,json=resourceScope,proto3" json:"resource_scope,omitempty"`
+	OperationScope            []string                               `protobuf:"bytes,3,rep,name=operation_scope,json=operationScope,proto3" json:"operation_scope,omitempty"`
+	MaxAccessLevel            int32                                  `protobuf:"varint,4,opt,name=max_access_level,json=maxAccessLevel,proto3" json:"max_access_level,omitempty"`
+	ExpiresAt                 int64                                  `protobuf:"varint,5,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	RenewableUntil            int64                                  `protobuf:"varint,6,opt,name=renewable_until,json=renewableUntil,proto3" json:"renewable_until,omitempty"`
+	RequiredTaskAuthorityHops uint32                                 `protobuf:"varint,7,opt,name=required_task_authority_hops,json=requiredTaskAuthorityHops,proto3" json:"required_task_authority_hops,omitempty"`
+	LifetimeMode              WorkflowAuthorityLifetimeMode          `protobuf:"varint,8,opt,name=lifetime_mode,json=lifetimeMode,proto3,enum=aether.v1.WorkflowAuthorityLifetimeMode" json:"lifetime_mode,omitempty"`
+	// Version of the deterministic schedule-authority policy shape. Callers
+	// currently send 1; unknown versions fail closed instead of being silently
+	// reinterpreted after an upgrade.
+	PolicyVersion uint32 `protobuf:"varint,9,opt,name=policy_version,json=policyVersion,proto3" json:"policy_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkflowScheduleAuthorityScope) Reset() {
+	*x = WorkflowScheduleAuthorityScope{}
+	mi := &file_aether_proto_msgTypes[122]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkflowScheduleAuthorityScope) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkflowScheduleAuthorityScope) ProtoMessage() {}
+
+func (x *WorkflowScheduleAuthorityScope) ProtoReflect() protoreflect.Message {
+	mi := &file_aether_proto_msgTypes[122]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkflowScheduleAuthorityScope.ProtoReflect.Descriptor instead.
+func (*WorkflowScheduleAuthorityScope) Descriptor() ([]byte, []int) {
+	return file_aether_proto_rawDescGZIP(), []int{122}
+}
+
+func (x *WorkflowScheduleAuthorityScope) GetWorkspaceScope() []string {
+	if x != nil {
+		return x.WorkspaceScope
+	}
+	return nil
+}
+
+func (x *WorkflowScheduleAuthorityScope) GetResourceScope() []*ACLAuthorityGrantResourceScopeEntry {
+	if x != nil {
+		return x.ResourceScope
+	}
+	return nil
+}
+
+func (x *WorkflowScheduleAuthorityScope) GetOperationScope() []string {
+	if x != nil {
+		return x.OperationScope
+	}
+	return nil
+}
+
+func (x *WorkflowScheduleAuthorityScope) GetMaxAccessLevel() int32 {
+	if x != nil {
+		return x.MaxAccessLevel
+	}
+	return 0
+}
+
+func (x *WorkflowScheduleAuthorityScope) GetExpiresAt() int64 {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return 0
+}
+
+func (x *WorkflowScheduleAuthorityScope) GetRenewableUntil() int64 {
+	if x != nil {
+		return x.RenewableUntil
+	}
+	return 0
+}
+
+func (x *WorkflowScheduleAuthorityScope) GetRequiredTaskAuthorityHops() uint32 {
+	if x != nil {
+		return x.RequiredTaskAuthorityHops
+	}
+	return 0
+}
+
+func (x *WorkflowScheduleAuthorityScope) GetLifetimeMode() WorkflowAuthorityLifetimeMode {
+	if x != nil {
+		return x.LifetimeMode
+	}
+	return WorkflowAuthorityLifetimeMode_WORKFLOW_AUTHORITY_LIFETIME_SOURCE_BOUND
+}
+
+func (x *WorkflowScheduleAuthorityScope) GetPolicyVersion() uint32 {
+	if x != nil {
+		return x.PolicyVersion
+	}
+	return 0
+}
+
+// Gateway-authored workflow request identity and schedule authority. The
+// gateway clears any client-supplied value before forwarding. Schedule grant
+// IDs remain outside action JSON, task payload/metadata, and workflow response
+// data. Consumers must treat this object as trusted only on the authenticated
+// WorkflowEngine connection from the gateway.
+type WorkflowRequestContext struct {
+	state                 protoimpl.MessageState        `protogen:"open.v1"`
+	Actor                 *PrincipalRef                 `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
+	Subject               *PrincipalRef                 `protobuf:"bytes,2,opt,name=subject,proto3" json:"subject,omitempty"`
+	ActorSessionId        string                        `protobuf:"bytes,3,opt,name=actor_session_id,json=actorSessionId,proto3" json:"actor_session_id,omitempty"`
+	ScheduleAuthorization *AuthorizationContext         `protobuf:"bytes,4,opt,name=schedule_authorization,json=scheduleAuthorization,proto3" json:"schedule_authorization,omitempty"`
+	RootGrantId           string                        `protobuf:"bytes,5,opt,name=root_grant_id,json=rootGrantId,proto3" json:"root_grant_id,omitempty"`
+	SourceGrantId         string                        `protobuf:"bytes,6,opt,name=source_grant_id,json=sourceGrantId,proto3" json:"source_grant_id,omitempty"`
+	ExpiresAtMs           int64                         `protobuf:"varint,7,opt,name=expires_at_ms,json=expiresAtMs,proto3" json:"expires_at_ms,omitempty"`
+	PolicyDigest          string                        `protobuf:"bytes,8,opt,name=policy_digest,json=policyDigest,proto3" json:"policy_digest,omitempty"`
+	LifetimeMode          WorkflowAuthorityLifetimeMode `protobuf:"varint,9,opt,name=lifetime_mode,json=lifetimeMode,proto3,enum=aether.v1.WorkflowAuthorityLifetimeMode" json:"lifetime_mode,omitempty"`
+	PolicyVersion         uint32                        `protobuf:"varint,10,opt,name=policy_version,json=policyVersion,proto3" json:"policy_version,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *WorkflowRequestContext) Reset() {
+	*x = WorkflowRequestContext{}
+	mi := &file_aether_proto_msgTypes[123]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkflowRequestContext) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkflowRequestContext) ProtoMessage() {}
+
+func (x *WorkflowRequestContext) ProtoReflect() protoreflect.Message {
+	mi := &file_aether_proto_msgTypes[123]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkflowRequestContext.ProtoReflect.Descriptor instead.
+func (*WorkflowRequestContext) Descriptor() ([]byte, []int) {
+	return file_aether_proto_rawDescGZIP(), []int{123}
+}
+
+func (x *WorkflowRequestContext) GetActor() *PrincipalRef {
+	if x != nil {
+		return x.Actor
+	}
+	return nil
+}
+
+func (x *WorkflowRequestContext) GetSubject() *PrincipalRef {
+	if x != nil {
+		return x.Subject
+	}
+	return nil
+}
+
+func (x *WorkflowRequestContext) GetActorSessionId() string {
+	if x != nil {
+		return x.ActorSessionId
+	}
+	return ""
+}
+
+func (x *WorkflowRequestContext) GetScheduleAuthorization() *AuthorizationContext {
+	if x != nil {
+		return x.ScheduleAuthorization
+	}
+	return nil
+}
+
+func (x *WorkflowRequestContext) GetRootGrantId() string {
+	if x != nil {
+		return x.RootGrantId
+	}
+	return ""
+}
+
+func (x *WorkflowRequestContext) GetSourceGrantId() string {
+	if x != nil {
+		return x.SourceGrantId
+	}
+	return ""
+}
+
+func (x *WorkflowRequestContext) GetExpiresAtMs() int64 {
+	if x != nil {
+		return x.ExpiresAtMs
+	}
+	return 0
+}
+
+func (x *WorkflowRequestContext) GetPolicyDigest() string {
+	if x != nil {
+		return x.PolicyDigest
+	}
+	return ""
+}
+
+func (x *WorkflowRequestContext) GetLifetimeMode() WorkflowAuthorityLifetimeMode {
+	if x != nil {
+		return x.LifetimeMode
+	}
+	return WorkflowAuthorityLifetimeMode_WORKFLOW_AUTHORITY_LIFETIME_SOURCE_BOUND
+}
+
+func (x *WorkflowRequestContext) GetPolicyVersion() uint32 {
+	if x != nil {
+		return x.PolicyVersion
+	}
+	return 0
+}
+
 // WorkflowOperation allows clients to manage workflow rules, definitions,
 // schedules, executions, and state machines through the gRPC streaming interface.
 // Operations are forwarded by the gateway to the connected workflow engine and
 // responses are relayed back to the requesting client.
 type WorkflowOperation struct {
-	state         protoimpl.MessageState   `protogen:"open.v1"`
-	Op            WorkflowOperation_OpType `protobuf:"varint,1,opt,name=op,proto3,enum=aether.v1.WorkflowOperation_OpType" json:"op,omitempty"`
-	Id            string                   `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`                                         // Entity ID for GET/UPDATE/DELETE
-	SecondaryId   string                   `protobuf:"bytes,3,opt,name=secondary_id,json=secondaryId,proto3" json:"secondary_id,omitempty"`    // e.g., instance_id for SM instance ops
-	Workspace     string                   `protobuf:"bytes,4,opt,name=workspace,proto3" json:"workspace,omitempty"`                           // Workspace filter
-	Data          []byte                   `protobuf:"bytes,5,opt,name=data,proto3" json:"data,omitempty"`                                     // JSON payload for CREATE/UPDATE ops
-	RequestId     string                   `protobuf:"bytes,6,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`          // Correlation ID
-	StatusFilter  string                   `protobuf:"bytes,7,opt,name=status_filter,json=statusFilter,proto3" json:"status_filter,omitempty"` // For LIST_EXECUTIONS
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState   `protogen:"open.v1"`
+	Op           WorkflowOperation_OpType `protobuf:"varint,1,opt,name=op,proto3,enum=aether.v1.WorkflowOperation_OpType" json:"op,omitempty"`
+	Id           string                   `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`                                         // Entity ID for GET/UPDATE/DELETE
+	SecondaryId  string                   `protobuf:"bytes,3,opt,name=secondary_id,json=secondaryId,proto3" json:"secondary_id,omitempty"`    // e.g., instance_id for SM instance ops
+	Workspace    string                   `protobuf:"bytes,4,opt,name=workspace,proto3" json:"workspace,omitempty"`                           // Workspace filter
+	Data         []byte                   `protobuf:"bytes,5,opt,name=data,proto3" json:"data,omitempty"`                                     // JSON payload for CREATE/UPDATE ops
+	RequestId    string                   `protobuf:"bytes,6,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`          // Correlation ID
+	StatusFilter string                   `protobuf:"bytes,7,opt,name=status_filter,json=statusFilter,proto3" json:"status_filter,omitempty"` // For LIST_EXECUTIONS
+	// Optional caller OBO authority. Resolved by the gateway before the request
+	// is authorized and forwarded.
+	Authorization *AuthorizationContext `protobuf:"bytes,8,opt,name=authorization,proto3" json:"authorization,omitempty"`
+	// Optional requested authority for CREATE_SCHEDULE / UPSERT_SCHEDULE. The
+	// gateway derives or mints the exact WorkflowEngine schedule grant and
+	// forwards only the resulting trusted request_context.
+	ScheduleAuthorityScope *WorkflowScheduleAuthorityScope `protobuf:"bytes,9,opt,name=schedule_authority_scope,json=scheduleAuthorityScope,proto3" json:"schedule_authority_scope,omitempty"`
+	// Gateway-authored; caller values are always discarded.
+	RequestContext *WorkflowRequestContext `protobuf:"bytes,10,opt,name=request_context,json=requestContext,proto3" json:"request_context,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *WorkflowOperation) Reset() {
 	*x = WorkflowOperation{}
-	mi := &file_aether_proto_msgTypes[122]
+	mi := &file_aether_proto_msgTypes[124]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15737,7 +16050,7 @@ func (x *WorkflowOperation) String() string {
 func (*WorkflowOperation) ProtoMessage() {}
 
 func (x *WorkflowOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[122]
+	mi := &file_aether_proto_msgTypes[124]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15750,7 +16063,7 @@ func (x *WorkflowOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkflowOperation.ProtoReflect.Descriptor instead.
 func (*WorkflowOperation) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{122}
+	return file_aether_proto_rawDescGZIP(), []int{124}
 }
 
 func (x *WorkflowOperation) GetOp() WorkflowOperation_OpType {
@@ -15802,6 +16115,27 @@ func (x *WorkflowOperation) GetStatusFilter() string {
 	return ""
 }
 
+func (x *WorkflowOperation) GetAuthorization() *AuthorizationContext {
+	if x != nil {
+		return x.Authorization
+	}
+	return nil
+}
+
+func (x *WorkflowOperation) GetScheduleAuthorityScope() *WorkflowScheduleAuthorityScope {
+	if x != nil {
+		return x.ScheduleAuthorityScope
+	}
+	return nil
+}
+
+func (x *WorkflowOperation) GetRequestContext() *WorkflowRequestContext {
+	if x != nil {
+		return x.RequestContext
+	}
+	return nil
+}
+
 // WorkflowResponse is sent in response to WorkflowOperation.
 // Uses JSON-encoded bytes for response payloads to avoid duplicating
 // the workflow server's internal types in the proto definition.
@@ -15819,7 +16153,7 @@ type WorkflowResponse struct {
 
 func (x *WorkflowResponse) Reset() {
 	*x = WorkflowResponse{}
-	mi := &file_aether_proto_msgTypes[123]
+	mi := &file_aether_proto_msgTypes[125]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15831,7 +16165,7 @@ func (x *WorkflowResponse) String() string {
 func (*WorkflowResponse) ProtoMessage() {}
 
 func (x *WorkflowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[123]
+	mi := &file_aether_proto_msgTypes[125]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15844,7 +16178,7 @@ func (x *WorkflowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkflowResponse.ProtoReflect.Descriptor instead.
 func (*WorkflowResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{123}
+	return file_aether_proto_rawDescGZIP(), []int{125}
 }
 
 func (x *WorkflowResponse) GetSuccess() bool {
@@ -15943,7 +16277,7 @@ type MessageEnvelope struct {
 
 func (x *MessageEnvelope) Reset() {
 	*x = MessageEnvelope{}
-	mi := &file_aether_proto_msgTypes[124]
+	mi := &file_aether_proto_msgTypes[126]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15955,7 +16289,7 @@ func (x *MessageEnvelope) String() string {
 func (*MessageEnvelope) ProtoMessage() {}
 
 func (x *MessageEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[124]
+	mi := &file_aether_proto_msgTypes[126]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15968,7 +16302,7 @@ func (x *MessageEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MessageEnvelope.ProtoReflect.Descriptor instead.
 func (*MessageEnvelope) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{124}
+	return file_aether_proto_rawDescGZIP(), []int{126}
 }
 
 func (x *MessageEnvelope) GetSource() string {
@@ -16066,7 +16400,7 @@ type AuditQuery struct {
 
 func (x *AuditQuery) Reset() {
 	*x = AuditQuery{}
-	mi := &file_aether_proto_msgTypes[125]
+	mi := &file_aether_proto_msgTypes[127]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16078,7 +16412,7 @@ func (x *AuditQuery) String() string {
 func (*AuditQuery) ProtoMessage() {}
 
 func (x *AuditQuery) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[125]
+	mi := &file_aether_proto_msgTypes[127]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16091,7 +16425,7 @@ func (x *AuditQuery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditQuery.ProtoReflect.Descriptor instead.
 func (*AuditQuery) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{125}
+	return file_aether_proto_rawDescGZIP(), []int{127}
 }
 
 func (x *AuditQuery) GetRequestId() string {
@@ -16255,7 +16589,7 @@ type AuditQueryResponse struct {
 
 func (x *AuditQueryResponse) Reset() {
 	*x = AuditQueryResponse{}
-	mi := &file_aether_proto_msgTypes[126]
+	mi := &file_aether_proto_msgTypes[128]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16267,7 +16601,7 @@ func (x *AuditQueryResponse) String() string {
 func (*AuditQueryResponse) ProtoMessage() {}
 
 func (x *AuditQueryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[126]
+	mi := &file_aether_proto_msgTypes[128]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16280,7 +16614,7 @@ func (x *AuditQueryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditQueryResponse.ProtoReflect.Descriptor instead.
 func (*AuditQueryResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{126}
+	return file_aether_proto_rawDescGZIP(), []int{128}
 }
 
 func (x *AuditQueryResponse) GetRequestId() string {
@@ -16350,7 +16684,7 @@ type AuditEntry struct {
 
 func (x *AuditEntry) Reset() {
 	*x = AuditEntry{}
-	mi := &file_aether_proto_msgTypes[127]
+	mi := &file_aether_proto_msgTypes[129]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16362,7 +16696,7 @@ func (x *AuditEntry) String() string {
 func (*AuditEntry) ProtoMessage() {}
 
 func (x *AuditEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[127]
+	mi := &file_aether_proto_msgTypes[129]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16375,7 +16709,7 @@ func (x *AuditEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditEntry.ProtoReflect.Descriptor instead.
 func (*AuditEntry) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{127}
+	return file_aether_proto_rawDescGZIP(), []int{129}
 }
 
 func (x *AuditEntry) GetAuditId() int64 {
@@ -16562,7 +16896,7 @@ type SubmitAuditEventRequest struct {
 
 func (x *SubmitAuditEventRequest) Reset() {
 	*x = SubmitAuditEventRequest{}
-	mi := &file_aether_proto_msgTypes[128]
+	mi := &file_aether_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16574,7 +16908,7 @@ func (x *SubmitAuditEventRequest) String() string {
 func (*SubmitAuditEventRequest) ProtoMessage() {}
 
 func (x *SubmitAuditEventRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[128]
+	mi := &file_aether_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16587,7 +16921,7 @@ func (x *SubmitAuditEventRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitAuditEventRequest.ProtoReflect.Descriptor instead.
 func (*SubmitAuditEventRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{128}
+	return file_aether_proto_rawDescGZIP(), []int{130}
 }
 
 func (x *SubmitAuditEventRequest) GetEventType() string {
@@ -16668,7 +17002,7 @@ type SubmitAuditEventResponse struct {
 
 func (x *SubmitAuditEventResponse) Reset() {
 	*x = SubmitAuditEventResponse{}
-	mi := &file_aether_proto_msgTypes[129]
+	mi := &file_aether_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16680,7 +17014,7 @@ func (x *SubmitAuditEventResponse) String() string {
 func (*SubmitAuditEventResponse) ProtoMessage() {}
 
 func (x *SubmitAuditEventResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[129]
+	mi := &file_aether_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16693,7 +17027,7 @@ func (x *SubmitAuditEventResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitAuditEventResponse.ProtoReflect.Descriptor instead.
 func (*SubmitAuditEventResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{129}
+	return file_aether_proto_rawDescGZIP(), []int{131}
 }
 
 func (x *SubmitAuditEventResponse) GetClientRequestId() string {
@@ -16773,7 +17107,7 @@ type ProxyHttpRequest struct {
 
 func (x *ProxyHttpRequest) Reset() {
 	*x = ProxyHttpRequest{}
-	mi := &file_aether_proto_msgTypes[130]
+	mi := &file_aether_proto_msgTypes[132]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16785,7 +17119,7 @@ func (x *ProxyHttpRequest) String() string {
 func (*ProxyHttpRequest) ProtoMessage() {}
 
 func (x *ProxyHttpRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[130]
+	mi := &file_aether_proto_msgTypes[132]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16798,7 +17132,7 @@ func (x *ProxyHttpRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyHttpRequest.ProtoReflect.Descriptor instead.
 func (*ProxyHttpRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{130}
+	return file_aether_proto_rawDescGZIP(), []int{132}
 }
 
 func (x *ProxyHttpRequest) GetRequestId() string {
@@ -16930,7 +17264,7 @@ type ProxyHttpResponse struct {
 
 func (x *ProxyHttpResponse) Reset() {
 	*x = ProxyHttpResponse{}
-	mi := &file_aether_proto_msgTypes[131]
+	mi := &file_aether_proto_msgTypes[133]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16942,7 +17276,7 @@ func (x *ProxyHttpResponse) String() string {
 func (*ProxyHttpResponse) ProtoMessage() {}
 
 func (x *ProxyHttpResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[131]
+	mi := &file_aether_proto_msgTypes[133]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16955,7 +17289,7 @@ func (x *ProxyHttpResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyHttpResponse.ProtoReflect.Descriptor instead.
 func (*ProxyHttpResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{131}
+	return file_aether_proto_rawDescGZIP(), []int{133}
 }
 
 func (x *ProxyHttpResponse) GetRequestId() string {
@@ -17015,7 +17349,7 @@ type ProxyHttpBodyChunk struct {
 
 func (x *ProxyHttpBodyChunk) Reset() {
 	*x = ProxyHttpBodyChunk{}
-	mi := &file_aether_proto_msgTypes[132]
+	mi := &file_aether_proto_msgTypes[134]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17027,7 +17361,7 @@ func (x *ProxyHttpBodyChunk) String() string {
 func (*ProxyHttpBodyChunk) ProtoMessage() {}
 
 func (x *ProxyHttpBodyChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[132]
+	mi := &file_aether_proto_msgTypes[134]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17040,7 +17374,7 @@ func (x *ProxyHttpBodyChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyHttpBodyChunk.ProtoReflect.Descriptor instead.
 func (*ProxyHttpBodyChunk) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{132}
+	return file_aether_proto_rawDescGZIP(), []int{134}
 }
 
 func (x *ProxyHttpBodyChunk) GetRequestId() string {
@@ -17090,7 +17424,7 @@ type ProxyError struct {
 
 func (x *ProxyError) Reset() {
 	*x = ProxyError{}
-	mi := &file_aether_proto_msgTypes[133]
+	mi := &file_aether_proto_msgTypes[135]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17102,7 +17436,7 @@ func (x *ProxyError) String() string {
 func (*ProxyError) ProtoMessage() {}
 
 func (x *ProxyError) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[133]
+	mi := &file_aether_proto_msgTypes[135]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17115,7 +17449,7 @@ func (x *ProxyError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyError.ProtoReflect.Descriptor instead.
 func (*ProxyError) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{133}
+	return file_aether_proto_rawDescGZIP(), []int{135}
 }
 
 func (x *ProxyError) GetKind() ProxyError_Kind {
@@ -17158,7 +17492,7 @@ type TunnelOpen struct {
 
 func (x *TunnelOpen) Reset() {
 	*x = TunnelOpen{}
-	mi := &file_aether_proto_msgTypes[134]
+	mi := &file_aether_proto_msgTypes[136]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17170,7 +17504,7 @@ func (x *TunnelOpen) String() string {
 func (*TunnelOpen) ProtoMessage() {}
 
 func (x *TunnelOpen) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[134]
+	mi := &file_aether_proto_msgTypes[136]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17183,7 +17517,7 @@ func (x *TunnelOpen) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelOpen.ProtoReflect.Descriptor instead.
 func (*TunnelOpen) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{134}
+	return file_aether_proto_rawDescGZIP(), []int{136}
 }
 
 func (x *TunnelOpen) GetTunnelId() string {
@@ -17275,7 +17609,7 @@ type TunnelData struct {
 
 func (x *TunnelData) Reset() {
 	*x = TunnelData{}
-	mi := &file_aether_proto_msgTypes[135]
+	mi := &file_aether_proto_msgTypes[137]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17287,7 +17621,7 @@ func (x *TunnelData) String() string {
 func (*TunnelData) ProtoMessage() {}
 
 func (x *TunnelData) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[135]
+	mi := &file_aether_proto_msgTypes[137]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17300,7 +17634,7 @@ func (x *TunnelData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelData.ProtoReflect.Descriptor instead.
 func (*TunnelData) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{135}
+	return file_aether_proto_rawDescGZIP(), []int{137}
 }
 
 func (x *TunnelData) GetTunnelId() string {
@@ -17342,7 +17676,7 @@ type TunnelClose struct {
 
 func (x *TunnelClose) Reset() {
 	*x = TunnelClose{}
-	mi := &file_aether_proto_msgTypes[136]
+	mi := &file_aether_proto_msgTypes[138]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17354,7 +17688,7 @@ func (x *TunnelClose) String() string {
 func (*TunnelClose) ProtoMessage() {}
 
 func (x *TunnelClose) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[136]
+	mi := &file_aether_proto_msgTypes[138]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17367,7 +17701,7 @@ func (x *TunnelClose) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelClose.ProtoReflect.Descriptor instead.
 func (*TunnelClose) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{136}
+	return file_aether_proto_rawDescGZIP(), []int{138}
 }
 
 func (x *TunnelClose) GetTunnelId() string {
@@ -17402,7 +17736,7 @@ type TunnelAck struct {
 
 func (x *TunnelAck) Reset() {
 	*x = TunnelAck{}
-	mi := &file_aether_proto_msgTypes[137]
+	mi := &file_aether_proto_msgTypes[139]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17414,7 +17748,7 @@ func (x *TunnelAck) String() string {
 func (*TunnelAck) ProtoMessage() {}
 
 func (x *TunnelAck) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[137]
+	mi := &file_aether_proto_msgTypes[139]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17427,7 +17761,7 @@ func (x *TunnelAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelAck.ProtoReflect.Descriptor instead.
 func (*TunnelAck) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{137}
+	return file_aether_proto_rawDescGZIP(), []int{139}
 }
 
 func (x *TunnelAck) GetTunnelId() string {
@@ -17474,7 +17808,7 @@ type ResolveAuthorityRequest struct {
 
 func (x *ResolveAuthorityRequest) Reset() {
 	*x = ResolveAuthorityRequest{}
-	mi := &file_aether_proto_msgTypes[138]
+	mi := &file_aether_proto_msgTypes[140]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17486,7 +17820,7 @@ func (x *ResolveAuthorityRequest) String() string {
 func (*ResolveAuthorityRequest) ProtoMessage() {}
 
 func (x *ResolveAuthorityRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[138]
+	mi := &file_aether_proto_msgTypes[140]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17499,7 +17833,7 @@ func (x *ResolveAuthorityRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveAuthorityRequest.ProtoReflect.Descriptor instead.
 func (*ResolveAuthorityRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{138}
+	return file_aether_proto_rawDescGZIP(), []int{140}
 }
 
 func (x *ResolveAuthorityRequest) GetRequestId() string {
@@ -17560,7 +17894,7 @@ type ResolveAuthorityResponse struct {
 
 func (x *ResolveAuthorityResponse) Reset() {
 	*x = ResolveAuthorityResponse{}
-	mi := &file_aether_proto_msgTypes[139]
+	mi := &file_aether_proto_msgTypes[141]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17572,7 +17906,7 @@ func (x *ResolveAuthorityResponse) String() string {
 func (*ResolveAuthorityResponse) ProtoMessage() {}
 
 func (x *ResolveAuthorityResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[139]
+	mi := &file_aether_proto_msgTypes[141]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17585,7 +17919,7 @@ func (x *ResolveAuthorityResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveAuthorityResponse.ProtoReflect.Descriptor instead.
 func (*ResolveAuthorityResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{139}
+	return file_aether_proto_rawDescGZIP(), []int{141}
 }
 
 func (x *ResolveAuthorityResponse) GetRequestId() string {
@@ -17632,7 +17966,7 @@ type ResolvedAuthority struct {
 
 func (x *ResolvedAuthority) Reset() {
 	*x = ResolvedAuthority{}
-	mi := &file_aether_proto_msgTypes[140]
+	mi := &file_aether_proto_msgTypes[142]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17644,7 +17978,7 @@ func (x *ResolvedAuthority) String() string {
 func (*ResolvedAuthority) ProtoMessage() {}
 
 func (x *ResolvedAuthority) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[140]
+	mi := &file_aether_proto_msgTypes[142]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17657,7 +17991,7 @@ func (x *ResolvedAuthority) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolvedAuthority.ProtoReflect.Descriptor instead.
 func (*ResolvedAuthority) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{140}
+	return file_aether_proto_rawDescGZIP(), []int{142}
 }
 
 func (x *ResolvedAuthority) GetActor() *PrincipalRef {
@@ -17704,7 +18038,7 @@ type AuthorityGrantInfo struct {
 
 func (x *AuthorityGrantInfo) Reset() {
 	*x = AuthorityGrantInfo{}
-	mi := &file_aether_proto_msgTypes[141]
+	mi := &file_aether_proto_msgTypes[143]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17716,7 +18050,7 @@ func (x *AuthorityGrantInfo) String() string {
 func (*AuthorityGrantInfo) ProtoMessage() {}
 
 func (x *AuthorityGrantInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[141]
+	mi := &file_aether_proto_msgTypes[143]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17729,7 +18063,7 @@ func (x *AuthorityGrantInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorityGrantInfo.ProtoReflect.Descriptor instead.
 func (*AuthorityGrantInfo) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{141}
+	return file_aether_proto_rawDescGZIP(), []int{143}
 }
 
 func (x *AuthorityGrantInfo) GetGrantId() string {
@@ -17822,7 +18156,7 @@ type ConnectionStatusRequest struct {
 
 func (x *ConnectionStatusRequest) Reset() {
 	*x = ConnectionStatusRequest{}
-	mi := &file_aether_proto_msgTypes[142]
+	mi := &file_aether_proto_msgTypes[144]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17834,7 +18168,7 @@ func (x *ConnectionStatusRequest) String() string {
 func (*ConnectionStatusRequest) ProtoMessage() {}
 
 func (x *ConnectionStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[142]
+	mi := &file_aether_proto_msgTypes[144]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17847,7 +18181,7 @@ func (x *ConnectionStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectionStatusRequest.ProtoReflect.Descriptor instead.
 func (*ConnectionStatusRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{142}
+	return file_aether_proto_rawDescGZIP(), []int{144}
 }
 
 func (x *ConnectionStatusRequest) GetRequestId() string {
@@ -17880,7 +18214,7 @@ type ConnectionStatusResponse struct {
 
 func (x *ConnectionStatusResponse) Reset() {
 	*x = ConnectionStatusResponse{}
-	mi := &file_aether_proto_msgTypes[143]
+	mi := &file_aether_proto_msgTypes[145]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17892,7 +18226,7 @@ func (x *ConnectionStatusResponse) String() string {
 func (*ConnectionStatusResponse) ProtoMessage() {}
 
 func (x *ConnectionStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[143]
+	mi := &file_aether_proto_msgTypes[145]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17905,7 +18239,7 @@ func (x *ConnectionStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectionStatusResponse.ProtoReflect.Descriptor instead.
 func (*ConnectionStatusResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{143}
+	return file_aether_proto_rawDescGZIP(), []int{145}
 }
 
 func (x *ConnectionStatusResponse) GetRequestId() string {
@@ -17971,7 +18305,7 @@ type TaskSubscriptionOperation struct {
 
 func (x *TaskSubscriptionOperation) Reset() {
 	*x = TaskSubscriptionOperation{}
-	mi := &file_aether_proto_msgTypes[144]
+	mi := &file_aether_proto_msgTypes[146]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17983,7 +18317,7 @@ func (x *TaskSubscriptionOperation) String() string {
 func (*TaskSubscriptionOperation) ProtoMessage() {}
 
 func (x *TaskSubscriptionOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[144]
+	mi := &file_aether_proto_msgTypes[146]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17996,7 +18330,7 @@ func (x *TaskSubscriptionOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskSubscriptionOperation.ProtoReflect.Descriptor instead.
 func (*TaskSubscriptionOperation) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{144}
+	return file_aether_proto_rawDescGZIP(), []int{146}
 }
 
 func (x *TaskSubscriptionOperation) GetOp() TaskSubscriptionOperation_OpType {
@@ -18057,7 +18391,7 @@ type TaskSubscriptionOperationResponse struct {
 
 func (x *TaskSubscriptionOperationResponse) Reset() {
 	*x = TaskSubscriptionOperationResponse{}
-	mi := &file_aether_proto_msgTypes[145]
+	mi := &file_aether_proto_msgTypes[147]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18069,7 +18403,7 @@ func (x *TaskSubscriptionOperationResponse) String() string {
 func (*TaskSubscriptionOperationResponse) ProtoMessage() {}
 
 func (x *TaskSubscriptionOperationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[145]
+	mi := &file_aether_proto_msgTypes[147]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18082,7 +18416,7 @@ func (x *TaskSubscriptionOperationResponse) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use TaskSubscriptionOperationResponse.ProtoReflect.Descriptor instead.
 func (*TaskSubscriptionOperationResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{145}
+	return file_aether_proto_rawDescGZIP(), []int{147}
 }
 
 func (x *TaskSubscriptionOperationResponse) GetSuccess() bool {
@@ -18144,7 +18478,7 @@ type TaskEvent struct {
 
 func (x *TaskEvent) Reset() {
 	*x = TaskEvent{}
-	mi := &file_aether_proto_msgTypes[146]
+	mi := &file_aether_proto_msgTypes[148]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18156,7 +18490,7 @@ func (x *TaskEvent) String() string {
 func (*TaskEvent) ProtoMessage() {}
 
 func (x *TaskEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[146]
+	mi := &file_aether_proto_msgTypes[148]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18169,7 +18503,7 @@ func (x *TaskEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskEvent.ProtoReflect.Descriptor instead.
 func (*TaskEvent) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{146}
+	return file_aether_proto_rawDescGZIP(), []int{148}
 }
 
 func (x *TaskEvent) GetTaskId() string {
@@ -18291,7 +18625,7 @@ type TaskStatusChangedEvent struct {
 
 func (x *TaskStatusChangedEvent) Reset() {
 	*x = TaskStatusChangedEvent{}
-	mi := &file_aether_proto_msgTypes[147]
+	mi := &file_aether_proto_msgTypes[149]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18303,7 +18637,7 @@ func (x *TaskStatusChangedEvent) String() string {
 func (*TaskStatusChangedEvent) ProtoMessage() {}
 
 func (x *TaskStatusChangedEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[147]
+	mi := &file_aether_proto_msgTypes[149]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18316,7 +18650,7 @@ func (x *TaskStatusChangedEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskStatusChangedEvent.ProtoReflect.Descriptor instead.
 func (*TaskStatusChangedEvent) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{147}
+	return file_aether_proto_rawDescGZIP(), []int{149}
 }
 
 func (x *TaskStatusChangedEvent) GetFromStatus() TaskStatus {
@@ -18354,7 +18688,7 @@ type TaskProgressEvent struct {
 
 func (x *TaskProgressEvent) Reset() {
 	*x = TaskProgressEvent{}
-	mi := &file_aether_proto_msgTypes[148]
+	mi := &file_aether_proto_msgTypes[150]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18366,7 +18700,7 @@ func (x *TaskProgressEvent) String() string {
 func (*TaskProgressEvent) ProtoMessage() {}
 
 func (x *TaskProgressEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[148]
+	mi := &file_aether_proto_msgTypes[150]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18379,7 +18713,7 @@ func (x *TaskProgressEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskProgressEvent.ProtoReflect.Descriptor instead.
 func (*TaskProgressEvent) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{148}
+	return file_aether_proto_rawDescGZIP(), []int{150}
 }
 
 func (x *TaskProgressEvent) GetState() string {
@@ -18424,7 +18758,7 @@ type TaskChildLifecycleEvent struct {
 
 func (x *TaskChildLifecycleEvent) Reset() {
 	*x = TaskChildLifecycleEvent{}
-	mi := &file_aether_proto_msgTypes[149]
+	mi := &file_aether_proto_msgTypes[151]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18436,7 +18770,7 @@ func (x *TaskChildLifecycleEvent) String() string {
 func (*TaskChildLifecycleEvent) ProtoMessage() {}
 
 func (x *TaskChildLifecycleEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[149]
+	mi := &file_aether_proto_msgTypes[151]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18449,7 +18783,7 @@ func (x *TaskChildLifecycleEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskChildLifecycleEvent.ProtoReflect.Descriptor instead.
 func (*TaskChildLifecycleEvent) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{149}
+	return file_aether_proto_rawDescGZIP(), []int{151}
 }
 
 func (x *TaskChildLifecycleEvent) GetChildTaskId() string {
@@ -18485,7 +18819,7 @@ type TaskAuthorityRequestEventRelay struct {
 
 func (x *TaskAuthorityRequestEventRelay) Reset() {
 	*x = TaskAuthorityRequestEventRelay{}
-	mi := &file_aether_proto_msgTypes[150]
+	mi := &file_aether_proto_msgTypes[152]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18497,7 +18831,7 @@ func (x *TaskAuthorityRequestEventRelay) String() string {
 func (*TaskAuthorityRequestEventRelay) ProtoMessage() {}
 
 func (x *TaskAuthorityRequestEventRelay) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[150]
+	mi := &file_aether_proto_msgTypes[152]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18510,7 +18844,7 @@ func (x *TaskAuthorityRequestEventRelay) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskAuthorityRequestEventRelay.ProtoReflect.Descriptor instead.
 func (*TaskAuthorityRequestEventRelay) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{150}
+	return file_aether_proto_rawDescGZIP(), []int{152}
 }
 
 func (x *TaskAuthorityRequestEventRelay) GetEvent() *AuthorityRequestEvent {
@@ -18540,7 +18874,7 @@ type ResourceAccessRequest struct {
 
 func (x *ResourceAccessRequest) Reset() {
 	*x = ResourceAccessRequest{}
-	mi := &file_aether_proto_msgTypes[151]
+	mi := &file_aether_proto_msgTypes[153]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18552,7 +18886,7 @@ func (x *ResourceAccessRequest) String() string {
 func (*ResourceAccessRequest) ProtoMessage() {}
 
 func (x *ResourceAccessRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[151]
+	mi := &file_aether_proto_msgTypes[153]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18565,7 +18899,7 @@ func (x *ResourceAccessRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceAccessRequest.ProtoReflect.Descriptor instead.
 func (*ResourceAccessRequest) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{151}
+	return file_aether_proto_rawDescGZIP(), []int{153}
 }
 
 func (x *ResourceAccessRequest) GetResourceType() string {
@@ -18638,7 +18972,7 @@ type AccessDecisionReceipt struct {
 
 func (x *AccessDecisionReceipt) Reset() {
 	*x = AccessDecisionReceipt{}
-	mi := &file_aether_proto_msgTypes[152]
+	mi := &file_aether_proto_msgTypes[154]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18650,7 +18984,7 @@ func (x *AccessDecisionReceipt) String() string {
 func (*AccessDecisionReceipt) ProtoMessage() {}
 
 func (x *AccessDecisionReceipt) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[152]
+	mi := &file_aether_proto_msgTypes[154]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18663,7 +18997,7 @@ func (x *AccessDecisionReceipt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AccessDecisionReceipt.ProtoReflect.Descriptor instead.
 func (*AccessDecisionReceipt) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{152}
+	return file_aether_proto_rawDescGZIP(), []int{154}
 }
 
 func (x *AccessDecisionReceipt) GetDecisionId() string {
@@ -18782,7 +19116,7 @@ type AccessCheckOperation struct {
 
 func (x *AccessCheckOperation) Reset() {
 	*x = AccessCheckOperation{}
-	mi := &file_aether_proto_msgTypes[153]
+	mi := &file_aether_proto_msgTypes[155]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18794,7 +19128,7 @@ func (x *AccessCheckOperation) String() string {
 func (*AccessCheckOperation) ProtoMessage() {}
 
 func (x *AccessCheckOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[153]
+	mi := &file_aether_proto_msgTypes[155]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18807,7 +19141,7 @@ func (x *AccessCheckOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AccessCheckOperation.ProtoReflect.Descriptor instead.
 func (*AccessCheckOperation) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{153}
+	return file_aether_proto_rawDescGZIP(), []int{155}
 }
 
 func (x *AccessCheckOperation) GetRequestId() string {
@@ -18843,7 +19177,7 @@ type AccessCheckResponse struct {
 
 func (x *AccessCheckResponse) Reset() {
 	*x = AccessCheckResponse{}
-	mi := &file_aether_proto_msgTypes[154]
+	mi := &file_aether_proto_msgTypes[156]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18855,7 +19189,7 @@ func (x *AccessCheckResponse) String() string {
 func (*AccessCheckResponse) ProtoMessage() {}
 
 func (x *AccessCheckResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[154]
+	mi := &file_aether_proto_msgTypes[156]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18868,7 +19202,7 @@ func (x *AccessCheckResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AccessCheckResponse.ProtoReflect.Descriptor instead.
 func (*AccessCheckResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{154}
+	return file_aether_proto_rawDescGZIP(), []int{156}
 }
 
 func (x *AccessCheckResponse) GetRequestId() string {
@@ -18910,7 +19244,7 @@ type BatchAccessCheckOperation struct {
 
 func (x *BatchAccessCheckOperation) Reset() {
 	*x = BatchAccessCheckOperation{}
-	mi := &file_aether_proto_msgTypes[155]
+	mi := &file_aether_proto_msgTypes[157]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18922,7 +19256,7 @@ func (x *BatchAccessCheckOperation) String() string {
 func (*BatchAccessCheckOperation) ProtoMessage() {}
 
 func (x *BatchAccessCheckOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[155]
+	mi := &file_aether_proto_msgTypes[157]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18935,7 +19269,7 @@ func (x *BatchAccessCheckOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchAccessCheckOperation.ProtoReflect.Descriptor instead.
 func (*BatchAccessCheckOperation) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{155}
+	return file_aether_proto_rawDescGZIP(), []int{157}
 }
 
 func (x *BatchAccessCheckOperation) GetRequestId() string {
@@ -18972,7 +19306,7 @@ type BatchAccessCheckResponse struct {
 
 func (x *BatchAccessCheckResponse) Reset() {
 	*x = BatchAccessCheckResponse{}
-	mi := &file_aether_proto_msgTypes[156]
+	mi := &file_aether_proto_msgTypes[158]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -18984,7 +19318,7 @@ func (x *BatchAccessCheckResponse) String() string {
 func (*BatchAccessCheckResponse) ProtoMessage() {}
 
 func (x *BatchAccessCheckResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aether_proto_msgTypes[156]
+	mi := &file_aether_proto_msgTypes[158]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -18997,7 +19331,7 @@ func (x *BatchAccessCheckResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchAccessCheckResponse.ProtoReflect.Descriptor instead.
 func (*BatchAccessCheckResponse) Descriptor() ([]byte, []int) {
-	return file_aether_proto_rawDescGZIP(), []int{156}
+	return file_aether_proto_rawDescGZIP(), []int{158}
 }
 
 func (x *BatchAccessCheckResponse) GetRequestId() string {
@@ -19383,7 +19717,7 @@ const file_aether_proto_rawDesc = "" +
 	"\n" +
 	"event_name\x18\x02 \x01(\tR\teventName\x126\n" +
 	"\von_statuses\x18\x03 \x03(\x0e2\x15.aether.v1.TaskStatusR\n" +
-	"onStatuses\"\xa0\n" +
+	"onStatuses\"\xd8\n" +
 	"\n" +
 	"\x11CreateTaskRequest\x12\x1b\n" +
 	"\ttask_type\x18\x01 \x01(\tR\btaskType\x12\x1c\n" +
@@ -19412,7 +19746,8 @@ const file_aether_proto_rawDesc = "" +
 	"\x10completion_event\x18\x13 \x01(\v2\x1e.aether.v1.TaskCompletionEventR\x0fcompletionEvent\x12$\n" +
 	"\x0eparent_task_id\x18\x14 \x01(\tR\fparentTaskId\x12R\n" +
 	"\x15target_offline_policy\x18\x15 \x01(\x0e2\x1e.aether.v1.TargetOfflinePolicyR\x13targetOfflinePolicy\x12K\n" +
-	"\"required_downstream_authority_hops\x18\x16 \x01(\rR\x1frequiredDownstreamAuthorityHops\x1aG\n" +
+	"\"required_downstream_authority_hops\x18\x16 \x01(\rR\x1frequiredDownstreamAuthorityHops\x126\n" +
+	"\x17originating_schedule_id\x18\x17 \x01(\tR\x15originatingScheduleId\x1aG\n" +
 	"\x19LaunchParamOverridesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a;\n" +
@@ -20239,7 +20574,7 @@ const file_aether_proto_rawDesc = "" +
 	"\x05roles\x18\x13 \x03(\v2\x16.aether.v1.ACLRoleInfoR\x05roles\x12B\n" +
 	"\rgroup_members\x18\x14 \x03(\v2\x1d.aether.v1.ACLGroupMemberInfoR\fgroupMembers\x12K\n" +
 	"\x10role_assignments\x18\x15 \x03(\v2 .aether.v1.ACLRoleAssignmentInfoR\x0froleAssignments\x12E\n" +
-	"\vexplanation\x18\x16 \x01(\v2#.aether.v1.ACLAccessExplanationInfoR\vexplanationJ\x04\b\a\x10\b\"\xb6\x06\n" +
+	"\vexplanation\x18\x16 \x01(\v2#.aether.v1.ACLAccessExplanationInfoR\vexplanationJ\x04\b\a\x10\b\"\xe8\x06\n" +
 	"\x17AuthorityGrantOperation\x129\n" +
 	"\x02op\x18\x01 \x01(\x0e2).aether.v1.AuthorityGrantOperation.OpTypeR\x02op\x12\x19\n" +
 	"\bgrant_id\x18\x02 \x01(\tR\agrantId\x12S\n" +
@@ -20250,7 +20585,9 @@ const file_aether_proto_rawDesc = "" +
 	"request_id\x18\x06 \x01(\tR\trequestId\x12G\n" +
 	"\flist_request\x18\a \x01(\v2$.aether.v1.AuthorityGrantListRequestR\vlistRequest\x12c\n" +
 	"\x16batch_exchange_request\x18\b \x01(\v2-.aether.v1.AuthorityGrantBatchExchangeRequestR\x14batchExchangeRequest\x12j\n" +
-	"\x19derive_for_target_request\x18\t \x01(\v2/.aether.v1.AuthorityGrantDeriveForTargetRequestR\x16deriveForTargetRequest\"\x98\x01\n" +
+	"\x19derive_for_target_request\x18\t \x01(\v2/.aether.v1.AuthorityGrantDeriveForTargetRequestR\x16deriveForTargetRequest\x120\n" +
+	"\x14workflow_schedule_id\x18\n" +
+	" \x01(\tR\x12workflowScheduleId\"\x98\x01\n" +
 	"\x06OpType\x12\f\n" +
 	"\bEXCHANGE\x10\x00\x12\n" +
 	"\n" +
@@ -20585,7 +20922,30 @@ const file_aether_proto_rawDesc = "" +
 	"\x04kind\x18\f \x01(\x0e2\x17.aether.v1.ProgressKindR\x04kind\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x98\x06\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf2\x03\n" +
+	"\x1eWorkflowScheduleAuthorityScope\x12'\n" +
+	"\x0fworkspace_scope\x18\x01 \x03(\tR\x0eworkspaceScope\x12U\n" +
+	"\x0eresource_scope\x18\x02 \x03(\v2..aether.v1.ACLAuthorityGrantResourceScopeEntryR\rresourceScope\x12'\n" +
+	"\x0foperation_scope\x18\x03 \x03(\tR\x0eoperationScope\x12(\n" +
+	"\x10max_access_level\x18\x04 \x01(\x05R\x0emaxAccessLevel\x12\x1d\n" +
+	"\n" +
+	"expires_at\x18\x05 \x01(\x03R\texpiresAt\x12'\n" +
+	"\x0frenewable_until\x18\x06 \x01(\x03R\x0erenewableUntil\x12?\n" +
+	"\x1crequired_task_authority_hops\x18\a \x01(\rR\x19requiredTaskAuthorityHops\x12M\n" +
+	"\rlifetime_mode\x18\b \x01(\x0e2(.aether.v1.WorkflowAuthorityLifetimeModeR\flifetimeMode\x12%\n" +
+	"\x0epolicy_version\x18\t \x01(\rR\rpolicyVersion\"\x87\x04\n" +
+	"\x16WorkflowRequestContext\x12-\n" +
+	"\x05actor\x18\x01 \x01(\v2\x17.aether.v1.PrincipalRefR\x05actor\x121\n" +
+	"\asubject\x18\x02 \x01(\v2\x17.aether.v1.PrincipalRefR\asubject\x12(\n" +
+	"\x10actor_session_id\x18\x03 \x01(\tR\x0eactorSessionId\x12V\n" +
+	"\x16schedule_authorization\x18\x04 \x01(\v2\x1f.aether.v1.AuthorizationContextR\x15scheduleAuthorization\x12\"\n" +
+	"\rroot_grant_id\x18\x05 \x01(\tR\vrootGrantId\x12&\n" +
+	"\x0fsource_grant_id\x18\x06 \x01(\tR\rsourceGrantId\x12\"\n" +
+	"\rexpires_at_ms\x18\a \x01(\x03R\vexpiresAtMs\x12#\n" +
+	"\rpolicy_digest\x18\b \x01(\tR\fpolicyDigest\x12M\n" +
+	"\rlifetime_mode\x18\t \x01(\x0e2(.aether.v1.WorkflowAuthorityLifetimeModeR\flifetimeMode\x12%\n" +
+	"\x0epolicy_version\x18\n" +
+	" \x01(\rR\rpolicyVersion\"\x90\b\n" +
 	"\x11WorkflowOperation\x123\n" +
 	"\x02op\x18\x01 \x01(\x0e2#.aether.v1.WorkflowOperation.OpTypeR\x02op\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12!\n" +
@@ -20594,7 +20954,11 @@ const file_aether_proto_rawDesc = "" +
 	"\x04data\x18\x05 \x01(\fR\x04data\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x06 \x01(\tR\trequestId\x12#\n" +
-	"\rstatus_filter\x18\a \x01(\tR\fstatusFilter\"\xa4\x04\n" +
+	"\rstatus_filter\x18\a \x01(\tR\fstatusFilter\x12E\n" +
+	"\rauthorization\x18\b \x01(\v2\x1f.aether.v1.AuthorizationContextR\rauthorization\x12c\n" +
+	"\x18schedule_authority_scope\x18\t \x01(\v2).aether.v1.WorkflowScheduleAuthorityScopeR\x16scheduleAuthorityScope\x12J\n" +
+	"\x0frequest_context\x18\n" +
+	" \x01(\v2!.aether.v1.WorkflowRequestContextR\x0erequestContext\"\xa4\x04\n" +
 	"\x06OpType\x12\x0e\n" +
 	"\n" +
 	"LIST_RULES\x10\x00\x12\f\n" +
@@ -21080,7 +21444,10 @@ const file_aether_proto_rawDesc = "" +
 	"\x19PROGRESS_KIND_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12PROGRESS_KIND_CHAT\x10\x01\x12\x15\n" +
 	"\x11PROGRESS_KIND_APP\x10\x02\x12\x16\n" +
-	"\x12PROGRESS_KIND_TASK\x10\x032X\n" +
+	"\x12PROGRESS_KIND_TASK\x10\x03*v\n" +
+	"\x1dWorkflowAuthorityLifetimeMode\x12,\n" +
+	"(WORKFLOW_AUTHORITY_LIFETIME_SOURCE_BOUND\x10\x00\x12'\n" +
+	"#WORKFLOW_AUTHORITY_LIFETIME_DURABLE\x10\x012X\n" +
 	"\rAetherGateway\x12G\n" +
 	"\aConnect\x12\x1a.aether.v1.UpstreamMessage\x1a\x1c.aether.v1.DownstreamMessage(\x010\x01B-Z+github.com/scitrera/aether/api/proto;aetherb\x06proto3"
 
@@ -21096,8 +21463,8 @@ func file_aether_proto_rawDescGZIP() []byte {
 	return file_aether_proto_rawDescData
 }
 
-var file_aether_proto_enumTypes = make([]protoimpl.EnumInfo, 35)
-var file_aether_proto_msgTypes = make([]protoimpl.MessageInfo, 195)
+var file_aether_proto_enumTypes = make([]protoimpl.EnumInfo, 36)
+var file_aether_proto_msgTypes = make([]protoimpl.MessageInfo, 197)
 var file_aether_proto_goTypes = []any{
 	(MessageType)(0),                             // 0: aether.v1.MessageType
 	(PrincipalType)(0),                           // 1: aether.v1.PrincipalType
@@ -21113,568 +21480,580 @@ var file_aether_proto_goTypes = []any{
 	(WaitReason)(0),                              // 11: aether.v1.WaitReason
 	(AuthorityRequestStatus)(0),                  // 12: aether.v1.AuthorityRequestStatus
 	(ProgressKind)(0),                            // 13: aether.v1.ProgressKind
-	(KVOperation_OpType)(0),                      // 14: aether.v1.KVOperation.OpType
-	(KVOperation_Scope)(0),                       // 15: aether.v1.KVOperation.Scope
-	(Signal_SignalType)(0),                       // 16: aether.v1.Signal.SignalType
-	(CheckpointOperation_OpType)(0),              // 17: aether.v1.CheckpointOperation.OpType
-	(AdminQuery_OpType)(0),                       // 18: aether.v1.AdminQuery.OpType
-	(SessionOperation_OpType)(0),                 // 19: aether.v1.SessionOperation.OpType
-	(TaskQuery_OpType)(0),                        // 20: aether.v1.TaskQuery.OpType
-	(TaskOperation_OpType)(0),                    // 21: aether.v1.TaskOperation.OpType
-	(WorkspaceOperation_OpType)(0),               // 22: aether.v1.WorkspaceOperation.OpType
-	(AgentOperation_OpType)(0),                   // 23: aether.v1.AgentOperation.OpType
-	(ACLOperation_OpType)(0),                     // 24: aether.v1.ACLOperation.OpType
-	(AuthorityGrantOperation_OpType)(0),          // 25: aether.v1.AuthorityGrantOperation.OpType
-	(ResolveAuthorityRequestPayload_Decision)(0), // 26: aether.v1.ResolveAuthorityRequestPayload.Decision
-	(AuthorityRequestOperation_OpType)(0),        // 27: aether.v1.AuthorityRequestOperation.OpType
-	(AuthorityRequestEvent_EventType)(0),         // 28: aether.v1.AuthorityRequestEvent.EventType
-	(TokenOperation_OpType)(0),                   // 29: aether.v1.TokenOperation.OpType
-	(WorkflowOperation_OpType)(0),                // 30: aether.v1.WorkflowOperation.OpType
-	(ProxyError_Kind)(0),                         // 31: aether.v1.ProxyError.Kind
-	(TunnelOpen_Protocol)(0),                     // 32: aether.v1.TunnelOpen.Protocol
-	(TunnelClose_Reason)(0),                      // 33: aether.v1.TunnelClose.Reason
-	(TaskSubscriptionOperation_OpType)(0),        // 34: aether.v1.TaskSubscriptionOperation.OpType
-	(*UpstreamMessage)(nil),                      // 35: aether.v1.UpstreamMessage
-	(*DownstreamMessage)(nil),                    // 36: aether.v1.DownstreamMessage
-	(*TaskHibernated)(nil),                       // 37: aether.v1.TaskHibernated
-	(*ConnectionAck)(nil),                        // 38: aether.v1.ConnectionAck
-	(*InitConnection)(nil),                       // 39: aether.v1.InitConnection
-	(*BuildInfo)(nil),                            // 40: aether.v1.BuildInfo
-	(*ExtensionDeclaration)(nil),                 // 41: aether.v1.ExtensionDeclaration
-	(*NegotiatedExtension)(nil),                  // 42: aether.v1.NegotiatedExtension
-	(*WorkflowEngineIdentity)(nil),               // 43: aether.v1.WorkflowEngineIdentity
-	(*MetricsBridgeIdentity)(nil),                // 44: aether.v1.MetricsBridgeIdentity
-	(*OrchestratorIdentity)(nil),                 // 45: aether.v1.OrchestratorIdentity
-	(*BridgeIdentity)(nil),                       // 46: aether.v1.BridgeIdentity
-	(*ServiceIdentity)(nil),                      // 47: aether.v1.ServiceIdentity
-	(*AgentIdentity)(nil),                        // 48: aether.v1.AgentIdentity
-	(*TaskIdentity)(nil),                         // 49: aether.v1.TaskIdentity
-	(*UserIdentity)(nil),                         // 50: aether.v1.UserIdentity
-	(*PrincipalRef)(nil),                         // 51: aether.v1.PrincipalRef
-	(*AuthorizationContext)(nil),                 // 52: aether.v1.AuthorizationContext
-	(*ResolvedAuthorityInfo)(nil),                // 53: aether.v1.ResolvedAuthorityInfo
-	(*SendMessage)(nil),                          // 54: aether.v1.SendMessage
-	(*Metric)(nil),                               // 55: aether.v1.Metric
-	(*MetricEntry)(nil),                          // 56: aether.v1.MetricEntry
-	(*SwitchWorkspace)(nil),                      // 57: aether.v1.SwitchWorkspace
-	(*KVOperation)(nil),                          // 58: aether.v1.KVOperation
-	(*KVResponse)(nil),                           // 59: aether.v1.KVResponse
-	(*IncomingMessage)(nil),                      // 60: aether.v1.IncomingMessage
-	(*ForwardedAuthorization)(nil),               // 61: aether.v1.ForwardedAuthorization
-	(*ConfigSnapshot)(nil),                       // 62: aether.v1.ConfigSnapshot
-	(*Signal)(nil),                               // 63: aether.v1.Signal
-	(*ErrorResponse)(nil),                        // 64: aether.v1.ErrorResponse
-	(*RetryPolicy)(nil),                          // 65: aether.v1.RetryPolicy
-	(*TaskCompletionEvent)(nil),                  // 66: aether.v1.TaskCompletionEvent
-	(*CreateTaskRequest)(nil),                    // 67: aether.v1.CreateTaskRequest
-	(*CreateTaskResponse)(nil),                   // 68: aether.v1.CreateTaskResponse
-	(*TaskAssignment)(nil),                       // 69: aether.v1.TaskAssignment
-	(*CheckpointOperation)(nil),                  // 70: aether.v1.CheckpointOperation
-	(*CheckpointResponse)(nil),                   // 71: aether.v1.CheckpointResponse
-	(*AdminQuery)(nil),                           // 72: aether.v1.AdminQuery
-	(*ConnectionFilter)(nil),                     // 73: aether.v1.ConnectionFilter
-	(*ConnectionInfo)(nil),                       // 74: aether.v1.ConnectionInfo
-	(*AdminResponse)(nil),                        // 75: aether.v1.AdminResponse
-	(*HealthInfo)(nil),                           // 76: aether.v1.HealthInfo
-	(*HealthCheck)(nil),                          // 77: aether.v1.HealthCheck
-	(*GatewayInfo)(nil),                          // 78: aether.v1.GatewayInfo
-	(*GatewayStats)(nil),                         // 79: aether.v1.GatewayStats
-	(*SessionOperation)(nil),                     // 80: aether.v1.SessionOperation
-	(*SessionOperationResponse)(nil),             // 81: aether.v1.SessionOperationResponse
-	(*TaskQuery)(nil),                            // 82: aether.v1.TaskQuery
-	(*TaskFilter)(nil),                           // 83: aether.v1.TaskFilter
-	(*TaskInfo)(nil),                             // 84: aether.v1.TaskInfo
-	(*TaskQueryResponse)(nil),                    // 85: aether.v1.TaskQueryResponse
-	(*TaskOperation)(nil),                        // 86: aether.v1.TaskOperation
-	(*WaitSpec)(nil),                             // 87: aether.v1.WaitSpec
-	(*HibernationDescriptor)(nil),                // 88: aether.v1.HibernationDescriptor
-	(*TaskOperationResponse)(nil),                // 89: aether.v1.TaskOperationResponse
-	(*WorkspaceOperation)(nil),                   // 90: aether.v1.WorkspaceOperation
-	(*WorkspaceFilter)(nil),                      // 91: aether.v1.WorkspaceFilter
-	(*WorkspaceInfo)(nil),                        // 92: aether.v1.WorkspaceInfo
-	(*WorkspaceResponse)(nil),                    // 93: aether.v1.WorkspaceResponse
-	(*MessageFlowInfo)(nil),                      // 94: aether.v1.MessageFlowInfo
-	(*FlowNode)(nil),                             // 95: aether.v1.FlowNode
-	(*FlowEdge)(nil),                             // 96: aether.v1.FlowEdge
-	(*AgentOperation)(nil),                       // 97: aether.v1.AgentOperation
-	(*AgentFilter)(nil),                          // 98: aether.v1.AgentFilter
-	(*AgentRegistrationInfo)(nil),                // 99: aether.v1.AgentRegistrationInfo
-	(*AgentResourceSchemaEntry)(nil),             // 100: aether.v1.AgentResourceSchemaEntry
-	(*AgentLaunchParams)(nil),                    // 101: aether.v1.AgentLaunchParams
-	(*OrchestratorInfo)(nil),                     // 102: aether.v1.OrchestratorInfo
-	(*AgentLaunchResult)(nil),                    // 103: aether.v1.AgentLaunchResult
-	(*AgentResponse)(nil),                        // 104: aether.v1.AgentResponse
-	(*ACLOperation)(nil),                         // 105: aether.v1.ACLOperation
-	(*ACLRuleFilter)(nil),                        // 106: aether.v1.ACLRuleFilter
-	(*ACLAuditFilter)(nil),                       // 107: aether.v1.ACLAuditFilter
-	(*ACLGrantRequest)(nil),                      // 108: aether.v1.ACLGrantRequest
-	(*ACLSetFallbackRequest)(nil),                // 109: aether.v1.ACLSetFallbackRequest
-	(*ACLAuthorityGrantFilter)(nil),              // 110: aether.v1.ACLAuthorityGrantFilter
-	(*ACLAuthorityGrantResourceScopeEntry)(nil),  // 111: aether.v1.ACLAuthorityGrantResourceScopeEntry
-	(*ACLAuthorityGrantRequest)(nil),             // 112: aether.v1.ACLAuthorityGrantRequest
-	(*ACLRenewAuthorityGrantRequest)(nil),        // 113: aether.v1.ACLRenewAuthorityGrantRequest
-	(*ACLRuleInfo)(nil),                          // 114: aether.v1.ACLRuleInfo
-	(*ACLFallbackPolicyInfo)(nil),                // 115: aether.v1.ACLFallbackPolicyInfo
-	(*ACLAuditEntryInfo)(nil),                    // 116: aether.v1.ACLAuditEntryInfo
-	(*ACLAuthorityGrantInfo)(nil),                // 117: aether.v1.ACLAuthorityGrantInfo
-	(*ACLCleanupResult)(nil),                     // 118: aether.v1.ACLCleanupResult
-	(*ACLGroupRequest)(nil),                      // 119: aether.v1.ACLGroupRequest
-	(*ACLRoleRequest)(nil),                       // 120: aether.v1.ACLRoleRequest
-	(*ACLGroupMemberRequest)(nil),                // 121: aether.v1.ACLGroupMemberRequest
-	(*ACLRoleAssignmentRequest)(nil),             // 122: aether.v1.ACLRoleAssignmentRequest
-	(*ACLGroupInfo)(nil),                         // 123: aether.v1.ACLGroupInfo
-	(*ACLRoleInfo)(nil),                          // 124: aether.v1.ACLRoleInfo
-	(*ACLGroupMemberInfo)(nil),                   // 125: aether.v1.ACLGroupMemberInfo
-	(*ACLRoleAssignmentInfo)(nil),                // 126: aether.v1.ACLRoleAssignmentInfo
-	(*ACLAccessContributionInfo)(nil),            // 127: aether.v1.ACLAccessContributionInfo
-	(*ACLAccessExplanationInfo)(nil),             // 128: aether.v1.ACLAccessExplanationInfo
-	(*ACLResponse)(nil),                          // 129: aether.v1.ACLResponse
-	(*AuthorityGrantOperation)(nil),              // 130: aether.v1.AuthorityGrantOperation
-	(*AuthorityGrantExchangeRequest)(nil),        // 131: aether.v1.AuthorityGrantExchangeRequest
-	(*AuthorityGrantDeriveRequest)(nil),          // 132: aether.v1.AuthorityGrantDeriveRequest
-	(*AuthorityGrantResponse)(nil),               // 133: aether.v1.AuthorityGrantResponse
-	(*AuthorityGrantListRequest)(nil),            // 134: aether.v1.AuthorityGrantListRequest
-	(*AuthorityGrantBatchExchangeRequest)(nil),   // 135: aether.v1.AuthorityGrantBatchExchangeRequest
-	(*AuthorityGrantDeriveForTargetRequest)(nil), // 136: aether.v1.AuthorityGrantDeriveForTargetRequest
-	(*AuthorityIdentity)(nil),                    // 137: aether.v1.AuthorityIdentity
-	(*AuthoritySpan)(nil),                        // 138: aether.v1.AuthoritySpan
-	(*AuthorityGrantRevocation)(nil),             // 139: aether.v1.AuthorityGrantRevocation
-	(*AuthorityRequestRoutingTarget)(nil),        // 140: aether.v1.AuthorityRequestRoutingTarget
-	(*AuthorityRequestResourceScopeEntry)(nil),   // 141: aether.v1.AuthorityRequestResourceScopeEntry
-	(*AuthorityRequest)(nil),                     // 142: aether.v1.AuthorityRequest
-	(*CreateAuthorityRequestPayload)(nil),        // 143: aether.v1.CreateAuthorityRequestPayload
-	(*ResolveAuthorityRequestPayload)(nil),       // 144: aether.v1.ResolveAuthorityRequestPayload
-	(*AuthorityRequestListFilter)(nil),           // 145: aether.v1.AuthorityRequestListFilter
-	(*AuthorityRequestOperation)(nil),            // 146: aether.v1.AuthorityRequestOperation
-	(*AuthorityRequestOperationResponse)(nil),    // 147: aether.v1.AuthorityRequestOperationResponse
-	(*AuthorityRequestEvent)(nil),                // 148: aether.v1.AuthorityRequestEvent
-	(*TokenOperation)(nil),                       // 149: aether.v1.TokenOperation
-	(*TokenCreateRequest)(nil),                   // 150: aether.v1.TokenCreateRequest
-	(*TokenFilter)(nil),                          // 151: aether.v1.TokenFilter
-	(*TokenInfo)(nil),                            // 152: aether.v1.TokenInfo
-	(*TokenResponse)(nil),                        // 153: aether.v1.TokenResponse
-	(*ProgressReport)(nil),                       // 154: aether.v1.ProgressReport
-	(*ProgressStep)(nil),                         // 155: aether.v1.ProgressStep
-	(*ProgressUpdate)(nil),                       // 156: aether.v1.ProgressUpdate
-	(*WorkflowOperation)(nil),                    // 157: aether.v1.WorkflowOperation
-	(*WorkflowResponse)(nil),                     // 158: aether.v1.WorkflowResponse
-	(*MessageEnvelope)(nil),                      // 159: aether.v1.MessageEnvelope
-	(*AuditQuery)(nil),                           // 160: aether.v1.AuditQuery
-	(*AuditQueryResponse)(nil),                   // 161: aether.v1.AuditQueryResponse
-	(*AuditEntry)(nil),                           // 162: aether.v1.AuditEntry
-	(*SubmitAuditEventRequest)(nil),              // 163: aether.v1.SubmitAuditEventRequest
-	(*SubmitAuditEventResponse)(nil),             // 164: aether.v1.SubmitAuditEventResponse
-	(*ProxyHttpRequest)(nil),                     // 165: aether.v1.ProxyHttpRequest
-	(*ProxyHttpResponse)(nil),                    // 166: aether.v1.ProxyHttpResponse
-	(*ProxyHttpBodyChunk)(nil),                   // 167: aether.v1.ProxyHttpBodyChunk
-	(*ProxyError)(nil),                           // 168: aether.v1.ProxyError
-	(*TunnelOpen)(nil),                           // 169: aether.v1.TunnelOpen
-	(*TunnelData)(nil),                           // 170: aether.v1.TunnelData
-	(*TunnelClose)(nil),                          // 171: aether.v1.TunnelClose
-	(*TunnelAck)(nil),                            // 172: aether.v1.TunnelAck
-	(*ResolveAuthorityRequest)(nil),              // 173: aether.v1.ResolveAuthorityRequest
-	(*ResolveAuthorityResponse)(nil),             // 174: aether.v1.ResolveAuthorityResponse
-	(*ResolvedAuthority)(nil),                    // 175: aether.v1.ResolvedAuthority
-	(*AuthorityGrantInfo)(nil),                   // 176: aether.v1.AuthorityGrantInfo
-	(*ConnectionStatusRequest)(nil),              // 177: aether.v1.ConnectionStatusRequest
-	(*ConnectionStatusResponse)(nil),             // 178: aether.v1.ConnectionStatusResponse
-	(*TaskSubscriptionOperation)(nil),            // 179: aether.v1.TaskSubscriptionOperation
-	(*TaskSubscriptionOperationResponse)(nil),    // 180: aether.v1.TaskSubscriptionOperationResponse
-	(*TaskEvent)(nil),                            // 181: aether.v1.TaskEvent
-	(*TaskStatusChangedEvent)(nil),               // 182: aether.v1.TaskStatusChangedEvent
-	(*TaskProgressEvent)(nil),                    // 183: aether.v1.TaskProgressEvent
-	(*TaskChildLifecycleEvent)(nil),              // 184: aether.v1.TaskChildLifecycleEvent
-	(*TaskAuthorityRequestEventRelay)(nil),       // 185: aether.v1.TaskAuthorityRequestEventRelay
-	(*ResourceAccessRequest)(nil),                // 186: aether.v1.ResourceAccessRequest
-	(*AccessDecisionReceipt)(nil),                // 187: aether.v1.AccessDecisionReceipt
-	(*AccessCheckOperation)(nil),                 // 188: aether.v1.AccessCheckOperation
-	(*AccessCheckResponse)(nil),                  // 189: aether.v1.AccessCheckResponse
-	(*BatchAccessCheckOperation)(nil),            // 190: aether.v1.BatchAccessCheckOperation
-	(*BatchAccessCheckResponse)(nil),             // 191: aether.v1.BatchAccessCheckResponse
-	nil,                                          // 192: aether.v1.InitConnection.CredentialsEntry
-	nil,                                          // 193: aether.v1.Metric.MetadataEntry
-	nil,                                          // 194: aether.v1.KVResponse.KvMapEntry
-	nil,                                          // 195: aether.v1.ConfigSnapshot.KvEntry
-	nil,                                          // 196: aether.v1.ConfigSnapshot.GlobalKvEntry
-	nil,                                          // 197: aether.v1.ConfigSnapshot.TaskContextEntry
-	nil,                                          // 198: aether.v1.ConfigSnapshot.WorkspaceExclusiveKvEntry
-	nil,                                          // 199: aether.v1.ConfigSnapshot.GlobalExclusiveKvEntry
-	nil,                                          // 200: aether.v1.CreateTaskRequest.LaunchParamOverridesEntry
-	nil,                                          // 201: aether.v1.CreateTaskRequest.MetadataEntry
-	nil,                                          // 202: aether.v1.TaskAssignment.MetadataEntry
-	nil,                                          // 203: aether.v1.TaskAssignment.LaunchParamsEntry
-	nil,                                          // 204: aether.v1.HealthInfo.ChecksEntry
-	nil,                                          // 205: aether.v1.TaskInfo.MetadataEntry
-	nil,                                          // 206: aether.v1.WaitSpec.InputMatchEntry
-	nil,                                          // 207: aether.v1.WorkspaceInfo.MetadataEntry
-	nil,                                          // 208: aether.v1.AgentRegistrationInfo.LaunchParamsEntry
-	nil,                                          // 209: aether.v1.AgentRegistrationInfo.CapabilitiesEntry
-	nil,                                          // 210: aether.v1.AgentLaunchParams.ParamOverridesEntry
-	nil,                                          // 211: aether.v1.ACLAuthorityGrantRequest.MetadataEntry
-	nil,                                          // 212: aether.v1.ACLAuditEntryInfo.MetadataEntry
-	nil,                                          // 213: aether.v1.ACLAuthorityGrantInfo.MetadataEntry
-	nil,                                          // 214: aether.v1.ACLGroupRequest.MetadataEntry
-	nil,                                          // 215: aether.v1.ACLRoleRequest.MetadataEntry
-	nil,                                          // 216: aether.v1.ACLGroupInfo.MetadataEntry
-	nil,                                          // 217: aether.v1.ACLRoleInfo.MetadataEntry
-	nil,                                          // 218: aether.v1.AuthorityGrantExchangeRequest.MetadataEntry
-	nil,                                          // 219: aether.v1.AuthorityGrantDeriveRequest.MetadataEntry
-	nil,                                          // 220: aether.v1.AuthorityRequest.MetadataEntry
-	nil,                                          // 221: aether.v1.CreateAuthorityRequestPayload.MetadataEntry
-	nil,                                          // 222: aether.v1.ProgressReport.MetadataEntry
-	nil,                                          // 223: aether.v1.ProgressUpdate.MetadataEntry
-	nil,                                          // 224: aether.v1.MessageEnvelope.MetadataEntry
-	nil,                                          // 225: aether.v1.SubmitAuditEventRequest.MetadataEntry
-	nil,                                          // 226: aether.v1.ProxyHttpRequest.HeadersEntry
-	nil,                                          // 227: aether.v1.ProxyHttpResponse.HeadersEntry
-	nil,                                          // 228: aether.v1.TunnelOpen.MetadataEntry
-	nil,                                          // 229: aether.v1.TaskProgressEvent.MetadataEntry
+	(WorkflowAuthorityLifetimeMode)(0),           // 14: aether.v1.WorkflowAuthorityLifetimeMode
+	(KVOperation_OpType)(0),                      // 15: aether.v1.KVOperation.OpType
+	(KVOperation_Scope)(0),                       // 16: aether.v1.KVOperation.Scope
+	(Signal_SignalType)(0),                       // 17: aether.v1.Signal.SignalType
+	(CheckpointOperation_OpType)(0),              // 18: aether.v1.CheckpointOperation.OpType
+	(AdminQuery_OpType)(0),                       // 19: aether.v1.AdminQuery.OpType
+	(SessionOperation_OpType)(0),                 // 20: aether.v1.SessionOperation.OpType
+	(TaskQuery_OpType)(0),                        // 21: aether.v1.TaskQuery.OpType
+	(TaskOperation_OpType)(0),                    // 22: aether.v1.TaskOperation.OpType
+	(WorkspaceOperation_OpType)(0),               // 23: aether.v1.WorkspaceOperation.OpType
+	(AgentOperation_OpType)(0),                   // 24: aether.v1.AgentOperation.OpType
+	(ACLOperation_OpType)(0),                     // 25: aether.v1.ACLOperation.OpType
+	(AuthorityGrantOperation_OpType)(0),          // 26: aether.v1.AuthorityGrantOperation.OpType
+	(ResolveAuthorityRequestPayload_Decision)(0), // 27: aether.v1.ResolveAuthorityRequestPayload.Decision
+	(AuthorityRequestOperation_OpType)(0),        // 28: aether.v1.AuthorityRequestOperation.OpType
+	(AuthorityRequestEvent_EventType)(0),         // 29: aether.v1.AuthorityRequestEvent.EventType
+	(TokenOperation_OpType)(0),                   // 30: aether.v1.TokenOperation.OpType
+	(WorkflowOperation_OpType)(0),                // 31: aether.v1.WorkflowOperation.OpType
+	(ProxyError_Kind)(0),                         // 32: aether.v1.ProxyError.Kind
+	(TunnelOpen_Protocol)(0),                     // 33: aether.v1.TunnelOpen.Protocol
+	(TunnelClose_Reason)(0),                      // 34: aether.v1.TunnelClose.Reason
+	(TaskSubscriptionOperation_OpType)(0),        // 35: aether.v1.TaskSubscriptionOperation.OpType
+	(*UpstreamMessage)(nil),                      // 36: aether.v1.UpstreamMessage
+	(*DownstreamMessage)(nil),                    // 37: aether.v1.DownstreamMessage
+	(*TaskHibernated)(nil),                       // 38: aether.v1.TaskHibernated
+	(*ConnectionAck)(nil),                        // 39: aether.v1.ConnectionAck
+	(*InitConnection)(nil),                       // 40: aether.v1.InitConnection
+	(*BuildInfo)(nil),                            // 41: aether.v1.BuildInfo
+	(*ExtensionDeclaration)(nil),                 // 42: aether.v1.ExtensionDeclaration
+	(*NegotiatedExtension)(nil),                  // 43: aether.v1.NegotiatedExtension
+	(*WorkflowEngineIdentity)(nil),               // 44: aether.v1.WorkflowEngineIdentity
+	(*MetricsBridgeIdentity)(nil),                // 45: aether.v1.MetricsBridgeIdentity
+	(*OrchestratorIdentity)(nil),                 // 46: aether.v1.OrchestratorIdentity
+	(*BridgeIdentity)(nil),                       // 47: aether.v1.BridgeIdentity
+	(*ServiceIdentity)(nil),                      // 48: aether.v1.ServiceIdentity
+	(*AgentIdentity)(nil),                        // 49: aether.v1.AgentIdentity
+	(*TaskIdentity)(nil),                         // 50: aether.v1.TaskIdentity
+	(*UserIdentity)(nil),                         // 51: aether.v1.UserIdentity
+	(*PrincipalRef)(nil),                         // 52: aether.v1.PrincipalRef
+	(*AuthorizationContext)(nil),                 // 53: aether.v1.AuthorizationContext
+	(*ResolvedAuthorityInfo)(nil),                // 54: aether.v1.ResolvedAuthorityInfo
+	(*SendMessage)(nil),                          // 55: aether.v1.SendMessage
+	(*Metric)(nil),                               // 56: aether.v1.Metric
+	(*MetricEntry)(nil),                          // 57: aether.v1.MetricEntry
+	(*SwitchWorkspace)(nil),                      // 58: aether.v1.SwitchWorkspace
+	(*KVOperation)(nil),                          // 59: aether.v1.KVOperation
+	(*KVResponse)(nil),                           // 60: aether.v1.KVResponse
+	(*IncomingMessage)(nil),                      // 61: aether.v1.IncomingMessage
+	(*ForwardedAuthorization)(nil),               // 62: aether.v1.ForwardedAuthorization
+	(*ConfigSnapshot)(nil),                       // 63: aether.v1.ConfigSnapshot
+	(*Signal)(nil),                               // 64: aether.v1.Signal
+	(*ErrorResponse)(nil),                        // 65: aether.v1.ErrorResponse
+	(*RetryPolicy)(nil),                          // 66: aether.v1.RetryPolicy
+	(*TaskCompletionEvent)(nil),                  // 67: aether.v1.TaskCompletionEvent
+	(*CreateTaskRequest)(nil),                    // 68: aether.v1.CreateTaskRequest
+	(*CreateTaskResponse)(nil),                   // 69: aether.v1.CreateTaskResponse
+	(*TaskAssignment)(nil),                       // 70: aether.v1.TaskAssignment
+	(*CheckpointOperation)(nil),                  // 71: aether.v1.CheckpointOperation
+	(*CheckpointResponse)(nil),                   // 72: aether.v1.CheckpointResponse
+	(*AdminQuery)(nil),                           // 73: aether.v1.AdminQuery
+	(*ConnectionFilter)(nil),                     // 74: aether.v1.ConnectionFilter
+	(*ConnectionInfo)(nil),                       // 75: aether.v1.ConnectionInfo
+	(*AdminResponse)(nil),                        // 76: aether.v1.AdminResponse
+	(*HealthInfo)(nil),                           // 77: aether.v1.HealthInfo
+	(*HealthCheck)(nil),                          // 78: aether.v1.HealthCheck
+	(*GatewayInfo)(nil),                          // 79: aether.v1.GatewayInfo
+	(*GatewayStats)(nil),                         // 80: aether.v1.GatewayStats
+	(*SessionOperation)(nil),                     // 81: aether.v1.SessionOperation
+	(*SessionOperationResponse)(nil),             // 82: aether.v1.SessionOperationResponse
+	(*TaskQuery)(nil),                            // 83: aether.v1.TaskQuery
+	(*TaskFilter)(nil),                           // 84: aether.v1.TaskFilter
+	(*TaskInfo)(nil),                             // 85: aether.v1.TaskInfo
+	(*TaskQueryResponse)(nil),                    // 86: aether.v1.TaskQueryResponse
+	(*TaskOperation)(nil),                        // 87: aether.v1.TaskOperation
+	(*WaitSpec)(nil),                             // 88: aether.v1.WaitSpec
+	(*HibernationDescriptor)(nil),                // 89: aether.v1.HibernationDescriptor
+	(*TaskOperationResponse)(nil),                // 90: aether.v1.TaskOperationResponse
+	(*WorkspaceOperation)(nil),                   // 91: aether.v1.WorkspaceOperation
+	(*WorkspaceFilter)(nil),                      // 92: aether.v1.WorkspaceFilter
+	(*WorkspaceInfo)(nil),                        // 93: aether.v1.WorkspaceInfo
+	(*WorkspaceResponse)(nil),                    // 94: aether.v1.WorkspaceResponse
+	(*MessageFlowInfo)(nil),                      // 95: aether.v1.MessageFlowInfo
+	(*FlowNode)(nil),                             // 96: aether.v1.FlowNode
+	(*FlowEdge)(nil),                             // 97: aether.v1.FlowEdge
+	(*AgentOperation)(nil),                       // 98: aether.v1.AgentOperation
+	(*AgentFilter)(nil),                          // 99: aether.v1.AgentFilter
+	(*AgentRegistrationInfo)(nil),                // 100: aether.v1.AgentRegistrationInfo
+	(*AgentResourceSchemaEntry)(nil),             // 101: aether.v1.AgentResourceSchemaEntry
+	(*AgentLaunchParams)(nil),                    // 102: aether.v1.AgentLaunchParams
+	(*OrchestratorInfo)(nil),                     // 103: aether.v1.OrchestratorInfo
+	(*AgentLaunchResult)(nil),                    // 104: aether.v1.AgentLaunchResult
+	(*AgentResponse)(nil),                        // 105: aether.v1.AgentResponse
+	(*ACLOperation)(nil),                         // 106: aether.v1.ACLOperation
+	(*ACLRuleFilter)(nil),                        // 107: aether.v1.ACLRuleFilter
+	(*ACLAuditFilter)(nil),                       // 108: aether.v1.ACLAuditFilter
+	(*ACLGrantRequest)(nil),                      // 109: aether.v1.ACLGrantRequest
+	(*ACLSetFallbackRequest)(nil),                // 110: aether.v1.ACLSetFallbackRequest
+	(*ACLAuthorityGrantFilter)(nil),              // 111: aether.v1.ACLAuthorityGrantFilter
+	(*ACLAuthorityGrantResourceScopeEntry)(nil),  // 112: aether.v1.ACLAuthorityGrantResourceScopeEntry
+	(*ACLAuthorityGrantRequest)(nil),             // 113: aether.v1.ACLAuthorityGrantRequest
+	(*ACLRenewAuthorityGrantRequest)(nil),        // 114: aether.v1.ACLRenewAuthorityGrantRequest
+	(*ACLRuleInfo)(nil),                          // 115: aether.v1.ACLRuleInfo
+	(*ACLFallbackPolicyInfo)(nil),                // 116: aether.v1.ACLFallbackPolicyInfo
+	(*ACLAuditEntryInfo)(nil),                    // 117: aether.v1.ACLAuditEntryInfo
+	(*ACLAuthorityGrantInfo)(nil),                // 118: aether.v1.ACLAuthorityGrantInfo
+	(*ACLCleanupResult)(nil),                     // 119: aether.v1.ACLCleanupResult
+	(*ACLGroupRequest)(nil),                      // 120: aether.v1.ACLGroupRequest
+	(*ACLRoleRequest)(nil),                       // 121: aether.v1.ACLRoleRequest
+	(*ACLGroupMemberRequest)(nil),                // 122: aether.v1.ACLGroupMemberRequest
+	(*ACLRoleAssignmentRequest)(nil),             // 123: aether.v1.ACLRoleAssignmentRequest
+	(*ACLGroupInfo)(nil),                         // 124: aether.v1.ACLGroupInfo
+	(*ACLRoleInfo)(nil),                          // 125: aether.v1.ACLRoleInfo
+	(*ACLGroupMemberInfo)(nil),                   // 126: aether.v1.ACLGroupMemberInfo
+	(*ACLRoleAssignmentInfo)(nil),                // 127: aether.v1.ACLRoleAssignmentInfo
+	(*ACLAccessContributionInfo)(nil),            // 128: aether.v1.ACLAccessContributionInfo
+	(*ACLAccessExplanationInfo)(nil),             // 129: aether.v1.ACLAccessExplanationInfo
+	(*ACLResponse)(nil),                          // 130: aether.v1.ACLResponse
+	(*AuthorityGrantOperation)(nil),              // 131: aether.v1.AuthorityGrantOperation
+	(*AuthorityGrantExchangeRequest)(nil),        // 132: aether.v1.AuthorityGrantExchangeRequest
+	(*AuthorityGrantDeriveRequest)(nil),          // 133: aether.v1.AuthorityGrantDeriveRequest
+	(*AuthorityGrantResponse)(nil),               // 134: aether.v1.AuthorityGrantResponse
+	(*AuthorityGrantListRequest)(nil),            // 135: aether.v1.AuthorityGrantListRequest
+	(*AuthorityGrantBatchExchangeRequest)(nil),   // 136: aether.v1.AuthorityGrantBatchExchangeRequest
+	(*AuthorityGrantDeriveForTargetRequest)(nil), // 137: aether.v1.AuthorityGrantDeriveForTargetRequest
+	(*AuthorityIdentity)(nil),                    // 138: aether.v1.AuthorityIdentity
+	(*AuthoritySpan)(nil),                        // 139: aether.v1.AuthoritySpan
+	(*AuthorityGrantRevocation)(nil),             // 140: aether.v1.AuthorityGrantRevocation
+	(*AuthorityRequestRoutingTarget)(nil),        // 141: aether.v1.AuthorityRequestRoutingTarget
+	(*AuthorityRequestResourceScopeEntry)(nil),   // 142: aether.v1.AuthorityRequestResourceScopeEntry
+	(*AuthorityRequest)(nil),                     // 143: aether.v1.AuthorityRequest
+	(*CreateAuthorityRequestPayload)(nil),        // 144: aether.v1.CreateAuthorityRequestPayload
+	(*ResolveAuthorityRequestPayload)(nil),       // 145: aether.v1.ResolveAuthorityRequestPayload
+	(*AuthorityRequestListFilter)(nil),           // 146: aether.v1.AuthorityRequestListFilter
+	(*AuthorityRequestOperation)(nil),            // 147: aether.v1.AuthorityRequestOperation
+	(*AuthorityRequestOperationResponse)(nil),    // 148: aether.v1.AuthorityRequestOperationResponse
+	(*AuthorityRequestEvent)(nil),                // 149: aether.v1.AuthorityRequestEvent
+	(*TokenOperation)(nil),                       // 150: aether.v1.TokenOperation
+	(*TokenCreateRequest)(nil),                   // 151: aether.v1.TokenCreateRequest
+	(*TokenFilter)(nil),                          // 152: aether.v1.TokenFilter
+	(*TokenInfo)(nil),                            // 153: aether.v1.TokenInfo
+	(*TokenResponse)(nil),                        // 154: aether.v1.TokenResponse
+	(*ProgressReport)(nil),                       // 155: aether.v1.ProgressReport
+	(*ProgressStep)(nil),                         // 156: aether.v1.ProgressStep
+	(*ProgressUpdate)(nil),                       // 157: aether.v1.ProgressUpdate
+	(*WorkflowScheduleAuthorityScope)(nil),       // 158: aether.v1.WorkflowScheduleAuthorityScope
+	(*WorkflowRequestContext)(nil),               // 159: aether.v1.WorkflowRequestContext
+	(*WorkflowOperation)(nil),                    // 160: aether.v1.WorkflowOperation
+	(*WorkflowResponse)(nil),                     // 161: aether.v1.WorkflowResponse
+	(*MessageEnvelope)(nil),                      // 162: aether.v1.MessageEnvelope
+	(*AuditQuery)(nil),                           // 163: aether.v1.AuditQuery
+	(*AuditQueryResponse)(nil),                   // 164: aether.v1.AuditQueryResponse
+	(*AuditEntry)(nil),                           // 165: aether.v1.AuditEntry
+	(*SubmitAuditEventRequest)(nil),              // 166: aether.v1.SubmitAuditEventRequest
+	(*SubmitAuditEventResponse)(nil),             // 167: aether.v1.SubmitAuditEventResponse
+	(*ProxyHttpRequest)(nil),                     // 168: aether.v1.ProxyHttpRequest
+	(*ProxyHttpResponse)(nil),                    // 169: aether.v1.ProxyHttpResponse
+	(*ProxyHttpBodyChunk)(nil),                   // 170: aether.v1.ProxyHttpBodyChunk
+	(*ProxyError)(nil),                           // 171: aether.v1.ProxyError
+	(*TunnelOpen)(nil),                           // 172: aether.v1.TunnelOpen
+	(*TunnelData)(nil),                           // 173: aether.v1.TunnelData
+	(*TunnelClose)(nil),                          // 174: aether.v1.TunnelClose
+	(*TunnelAck)(nil),                            // 175: aether.v1.TunnelAck
+	(*ResolveAuthorityRequest)(nil),              // 176: aether.v1.ResolveAuthorityRequest
+	(*ResolveAuthorityResponse)(nil),             // 177: aether.v1.ResolveAuthorityResponse
+	(*ResolvedAuthority)(nil),                    // 178: aether.v1.ResolvedAuthority
+	(*AuthorityGrantInfo)(nil),                   // 179: aether.v1.AuthorityGrantInfo
+	(*ConnectionStatusRequest)(nil),              // 180: aether.v1.ConnectionStatusRequest
+	(*ConnectionStatusResponse)(nil),             // 181: aether.v1.ConnectionStatusResponse
+	(*TaskSubscriptionOperation)(nil),            // 182: aether.v1.TaskSubscriptionOperation
+	(*TaskSubscriptionOperationResponse)(nil),    // 183: aether.v1.TaskSubscriptionOperationResponse
+	(*TaskEvent)(nil),                            // 184: aether.v1.TaskEvent
+	(*TaskStatusChangedEvent)(nil),               // 185: aether.v1.TaskStatusChangedEvent
+	(*TaskProgressEvent)(nil),                    // 186: aether.v1.TaskProgressEvent
+	(*TaskChildLifecycleEvent)(nil),              // 187: aether.v1.TaskChildLifecycleEvent
+	(*TaskAuthorityRequestEventRelay)(nil),       // 188: aether.v1.TaskAuthorityRequestEventRelay
+	(*ResourceAccessRequest)(nil),                // 189: aether.v1.ResourceAccessRequest
+	(*AccessDecisionReceipt)(nil),                // 190: aether.v1.AccessDecisionReceipt
+	(*AccessCheckOperation)(nil),                 // 191: aether.v1.AccessCheckOperation
+	(*AccessCheckResponse)(nil),                  // 192: aether.v1.AccessCheckResponse
+	(*BatchAccessCheckOperation)(nil),            // 193: aether.v1.BatchAccessCheckOperation
+	(*BatchAccessCheckResponse)(nil),             // 194: aether.v1.BatchAccessCheckResponse
+	nil,                                          // 195: aether.v1.InitConnection.CredentialsEntry
+	nil,                                          // 196: aether.v1.Metric.MetadataEntry
+	nil,                                          // 197: aether.v1.KVResponse.KvMapEntry
+	nil,                                          // 198: aether.v1.ConfigSnapshot.KvEntry
+	nil,                                          // 199: aether.v1.ConfigSnapshot.GlobalKvEntry
+	nil,                                          // 200: aether.v1.ConfigSnapshot.TaskContextEntry
+	nil,                                          // 201: aether.v1.ConfigSnapshot.WorkspaceExclusiveKvEntry
+	nil,                                          // 202: aether.v1.ConfigSnapshot.GlobalExclusiveKvEntry
+	nil,                                          // 203: aether.v1.CreateTaskRequest.LaunchParamOverridesEntry
+	nil,                                          // 204: aether.v1.CreateTaskRequest.MetadataEntry
+	nil,                                          // 205: aether.v1.TaskAssignment.MetadataEntry
+	nil,                                          // 206: aether.v1.TaskAssignment.LaunchParamsEntry
+	nil,                                          // 207: aether.v1.HealthInfo.ChecksEntry
+	nil,                                          // 208: aether.v1.TaskInfo.MetadataEntry
+	nil,                                          // 209: aether.v1.WaitSpec.InputMatchEntry
+	nil,                                          // 210: aether.v1.WorkspaceInfo.MetadataEntry
+	nil,                                          // 211: aether.v1.AgentRegistrationInfo.LaunchParamsEntry
+	nil,                                          // 212: aether.v1.AgentRegistrationInfo.CapabilitiesEntry
+	nil,                                          // 213: aether.v1.AgentLaunchParams.ParamOverridesEntry
+	nil,                                          // 214: aether.v1.ACLAuthorityGrantRequest.MetadataEntry
+	nil,                                          // 215: aether.v1.ACLAuditEntryInfo.MetadataEntry
+	nil,                                          // 216: aether.v1.ACLAuthorityGrantInfo.MetadataEntry
+	nil,                                          // 217: aether.v1.ACLGroupRequest.MetadataEntry
+	nil,                                          // 218: aether.v1.ACLRoleRequest.MetadataEntry
+	nil,                                          // 219: aether.v1.ACLGroupInfo.MetadataEntry
+	nil,                                          // 220: aether.v1.ACLRoleInfo.MetadataEntry
+	nil,                                          // 221: aether.v1.AuthorityGrantExchangeRequest.MetadataEntry
+	nil,                                          // 222: aether.v1.AuthorityGrantDeriveRequest.MetadataEntry
+	nil,                                          // 223: aether.v1.AuthorityRequest.MetadataEntry
+	nil,                                          // 224: aether.v1.CreateAuthorityRequestPayload.MetadataEntry
+	nil,                                          // 225: aether.v1.ProgressReport.MetadataEntry
+	nil,                                          // 226: aether.v1.ProgressUpdate.MetadataEntry
+	nil,                                          // 227: aether.v1.MessageEnvelope.MetadataEntry
+	nil,                                          // 228: aether.v1.SubmitAuditEventRequest.MetadataEntry
+	nil,                                          // 229: aether.v1.ProxyHttpRequest.HeadersEntry
+	nil,                                          // 230: aether.v1.ProxyHttpResponse.HeadersEntry
+	nil,                                          // 231: aether.v1.TunnelOpen.MetadataEntry
+	nil,                                          // 232: aether.v1.TaskProgressEvent.MetadataEntry
 }
 var file_aether_proto_depIdxs = []int32{
-	39,  // 0: aether.v1.UpstreamMessage.init:type_name -> aether.v1.InitConnection
-	54,  // 1: aether.v1.UpstreamMessage.send:type_name -> aether.v1.SendMessage
-	57,  // 2: aether.v1.UpstreamMessage.switch_workspace:type_name -> aether.v1.SwitchWorkspace
-	58,  // 3: aether.v1.UpstreamMessage.kv_op:type_name -> aether.v1.KVOperation
-	67,  // 4: aether.v1.UpstreamMessage.create_task:type_name -> aether.v1.CreateTaskRequest
-	70,  // 5: aether.v1.UpstreamMessage.checkpoint_op:type_name -> aether.v1.CheckpointOperation
-	72,  // 6: aether.v1.UpstreamMessage.admin_query:type_name -> aether.v1.AdminQuery
-	80,  // 7: aether.v1.UpstreamMessage.session_op:type_name -> aether.v1.SessionOperation
-	82,  // 8: aether.v1.UpstreamMessage.task_query:type_name -> aether.v1.TaskQuery
-	86,  // 9: aether.v1.UpstreamMessage.task_op:type_name -> aether.v1.TaskOperation
-	90,  // 10: aether.v1.UpstreamMessage.workspace_op:type_name -> aether.v1.WorkspaceOperation
-	97,  // 11: aether.v1.UpstreamMessage.agent_op:type_name -> aether.v1.AgentOperation
-	105, // 12: aether.v1.UpstreamMessage.acl_op:type_name -> aether.v1.ACLOperation
-	154, // 13: aether.v1.UpstreamMessage.progress:type_name -> aether.v1.ProgressReport
-	157, // 14: aether.v1.UpstreamMessage.workflow_op:type_name -> aether.v1.WorkflowOperation
-	158, // 15: aether.v1.UpstreamMessage.workflow_response:type_name -> aether.v1.WorkflowResponse
-	149, // 16: aether.v1.UpstreamMessage.token_op:type_name -> aether.v1.TokenOperation
-	160, // 17: aether.v1.UpstreamMessage.audit_query:type_name -> aether.v1.AuditQuery
-	130, // 18: aether.v1.UpstreamMessage.authority_grant_op:type_name -> aether.v1.AuthorityGrantOperation
-	165, // 19: aether.v1.UpstreamMessage.proxy_http_request:type_name -> aether.v1.ProxyHttpRequest
-	167, // 20: aether.v1.UpstreamMessage.proxy_http_body_chunk:type_name -> aether.v1.ProxyHttpBodyChunk
-	169, // 21: aether.v1.UpstreamMessage.tunnel_open:type_name -> aether.v1.TunnelOpen
-	170, // 22: aether.v1.UpstreamMessage.tunnel_data:type_name -> aether.v1.TunnelData
-	171, // 23: aether.v1.UpstreamMessage.tunnel_close:type_name -> aether.v1.TunnelClose
-	166, // 24: aether.v1.UpstreamMessage.proxy_http_response:type_name -> aether.v1.ProxyHttpResponse
-	172, // 25: aether.v1.UpstreamMessage.tunnel_ack:type_name -> aether.v1.TunnelAck
-	173, // 26: aether.v1.UpstreamMessage.resolve_authority_request:type_name -> aether.v1.ResolveAuthorityRequest
-	177, // 27: aether.v1.UpstreamMessage.connection_status_request:type_name -> aether.v1.ConnectionStatusRequest
-	163, // 28: aether.v1.UpstreamMessage.submit_audit_event:type_name -> aether.v1.SubmitAuditEventRequest
-	146, // 29: aether.v1.UpstreamMessage.authority_request_op:type_name -> aether.v1.AuthorityRequestOperation
-	179, // 30: aether.v1.UpstreamMessage.task_subscription_op:type_name -> aether.v1.TaskSubscriptionOperation
-	188, // 31: aether.v1.UpstreamMessage.access_check:type_name -> aether.v1.AccessCheckOperation
-	190, // 32: aether.v1.UpstreamMessage.batch_access_check:type_name -> aether.v1.BatchAccessCheckOperation
-	60,  // 33: aether.v1.DownstreamMessage.msg:type_name -> aether.v1.IncomingMessage
-	62,  // 34: aether.v1.DownstreamMessage.config:type_name -> aether.v1.ConfigSnapshot
-	63,  // 35: aether.v1.DownstreamMessage.signal:type_name -> aether.v1.Signal
-	64,  // 36: aether.v1.DownstreamMessage.error:type_name -> aether.v1.ErrorResponse
-	59,  // 37: aether.v1.DownstreamMessage.kv:type_name -> aether.v1.KVResponse
-	69,  // 38: aether.v1.DownstreamMessage.task_assignment:type_name -> aether.v1.TaskAssignment
-	38,  // 39: aether.v1.DownstreamMessage.connection_ack:type_name -> aether.v1.ConnectionAck
-	71,  // 40: aether.v1.DownstreamMessage.checkpoint:type_name -> aether.v1.CheckpointResponse
-	75,  // 41: aether.v1.DownstreamMessage.admin:type_name -> aether.v1.AdminResponse
-	81,  // 42: aether.v1.DownstreamMessage.session_response:type_name -> aether.v1.SessionOperationResponse
-	85,  // 43: aether.v1.DownstreamMessage.task_query:type_name -> aether.v1.TaskQueryResponse
-	89,  // 44: aether.v1.DownstreamMessage.task_op:type_name -> aether.v1.TaskOperationResponse
-	93,  // 45: aether.v1.DownstreamMessage.workspace:type_name -> aether.v1.WorkspaceResponse
-	104, // 46: aether.v1.DownstreamMessage.agent:type_name -> aether.v1.AgentResponse
-	129, // 47: aether.v1.DownstreamMessage.acl:type_name -> aether.v1.ACLResponse
-	156, // 48: aether.v1.DownstreamMessage.progress_update:type_name -> aether.v1.ProgressUpdate
-	158, // 49: aether.v1.DownstreamMessage.workflow_response:type_name -> aether.v1.WorkflowResponse
-	157, // 50: aether.v1.DownstreamMessage.workflow_op:type_name -> aether.v1.WorkflowOperation
-	153, // 51: aether.v1.DownstreamMessage.token:type_name -> aether.v1.TokenResponse
-	161, // 52: aether.v1.DownstreamMessage.audit_response:type_name -> aether.v1.AuditQueryResponse
-	133, // 53: aether.v1.DownstreamMessage.authority_grant:type_name -> aether.v1.AuthorityGrantResponse
-	68,  // 54: aether.v1.DownstreamMessage.create_task:type_name -> aether.v1.CreateTaskResponse
-	166, // 55: aether.v1.DownstreamMessage.proxy_http_response:type_name -> aether.v1.ProxyHttpResponse
-	167, // 56: aether.v1.DownstreamMessage.proxy_http_body_chunk:type_name -> aether.v1.ProxyHttpBodyChunk
-	172, // 57: aether.v1.DownstreamMessage.tunnel_ack:type_name -> aether.v1.TunnelAck
-	171, // 58: aether.v1.DownstreamMessage.tunnel_close:type_name -> aether.v1.TunnelClose
-	170, // 59: aether.v1.DownstreamMessage.tunnel_data:type_name -> aether.v1.TunnelData
-	165, // 60: aether.v1.DownstreamMessage.proxy_http_request:type_name -> aether.v1.ProxyHttpRequest
-	174, // 61: aether.v1.DownstreamMessage.resolve_authority_response:type_name -> aether.v1.ResolveAuthorityResponse
-	178, // 62: aether.v1.DownstreamMessage.connection_status_response:type_name -> aether.v1.ConnectionStatusResponse
-	139, // 63: aether.v1.DownstreamMessage.authority_grant_revocation:type_name -> aether.v1.AuthorityGrantRevocation
-	164, // 64: aether.v1.DownstreamMessage.submit_audit_event_response:type_name -> aether.v1.SubmitAuditEventResponse
-	147, // 65: aether.v1.DownstreamMessage.authority_request_response:type_name -> aether.v1.AuthorityRequestOperationResponse
-	148, // 66: aether.v1.DownstreamMessage.authority_request_event:type_name -> aether.v1.AuthorityRequestEvent
-	37,  // 67: aether.v1.DownstreamMessage.task_hibernated:type_name -> aether.v1.TaskHibernated
-	180, // 68: aether.v1.DownstreamMessage.task_subscription_response:type_name -> aether.v1.TaskSubscriptionOperationResponse
-	181, // 69: aether.v1.DownstreamMessage.task_event:type_name -> aether.v1.TaskEvent
-	189, // 70: aether.v1.DownstreamMessage.access_check_response:type_name -> aether.v1.AccessCheckResponse
-	191, // 71: aether.v1.DownstreamMessage.batch_access_check_response:type_name -> aether.v1.BatchAccessCheckResponse
-	88,  // 72: aether.v1.TaskHibernated.descriptor:type_name -> aether.v1.HibernationDescriptor
-	42,  // 73: aether.v1.ConnectionAck.negotiated_extensions:type_name -> aether.v1.NegotiatedExtension
-	40,  // 74: aether.v1.ConnectionAck.server_build_info:type_name -> aether.v1.BuildInfo
-	48,  // 75: aether.v1.InitConnection.agent:type_name -> aether.v1.AgentIdentity
-	49,  // 76: aether.v1.InitConnection.task:type_name -> aether.v1.TaskIdentity
-	50,  // 77: aether.v1.InitConnection.user:type_name -> aether.v1.UserIdentity
-	45,  // 78: aether.v1.InitConnection.orchestrator:type_name -> aether.v1.OrchestratorIdentity
-	43,  // 79: aether.v1.InitConnection.workflow_engine:type_name -> aether.v1.WorkflowEngineIdentity
-	44,  // 80: aether.v1.InitConnection.metrics_bridge:type_name -> aether.v1.MetricsBridgeIdentity
-	46,  // 81: aether.v1.InitConnection.bridge:type_name -> aether.v1.BridgeIdentity
-	47,  // 82: aether.v1.InitConnection.service:type_name -> aether.v1.ServiceIdentity
-	192, // 83: aether.v1.InitConnection.credentials:type_name -> aether.v1.InitConnection.CredentialsEntry
-	41,  // 84: aether.v1.InitConnection.extensions:type_name -> aether.v1.ExtensionDeclaration
-	40,  // 85: aether.v1.InitConnection.client_build_info:type_name -> aether.v1.BuildInfo
-	51,  // 86: aether.v1.AuthorizationContext.subject:type_name -> aether.v1.PrincipalRef
-	53,  // 87: aether.v1.AuthorizationContext.resolved:type_name -> aether.v1.ResolvedAuthorityInfo
-	51,  // 88: aether.v1.ResolvedAuthorityInfo.root_subject:type_name -> aether.v1.PrincipalRef
+	40,  // 0: aether.v1.UpstreamMessage.init:type_name -> aether.v1.InitConnection
+	55,  // 1: aether.v1.UpstreamMessage.send:type_name -> aether.v1.SendMessage
+	58,  // 2: aether.v1.UpstreamMessage.switch_workspace:type_name -> aether.v1.SwitchWorkspace
+	59,  // 3: aether.v1.UpstreamMessage.kv_op:type_name -> aether.v1.KVOperation
+	68,  // 4: aether.v1.UpstreamMessage.create_task:type_name -> aether.v1.CreateTaskRequest
+	71,  // 5: aether.v1.UpstreamMessage.checkpoint_op:type_name -> aether.v1.CheckpointOperation
+	73,  // 6: aether.v1.UpstreamMessage.admin_query:type_name -> aether.v1.AdminQuery
+	81,  // 7: aether.v1.UpstreamMessage.session_op:type_name -> aether.v1.SessionOperation
+	83,  // 8: aether.v1.UpstreamMessage.task_query:type_name -> aether.v1.TaskQuery
+	87,  // 9: aether.v1.UpstreamMessage.task_op:type_name -> aether.v1.TaskOperation
+	91,  // 10: aether.v1.UpstreamMessage.workspace_op:type_name -> aether.v1.WorkspaceOperation
+	98,  // 11: aether.v1.UpstreamMessage.agent_op:type_name -> aether.v1.AgentOperation
+	106, // 12: aether.v1.UpstreamMessage.acl_op:type_name -> aether.v1.ACLOperation
+	155, // 13: aether.v1.UpstreamMessage.progress:type_name -> aether.v1.ProgressReport
+	160, // 14: aether.v1.UpstreamMessage.workflow_op:type_name -> aether.v1.WorkflowOperation
+	161, // 15: aether.v1.UpstreamMessage.workflow_response:type_name -> aether.v1.WorkflowResponse
+	150, // 16: aether.v1.UpstreamMessage.token_op:type_name -> aether.v1.TokenOperation
+	163, // 17: aether.v1.UpstreamMessage.audit_query:type_name -> aether.v1.AuditQuery
+	131, // 18: aether.v1.UpstreamMessage.authority_grant_op:type_name -> aether.v1.AuthorityGrantOperation
+	168, // 19: aether.v1.UpstreamMessage.proxy_http_request:type_name -> aether.v1.ProxyHttpRequest
+	170, // 20: aether.v1.UpstreamMessage.proxy_http_body_chunk:type_name -> aether.v1.ProxyHttpBodyChunk
+	172, // 21: aether.v1.UpstreamMessage.tunnel_open:type_name -> aether.v1.TunnelOpen
+	173, // 22: aether.v1.UpstreamMessage.tunnel_data:type_name -> aether.v1.TunnelData
+	174, // 23: aether.v1.UpstreamMessage.tunnel_close:type_name -> aether.v1.TunnelClose
+	169, // 24: aether.v1.UpstreamMessage.proxy_http_response:type_name -> aether.v1.ProxyHttpResponse
+	175, // 25: aether.v1.UpstreamMessage.tunnel_ack:type_name -> aether.v1.TunnelAck
+	176, // 26: aether.v1.UpstreamMessage.resolve_authority_request:type_name -> aether.v1.ResolveAuthorityRequest
+	180, // 27: aether.v1.UpstreamMessage.connection_status_request:type_name -> aether.v1.ConnectionStatusRequest
+	166, // 28: aether.v1.UpstreamMessage.submit_audit_event:type_name -> aether.v1.SubmitAuditEventRequest
+	147, // 29: aether.v1.UpstreamMessage.authority_request_op:type_name -> aether.v1.AuthorityRequestOperation
+	182, // 30: aether.v1.UpstreamMessage.task_subscription_op:type_name -> aether.v1.TaskSubscriptionOperation
+	191, // 31: aether.v1.UpstreamMessage.access_check:type_name -> aether.v1.AccessCheckOperation
+	193, // 32: aether.v1.UpstreamMessage.batch_access_check:type_name -> aether.v1.BatchAccessCheckOperation
+	61,  // 33: aether.v1.DownstreamMessage.msg:type_name -> aether.v1.IncomingMessage
+	63,  // 34: aether.v1.DownstreamMessage.config:type_name -> aether.v1.ConfigSnapshot
+	64,  // 35: aether.v1.DownstreamMessage.signal:type_name -> aether.v1.Signal
+	65,  // 36: aether.v1.DownstreamMessage.error:type_name -> aether.v1.ErrorResponse
+	60,  // 37: aether.v1.DownstreamMessage.kv:type_name -> aether.v1.KVResponse
+	70,  // 38: aether.v1.DownstreamMessage.task_assignment:type_name -> aether.v1.TaskAssignment
+	39,  // 39: aether.v1.DownstreamMessage.connection_ack:type_name -> aether.v1.ConnectionAck
+	72,  // 40: aether.v1.DownstreamMessage.checkpoint:type_name -> aether.v1.CheckpointResponse
+	76,  // 41: aether.v1.DownstreamMessage.admin:type_name -> aether.v1.AdminResponse
+	82,  // 42: aether.v1.DownstreamMessage.session_response:type_name -> aether.v1.SessionOperationResponse
+	86,  // 43: aether.v1.DownstreamMessage.task_query:type_name -> aether.v1.TaskQueryResponse
+	90,  // 44: aether.v1.DownstreamMessage.task_op:type_name -> aether.v1.TaskOperationResponse
+	94,  // 45: aether.v1.DownstreamMessage.workspace:type_name -> aether.v1.WorkspaceResponse
+	105, // 46: aether.v1.DownstreamMessage.agent:type_name -> aether.v1.AgentResponse
+	130, // 47: aether.v1.DownstreamMessage.acl:type_name -> aether.v1.ACLResponse
+	157, // 48: aether.v1.DownstreamMessage.progress_update:type_name -> aether.v1.ProgressUpdate
+	161, // 49: aether.v1.DownstreamMessage.workflow_response:type_name -> aether.v1.WorkflowResponse
+	160, // 50: aether.v1.DownstreamMessage.workflow_op:type_name -> aether.v1.WorkflowOperation
+	154, // 51: aether.v1.DownstreamMessage.token:type_name -> aether.v1.TokenResponse
+	164, // 52: aether.v1.DownstreamMessage.audit_response:type_name -> aether.v1.AuditQueryResponse
+	134, // 53: aether.v1.DownstreamMessage.authority_grant:type_name -> aether.v1.AuthorityGrantResponse
+	69,  // 54: aether.v1.DownstreamMessage.create_task:type_name -> aether.v1.CreateTaskResponse
+	169, // 55: aether.v1.DownstreamMessage.proxy_http_response:type_name -> aether.v1.ProxyHttpResponse
+	170, // 56: aether.v1.DownstreamMessage.proxy_http_body_chunk:type_name -> aether.v1.ProxyHttpBodyChunk
+	175, // 57: aether.v1.DownstreamMessage.tunnel_ack:type_name -> aether.v1.TunnelAck
+	174, // 58: aether.v1.DownstreamMessage.tunnel_close:type_name -> aether.v1.TunnelClose
+	173, // 59: aether.v1.DownstreamMessage.tunnel_data:type_name -> aether.v1.TunnelData
+	168, // 60: aether.v1.DownstreamMessage.proxy_http_request:type_name -> aether.v1.ProxyHttpRequest
+	177, // 61: aether.v1.DownstreamMessage.resolve_authority_response:type_name -> aether.v1.ResolveAuthorityResponse
+	181, // 62: aether.v1.DownstreamMessage.connection_status_response:type_name -> aether.v1.ConnectionStatusResponse
+	140, // 63: aether.v1.DownstreamMessage.authority_grant_revocation:type_name -> aether.v1.AuthorityGrantRevocation
+	167, // 64: aether.v1.DownstreamMessage.submit_audit_event_response:type_name -> aether.v1.SubmitAuditEventResponse
+	148, // 65: aether.v1.DownstreamMessage.authority_request_response:type_name -> aether.v1.AuthorityRequestOperationResponse
+	149, // 66: aether.v1.DownstreamMessage.authority_request_event:type_name -> aether.v1.AuthorityRequestEvent
+	38,  // 67: aether.v1.DownstreamMessage.task_hibernated:type_name -> aether.v1.TaskHibernated
+	183, // 68: aether.v1.DownstreamMessage.task_subscription_response:type_name -> aether.v1.TaskSubscriptionOperationResponse
+	184, // 69: aether.v1.DownstreamMessage.task_event:type_name -> aether.v1.TaskEvent
+	192, // 70: aether.v1.DownstreamMessage.access_check_response:type_name -> aether.v1.AccessCheckResponse
+	194, // 71: aether.v1.DownstreamMessage.batch_access_check_response:type_name -> aether.v1.BatchAccessCheckResponse
+	89,  // 72: aether.v1.TaskHibernated.descriptor:type_name -> aether.v1.HibernationDescriptor
+	43,  // 73: aether.v1.ConnectionAck.negotiated_extensions:type_name -> aether.v1.NegotiatedExtension
+	41,  // 74: aether.v1.ConnectionAck.server_build_info:type_name -> aether.v1.BuildInfo
+	49,  // 75: aether.v1.InitConnection.agent:type_name -> aether.v1.AgentIdentity
+	50,  // 76: aether.v1.InitConnection.task:type_name -> aether.v1.TaskIdentity
+	51,  // 77: aether.v1.InitConnection.user:type_name -> aether.v1.UserIdentity
+	46,  // 78: aether.v1.InitConnection.orchestrator:type_name -> aether.v1.OrchestratorIdentity
+	44,  // 79: aether.v1.InitConnection.workflow_engine:type_name -> aether.v1.WorkflowEngineIdentity
+	45,  // 80: aether.v1.InitConnection.metrics_bridge:type_name -> aether.v1.MetricsBridgeIdentity
+	47,  // 81: aether.v1.InitConnection.bridge:type_name -> aether.v1.BridgeIdentity
+	48,  // 82: aether.v1.InitConnection.service:type_name -> aether.v1.ServiceIdentity
+	195, // 83: aether.v1.InitConnection.credentials:type_name -> aether.v1.InitConnection.CredentialsEntry
+	42,  // 84: aether.v1.InitConnection.extensions:type_name -> aether.v1.ExtensionDeclaration
+	41,  // 85: aether.v1.InitConnection.client_build_info:type_name -> aether.v1.BuildInfo
+	52,  // 86: aether.v1.AuthorizationContext.subject:type_name -> aether.v1.PrincipalRef
+	54,  // 87: aether.v1.AuthorizationContext.resolved:type_name -> aether.v1.ResolvedAuthorityInfo
+	52,  // 88: aether.v1.ResolvedAuthorityInfo.root_subject:type_name -> aether.v1.PrincipalRef
 	0,   // 89: aether.v1.SendMessage.message_type:type_name -> aether.v1.MessageType
-	52,  // 90: aether.v1.SendMessage.authorization:type_name -> aether.v1.AuthorizationContext
-	186, // 91: aether.v1.SendMessage.checked_access:type_name -> aether.v1.ResourceAccessRequest
-	56,  // 92: aether.v1.Metric.entries:type_name -> aether.v1.MetricEntry
-	193, // 93: aether.v1.Metric.metadata:type_name -> aether.v1.Metric.MetadataEntry
-	14,  // 94: aether.v1.KVOperation.op:type_name -> aether.v1.KVOperation.OpType
-	15,  // 95: aether.v1.KVOperation.scope:type_name -> aether.v1.KVOperation.Scope
-	52,  // 96: aether.v1.KVOperation.authorization:type_name -> aether.v1.AuthorizationContext
-	194, // 97: aether.v1.KVResponse.kv_map:type_name -> aether.v1.KVResponse.KvMapEntry
+	53,  // 90: aether.v1.SendMessage.authorization:type_name -> aether.v1.AuthorizationContext
+	189, // 91: aether.v1.SendMessage.checked_access:type_name -> aether.v1.ResourceAccessRequest
+	57,  // 92: aether.v1.Metric.entries:type_name -> aether.v1.MetricEntry
+	196, // 93: aether.v1.Metric.metadata:type_name -> aether.v1.Metric.MetadataEntry
+	15,  // 94: aether.v1.KVOperation.op:type_name -> aether.v1.KVOperation.OpType
+	16,  // 95: aether.v1.KVOperation.scope:type_name -> aether.v1.KVOperation.Scope
+	53,  // 96: aether.v1.KVOperation.authorization:type_name -> aether.v1.AuthorizationContext
+	197, // 97: aether.v1.KVResponse.kv_map:type_name -> aether.v1.KVResponse.KvMapEntry
 	0,   // 98: aether.v1.IncomingMessage.message_type:type_name -> aether.v1.MessageType
-	51,  // 99: aether.v1.IncomingMessage.on_behalf_subject:type_name -> aether.v1.PrincipalRef
-	187, // 100: aether.v1.IncomingMessage.access_receipt:type_name -> aether.v1.AccessDecisionReceipt
-	61,  // 101: aether.v1.IncomingMessage.forwarded_authorization:type_name -> aether.v1.ForwardedAuthorization
-	52,  // 102: aether.v1.ForwardedAuthorization.authorization:type_name -> aether.v1.AuthorizationContext
-	195, // 103: aether.v1.ConfigSnapshot.kv:type_name -> aether.v1.ConfigSnapshot.KvEntry
-	196, // 104: aether.v1.ConfigSnapshot.global_kv:type_name -> aether.v1.ConfigSnapshot.GlobalKvEntry
-	197, // 105: aether.v1.ConfigSnapshot.task_context:type_name -> aether.v1.ConfigSnapshot.TaskContextEntry
-	198, // 106: aether.v1.ConfigSnapshot.workspace_exclusive_kv:type_name -> aether.v1.ConfigSnapshot.WorkspaceExclusiveKvEntry
-	199, // 107: aether.v1.ConfigSnapshot.global_exclusive_kv:type_name -> aether.v1.ConfigSnapshot.GlobalExclusiveKvEntry
-	16,  // 108: aether.v1.Signal.type:type_name -> aether.v1.Signal.SignalType
+	52,  // 99: aether.v1.IncomingMessage.on_behalf_subject:type_name -> aether.v1.PrincipalRef
+	190, // 100: aether.v1.IncomingMessage.access_receipt:type_name -> aether.v1.AccessDecisionReceipt
+	62,  // 101: aether.v1.IncomingMessage.forwarded_authorization:type_name -> aether.v1.ForwardedAuthorization
+	53,  // 102: aether.v1.ForwardedAuthorization.authorization:type_name -> aether.v1.AuthorizationContext
+	198, // 103: aether.v1.ConfigSnapshot.kv:type_name -> aether.v1.ConfigSnapshot.KvEntry
+	199, // 104: aether.v1.ConfigSnapshot.global_kv:type_name -> aether.v1.ConfigSnapshot.GlobalKvEntry
+	200, // 105: aether.v1.ConfigSnapshot.task_context:type_name -> aether.v1.ConfigSnapshot.TaskContextEntry
+	201, // 106: aether.v1.ConfigSnapshot.workspace_exclusive_kv:type_name -> aether.v1.ConfigSnapshot.WorkspaceExclusiveKvEntry
+	202, // 107: aether.v1.ConfigSnapshot.global_exclusive_kv:type_name -> aether.v1.ConfigSnapshot.GlobalExclusiveKvEntry
+	17,  // 108: aether.v1.Signal.type:type_name -> aether.v1.Signal.SignalType
 	9,   // 109: aether.v1.RetryPolicy.backoff:type_name -> aether.v1.BackoffStrategy
 	2,   // 110: aether.v1.TaskCompletionEvent.on_statuses:type_name -> aether.v1.TaskStatus
 	6,   // 111: aether.v1.CreateTaskRequest.assignment_mode:type_name -> aether.v1.TaskAssignmentMode
-	200, // 112: aether.v1.CreateTaskRequest.launch_param_overrides:type_name -> aether.v1.CreateTaskRequest.LaunchParamOverridesEntry
-	201, // 113: aether.v1.CreateTaskRequest.metadata:type_name -> aether.v1.CreateTaskRequest.MetadataEntry
-	52,  // 114: aether.v1.CreateTaskRequest.authorization:type_name -> aether.v1.AuthorizationContext
+	203, // 112: aether.v1.CreateTaskRequest.launch_param_overrides:type_name -> aether.v1.CreateTaskRequest.LaunchParamOverridesEntry
+	204, // 113: aether.v1.CreateTaskRequest.metadata:type_name -> aether.v1.CreateTaskRequest.MetadataEntry
+	53,  // 114: aether.v1.CreateTaskRequest.authorization:type_name -> aether.v1.AuthorizationContext
 	7,   // 115: aether.v1.CreateTaskRequest.task_class:type_name -> aether.v1.TaskClass
-	65,  // 116: aether.v1.CreateTaskRequest.retry_policy:type_name -> aether.v1.RetryPolicy
+	66,  // 116: aether.v1.CreateTaskRequest.retry_policy:type_name -> aether.v1.RetryPolicy
 	8,   // 117: aether.v1.CreateTaskRequest.priority:type_name -> aether.v1.TaskPriority
-	66,  // 118: aether.v1.CreateTaskRequest.completion_event:type_name -> aether.v1.TaskCompletionEvent
+	67,  // 118: aether.v1.CreateTaskRequest.completion_event:type_name -> aether.v1.TaskCompletionEvent
 	10,  // 119: aether.v1.CreateTaskRequest.target_offline_policy:type_name -> aether.v1.TargetOfflinePolicy
-	202, // 120: aether.v1.TaskAssignment.metadata:type_name -> aether.v1.TaskAssignment.MetadataEntry
-	203, // 121: aether.v1.TaskAssignment.launch_params:type_name -> aether.v1.TaskAssignment.LaunchParamsEntry
+	205, // 120: aether.v1.TaskAssignment.metadata:type_name -> aether.v1.TaskAssignment.MetadataEntry
+	206, // 121: aether.v1.TaskAssignment.launch_params:type_name -> aether.v1.TaskAssignment.LaunchParamsEntry
 	7,   // 122: aether.v1.TaskAssignment.task_class:type_name -> aether.v1.TaskClass
-	52,  // 123: aether.v1.TaskAssignment.authorization:type_name -> aether.v1.AuthorizationContext
-	17,  // 124: aether.v1.CheckpointOperation.op:type_name -> aether.v1.CheckpointOperation.OpType
-	18,  // 125: aether.v1.AdminQuery.op:type_name -> aether.v1.AdminQuery.OpType
-	73,  // 126: aether.v1.AdminQuery.filter:type_name -> aether.v1.ConnectionFilter
+	53,  // 123: aether.v1.TaskAssignment.authorization:type_name -> aether.v1.AuthorizationContext
+	18,  // 124: aether.v1.CheckpointOperation.op:type_name -> aether.v1.CheckpointOperation.OpType
+	19,  // 125: aether.v1.AdminQuery.op:type_name -> aether.v1.AdminQuery.OpType
+	74,  // 126: aether.v1.AdminQuery.filter:type_name -> aether.v1.ConnectionFilter
 	1,   // 127: aether.v1.ConnectionFilter.type:type_name -> aether.v1.PrincipalType
 	1,   // 128: aether.v1.ConnectionInfo.type:type_name -> aether.v1.PrincipalType
-	76,  // 129: aether.v1.AdminResponse.health:type_name -> aether.v1.HealthInfo
-	78,  // 130: aether.v1.AdminResponse.info:type_name -> aether.v1.GatewayInfo
-	79,  // 131: aether.v1.AdminResponse.stats:type_name -> aether.v1.GatewayStats
-	74,  // 132: aether.v1.AdminResponse.connection:type_name -> aether.v1.ConnectionInfo
-	74,  // 133: aether.v1.AdminResponse.connections:type_name -> aether.v1.ConnectionInfo
+	77,  // 129: aether.v1.AdminResponse.health:type_name -> aether.v1.HealthInfo
+	79,  // 130: aether.v1.AdminResponse.info:type_name -> aether.v1.GatewayInfo
+	80,  // 131: aether.v1.AdminResponse.stats:type_name -> aether.v1.GatewayStats
+	75,  // 132: aether.v1.AdminResponse.connection:type_name -> aether.v1.ConnectionInfo
+	75,  // 133: aether.v1.AdminResponse.connections:type_name -> aether.v1.ConnectionInfo
 	3,   // 134: aether.v1.HealthInfo.status:type_name -> aether.v1.HealthStatus
-	204, // 135: aether.v1.HealthInfo.checks:type_name -> aether.v1.HealthInfo.ChecksEntry
-	79,  // 136: aether.v1.HealthInfo.stats:type_name -> aether.v1.GatewayStats
+	207, // 135: aether.v1.HealthInfo.checks:type_name -> aether.v1.HealthInfo.ChecksEntry
+	80,  // 136: aether.v1.HealthInfo.stats:type_name -> aether.v1.GatewayStats
 	4,   // 137: aether.v1.HealthCheck.status:type_name -> aether.v1.HealthCheckStatus
-	19,  // 138: aether.v1.SessionOperation.op:type_name -> aether.v1.SessionOperation.OpType
-	73,  // 139: aether.v1.SessionOperation.filter:type_name -> aether.v1.ConnectionFilter
-	52,  // 140: aether.v1.SessionOperation.authorization:type_name -> aether.v1.AuthorizationContext
-	74,  // 141: aether.v1.SessionOperationResponse.connection:type_name -> aether.v1.ConnectionInfo
-	74,  // 142: aether.v1.SessionOperationResponse.connections:type_name -> aether.v1.ConnectionInfo
-	20,  // 143: aether.v1.TaskQuery.op:type_name -> aether.v1.TaskQuery.OpType
-	83,  // 144: aether.v1.TaskQuery.filter:type_name -> aether.v1.TaskFilter
+	20,  // 138: aether.v1.SessionOperation.op:type_name -> aether.v1.SessionOperation.OpType
+	74,  // 139: aether.v1.SessionOperation.filter:type_name -> aether.v1.ConnectionFilter
+	53,  // 140: aether.v1.SessionOperation.authorization:type_name -> aether.v1.AuthorizationContext
+	75,  // 141: aether.v1.SessionOperationResponse.connection:type_name -> aether.v1.ConnectionInfo
+	75,  // 142: aether.v1.SessionOperationResponse.connections:type_name -> aether.v1.ConnectionInfo
+	21,  // 143: aether.v1.TaskQuery.op:type_name -> aether.v1.TaskQuery.OpType
+	84,  // 144: aether.v1.TaskQuery.filter:type_name -> aether.v1.TaskFilter
 	2,   // 145: aether.v1.TaskFilter.status:type_name -> aether.v1.TaskStatus
 	2,   // 146: aether.v1.TaskFilter.statuses:type_name -> aether.v1.TaskStatus
 	7,   // 147: aether.v1.TaskFilter.task_class:type_name -> aether.v1.TaskClass
 	7,   // 148: aether.v1.TaskFilter.exclude_task_classes:type_name -> aether.v1.TaskClass
 	2,   // 149: aether.v1.TaskFilter.exclude_statuses:type_name -> aether.v1.TaskStatus
-	51,  // 150: aether.v1.TaskFilter.creator_actor:type_name -> aether.v1.PrincipalRef
+	52,  // 150: aether.v1.TaskFilter.creator_actor:type_name -> aether.v1.PrincipalRef
 	8,   // 151: aether.v1.TaskFilter.priority:type_name -> aether.v1.TaskPriority
 	8,   // 152: aether.v1.TaskFilter.min_priority:type_name -> aether.v1.TaskPriority
 	2,   // 153: aether.v1.TaskInfo.status:type_name -> aether.v1.TaskStatus
-	205, // 154: aether.v1.TaskInfo.metadata:type_name -> aether.v1.TaskInfo.MetadataEntry
+	208, // 154: aether.v1.TaskInfo.metadata:type_name -> aether.v1.TaskInfo.MetadataEntry
 	7,   // 155: aether.v1.TaskInfo.task_class:type_name -> aether.v1.TaskClass
-	87,  // 156: aether.v1.TaskInfo.wait_spec:type_name -> aether.v1.WaitSpec
+	88,  // 156: aether.v1.TaskInfo.wait_spec:type_name -> aether.v1.WaitSpec
 	8,   // 157: aether.v1.TaskInfo.priority:type_name -> aether.v1.TaskPriority
-	66,  // 158: aether.v1.TaskInfo.completion_event:type_name -> aether.v1.TaskCompletionEvent
-	84,  // 159: aether.v1.TaskQueryResponse.task:type_name -> aether.v1.TaskInfo
-	84,  // 160: aether.v1.TaskQueryResponse.tasks:type_name -> aether.v1.TaskInfo
-	21,  // 161: aether.v1.TaskOperation.op:type_name -> aether.v1.TaskOperation.OpType
-	87,  // 162: aether.v1.TaskOperation.wait_spec:type_name -> aether.v1.WaitSpec
+	67,  // 158: aether.v1.TaskInfo.completion_event:type_name -> aether.v1.TaskCompletionEvent
+	85,  // 159: aether.v1.TaskQueryResponse.task:type_name -> aether.v1.TaskInfo
+	85,  // 160: aether.v1.TaskQueryResponse.tasks:type_name -> aether.v1.TaskInfo
+	22,  // 161: aether.v1.TaskOperation.op:type_name -> aether.v1.TaskOperation.OpType
+	88,  // 162: aether.v1.TaskOperation.wait_spec:type_name -> aether.v1.WaitSpec
 	11,  // 163: aether.v1.WaitSpec.reason:type_name -> aether.v1.WaitReason
-	206, // 164: aether.v1.WaitSpec.input_match:type_name -> aether.v1.WaitSpec.InputMatchEntry
-	88,  // 165: aether.v1.WaitSpec.hibernation:type_name -> aether.v1.HibernationDescriptor
-	84,  // 166: aether.v1.TaskOperationResponse.task:type_name -> aether.v1.TaskInfo
-	22,  // 167: aether.v1.WorkspaceOperation.op:type_name -> aether.v1.WorkspaceOperation.OpType
-	91,  // 168: aether.v1.WorkspaceOperation.filter:type_name -> aether.v1.WorkspaceFilter
-	92,  // 169: aether.v1.WorkspaceOperation.workspace:type_name -> aether.v1.WorkspaceInfo
-	207, // 170: aether.v1.WorkspaceInfo.metadata:type_name -> aether.v1.WorkspaceInfo.MetadataEntry
-	92,  // 171: aether.v1.WorkspaceResponse.workspace:type_name -> aether.v1.WorkspaceInfo
-	92,  // 172: aether.v1.WorkspaceResponse.workspaces:type_name -> aether.v1.WorkspaceInfo
-	94,  // 173: aether.v1.WorkspaceResponse.message_flow:type_name -> aether.v1.MessageFlowInfo
-	95,  // 174: aether.v1.MessageFlowInfo.nodes:type_name -> aether.v1.FlowNode
-	96,  // 175: aether.v1.MessageFlowInfo.edges:type_name -> aether.v1.FlowEdge
+	209, // 164: aether.v1.WaitSpec.input_match:type_name -> aether.v1.WaitSpec.InputMatchEntry
+	89,  // 165: aether.v1.WaitSpec.hibernation:type_name -> aether.v1.HibernationDescriptor
+	85,  // 166: aether.v1.TaskOperationResponse.task:type_name -> aether.v1.TaskInfo
+	23,  // 167: aether.v1.WorkspaceOperation.op:type_name -> aether.v1.WorkspaceOperation.OpType
+	92,  // 168: aether.v1.WorkspaceOperation.filter:type_name -> aether.v1.WorkspaceFilter
+	93,  // 169: aether.v1.WorkspaceOperation.workspace:type_name -> aether.v1.WorkspaceInfo
+	210, // 170: aether.v1.WorkspaceInfo.metadata:type_name -> aether.v1.WorkspaceInfo.MetadataEntry
+	93,  // 171: aether.v1.WorkspaceResponse.workspace:type_name -> aether.v1.WorkspaceInfo
+	93,  // 172: aether.v1.WorkspaceResponse.workspaces:type_name -> aether.v1.WorkspaceInfo
+	95,  // 173: aether.v1.WorkspaceResponse.message_flow:type_name -> aether.v1.MessageFlowInfo
+	96,  // 174: aether.v1.MessageFlowInfo.nodes:type_name -> aether.v1.FlowNode
+	97,  // 175: aether.v1.MessageFlowInfo.edges:type_name -> aether.v1.FlowEdge
 	1,   // 176: aether.v1.FlowNode.type:type_name -> aether.v1.PrincipalType
-	23,  // 177: aether.v1.AgentOperation.op:type_name -> aether.v1.AgentOperation.OpType
-	98,  // 178: aether.v1.AgentOperation.filter:type_name -> aether.v1.AgentFilter
-	99,  // 179: aether.v1.AgentOperation.agent:type_name -> aether.v1.AgentRegistrationInfo
-	101, // 180: aether.v1.AgentOperation.launch_params:type_name -> aether.v1.AgentLaunchParams
-	208, // 181: aether.v1.AgentRegistrationInfo.launch_params:type_name -> aether.v1.AgentRegistrationInfo.LaunchParamsEntry
-	100, // 182: aether.v1.AgentRegistrationInfo.resource_schema:type_name -> aether.v1.AgentResourceSchemaEntry
-	209, // 183: aether.v1.AgentRegistrationInfo.capabilities:type_name -> aether.v1.AgentRegistrationInfo.CapabilitiesEntry
-	210, // 184: aether.v1.AgentLaunchParams.param_overrides:type_name -> aether.v1.AgentLaunchParams.ParamOverridesEntry
-	99,  // 185: aether.v1.AgentResponse.agent:type_name -> aether.v1.AgentRegistrationInfo
-	99,  // 186: aether.v1.AgentResponse.agents:type_name -> aether.v1.AgentRegistrationInfo
-	102, // 187: aether.v1.AgentResponse.orchestrators:type_name -> aether.v1.OrchestratorInfo
-	103, // 188: aether.v1.AgentResponse.launch_result:type_name -> aether.v1.AgentLaunchResult
-	24,  // 189: aether.v1.ACLOperation.op:type_name -> aether.v1.ACLOperation.OpType
-	106, // 190: aether.v1.ACLOperation.rule_filter:type_name -> aether.v1.ACLRuleFilter
-	107, // 191: aether.v1.ACLOperation.audit_filter:type_name -> aether.v1.ACLAuditFilter
-	108, // 192: aether.v1.ACLOperation.grant_request:type_name -> aether.v1.ACLGrantRequest
-	109, // 193: aether.v1.ACLOperation.fallback_request:type_name -> aether.v1.ACLSetFallbackRequest
-	51,  // 194: aether.v1.ACLOperation.principal:type_name -> aether.v1.PrincipalRef
-	119, // 195: aether.v1.ACLOperation.group_request:type_name -> aether.v1.ACLGroupRequest
-	120, // 196: aether.v1.ACLOperation.role_request:type_name -> aether.v1.ACLRoleRequest
-	121, // 197: aether.v1.ACLOperation.member_request:type_name -> aether.v1.ACLGroupMemberRequest
-	122, // 198: aether.v1.ACLOperation.assignment_request:type_name -> aether.v1.ACLRoleAssignmentRequest
-	52,  // 199: aether.v1.ACLOperation.authorization:type_name -> aether.v1.AuthorizationContext
-	51,  // 200: aether.v1.ACLAuthorityGrantRequest.subject:type_name -> aether.v1.PrincipalRef
-	51,  // 201: aether.v1.ACLAuthorityGrantRequest.delegate:type_name -> aether.v1.PrincipalRef
-	51,  // 202: aether.v1.ACLAuthorityGrantRequest.issued_by:type_name -> aether.v1.PrincipalRef
-	51,  // 203: aether.v1.ACLAuthorityGrantRequest.root_subject:type_name -> aether.v1.PrincipalRef
-	111, // 204: aether.v1.ACLAuthorityGrantRequest.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
-	211, // 205: aether.v1.ACLAuthorityGrantRequest.metadata:type_name -> aether.v1.ACLAuthorityGrantRequest.MetadataEntry
-	212, // 206: aether.v1.ACLAuditEntryInfo.metadata:type_name -> aether.v1.ACLAuditEntryInfo.MetadataEntry
-	51,  // 207: aether.v1.ACLAuthorityGrantInfo.subject:type_name -> aether.v1.PrincipalRef
-	51,  // 208: aether.v1.ACLAuthorityGrantInfo.delegate:type_name -> aether.v1.PrincipalRef
-	51,  // 209: aether.v1.ACLAuthorityGrantInfo.issued_by:type_name -> aether.v1.PrincipalRef
-	51,  // 210: aether.v1.ACLAuthorityGrantInfo.root_subject:type_name -> aether.v1.PrincipalRef
-	111, // 211: aether.v1.ACLAuthorityGrantInfo.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
-	213, // 212: aether.v1.ACLAuthorityGrantInfo.metadata:type_name -> aether.v1.ACLAuthorityGrantInfo.MetadataEntry
-	214, // 213: aether.v1.ACLGroupRequest.metadata:type_name -> aether.v1.ACLGroupRequest.MetadataEntry
-	215, // 214: aether.v1.ACLRoleRequest.metadata:type_name -> aether.v1.ACLRoleRequest.MetadataEntry
-	216, // 215: aether.v1.ACLGroupInfo.metadata:type_name -> aether.v1.ACLGroupInfo.MetadataEntry
-	217, // 216: aether.v1.ACLRoleInfo.metadata:type_name -> aether.v1.ACLRoleInfo.MetadataEntry
-	127, // 217: aether.v1.ACLAccessExplanationInfo.contributions:type_name -> aether.v1.ACLAccessContributionInfo
-	114, // 218: aether.v1.ACLResponse.rule:type_name -> aether.v1.ACLRuleInfo
-	114, // 219: aether.v1.ACLResponse.rules:type_name -> aether.v1.ACLRuleInfo
-	115, // 220: aether.v1.ACLResponse.fallback_policy:type_name -> aether.v1.ACLFallbackPolicyInfo
-	116, // 221: aether.v1.ACLResponse.audit_entries:type_name -> aether.v1.ACLAuditEntryInfo
-	118, // 222: aether.v1.ACLResponse.cleanup_result:type_name -> aether.v1.ACLCleanupResult
-	117, // 223: aether.v1.ACLResponse.authority_grant:type_name -> aether.v1.ACLAuthorityGrantInfo
-	117, // 224: aether.v1.ACLResponse.authority_grants:type_name -> aether.v1.ACLAuthorityGrantInfo
-	123, // 225: aether.v1.ACLResponse.group:type_name -> aether.v1.ACLGroupInfo
-	123, // 226: aether.v1.ACLResponse.groups:type_name -> aether.v1.ACLGroupInfo
-	124, // 227: aether.v1.ACLResponse.role:type_name -> aether.v1.ACLRoleInfo
-	124, // 228: aether.v1.ACLResponse.roles:type_name -> aether.v1.ACLRoleInfo
-	125, // 229: aether.v1.ACLResponse.group_members:type_name -> aether.v1.ACLGroupMemberInfo
-	126, // 230: aether.v1.ACLResponse.role_assignments:type_name -> aether.v1.ACLRoleAssignmentInfo
-	128, // 231: aether.v1.ACLResponse.explanation:type_name -> aether.v1.ACLAccessExplanationInfo
-	25,  // 232: aether.v1.AuthorityGrantOperation.op:type_name -> aether.v1.AuthorityGrantOperation.OpType
-	131, // 233: aether.v1.AuthorityGrantOperation.exchange_request:type_name -> aether.v1.AuthorityGrantExchangeRequest
-	132, // 234: aether.v1.AuthorityGrantOperation.derive_request:type_name -> aether.v1.AuthorityGrantDeriveRequest
-	113, // 235: aether.v1.AuthorityGrantOperation.renew_request:type_name -> aether.v1.ACLRenewAuthorityGrantRequest
-	134, // 236: aether.v1.AuthorityGrantOperation.list_request:type_name -> aether.v1.AuthorityGrantListRequest
-	135, // 237: aether.v1.AuthorityGrantOperation.batch_exchange_request:type_name -> aether.v1.AuthorityGrantBatchExchangeRequest
-	136, // 238: aether.v1.AuthorityGrantOperation.derive_for_target_request:type_name -> aether.v1.AuthorityGrantDeriveForTargetRequest
-	111, // 239: aether.v1.AuthorityGrantExchangeRequest.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
-	218, // 240: aether.v1.AuthorityGrantExchangeRequest.metadata:type_name -> aether.v1.AuthorityGrantExchangeRequest.MetadataEntry
-	51,  // 241: aether.v1.AuthorityGrantDeriveRequest.delegate:type_name -> aether.v1.PrincipalRef
-	111, // 242: aether.v1.AuthorityGrantDeriveRequest.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
-	219, // 243: aether.v1.AuthorityGrantDeriveRequest.metadata:type_name -> aether.v1.AuthorityGrantDeriveRequest.MetadataEntry
-	117, // 244: aether.v1.AuthorityGrantResponse.grant:type_name -> aether.v1.ACLAuthorityGrantInfo
-	117, // 245: aether.v1.AuthorityGrantResponse.grants:type_name -> aether.v1.ACLAuthorityGrantInfo
-	131, // 246: aether.v1.AuthorityGrantBatchExchangeRequest.requests:type_name -> aether.v1.AuthorityGrantExchangeRequest
-	51,  // 247: aether.v1.AuthorityGrantDeriveForTargetRequest.target:type_name -> aether.v1.PrincipalRef
-	51,  // 248: aether.v1.AuthorityIdentity.subject:type_name -> aether.v1.PrincipalRef
-	51,  // 249: aether.v1.AuthorityIdentity.root_subject:type_name -> aether.v1.PrincipalRef
-	51,  // 250: aether.v1.AuthorityIdentity.delegate:type_name -> aether.v1.PrincipalRef
-	51,  // 251: aether.v1.AuthorityIdentity.issued_by:type_name -> aether.v1.PrincipalRef
-	51,  // 252: aether.v1.AuthorityRequestRoutingTarget.principal:type_name -> aether.v1.PrincipalRef
+	24,  // 177: aether.v1.AgentOperation.op:type_name -> aether.v1.AgentOperation.OpType
+	99,  // 178: aether.v1.AgentOperation.filter:type_name -> aether.v1.AgentFilter
+	100, // 179: aether.v1.AgentOperation.agent:type_name -> aether.v1.AgentRegistrationInfo
+	102, // 180: aether.v1.AgentOperation.launch_params:type_name -> aether.v1.AgentLaunchParams
+	211, // 181: aether.v1.AgentRegistrationInfo.launch_params:type_name -> aether.v1.AgentRegistrationInfo.LaunchParamsEntry
+	101, // 182: aether.v1.AgentRegistrationInfo.resource_schema:type_name -> aether.v1.AgentResourceSchemaEntry
+	212, // 183: aether.v1.AgentRegistrationInfo.capabilities:type_name -> aether.v1.AgentRegistrationInfo.CapabilitiesEntry
+	213, // 184: aether.v1.AgentLaunchParams.param_overrides:type_name -> aether.v1.AgentLaunchParams.ParamOverridesEntry
+	100, // 185: aether.v1.AgentResponse.agent:type_name -> aether.v1.AgentRegistrationInfo
+	100, // 186: aether.v1.AgentResponse.agents:type_name -> aether.v1.AgentRegistrationInfo
+	103, // 187: aether.v1.AgentResponse.orchestrators:type_name -> aether.v1.OrchestratorInfo
+	104, // 188: aether.v1.AgentResponse.launch_result:type_name -> aether.v1.AgentLaunchResult
+	25,  // 189: aether.v1.ACLOperation.op:type_name -> aether.v1.ACLOperation.OpType
+	107, // 190: aether.v1.ACLOperation.rule_filter:type_name -> aether.v1.ACLRuleFilter
+	108, // 191: aether.v1.ACLOperation.audit_filter:type_name -> aether.v1.ACLAuditFilter
+	109, // 192: aether.v1.ACLOperation.grant_request:type_name -> aether.v1.ACLGrantRequest
+	110, // 193: aether.v1.ACLOperation.fallback_request:type_name -> aether.v1.ACLSetFallbackRequest
+	52,  // 194: aether.v1.ACLOperation.principal:type_name -> aether.v1.PrincipalRef
+	120, // 195: aether.v1.ACLOperation.group_request:type_name -> aether.v1.ACLGroupRequest
+	121, // 196: aether.v1.ACLOperation.role_request:type_name -> aether.v1.ACLRoleRequest
+	122, // 197: aether.v1.ACLOperation.member_request:type_name -> aether.v1.ACLGroupMemberRequest
+	123, // 198: aether.v1.ACLOperation.assignment_request:type_name -> aether.v1.ACLRoleAssignmentRequest
+	53,  // 199: aether.v1.ACLOperation.authorization:type_name -> aether.v1.AuthorizationContext
+	52,  // 200: aether.v1.ACLAuthorityGrantRequest.subject:type_name -> aether.v1.PrincipalRef
+	52,  // 201: aether.v1.ACLAuthorityGrantRequest.delegate:type_name -> aether.v1.PrincipalRef
+	52,  // 202: aether.v1.ACLAuthorityGrantRequest.issued_by:type_name -> aether.v1.PrincipalRef
+	52,  // 203: aether.v1.ACLAuthorityGrantRequest.root_subject:type_name -> aether.v1.PrincipalRef
+	112, // 204: aether.v1.ACLAuthorityGrantRequest.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
+	214, // 205: aether.v1.ACLAuthorityGrantRequest.metadata:type_name -> aether.v1.ACLAuthorityGrantRequest.MetadataEntry
+	215, // 206: aether.v1.ACLAuditEntryInfo.metadata:type_name -> aether.v1.ACLAuditEntryInfo.MetadataEntry
+	52,  // 207: aether.v1.ACLAuthorityGrantInfo.subject:type_name -> aether.v1.PrincipalRef
+	52,  // 208: aether.v1.ACLAuthorityGrantInfo.delegate:type_name -> aether.v1.PrincipalRef
+	52,  // 209: aether.v1.ACLAuthorityGrantInfo.issued_by:type_name -> aether.v1.PrincipalRef
+	52,  // 210: aether.v1.ACLAuthorityGrantInfo.root_subject:type_name -> aether.v1.PrincipalRef
+	112, // 211: aether.v1.ACLAuthorityGrantInfo.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
+	216, // 212: aether.v1.ACLAuthorityGrantInfo.metadata:type_name -> aether.v1.ACLAuthorityGrantInfo.MetadataEntry
+	217, // 213: aether.v1.ACLGroupRequest.metadata:type_name -> aether.v1.ACLGroupRequest.MetadataEntry
+	218, // 214: aether.v1.ACLRoleRequest.metadata:type_name -> aether.v1.ACLRoleRequest.MetadataEntry
+	219, // 215: aether.v1.ACLGroupInfo.metadata:type_name -> aether.v1.ACLGroupInfo.MetadataEntry
+	220, // 216: aether.v1.ACLRoleInfo.metadata:type_name -> aether.v1.ACLRoleInfo.MetadataEntry
+	128, // 217: aether.v1.ACLAccessExplanationInfo.contributions:type_name -> aether.v1.ACLAccessContributionInfo
+	115, // 218: aether.v1.ACLResponse.rule:type_name -> aether.v1.ACLRuleInfo
+	115, // 219: aether.v1.ACLResponse.rules:type_name -> aether.v1.ACLRuleInfo
+	116, // 220: aether.v1.ACLResponse.fallback_policy:type_name -> aether.v1.ACLFallbackPolicyInfo
+	117, // 221: aether.v1.ACLResponse.audit_entries:type_name -> aether.v1.ACLAuditEntryInfo
+	119, // 222: aether.v1.ACLResponse.cleanup_result:type_name -> aether.v1.ACLCleanupResult
+	118, // 223: aether.v1.ACLResponse.authority_grant:type_name -> aether.v1.ACLAuthorityGrantInfo
+	118, // 224: aether.v1.ACLResponse.authority_grants:type_name -> aether.v1.ACLAuthorityGrantInfo
+	124, // 225: aether.v1.ACLResponse.group:type_name -> aether.v1.ACLGroupInfo
+	124, // 226: aether.v1.ACLResponse.groups:type_name -> aether.v1.ACLGroupInfo
+	125, // 227: aether.v1.ACLResponse.role:type_name -> aether.v1.ACLRoleInfo
+	125, // 228: aether.v1.ACLResponse.roles:type_name -> aether.v1.ACLRoleInfo
+	126, // 229: aether.v1.ACLResponse.group_members:type_name -> aether.v1.ACLGroupMemberInfo
+	127, // 230: aether.v1.ACLResponse.role_assignments:type_name -> aether.v1.ACLRoleAssignmentInfo
+	129, // 231: aether.v1.ACLResponse.explanation:type_name -> aether.v1.ACLAccessExplanationInfo
+	26,  // 232: aether.v1.AuthorityGrantOperation.op:type_name -> aether.v1.AuthorityGrantOperation.OpType
+	132, // 233: aether.v1.AuthorityGrantOperation.exchange_request:type_name -> aether.v1.AuthorityGrantExchangeRequest
+	133, // 234: aether.v1.AuthorityGrantOperation.derive_request:type_name -> aether.v1.AuthorityGrantDeriveRequest
+	114, // 235: aether.v1.AuthorityGrantOperation.renew_request:type_name -> aether.v1.ACLRenewAuthorityGrantRequest
+	135, // 236: aether.v1.AuthorityGrantOperation.list_request:type_name -> aether.v1.AuthorityGrantListRequest
+	136, // 237: aether.v1.AuthorityGrantOperation.batch_exchange_request:type_name -> aether.v1.AuthorityGrantBatchExchangeRequest
+	137, // 238: aether.v1.AuthorityGrantOperation.derive_for_target_request:type_name -> aether.v1.AuthorityGrantDeriveForTargetRequest
+	112, // 239: aether.v1.AuthorityGrantExchangeRequest.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
+	221, // 240: aether.v1.AuthorityGrantExchangeRequest.metadata:type_name -> aether.v1.AuthorityGrantExchangeRequest.MetadataEntry
+	52,  // 241: aether.v1.AuthorityGrantDeriveRequest.delegate:type_name -> aether.v1.PrincipalRef
+	112, // 242: aether.v1.AuthorityGrantDeriveRequest.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
+	222, // 243: aether.v1.AuthorityGrantDeriveRequest.metadata:type_name -> aether.v1.AuthorityGrantDeriveRequest.MetadataEntry
+	118, // 244: aether.v1.AuthorityGrantResponse.grant:type_name -> aether.v1.ACLAuthorityGrantInfo
+	118, // 245: aether.v1.AuthorityGrantResponse.grants:type_name -> aether.v1.ACLAuthorityGrantInfo
+	132, // 246: aether.v1.AuthorityGrantBatchExchangeRequest.requests:type_name -> aether.v1.AuthorityGrantExchangeRequest
+	52,  // 247: aether.v1.AuthorityGrantDeriveForTargetRequest.target:type_name -> aether.v1.PrincipalRef
+	52,  // 248: aether.v1.AuthorityIdentity.subject:type_name -> aether.v1.PrincipalRef
+	52,  // 249: aether.v1.AuthorityIdentity.root_subject:type_name -> aether.v1.PrincipalRef
+	52,  // 250: aether.v1.AuthorityIdentity.delegate:type_name -> aether.v1.PrincipalRef
+	52,  // 251: aether.v1.AuthorityIdentity.issued_by:type_name -> aether.v1.PrincipalRef
+	52,  // 252: aether.v1.AuthorityRequestRoutingTarget.principal:type_name -> aether.v1.PrincipalRef
 	12,  // 253: aether.v1.AuthorityRequest.status:type_name -> aether.v1.AuthorityRequestStatus
-	51,  // 254: aether.v1.AuthorityRequest.requesting_actor:type_name -> aether.v1.PrincipalRef
-	51,  // 255: aether.v1.AuthorityRequest.target_subject:type_name -> aether.v1.PrincipalRef
-	141, // 256: aether.v1.AuthorityRequest.desired_resource_scope:type_name -> aether.v1.AuthorityRequestResourceScopeEntry
+	52,  // 254: aether.v1.AuthorityRequest.requesting_actor:type_name -> aether.v1.PrincipalRef
+	52,  // 255: aether.v1.AuthorityRequest.target_subject:type_name -> aether.v1.PrincipalRef
+	142, // 256: aether.v1.AuthorityRequest.desired_resource_scope:type_name -> aether.v1.AuthorityRequestResourceScopeEntry
 	5,   // 257: aether.v1.AuthorityRequest.requested_access_level:type_name -> aether.v1.AccessLevel
-	140, // 258: aether.v1.AuthorityRequest.routing_target:type_name -> aether.v1.AuthorityRequestRoutingTarget
-	220, // 259: aether.v1.AuthorityRequest.metadata:type_name -> aether.v1.AuthorityRequest.MetadataEntry
-	51,  // 260: aether.v1.AuthorityRequest.resolved_by:type_name -> aether.v1.PrincipalRef
-	51,  // 261: aether.v1.CreateAuthorityRequestPayload.requesting_actor:type_name -> aether.v1.PrincipalRef
-	51,  // 262: aether.v1.CreateAuthorityRequestPayload.target_subject:type_name -> aether.v1.PrincipalRef
-	141, // 263: aether.v1.CreateAuthorityRequestPayload.desired_resource_scope:type_name -> aether.v1.AuthorityRequestResourceScopeEntry
+	141, // 258: aether.v1.AuthorityRequest.routing_target:type_name -> aether.v1.AuthorityRequestRoutingTarget
+	223, // 259: aether.v1.AuthorityRequest.metadata:type_name -> aether.v1.AuthorityRequest.MetadataEntry
+	52,  // 260: aether.v1.AuthorityRequest.resolved_by:type_name -> aether.v1.PrincipalRef
+	52,  // 261: aether.v1.CreateAuthorityRequestPayload.requesting_actor:type_name -> aether.v1.PrincipalRef
+	52,  // 262: aether.v1.CreateAuthorityRequestPayload.target_subject:type_name -> aether.v1.PrincipalRef
+	142, // 263: aether.v1.CreateAuthorityRequestPayload.desired_resource_scope:type_name -> aether.v1.AuthorityRequestResourceScopeEntry
 	5,   // 264: aether.v1.CreateAuthorityRequestPayload.requested_access_level:type_name -> aether.v1.AccessLevel
-	140, // 265: aether.v1.CreateAuthorityRequestPayload.routing_target:type_name -> aether.v1.AuthorityRequestRoutingTarget
-	221, // 266: aether.v1.CreateAuthorityRequestPayload.metadata:type_name -> aether.v1.CreateAuthorityRequestPayload.MetadataEntry
-	26,  // 267: aether.v1.ResolveAuthorityRequestPayload.decision:type_name -> aether.v1.ResolveAuthorityRequestPayload.Decision
-	141, // 268: aether.v1.ResolveAuthorityRequestPayload.granted_resource_scope:type_name -> aether.v1.AuthorityRequestResourceScopeEntry
+	141, // 265: aether.v1.CreateAuthorityRequestPayload.routing_target:type_name -> aether.v1.AuthorityRequestRoutingTarget
+	224, // 266: aether.v1.CreateAuthorityRequestPayload.metadata:type_name -> aether.v1.CreateAuthorityRequestPayload.MetadataEntry
+	27,  // 267: aether.v1.ResolveAuthorityRequestPayload.decision:type_name -> aether.v1.ResolveAuthorityRequestPayload.Decision
+	142, // 268: aether.v1.ResolveAuthorityRequestPayload.granted_resource_scope:type_name -> aether.v1.AuthorityRequestResourceScopeEntry
 	5,   // 269: aether.v1.ResolveAuthorityRequestPayload.granted_access_level:type_name -> aether.v1.AccessLevel
 	12,  // 270: aether.v1.AuthorityRequestListFilter.status:type_name -> aether.v1.AuthorityRequestStatus
-	27,  // 271: aether.v1.AuthorityRequestOperation.op:type_name -> aether.v1.AuthorityRequestOperation.OpType
-	143, // 272: aether.v1.AuthorityRequestOperation.create:type_name -> aether.v1.CreateAuthorityRequestPayload
-	144, // 273: aether.v1.AuthorityRequestOperation.resolve:type_name -> aether.v1.ResolveAuthorityRequestPayload
-	145, // 274: aether.v1.AuthorityRequestOperation.list_filter:type_name -> aether.v1.AuthorityRequestListFilter
-	142, // 275: aether.v1.AuthorityRequestOperationResponse.request:type_name -> aether.v1.AuthorityRequest
-	142, // 276: aether.v1.AuthorityRequestOperationResponse.requests:type_name -> aether.v1.AuthorityRequest
-	28,  // 277: aether.v1.AuthorityRequestEvent.event_type:type_name -> aether.v1.AuthorityRequestEvent.EventType
-	142, // 278: aether.v1.AuthorityRequestEvent.request:type_name -> aether.v1.AuthorityRequest
-	29,  // 279: aether.v1.TokenOperation.op:type_name -> aether.v1.TokenOperation.OpType
-	150, // 280: aether.v1.TokenOperation.create_request:type_name -> aether.v1.TokenCreateRequest
-	151, // 281: aether.v1.TokenOperation.filter:type_name -> aether.v1.TokenFilter
-	152, // 282: aether.v1.TokenResponse.token:type_name -> aether.v1.TokenInfo
-	152, // 283: aether.v1.TokenResponse.tokens:type_name -> aether.v1.TokenInfo
-	152, // 284: aether.v1.TokenResponse.created_token:type_name -> aether.v1.TokenInfo
-	155, // 285: aether.v1.ProgressReport.step:type_name -> aether.v1.ProgressStep
-	222, // 286: aether.v1.ProgressReport.metadata:type_name -> aether.v1.ProgressReport.MetadataEntry
+	28,  // 271: aether.v1.AuthorityRequestOperation.op:type_name -> aether.v1.AuthorityRequestOperation.OpType
+	144, // 272: aether.v1.AuthorityRequestOperation.create:type_name -> aether.v1.CreateAuthorityRequestPayload
+	145, // 273: aether.v1.AuthorityRequestOperation.resolve:type_name -> aether.v1.ResolveAuthorityRequestPayload
+	146, // 274: aether.v1.AuthorityRequestOperation.list_filter:type_name -> aether.v1.AuthorityRequestListFilter
+	143, // 275: aether.v1.AuthorityRequestOperationResponse.request:type_name -> aether.v1.AuthorityRequest
+	143, // 276: aether.v1.AuthorityRequestOperationResponse.requests:type_name -> aether.v1.AuthorityRequest
+	29,  // 277: aether.v1.AuthorityRequestEvent.event_type:type_name -> aether.v1.AuthorityRequestEvent.EventType
+	143, // 278: aether.v1.AuthorityRequestEvent.request:type_name -> aether.v1.AuthorityRequest
+	30,  // 279: aether.v1.TokenOperation.op:type_name -> aether.v1.TokenOperation.OpType
+	151, // 280: aether.v1.TokenOperation.create_request:type_name -> aether.v1.TokenCreateRequest
+	152, // 281: aether.v1.TokenOperation.filter:type_name -> aether.v1.TokenFilter
+	153, // 282: aether.v1.TokenResponse.token:type_name -> aether.v1.TokenInfo
+	153, // 283: aether.v1.TokenResponse.tokens:type_name -> aether.v1.TokenInfo
+	153, // 284: aether.v1.TokenResponse.created_token:type_name -> aether.v1.TokenInfo
+	156, // 285: aether.v1.ProgressReport.step:type_name -> aether.v1.ProgressStep
+	225, // 286: aether.v1.ProgressReport.metadata:type_name -> aether.v1.ProgressReport.MetadataEntry
 	13,  // 287: aether.v1.ProgressReport.kind:type_name -> aether.v1.ProgressKind
-	155, // 288: aether.v1.ProgressUpdate.step:type_name -> aether.v1.ProgressStep
-	223, // 289: aether.v1.ProgressUpdate.metadata:type_name -> aether.v1.ProgressUpdate.MetadataEntry
+	156, // 288: aether.v1.ProgressUpdate.step:type_name -> aether.v1.ProgressStep
+	226, // 289: aether.v1.ProgressUpdate.metadata:type_name -> aether.v1.ProgressUpdate.MetadataEntry
 	13,  // 290: aether.v1.ProgressUpdate.kind:type_name -> aether.v1.ProgressKind
-	30,  // 291: aether.v1.WorkflowOperation.op:type_name -> aether.v1.WorkflowOperation.OpType
-	0,   // 292: aether.v1.MessageEnvelope.message_type:type_name -> aether.v1.MessageType
-	224, // 293: aether.v1.MessageEnvelope.metadata:type_name -> aether.v1.MessageEnvelope.MetadataEntry
-	51,  // 294: aether.v1.MessageEnvelope.on_behalf_subject:type_name -> aether.v1.PrincipalRef
-	187, // 295: aether.v1.MessageEnvelope.access_receipt:type_name -> aether.v1.AccessDecisionReceipt
-	61,  // 296: aether.v1.MessageEnvelope.forwarded_authorization:type_name -> aether.v1.ForwardedAuthorization
-	52,  // 297: aether.v1.AuditQuery.authorization:type_name -> aether.v1.AuthorizationContext
-	162, // 298: aether.v1.AuditQueryResponse.entries:type_name -> aether.v1.AuditEntry
-	225, // 299: aether.v1.SubmitAuditEventRequest.metadata:type_name -> aether.v1.SubmitAuditEventRequest.MetadataEntry
-	226, // 300: aether.v1.ProxyHttpRequest.headers:type_name -> aether.v1.ProxyHttpRequest.HeadersEntry
-	52,  // 301: aether.v1.ProxyHttpRequest.authorization:type_name -> aether.v1.AuthorizationContext
-	227, // 302: aether.v1.ProxyHttpResponse.headers:type_name -> aether.v1.ProxyHttpResponse.HeadersEntry
-	168, // 303: aether.v1.ProxyHttpResponse.error:type_name -> aether.v1.ProxyError
-	31,  // 304: aether.v1.ProxyError.kind:type_name -> aether.v1.ProxyError.Kind
-	32,  // 305: aether.v1.TunnelOpen.protocol:type_name -> aether.v1.TunnelOpen.Protocol
-	228, // 306: aether.v1.TunnelOpen.metadata:type_name -> aether.v1.TunnelOpen.MetadataEntry
-	52,  // 307: aether.v1.TunnelOpen.authorization:type_name -> aether.v1.AuthorizationContext
-	33,  // 308: aether.v1.TunnelClose.reason:type_name -> aether.v1.TunnelClose.Reason
-	51,  // 309: aether.v1.ResolveAuthorityRequest.actor:type_name -> aether.v1.PrincipalRef
-	51,  // 310: aether.v1.ResolveAuthorityRequest.subject:type_name -> aether.v1.PrincipalRef
-	175, // 311: aether.v1.ResolveAuthorityResponse.authority:type_name -> aether.v1.ResolvedAuthority
-	51,  // 312: aether.v1.ResolvedAuthority.actor:type_name -> aether.v1.PrincipalRef
-	51,  // 313: aether.v1.ResolvedAuthority.subject:type_name -> aether.v1.PrincipalRef
-	176, // 314: aether.v1.ResolvedAuthority.grant:type_name -> aether.v1.AuthorityGrantInfo
-	51,  // 315: aether.v1.ConnectionStatusRequest.principal:type_name -> aether.v1.PrincipalRef
-	34,  // 316: aether.v1.TaskSubscriptionOperation.op:type_name -> aether.v1.TaskSubscriptionOperation.OpType
-	182, // 317: aether.v1.TaskEvent.status_changed:type_name -> aether.v1.TaskStatusChangedEvent
-	183, // 318: aether.v1.TaskEvent.progress:type_name -> aether.v1.TaskProgressEvent
-	184, // 319: aether.v1.TaskEvent.child_lifecycle:type_name -> aether.v1.TaskChildLifecycleEvent
-	185, // 320: aether.v1.TaskEvent.authority_request:type_name -> aether.v1.TaskAuthorityRequestEventRelay
-	2,   // 321: aether.v1.TaskStatusChangedEvent.from_status:type_name -> aether.v1.TaskStatus
-	2,   // 322: aether.v1.TaskStatusChangedEvent.to_status:type_name -> aether.v1.TaskStatus
-	229, // 323: aether.v1.TaskProgressEvent.metadata:type_name -> aether.v1.TaskProgressEvent.MetadataEntry
-	2,   // 324: aether.v1.TaskChildLifecycleEvent.child_status:type_name -> aether.v1.TaskStatus
-	148, // 325: aether.v1.TaskAuthorityRequestEventRelay.event:type_name -> aether.v1.AuthorityRequestEvent
-	186, // 326: aether.v1.AccessDecisionReceipt.request:type_name -> aether.v1.ResourceAccessRequest
-	51,  // 327: aether.v1.AccessDecisionReceipt.actor:type_name -> aether.v1.PrincipalRef
-	51,  // 328: aether.v1.AccessDecisionReceipt.subject:type_name -> aether.v1.PrincipalRef
-	51,  // 329: aether.v1.AccessDecisionReceipt.root_subject:type_name -> aether.v1.PrincipalRef
-	186, // 330: aether.v1.AccessCheckOperation.access:type_name -> aether.v1.ResourceAccessRequest
-	52,  // 331: aether.v1.AccessCheckOperation.authorization:type_name -> aether.v1.AuthorizationContext
-	187, // 332: aether.v1.AccessCheckResponse.decision:type_name -> aether.v1.AccessDecisionReceipt
-	186, // 333: aether.v1.BatchAccessCheckOperation.access:type_name -> aether.v1.ResourceAccessRequest
-	52,  // 334: aether.v1.BatchAccessCheckOperation.authorization:type_name -> aether.v1.AuthorizationContext
-	187, // 335: aether.v1.BatchAccessCheckResponse.decisions:type_name -> aether.v1.AccessDecisionReceipt
-	77,  // 336: aether.v1.HealthInfo.ChecksEntry.value:type_name -> aether.v1.HealthCheck
-	35,  // 337: aether.v1.AetherGateway.Connect:input_type -> aether.v1.UpstreamMessage
-	36,  // 338: aether.v1.AetherGateway.Connect:output_type -> aether.v1.DownstreamMessage
-	338, // [338:339] is the sub-list for method output_type
-	337, // [337:338] is the sub-list for method input_type
-	337, // [337:337] is the sub-list for extension type_name
-	337, // [337:337] is the sub-list for extension extendee
-	0,   // [0:337] is the sub-list for field type_name
+	112, // 291: aether.v1.WorkflowScheduleAuthorityScope.resource_scope:type_name -> aether.v1.ACLAuthorityGrantResourceScopeEntry
+	14,  // 292: aether.v1.WorkflowScheduleAuthorityScope.lifetime_mode:type_name -> aether.v1.WorkflowAuthorityLifetimeMode
+	52,  // 293: aether.v1.WorkflowRequestContext.actor:type_name -> aether.v1.PrincipalRef
+	52,  // 294: aether.v1.WorkflowRequestContext.subject:type_name -> aether.v1.PrincipalRef
+	53,  // 295: aether.v1.WorkflowRequestContext.schedule_authorization:type_name -> aether.v1.AuthorizationContext
+	14,  // 296: aether.v1.WorkflowRequestContext.lifetime_mode:type_name -> aether.v1.WorkflowAuthorityLifetimeMode
+	31,  // 297: aether.v1.WorkflowOperation.op:type_name -> aether.v1.WorkflowOperation.OpType
+	53,  // 298: aether.v1.WorkflowOperation.authorization:type_name -> aether.v1.AuthorizationContext
+	158, // 299: aether.v1.WorkflowOperation.schedule_authority_scope:type_name -> aether.v1.WorkflowScheduleAuthorityScope
+	159, // 300: aether.v1.WorkflowOperation.request_context:type_name -> aether.v1.WorkflowRequestContext
+	0,   // 301: aether.v1.MessageEnvelope.message_type:type_name -> aether.v1.MessageType
+	227, // 302: aether.v1.MessageEnvelope.metadata:type_name -> aether.v1.MessageEnvelope.MetadataEntry
+	52,  // 303: aether.v1.MessageEnvelope.on_behalf_subject:type_name -> aether.v1.PrincipalRef
+	190, // 304: aether.v1.MessageEnvelope.access_receipt:type_name -> aether.v1.AccessDecisionReceipt
+	62,  // 305: aether.v1.MessageEnvelope.forwarded_authorization:type_name -> aether.v1.ForwardedAuthorization
+	53,  // 306: aether.v1.AuditQuery.authorization:type_name -> aether.v1.AuthorizationContext
+	165, // 307: aether.v1.AuditQueryResponse.entries:type_name -> aether.v1.AuditEntry
+	228, // 308: aether.v1.SubmitAuditEventRequest.metadata:type_name -> aether.v1.SubmitAuditEventRequest.MetadataEntry
+	229, // 309: aether.v1.ProxyHttpRequest.headers:type_name -> aether.v1.ProxyHttpRequest.HeadersEntry
+	53,  // 310: aether.v1.ProxyHttpRequest.authorization:type_name -> aether.v1.AuthorizationContext
+	230, // 311: aether.v1.ProxyHttpResponse.headers:type_name -> aether.v1.ProxyHttpResponse.HeadersEntry
+	171, // 312: aether.v1.ProxyHttpResponse.error:type_name -> aether.v1.ProxyError
+	32,  // 313: aether.v1.ProxyError.kind:type_name -> aether.v1.ProxyError.Kind
+	33,  // 314: aether.v1.TunnelOpen.protocol:type_name -> aether.v1.TunnelOpen.Protocol
+	231, // 315: aether.v1.TunnelOpen.metadata:type_name -> aether.v1.TunnelOpen.MetadataEntry
+	53,  // 316: aether.v1.TunnelOpen.authorization:type_name -> aether.v1.AuthorizationContext
+	34,  // 317: aether.v1.TunnelClose.reason:type_name -> aether.v1.TunnelClose.Reason
+	52,  // 318: aether.v1.ResolveAuthorityRequest.actor:type_name -> aether.v1.PrincipalRef
+	52,  // 319: aether.v1.ResolveAuthorityRequest.subject:type_name -> aether.v1.PrincipalRef
+	178, // 320: aether.v1.ResolveAuthorityResponse.authority:type_name -> aether.v1.ResolvedAuthority
+	52,  // 321: aether.v1.ResolvedAuthority.actor:type_name -> aether.v1.PrincipalRef
+	52,  // 322: aether.v1.ResolvedAuthority.subject:type_name -> aether.v1.PrincipalRef
+	179, // 323: aether.v1.ResolvedAuthority.grant:type_name -> aether.v1.AuthorityGrantInfo
+	52,  // 324: aether.v1.ConnectionStatusRequest.principal:type_name -> aether.v1.PrincipalRef
+	35,  // 325: aether.v1.TaskSubscriptionOperation.op:type_name -> aether.v1.TaskSubscriptionOperation.OpType
+	185, // 326: aether.v1.TaskEvent.status_changed:type_name -> aether.v1.TaskStatusChangedEvent
+	186, // 327: aether.v1.TaskEvent.progress:type_name -> aether.v1.TaskProgressEvent
+	187, // 328: aether.v1.TaskEvent.child_lifecycle:type_name -> aether.v1.TaskChildLifecycleEvent
+	188, // 329: aether.v1.TaskEvent.authority_request:type_name -> aether.v1.TaskAuthorityRequestEventRelay
+	2,   // 330: aether.v1.TaskStatusChangedEvent.from_status:type_name -> aether.v1.TaskStatus
+	2,   // 331: aether.v1.TaskStatusChangedEvent.to_status:type_name -> aether.v1.TaskStatus
+	232, // 332: aether.v1.TaskProgressEvent.metadata:type_name -> aether.v1.TaskProgressEvent.MetadataEntry
+	2,   // 333: aether.v1.TaskChildLifecycleEvent.child_status:type_name -> aether.v1.TaskStatus
+	149, // 334: aether.v1.TaskAuthorityRequestEventRelay.event:type_name -> aether.v1.AuthorityRequestEvent
+	189, // 335: aether.v1.AccessDecisionReceipt.request:type_name -> aether.v1.ResourceAccessRequest
+	52,  // 336: aether.v1.AccessDecisionReceipt.actor:type_name -> aether.v1.PrincipalRef
+	52,  // 337: aether.v1.AccessDecisionReceipt.subject:type_name -> aether.v1.PrincipalRef
+	52,  // 338: aether.v1.AccessDecisionReceipt.root_subject:type_name -> aether.v1.PrincipalRef
+	189, // 339: aether.v1.AccessCheckOperation.access:type_name -> aether.v1.ResourceAccessRequest
+	53,  // 340: aether.v1.AccessCheckOperation.authorization:type_name -> aether.v1.AuthorizationContext
+	190, // 341: aether.v1.AccessCheckResponse.decision:type_name -> aether.v1.AccessDecisionReceipt
+	189, // 342: aether.v1.BatchAccessCheckOperation.access:type_name -> aether.v1.ResourceAccessRequest
+	53,  // 343: aether.v1.BatchAccessCheckOperation.authorization:type_name -> aether.v1.AuthorizationContext
+	190, // 344: aether.v1.BatchAccessCheckResponse.decisions:type_name -> aether.v1.AccessDecisionReceipt
+	78,  // 345: aether.v1.HealthInfo.ChecksEntry.value:type_name -> aether.v1.HealthCheck
+	36,  // 346: aether.v1.AetherGateway.Connect:input_type -> aether.v1.UpstreamMessage
+	37,  // 347: aether.v1.AetherGateway.Connect:output_type -> aether.v1.DownstreamMessage
+	347, // [347:348] is the sub-list for method output_type
+	346, // [346:347] is the sub-list for method input_type
+	346, // [346:346] is the sub-list for extension type_name
+	346, // [346:346] is the sub-list for extension extendee
+	0,   // [0:346] is the sub-list for field type_name
 }
 
 func init() { file_aether_proto_init() }
@@ -21768,7 +22147,7 @@ func file_aether_proto_init() {
 		(*InitConnection_Bridge)(nil),
 		(*InitConnection_Service)(nil),
 	}
-	file_aether_proto_msgTypes[146].OneofWrappers = []any{
+	file_aether_proto_msgTypes[148].OneofWrappers = []any{
 		(*TaskEvent_StatusChanged)(nil),
 		(*TaskEvent_Progress)(nil),
 		(*TaskEvent_ChildLifecycle)(nil),
@@ -21779,8 +22158,8 @@ func file_aether_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_aether_proto_rawDesc), len(file_aether_proto_rawDesc)),
-			NumEnums:      35,
-			NumMessages:   195,
+			NumEnums:      36,
+			NumMessages:   197,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

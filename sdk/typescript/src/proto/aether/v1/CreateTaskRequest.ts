@@ -118,6 +118,13 @@ export interface CreateTaskRequest {
    * In POOL mode the gateway reserves the additional anchor-to-assignee hop.
    */
   'requiredDownstreamAuthorityHops'?: (number);
+  /**
+   * WorkflowEngine-only authority audience binding. The gateway accepts this
+   * field only from the authenticated WorkflowEngine principal and requires it
+   * to match a workflow_schedule audience on authorization. Ordinary task
+   * creators must leave it empty.
+   */
+  'originatingScheduleId'?: (string);
 }
 
 export interface CreateTaskRequest__Output {
@@ -230,4 +237,11 @@ export interface CreateTaskRequest__Output {
    * In POOL mode the gateway reserves the additional anchor-to-assignee hop.
    */
   'requiredDownstreamAuthorityHops': (number);
+  /**
+   * WorkflowEngine-only authority audience binding. The gateway accepts this
+   * field only from the authenticated WorkflowEngine principal and requires it
+   * to match a workflow_schedule audience on authorization. Ordinary task
+   * creators must leave it empty.
+   */
+  'originatingScheduleId': (string);
 }

@@ -80,7 +80,7 @@ export type { UserClientOptions } from "./users.js";
 export { OrchestratorClient, BaseOrchestrator } from "./orchestrator.js";
 export type { OrchestratorClientOptions, BaseOrchestratorOptions } from "./orchestrator.js";
 
-export { WorkflowEngineClient } from "./workflow.js";
+export { WorkflowEngineClient, WORKFLOW_SCHEDULE_AUTHORITY_POLICY_VERSION } from "./workflow.js";
 export type { WorkflowEngineClientOptions } from "./workflow.js";
 
 export { MetricsBridgeClient } from "./metrics.js";

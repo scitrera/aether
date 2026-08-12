@@ -2341,6 +2341,8 @@ class TestSchedulingAPI:
         msg, req_id, timeout = agent_client._send_sync_op.call_args[0]
         assert msg.HasField("workflow_op")
         assert msg.workflow_op.op == aether_pb2.WorkflowOperation.CREATE_SCHEDULE
+        assert msg.workflow_op.id == "sched-1"
+        assert msg.workflow_op.workspace == "ws1"
         data = _json.loads(msg.workflow_op.data.decode())
         assert data["id"] == "sched-1"
         assert data["name"] == "My Schedule"
@@ -2351,6 +2353,33 @@ class TestSchedulingAPI:
         assert data["max_concurrent"] == 1
         assert timeout == 5.0
 
+    def test_create_schedule_sync_carries_authority_outside_json(self, agent_client: AgentClient):
+        """Schedule authority is transport-owned and never enters action JSON."""
+        import json as _json
+        agent_client._send_sync_op = MagicMock(return_value=None)
+        authorization = aether_pb2.AuthorizationContext(
+            authority_mode="on_behalf_of",
+            subject=aether_pb2.PrincipalRef(principal_type="user", principal_id="user-a"),
+            grant_id="source-grant",
+        )
+        scope = aether_pb2.WorkflowScheduleAuthorityScope(
+            workspace_scope=["ws1"],
+            operation_scope=["task_create"],
+            max_access_level=20,
+            policy_version=1,
+        )
+        agent_client.create_schedule_sync(
+            schedule_id="sched-auth", name="Authorized", schedule_type="cron",
+            schedule_expr="0 * * * *", workspace="ws1",
+            action={"type": "create_task", "require_task_authority": True},
+            authorization=authorization, authority_scope=scope,
+        )
+        msg, _, _ = agent_client._send_sync_op.call_args[0]
+        assert msg.workflow_op.authorization.grant_id == "source-grant"
+        assert msg.workflow_op.schedule_authority_scope.policy_version == 1
+        data = _json.loads(msg.workflow_op.data.decode())
+        assert "grant_id" not in _json.dumps(data)
+
     def test_upsert_schedule_sync_uses_upsert_op(self, agent_client: AgentClient):
         """upsert_schedule_sync puts an UPSERT_SCHEDULE WorkflowOperation."""
         agent_client._send_sync_op = MagicMock(return_value=None)
@@ -2360,6 +2389,7 @@ class TestSchedulingAPI:
             name="Updated",
             schedule_type="interval",
             schedule_expr="3600s",
+            workspace="ws1",
         )
 
         msg, _, _ = agent_client._send_sync_op.call_args[0]
@@ -2368,10 +2398,11 @@ class TestSchedulingAPI:
     def test_delete_schedule_sync_uses_delete_op(self, agent_client: AgentClient):
         """delete_schedule_sync puts a DELETE_SCHEDULE WorkflowOperation."""
         agent_client._send_sync_op = MagicMock(return_value=None)
-        agent_client.delete_schedule_sync("sched-3", timeout=3.0)
+        agent_client.delete_schedule_sync("sched-3", workspace="ws1", timeout=3.0)
         msg, _, timeout = agent_client._send_sync_op.call_args[0]
         assert msg.workflow_op.op == aether_pb2.WorkflowOperation.DELETE_SCHEDULE
         assert msg.workflow_op.id == "sched-3"
+        assert msg.workflow_op.workspace == "ws1"
         assert timeout == 3.0
 
     def test_list_schedules_sync_uses_list_op(self, agent_client: AgentClient):
@@ -2390,7 +2421,7 @@ class TestSchedulingAPI:
         action = {"type": "launch_agent", "implementation": "myorg/bot"}
         agent_client.create_schedule_sync(
             schedule_id="s1", name="n", schedule_type="cron",
-            schedule_expr="* * * * *", action=action,
+            schedule_expr="* * * * *", workspace="ws1", action=action,
         )
         msg, _, _ = agent_client._send_sync_op.call_args[0]
         data = _json.loads(msg.workflow_op.data.decode())
@@ -2402,7 +2433,7 @@ class TestSchedulingAPI:
         agent_client._send_sync_op = MagicMock(return_value=None)
         agent_client.create_schedule_sync(
             schedule_id="s1", name="n", schedule_type="cron",
-            schedule_expr="* * * * *", workflow_id="wf-42",
+            schedule_expr="* * * * *", workspace="ws1", workflow_id="wf-42",
         )
         msg, _, _ = agent_client._send_sync_op.call_args[0]
         data = _json.loads(msg.workflow_op.data.decode())
@@ -2412,9 +2443,14 @@ class TestSchedulingAPI:
         """create_schedule_sync returns None when the RPC times out."""
         result = agent_client.create_schedule_sync(
             schedule_id="s1", name="n", schedule_type="cron",
-            schedule_expr="* * * * *", timeout=0.01,
+            schedule_expr="* * * * *", workspace="ws1", timeout=0.01,
         )
         assert result is None
+
+    def test_schedule_helpers_reject_wildcard_workspace(self, agent_client: AgentClient):
+        """Schedule ACL resources are always scoped to one exact workspace."""
+        with pytest.raises(ValueError, match="exact workflow schedule workspace"):
+            agent_client.list_schedules_sync("*")
 
 
 # =============================================================================

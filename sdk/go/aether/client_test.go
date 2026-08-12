@@ -52,6 +52,59 @@ func TestNewBaseClient_DefaultValues(t *testing.T) {
 	}
 }
 
+func TestWorkflowOperationHandlersRunOffReceiveLoopInArrivalOrder(t *testing.T) {
+	client := &BaseClient{handlers: NewHandlers()}
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	secondStarted := make(chan struct{})
+	client.handlers.OnWorkflowOperation = func(_ context.Context, op *pb.WorkflowOperation) (*pb.WorkflowResponse, error) {
+		switch op.GetRequestId() {
+		case "first":
+			close(firstStarted)
+			<-releaseFirst
+		case "second":
+			close(secondStarted)
+		}
+		return nil, nil
+	}
+
+	if err := client.handleWorkflowOperation(context.Background(), &pb.WorkflowOperation{RequestId: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first workflow handler did not start asynchronously")
+	}
+	if err := client.handleWorkflowOperation(context.Background(), &pb.WorkflowOperation{RequestId: "second"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-secondStarted:
+		t.Fatal("second workflow handler overtook the first")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(releaseFirst)
+	select {
+	case <-secondStarted:
+	case <-time.After(time.Second):
+		t.Fatal("second workflow handler did not run after the first completed")
+	}
+}
+
+func TestWorkflowScheduleOperationsRequireExactWorkspace(t *testing.T) {
+	ops := &WorkflowOps{}
+	if _, err := ops.ListSchedules(context.Background(), "*"); err == nil {
+		t.Fatal("ListSchedules accepted wildcard workspace")
+	}
+	if _, err := ops.DeleteSchedule(context.Background(), "", "schedule-a"); err == nil {
+		t.Fatal("DeleteSchedule accepted empty workspace")
+	}
+	if _, err := ops.CreateSchedule(context.Background(), []byte(`{"id":"schedule-a","workspace":"*"}`)); err == nil {
+		t.Fatal("CreateSchedule accepted wildcard workspace")
+	}
+}
+
 func TestNewBaseClient_CustomValues(t *testing.T) {
 	cfg := BaseClientConfig{
 		ServerAddr: TestServerAddr,

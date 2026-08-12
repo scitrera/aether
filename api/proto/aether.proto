@@ -883,6 +883,12 @@ message CreateTaskRequest {
   // (for example, Sahara querying the tool catalog under the user's authority).
   // In POOL mode the gateway reserves the additional anchor-to-assignee hop.
   uint32 required_downstream_authority_hops = 22;
+
+  // WorkflowEngine-only authority audience binding. The gateway accepts this
+  // field only from the authenticated WorkflowEngine principal and requires it
+  // to match a workflow_schedule audience on authorization. Ordinary task
+  // creators must leave it empty.
+  string originating_schedule_id = 23;
 }
 
 // CreateTaskResponse is sent in response to CreateTaskRequest when the
@@ -2298,6 +2304,10 @@ message AuthorityGrantOperation {
 
   // For DERIVE_FOR_TARGET
   AuthorityGrantDeriveForTargetRequest derive_for_target_request = 9;
+
+  // WorkflowEngine-only audience context for GET/REVOKE of a
+  // workflow_schedule grant. Ignored for other actors and operations.
+  string workflow_schedule_id = 10;
 }
 
 // AuthorityGrantExchangeRequest bootstraps a grant for the current actor.
@@ -2854,6 +2864,48 @@ message ProgressUpdate {
 // Workflow Management Messages
 // ============================================================================
 
+enum WorkflowAuthorityLifetimeMode {
+  WORKFLOW_AUTHORITY_LIFETIME_SOURCE_BOUND = 0;
+  WORKFLOW_AUTHORITY_LIFETIME_DURABLE = 1;
+}
+
+// Requested ceiling for the private authority attached to one schedule. The
+// gateway validates/attenuates this against the authenticated caller context;
+// the WorkflowEngine never trusts it directly and never stores it in action
+// JSON. Empty resource or operation scope is invalid.
+message WorkflowScheduleAuthorityScope {
+  repeated string workspace_scope = 1;
+  repeated ACLAuthorityGrantResourceScopeEntry resource_scope = 2;
+  repeated string operation_scope = 3;
+  int32 max_access_level = 4;
+  int64 expires_at = 5;
+  int64 renewable_until = 6;
+  uint32 required_task_authority_hops = 7;
+  WorkflowAuthorityLifetimeMode lifetime_mode = 8;
+  // Version of the deterministic schedule-authority policy shape. Callers
+  // currently send 1; unknown versions fail closed instead of being silently
+  // reinterpreted after an upgrade.
+  uint32 policy_version = 9;
+}
+
+// Gateway-authored workflow request identity and schedule authority. The
+// gateway clears any client-supplied value before forwarding. Schedule grant
+// IDs remain outside action JSON, task payload/metadata, and workflow response
+// data. Consumers must treat this object as trusted only on the authenticated
+// WorkflowEngine connection from the gateway.
+message WorkflowRequestContext {
+  PrincipalRef actor = 1;
+  PrincipalRef subject = 2;
+  string actor_session_id = 3;
+  AuthorizationContext schedule_authorization = 4;
+  string root_grant_id = 5;
+  string source_grant_id = 6;
+  int64 expires_at_ms = 7;
+  string policy_digest = 8;
+  WorkflowAuthorityLifetimeMode lifetime_mode = 9;
+  uint32 policy_version = 10;
+}
+
 // WorkflowOperation allows clients to manage workflow rules, definitions,
 // schedules, executions, and state machines through the gRPC streaming interface.
 // Operations are forwarded by the gateway to the connected workflow engine and
@@ -2903,6 +2955,18 @@ message WorkflowOperation {
   bytes data = 5;             // JSON payload for CREATE/UPDATE ops
   string request_id = 6;      // Correlation ID
   string status_filter = 7;   // For LIST_EXECUTIONS
+
+  // Optional caller OBO authority. Resolved by the gateway before the request
+  // is authorized and forwarded.
+  AuthorizationContext authorization = 8;
+
+  // Optional requested authority for CREATE_SCHEDULE / UPSERT_SCHEDULE. The
+  // gateway derives or mints the exact WorkflowEngine schedule grant and
+  // forwards only the resulting trusted request_context.
+  WorkflowScheduleAuthorityScope schedule_authority_scope = 9;
+
+  // Gateway-authored; caller values are always discarded.
+  WorkflowRequestContext request_context = 10;
 }
 
 // WorkflowResponse is sent in response to WorkflowOperation.

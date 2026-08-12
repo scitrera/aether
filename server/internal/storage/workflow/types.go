@@ -29,6 +29,8 @@ type (
 	StepState = legacy.StepState
 	// Schedule is a workflow_schedules row.
 	Schedule = legacy.Schedule
+	// ScheduleAuthority is the private schedule authorization envelope.
+	ScheduleAuthority = legacy.ScheduleAuthority
 	// ScheduleOccurrence is the latest bounded scheduler decision.
 	ScheduleOccurrence = legacy.ScheduleOccurrence
 	// Join is a workflow_joins row.
@@ -54,8 +56,9 @@ const (
 	ScheduleDispositionCoalesced = legacy.ScheduleDispositionCoalesced
 	ScheduleDispositionCatchUp   = legacy.ScheduleDispositionCatchUp
 
-	ScheduleSkipReasonMissPolicy    = legacy.ScheduleSkipReasonMissPolicy
-	ScheduleSkipReasonMaxConcurrent = legacy.ScheduleSkipReasonMaxConcurrent
+	ScheduleSkipReasonMissPolicy       = legacy.ScheduleSkipReasonMissPolicy
+	ScheduleSkipReasonMaxConcurrent    = legacy.ScheduleSkipReasonMaxConcurrent
+	ScheduleSkipReasonAuthorityInvalid = legacy.ScheduleSkipReasonAuthorityInvalid
 )
 
 // Step status values — values that land in workflow_step_states.status.

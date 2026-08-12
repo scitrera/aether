@@ -27,6 +27,10 @@ func (s *GatewayServer) resolveAuthorizationContext(ctx context.Context, client 
 // with every task it executes, so the validated parent task supplies the grant
 // audience for this request without mutating the connection session.
 func (s *GatewayServer) resolveAuthorizationContextForTask(ctx context.Context, client *ClientSession, actor models.Identity, authz *pb.AuthorizationContext, associatedTaskID string) (*acl.ResolvedAuthority, error) {
+	return s.resolveAuthorizationContextForAudience(ctx, client, actor, authz, associatedTaskID, "")
+}
+
+func (s *GatewayServer) resolveAuthorizationContextForAudience(ctx context.Context, client *ClientSession, actor models.Identity, authz *pb.AuthorizationContext, associatedTaskID, workflowScheduleID string) (*acl.ResolvedAuthority, error) {
 	if authz == nil {
 		return nil, nil
 	}
@@ -88,6 +92,7 @@ func (s *GatewayServer) resolveAuthorizationContextForTask(ctx context.Context, 
 			}
 			return t.Status == tasks.TaskStatusPending || t.Status == tasks.TaskStatusAssigned || t.Status == tasks.TaskStatusRunning
 		},
+		WorkflowScheduleID: workflowScheduleID,
 	})
 }
 

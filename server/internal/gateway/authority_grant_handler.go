@@ -82,7 +82,7 @@ func (s *GatewayServer) handleAuthorityGrantOp(ctx context.Context, client *Clie
 		})
 
 	case pb.AuthorityGrantOperation_GET:
-		grant, err := s.getVisibleAuthorityGrant(ctx, client, actor, op.GetGrantId())
+		grant, err := s.getVisibleAuthorityGrantForSchedule(ctx, client, actor, op.GetGrantId(), op.GetWorkflowScheduleId())
 		if err != nil {
 			logging.Logger.Error().Err(err).Str("grant_id", op.GetGrantId()).Msg("handleAuthorityGrantOp: get failed")
 			s.logAuthorityGrantLifecycle(ctx, actor, client.SessionUUID, audit.OpAuthorityGrantGet, nil, false, err.Error(), map[string]interface{}{
@@ -131,7 +131,7 @@ func (s *GatewayServer) handleAuthorityGrantOp(ctx context.Context, client *Clie
 		})
 
 	case pb.AuthorityGrantOperation_REVOKE:
-		grant, err := s.revokeVisibleAuthorityGrant(ctx, client, actor, op.GetGrantId())
+		grant, err := s.revokeVisibleAuthorityGrantForSchedule(ctx, client, actor, op.GetGrantId(), op.GetWorkflowScheduleId())
 		if err != nil {
 			logging.Logger.Error().Err(err).Str("grant_id", op.GetGrantId()).Msg("handleAuthorityGrantOp: revoke failed")
 			s.logAuthorityGrantLifecycle(ctx, actor, client.SessionUUID, audit.OpAuthorityGrantRevoke, nil, false, err.Error(), map[string]interface{}{
@@ -518,6 +518,10 @@ func (s *GatewayServer) deriveAuthorityGrant(ctx context.Context, client *Client
 }
 
 func (s *GatewayServer) getVisibleAuthorityGrant(ctx context.Context, client *ClientSession, actor models.Identity, grantID string) (*acl.AuthorityGrant, error) {
+	return s.getVisibleAuthorityGrantForSchedule(ctx, client, actor, grantID, "")
+}
+
+func (s *GatewayServer) getVisibleAuthorityGrantForSchedule(ctx context.Context, client *ClientSession, actor models.Identity, grantID, workflowScheduleID string) (*acl.AuthorityGrant, error) {
 	if strings.TrimSpace(grantID) == "" {
 		return nil, fmt.Errorf("grant_id is required")
 	}
@@ -526,7 +530,14 @@ func (s *GatewayServer) getVisibleAuthorityGrant(ctx context.Context, client *Cl
 	if err != nil {
 		return nil, err
 	}
-	if err := s.requireVisibleAuthorityGrant(ctx, client, actor, grant); err != nil {
+	if workflowScheduleID != "" {
+		if actor.Type != models.PrincipalWorkflowEngine || grant.AudienceType != acl.AuthorityAudienceWorkflowSchedule || grant.AudienceID != workflowScheduleID {
+			return nil, fmt.Errorf("workflow schedule authority context does not match grant")
+		}
+		if err := s.requireCurrentDelegateAuthorityForSchedule(ctx, client, actor, grant, workflowScheduleID); err != nil {
+			return nil, err
+		}
+	} else if err := s.requireVisibleAuthorityGrant(ctx, client, actor, grant); err != nil {
 		return nil, err
 	}
 
@@ -564,7 +575,11 @@ func (s *GatewayServer) renewVisibleAuthorityGrant(ctx context.Context, client *
 }
 
 func (s *GatewayServer) revokeVisibleAuthorityGrant(ctx context.Context, client *ClientSession, actor models.Identity, grantID string) (*acl.AuthorityGrant, error) {
-	grant, err := s.getVisibleAuthorityGrant(ctx, client, actor, grantID)
+	return s.revokeVisibleAuthorityGrantForSchedule(ctx, client, actor, grantID, "")
+}
+
+func (s *GatewayServer) revokeVisibleAuthorityGrantForSchedule(ctx context.Context, client *ClientSession, actor models.Identity, grantID, workflowScheduleID string) (*acl.AuthorityGrant, error) {
+	grant, err := s.getVisibleAuthorityGrantForSchedule(ctx, client, actor, grantID, workflowScheduleID)
 	if err != nil {
 		return nil, err
 	}
@@ -716,6 +731,10 @@ func (s *GatewayServer) requireVisibleAuthorityGrant(ctx context.Context, client
 }
 
 func (s *GatewayServer) requireCurrentDelegateAuthority(ctx context.Context, client *ClientSession, actor models.Identity, grant *acl.AuthorityGrant) error {
+	return s.requireCurrentDelegateAuthorityForSchedule(ctx, client, actor, grant, "")
+}
+
+func (s *GatewayServer) requireCurrentDelegateAuthorityForSchedule(ctx context.Context, client *ClientSession, actor models.Identity, grant *acl.AuthorityGrant, workflowScheduleID string) error {
 	if grant == nil {
 		return fmt.Errorf("authority grant is required")
 	}
@@ -733,9 +752,10 @@ func (s *GatewayServer) requireCurrentDelegateAuthority(ctx context.Context, cli
 		Subject: subject,
 		GrantID: grant.GrantID,
 	}, acl.GrantAudienceContext{
-		SessionID:        client.SessionUUID,
-		AssociatedTaskID: client.AssociatedTaskID,
-		Actor:            actor,
+		SessionID:          client.SessionUUID,
+		AssociatedTaskID:   client.AssociatedTaskID,
+		Actor:              actor,
+		WorkflowScheduleID: workflowScheduleID,
 	})
 	if err != nil {
 		return fmt.Errorf("authority grant is not valid for the current delegate context: %w", err)

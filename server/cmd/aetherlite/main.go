@@ -18,6 +18,7 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
+	aclcore "github.com/scitrera/aether/server/internal/acl"
 	"github.com/scitrera/aether/server/internal/admin"
 	"github.com/scitrera/aether/server/internal/audit"
 	"github.com/scitrera/aether/server/internal/auth"
@@ -643,6 +644,12 @@ func main() {
 	if err != nil {
 		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite acl store")
 	}
+	if *devMode {
+		category := aclcore.RuleCategory(aclcore.PrincipalTypeUser, aclcore.ResourceTypeWorkflowSchedule)
+		if err := sharedACLService.SetFallbackPolicy(ctx, category, aclcore.AccessManage, aclcore.SystemPrincipal); err != nil {
+			logging.Logger.Fatal().Err(err).Str("category", category).Msg("failed to enable development workflow schedule access")
+		}
+	}
 
 	// Gateway-facing ACL store. In cluster mode we wrap sharedACLService in a
 	// JetStream-backed decorator so the 6 authority-request lifecycle methods
@@ -677,9 +684,9 @@ func main() {
 
 	// Cleanup service.
 	cleanupConfig := &cleanup.Config{
-		TaskPurgeInterval:      cfg.Cleanup.GetTaskPurgeInterval(),
-		CompletedTaskRetention: cfg.Cleanup.GetCompletedTaskRetention(),
-		FailedTaskRetention:    cfg.Cleanup.GetFailedTaskRetention(),
+		TaskPurgeInterval:             cfg.Cleanup.GetTaskPurgeInterval(),
+		CompletedTaskRetention:        cfg.Cleanup.GetCompletedTaskRetention(),
+		FailedTaskRetention:           cfg.Cleanup.GetFailedTaskRetention(),
 		CancelledTaskRetention:        cfg.Cleanup.GetCancelledTaskRetention(),
 		ReconciliationInterval:        cfg.Cleanup.GetReconciliationInterval(),
 		InteractiveTaskTTL:            cfg.Cleanup.GetInteractiveTaskTTL(),

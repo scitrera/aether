@@ -763,6 +763,11 @@ type CreateTaskOptions struct {
 	// Set to 1 when the worker must explicitly forward authority to one service.
 	RequiredDownstreamAuthorityHops uint32
 
+	// OriginatingScheduleID is reserved for the authenticated WorkflowEngine.
+	// It binds a workflow_schedule authority grant to the exact schedule that
+	// caused this task. Ordinary clients must leave it empty.
+	OriginatingScheduleID string
+
 	// TargetIdentity is an arbitrary principal address (e.g.
 	// "sv::sandbox-sidecar::<id>") that the gateway treats as the assignee
 	// when AssignmentMode is TARGETED and the destination is not an Agent.

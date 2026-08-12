@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/proto"
 )
 
 // =============================================================================
@@ -153,28 +154,30 @@ type BaseClient struct {
 	authorityCaches  []*AuthorityGrantCache
 
 	// Cached KV, Checkpoint, and Workflow helpers (for sync mutex to work across calls)
-	kvOnce             sync.Once
-	kvInstance         *KV
-	cpOnce             sync.Once
-	cpInstance         *Checkpoint
-	workflowOnce       sync.Once
-	workflowInstance   *WorkflowOps
-	workspaceOnce      sync.Once
-	workspaceInstance  *WorkspaceOps
-	agentOnce          sync.Once
-	agentInstance      *AgentOps
-	aclOnce            sync.Once
-	aclInstance        *ACLOps
-	tokenOnce          sync.Once
-	tokenInstance      *TokenOps
-	authorityOnce      sync.Once
-	authorityInstance  *AuthorityGrantOps
-	adminOnce          sync.Once
-	adminInstance      *AdminOps
-	sessionOnce        sync.Once
-	sessionInstance    *SessionOps
-	connectionOnce     sync.Once
-	connectionInstance *ConnectionOps
+	kvOnce                 sync.Once
+	kvInstance             *KV
+	cpOnce                 sync.Once
+	cpInstance             *Checkpoint
+	workflowOnce           sync.Once
+	workflowInstance       *WorkflowOps
+	workflowHandlerOrderMu sync.Mutex
+	workflowHandlerTail    chan struct{}
+	workspaceOnce          sync.Once
+	workspaceInstance      *WorkspaceOps
+	agentOnce              sync.Once
+	agentInstance          *AgentOps
+	aclOnce                sync.Once
+	aclInstance            *ACLOps
+	tokenOnce              sync.Once
+	tokenInstance          *TokenOps
+	authorityOnce          sync.Once
+	authorityInstance      *AuthorityGrantOps
+	adminOnce              sync.Once
+	adminInstance          *AdminOps
+	sessionOnce            sync.Once
+	sessionInstance        *SessionOps
+	connectionOnce         sync.Once
+	connectionInstance     *ConnectionOps
 
 	// InitConnection message builder (set by specific client types)
 	initMsgBuilder func() *pb.InitConnection
@@ -2437,6 +2440,7 @@ func (c *BaseClient) CreateTask(taskType, workspace string, opts CreateTaskOptio
 		CompletionEvent:                 opts.CompletionEvent,
 		ParentTaskId:                    opts.ParentTaskID,
 		RequiredDownstreamAuthorityHops: opts.RequiredDownstreamAuthorityHops,
+		OriginatingScheduleId:           opts.OriginatingScheduleID,
 		Authorization:                   opts.Authorization,
 	}
 	return c.Send(&pb.UpstreamMessage{
@@ -2478,6 +2482,7 @@ func (c *BaseClient) CreateTaskSync(ctx context.Context, taskType, workspace str
 		CompletionEvent:                 opts.CompletionEvent,
 		ParentTaskId:                    opts.ParentTaskID,
 		RequiredDownstreamAuthorityHops: opts.RequiredDownstreamAuthorityHops,
+		OriginatingScheduleId:           opts.OriginatingScheduleID,
 		Authorization:                   opts.Authorization,
 		RequestId:                       requestID,
 	}
@@ -2651,6 +2656,34 @@ func (c *BaseClient) handleWorkflowOperation(ctx context.Context, op *pb.Workflo
 	if c.handlers.OnWorkflowOperation == nil {
 		return nil
 	}
+	// Workflow handlers may make correlated synchronous calls back through this
+	// same client (notably revoking a replaced schedule authority). Detach them
+	// from the single receive loop so that loop remains free to deliver the
+	// nested response.
+	cloned := proto.Clone(op).(*pb.WorkflowOperation)
+	done := make(chan struct{})
+	c.workflowHandlerOrderMu.Lock()
+	previous := c.workflowHandlerTail
+	c.workflowHandlerTail = done
+	c.workflowHandlerOrderMu.Unlock()
+	go func() {
+		defer func() {
+			close(done)
+			c.workflowHandlerOrderMu.Lock()
+			if c.workflowHandlerTail == done {
+				c.workflowHandlerTail = nil
+			}
+			c.workflowHandlerOrderMu.Unlock()
+		}()
+		if previous != nil {
+			<-previous
+		}
+		_ = c.processWorkflowOperation(context.WithoutCancel(ctx), cloned)
+	}()
+	return nil
+}
+
+func (c *BaseClient) processWorkflowOperation(ctx context.Context, op *pb.WorkflowOperation) error {
 	resp, err := c.handlers.OnWorkflowOperation(ctx, op)
 	if err != nil {
 		resp = &pb.WorkflowResponse{

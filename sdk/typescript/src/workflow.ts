@@ -23,6 +23,9 @@ import {
 } from "./topics.js";
 import type { Metric } from "./metrics-builder.js";
 
+/** Current deterministic WorkflowScheduleAuthorityScope policy shape. */
+export const WORKFLOW_SCHEDULE_AUTHORITY_POLICY_VERSION = 1;
+
 // =============================================================================
 // Workflow Engine Client Options
 // =============================================================================

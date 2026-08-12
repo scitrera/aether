@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -312,6 +313,9 @@ func (s *Server) handleCreateSchedule(ctx context.Context, op *pb.WorkflowOperat
 	if sc.Workspace == "" {
 		sc.Workspace = "*"
 	}
+	if err := validateScheduleOperationIdentity(op, &sc); err != nil {
+		return errResponse(op.RequestId, err.Error()), nil
+	}
 	if sc.MissPolicy == "" {
 		sc.MissPolicy = ScheduleMissPolicySkip
 	}
@@ -325,6 +329,11 @@ func (s *Server) handleCreateSchedule(ctx context.Context, op *pb.WorkflowOperat
 		return errResponse(op.RequestId, "invalid schedule expression: "+err.Error()), nil
 	}
 	sc.NextFireAt = nextFire
+	authority, err := scheduleAuthorityFromOperation(op, &sc)
+	if err != nil {
+		return errResponse(op.RequestId, err.Error()), nil
+	}
+	sc.Authority = authority
 
 	if err := s.store.CreateSchedule(ctx, &sc); err != nil {
 		return errResponse(op.RequestId, err.Error()), nil
@@ -333,6 +342,16 @@ func (s *Server) handleCreateSchedule(ctx context.Context, op *pb.WorkflowOperat
 }
 
 func (s *Server) handleDeleteSchedule(ctx context.Context, op *pb.WorkflowOperation) (*pb.WorkflowResponse, error) {
+	existing, err := s.store.GetSchedule(ctx, op.Id)
+	if err != nil {
+		return errResponse(op.RequestId, err.Error()), nil
+	}
+	if existing != nil && existing.Workspace != op.GetWorkspace() {
+		return errResponse(op.RequestId, "workflow schedule operation identity does not match stored schedule"), nil
+	}
+	if err := s.revokeScheduleAuthority(ctx, existing); err != nil {
+		return errResponse(op.RequestId, err.Error()), nil
+	}
 	if err := s.store.DeleteSchedule(ctx, op.Id); err != nil {
 		return errResponse(op.RequestId, err.Error()), nil
 	}
@@ -353,6 +372,9 @@ func (s *Server) handleUpsertSchedule(ctx context.Context, op *pb.WorkflowOperat
 	if sc.Workspace == "" {
 		sc.Workspace = "*"
 	}
+	if err := validateScheduleOperationIdentity(op, &sc); err != nil {
+		return errResponse(op.RequestId, err.Error()), nil
+	}
 	if sc.MissPolicy == "" {
 		sc.MissPolicy = ScheduleMissPolicySkip
 	}
@@ -366,11 +388,107 @@ func (s *Server) handleUpsertSchedule(ctx context.Context, op *pb.WorkflowOperat
 		return errResponse(op.RequestId, "invalid schedule expression: "+err.Error()), nil
 	}
 	sc.NextFireAt = nextFire
+	authority, err := scheduleAuthorityFromOperation(op, &sc)
+	if err != nil {
+		return errResponse(op.RequestId, err.Error()), nil
+	}
+	existing, err := s.store.GetSchedule(ctx, sc.ID)
+	if err != nil {
+		return errResponse(op.RequestId, err.Error()), nil
+	}
+	if existing != nil && existing.Workspace != sc.Workspace {
+		return errResponse(op.RequestId, "cannot move a schedule between workspaces"), nil
+	}
+	sc.Authority = authority
 
 	if err := s.store.UpsertSchedule(ctx, &sc); err != nil {
 		return errResponse(op.RequestId, err.Error()), nil
 	}
+	if err := s.revokeScheduleAuthority(ctx, existing); err != nil {
+		// Restore the complete prior row before reporting failure. The gateway
+		// will revoke the provisional replacement grant when it sees the failed
+		// response, leaving the previously-authorized schedule intact.
+		if existing != nil {
+			if restoreErr := s.store.UpsertSchedule(ctx, existing); restoreErr != nil {
+				_ = s.store.SetScheduleAuthorityBlocked(ctx, sc.ID, "schedule authority replacement rollback failed")
+				return errResponse(op.RequestId, fmt.Sprintf("%v; rollback failed: %v", err, restoreErr)), nil
+			}
+		}
+		return errResponse(op.RequestId, err.Error()), nil
+	}
 	return jsonResponse(op.RequestId, sc)
+}
+
+func validateScheduleOperationIdentity(op *pb.WorkflowOperation, sc *Schedule) error {
+	if op == nil || sc == nil || op.GetId() == "" || op.GetWorkspace() == "" ||
+		op.GetId() != sc.ID || op.GetWorkspace() != sc.Workspace {
+		return fmt.Errorf("workflow schedule operation identity does not match JSON definition")
+	}
+	return nil
+}
+
+func scheduleAuthorityFromOperation(op *pb.WorkflowOperation, sc *Schedule) (*ScheduleAuthority, error) {
+	var action ActionDef
+	requireAuthority := false
+	if len(sc.Action) > 0 {
+		if err := json.Unmarshal(sc.Action, &action); err != nil {
+			return nil, fmt.Errorf("invalid schedule action: %w", err)
+		}
+		requireAuthority = action.RequireTaskAuthority
+		if action.RequiredDownstreamAuthorityHops > 1 {
+			return nil, fmt.Errorf("required_downstream_authority_hops currently supports only 0 or 1")
+		}
+	}
+	requestContext := op.GetRequestContext()
+	if requestContext == nil || requestContext.GetScheduleAuthorization() == nil {
+		if requireAuthority {
+			return nil, fmt.Errorf("schedule action requires task authority")
+		}
+		return nil, nil
+	}
+	if action.Type != "create_task" {
+		return nil, fmt.Errorf("private schedule authority is valid only for create_task actions")
+	}
+	authorization := requestContext.GetScheduleAuthorization()
+	if authorization.GetAuthorityMode() != "on_behalf_of" || authorization.GetSubject() == nil ||
+		authorization.GetGrantId() == "" || requestContext.GetPolicyDigest() == "" ||
+		requestContext.GetExpiresAtMs() <= time.Now().UnixMilli() {
+		return nil, fmt.Errorf("invalid private schedule authority context")
+	}
+	if requestContext.GetPolicyVersion() != 1 {
+		return nil, fmt.Errorf("unsupported private schedule authority policy version %d", requestContext.GetPolicyVersion())
+	}
+	if action.RequiredDownstreamAuthorityHops > op.GetScheduleAuthorityScope().GetRequiredTaskAuthorityHops() {
+		return nil, fmt.Errorf("schedule action downstream authority requirement exceeds granted scope")
+	}
+	return &ScheduleAuthority{
+		Authorization: authorization,
+		RootGrantID:   requestContext.GetRootGrantId(), SourceGrantID: requestContext.GetSourceGrantId(),
+		ExpiresAt:    time.UnixMilli(requestContext.GetExpiresAtMs()).UTC(),
+		PolicyDigest: requestContext.GetPolicyDigest(), PolicyVersion: requestContext.GetPolicyVersion(),
+		LifetimeMode: requestContext.GetLifetimeMode(),
+	}, nil
+}
+
+func (s *Server) revokeScheduleAuthority(ctx context.Context, sc *Schedule) error {
+	if sc == nil || sc.Authority == nil || sc.Authority.Authorization == nil ||
+		sc.Authority.Authorization.GetGrantId() == "" || s.client == nil {
+		return nil
+	}
+	response, err := s.client.AuthorityGrants().RevokeForWorkflowSchedule(
+		ctx, sc.Authority.Authorization.GetGrantId(), sc.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("revoke prior workflow schedule authority: %w", err)
+	}
+	if response == nil || !response.GetSuccess() {
+		message := "no response"
+		if response != nil && response.GetError() != "" {
+			message = response.GetError()
+		}
+		return fmt.Errorf("revoke prior workflow schedule authority: %s", message)
+	}
+	return nil
 }
 
 // =============================================================================

@@ -2,6 +2,11 @@
 
 AetherLite is a deployment mode for Aether that replaces all external services with embedded in-process alternatives. There is no Redis, no RabbitMQ, and no PostgreSQL to install or manage. Everything runs inside a single process backed by [Badger](https://github.com/dgraph-io/badger) (KV and messaging) and [SQLite](https://sqlite.org) (relational data).
 
+Scheduled task actions can optionally retain private, bounded OBO authority;
+see [Workflow schedule authority](workflow-schedule-authority.md). Production
+mode requires explicit `workflow/schedule` ACL grants. `--dev` enables the
+permissive user fallback for local testing.
+
 ## When to Use AetherLite
 
 | Scenario | AetherLite | Full Aether |

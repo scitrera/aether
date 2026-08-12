@@ -44,4 +44,8 @@ const (
 	// ResourceTypeToolCatalogEntry authorizes discovery and invocation of one
 	// provider-qualified catalog entry.
 	ResourceTypeToolCatalogEntry = "tool-catalog/entry"
+	// ResourceTypeWorkflowSchedule authorizes exact WorkflowEngine schedule
+	// definitions. Resource IDs are canonical
+	// workspaces/{workspace}/schedules/{schedule} paths.
+	ResourceTypeWorkflowSchedule = "workflow/schedule"
 )

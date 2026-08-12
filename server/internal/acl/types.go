@@ -42,6 +42,7 @@ const (
 	ResourceTypeWorkspaceExecutionView = models.ResourceTypeWorkspaceExecutionView
 	ResourceTypeToolCatalogProvider    = models.ResourceTypeToolCatalogProvider
 	ResourceTypeToolCatalogEntry       = models.ResourceTypeToolCatalogEntry
+	ResourceTypeWorkflowSchedule       = models.ResourceTypeWorkflowSchedule
 )
 
 // Principal type strings for ACL database operations. These are the lowercase
@@ -98,6 +99,7 @@ const (
 	PermissionAdminAgents             = "admin/agents"                         // admin gate — agent management
 	PermissionExchangeAuthorityGrants = "capability/exchange_authority_grants" // capability gate — trusted service/user-session grant exchange
 	PermissionAuthorityIntermediary   = "capability/authority_intermediary"    // capability gate — trusted intermediaries minting re-rooted task grants on hop exhaustion
+	PermissionScheduleAuthority       = "capability/schedule_authority"        // capability gate — trusted OBO intermediaries mint bounded durable workflow-schedule authority
 	PermissionMetricCredit            = "capability/metric_credit"             // capability gate — publish negative metric deltas (corrections / credits)
 	PermissionEventBroadcast          = "capability/event_broadcast"           // capability gate — publish event::{ws} for a workspace other than the sender's home workspace
 	PermissionMetricBroadcast         = "capability/metric_broadcast"          // capability gate — publish metric::{ws} for a workspace other than the sender's home workspace

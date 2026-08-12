@@ -394,6 +394,17 @@ func (s *GatewayServer) handleCreateTask(
 
 	// Extract correlation ID for optional response path.
 	requestID := req.GetRequestId()
+	originatingScheduleID := strings.TrimSpace(req.GetOriginatingScheduleId())
+	if originatingScheduleID != "" && identity.Type != models.PrincipalWorkflowEngine {
+		errMsg := "originating_schedule_id is reserved for the authenticated WorkflowEngine"
+		sendClientError(client, "ERR_INVALID_ARGUMENT", errMsg)
+		if requestID != "" {
+			_ = client.SafeSend(&pb.DownstreamMessage{Payload: &pb.DownstreamMessage_CreateTask{CreateTask: &pb.CreateTaskResponse{
+				Success: false, ErrorCode: "ERR_INVALID_ARGUMENT", ErrorMessage: errMsg, RequestId: requestID,
+			}}})
+		}
+		return nil
+	}
 
 	// mintedTaskToken is populated by maybeIssueTaskToken below (only on the
 	// success path, only when the caller passed target_identity AND the
@@ -507,12 +518,29 @@ func (s *GatewayServer) handleCreateTask(
 		return nil
 	}
 
-	resolvedAuthority, err := s.resolveAuthorizationContextForTask(ctx, client, identity, req.GetAuthorization(), parentTaskID)
+	var resolvedAuthority *acl.ResolvedAuthority
+	if originatingScheduleID != "" {
+		resolvedAuthority, err = s.resolveAuthorizationContextForAudience(ctx, client, identity, req.GetAuthorization(), parentTaskID, originatingScheduleID)
+	} else {
+		resolvedAuthority, err = s.resolveAuthorizationContextForTask(ctx, client, identity, req.GetAuthorization(), parentTaskID)
+	}
 	if err != nil {
 		s.logTaskCreateAudit(ctx, identity, client.SessionUUID, taskWorkspace, "", false, "invalid authorization context: "+err.Error(), buildTaskCreateAuditMetadata(req, assignmentMode, taskWorkspace), nil)
-		sendClientError(client, "ERR_PERMISSION_DENIED", "invalid authorization context")
-		sendCreateTaskResponse(false, "", "", "ERR_PERMISSION_DENIED", "invalid authorization context", "")
+		errorCode := "ERR_PERMISSION_DENIED"
+		if originatingScheduleID != "" {
+			errorCode = "ERR_AUTHORITY_INVALID"
+		}
+		sendClientError(client, errorCode, "invalid authorization context")
+		sendCreateTaskResponse(false, "", "", errorCode, "invalid authorization context", "")
 		return nil
+	}
+	if originatingScheduleID != "" && resolvedAuthority != nil {
+		if err := s.validateWorkflowScheduleSourceAuthority(ctx, resolvedAuthority.Grant); err != nil {
+			s.logTaskCreateAudit(ctx, identity, client.SessionUUID, taskWorkspace, "", false, "invalid schedule authority source: "+err.Error(), buildTaskCreateAuditMetadata(req, assignmentMode, taskWorkspace), resolvedAuthority)
+			sendClientError(client, "ERR_AUTHORITY_INVALID", "workflow schedule authority is no longer valid")
+			sendCreateTaskResponse(false, "", "", "ERR_AUTHORITY_INVALID", "workflow schedule authority is no longer valid", "")
+			return nil
+		}
 	}
 
 	// Nested task creation: when an agent currently delivering a task under a
@@ -572,7 +600,12 @@ func (s *GatewayServer) handleCreateTask(
 	}
 
 	// Create task request
-	metadata = applyResolvedAuthorityToTaskMetadata(metadata, resolvedAuthority)
+	// A schedule grant is a private transport credential. The derived task grant
+	// is persisted later by establishTaskAuthorityGrant, but the source schedule
+	// grant must never be copied into caller-visible task metadata.
+	if originatingScheduleID == "" {
+		metadata = applyResolvedAuthorityToTaskMetadata(metadata, resolvedAuthority)
+	}
 	correlationID := req.GetCorrelationId()
 	rootTaskID := req.GetRootTaskId()
 	if parentTask != nil {
@@ -806,6 +839,9 @@ func buildTaskCreateAuditMetadata(req *pb.CreateTaskRequest, assignmentMode, wor
 	}
 	if req.GetRequiredDownstreamAuthorityHops() > 0 {
 		metadata["required_downstream_authority_hops"] = req.GetRequiredDownstreamAuthorityHops()
+	}
+	if req.GetOriginatingScheduleId() != "" {
+		metadata["originating_schedule_id"] = req.GetOriginatingScheduleId()
 	}
 	if len(req.LaunchParamOverrides) > 0 {
 		metadata["launch_param_overrides"] = len(req.LaunchParamOverrides)

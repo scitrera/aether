@@ -159,7 +159,9 @@ import type { WaitSpec as _aether_v1_WaitSpec, WaitSpec__Output as _aether_v1_Wa
 import type { WatchTenantsRequest as _aether_v1_WatchTenantsRequest, WatchTenantsRequest__Output as _aether_v1_WatchTenantsRequest__Output } from './aether/v1/WatchTenantsRequest';
 import type { WorkflowEngineIdentity as _aether_v1_WorkflowEngineIdentity, WorkflowEngineIdentity__Output as _aether_v1_WorkflowEngineIdentity__Output } from './aether/v1/WorkflowEngineIdentity';
 import type { WorkflowOperation as _aether_v1_WorkflowOperation, WorkflowOperation__Output as _aether_v1_WorkflowOperation__Output } from './aether/v1/WorkflowOperation';
+import type { WorkflowRequestContext as _aether_v1_WorkflowRequestContext, WorkflowRequestContext__Output as _aether_v1_WorkflowRequestContext__Output } from './aether/v1/WorkflowRequestContext';
 import type { WorkflowResponse as _aether_v1_WorkflowResponse, WorkflowResponse__Output as _aether_v1_WorkflowResponse__Output } from './aether/v1/WorkflowResponse';
+import type { WorkflowScheduleAuthorityScope as _aether_v1_WorkflowScheduleAuthorityScope, WorkflowScheduleAuthorityScope__Output as _aether_v1_WorkflowScheduleAuthorityScope__Output } from './aether/v1/WorkflowScheduleAuthorityScope';
 import type { WorkspaceFilter as _aether_v1_WorkspaceFilter, WorkspaceFilter__Output as _aether_v1_WorkspaceFilter__Output } from './aether/v1/WorkspaceFilter';
 import type { WorkspaceInfo as _aether_v1_WorkspaceInfo, WorkspaceInfo__Output as _aether_v1_WorkspaceInfo__Output } from './aether/v1/WorkspaceInfo';
 import type { WorkspaceOperation as _aether_v1_WorkspaceOperation, WorkspaceOperation__Output as _aether_v1_WorkspaceOperation__Output } from './aether/v1/WorkspaceOperation';
@@ -350,9 +352,12 @@ export interface ProtoGrpcType {
       WaitReason: EnumTypeDefinition
       WaitSpec: MessageTypeDefinition<_aether_v1_WaitSpec, _aether_v1_WaitSpec__Output>
       WatchTenantsRequest: MessageTypeDefinition<_aether_v1_WatchTenantsRequest, _aether_v1_WatchTenantsRequest__Output>
+      WorkflowAuthorityLifetimeMode: EnumTypeDefinition
       WorkflowEngineIdentity: MessageTypeDefinition<_aether_v1_WorkflowEngineIdentity, _aether_v1_WorkflowEngineIdentity__Output>
       WorkflowOperation: MessageTypeDefinition<_aether_v1_WorkflowOperation, _aether_v1_WorkflowOperation__Output>
+      WorkflowRequestContext: MessageTypeDefinition<_aether_v1_WorkflowRequestContext, _aether_v1_WorkflowRequestContext__Output>
       WorkflowResponse: MessageTypeDefinition<_aether_v1_WorkflowResponse, _aether_v1_WorkflowResponse__Output>
+      WorkflowScheduleAuthorityScope: MessageTypeDefinition<_aether_v1_WorkflowScheduleAuthorityScope, _aether_v1_WorkflowScheduleAuthorityScope__Output>
       WorkspaceFilter: MessageTypeDefinition<_aether_v1_WorkspaceFilter, _aether_v1_WorkspaceFilter__Output>
       WorkspaceInfo: MessageTypeDefinition<_aether_v1_WorkspaceInfo, _aether_v1_WorkspaceInfo__Output>
       WorkspaceOperation: MessageTypeDefinition<_aether_v1_WorkspaceOperation, _aether_v1_WorkspaceOperation__Output>

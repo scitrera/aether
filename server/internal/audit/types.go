@@ -104,6 +104,9 @@ const (
 	OpAuthorityGrantRenew    = "authority_grant_renew"
 	OpAuthorityGrantRevoke   = "authority_grant_revoke"
 	OpAuthorityIntermediary  = "authority_intermediary_reroot" // a service principal exercised capability/authority_intermediary to mint a task grant that re-roots from the original subject (preserving principal chain) instead of failing at hop exhaustion
+	OpScheduleAuthority      = "schedule_authority_mint"
+	OpWorkflowScheduleRead   = "workflow_schedule_read"
+	OpWorkflowScheduleManage = "workflow_schedule_manage"
 
 	// Authority-request lifecycle operations (Phase 2 Stage C). Used both as
 	// the audit Operation column value and as the operation argument to

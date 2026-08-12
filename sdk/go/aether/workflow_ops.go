@@ -12,6 +12,8 @@ package aether
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -21,10 +23,37 @@ import (
 // DefaultWorkflowTimeout is the default timeout for synchronous workflow operations.
 const DefaultWorkflowTimeout = 10 * time.Second
 
+// WorkflowScheduleAuthorityPolicyVersion is the policy shape understood by
+// the current gateway and WorkflowEngine private store.
+const WorkflowScheduleAuthorityPolicyVersion uint32 = 1
+
 // WorkflowOps provides workflow management operations on a client.
 type WorkflowOps struct {
 	client *BaseClient
 	syncMu sync.Mutex // serializes synchronous workflow operations
+}
+
+// WorkflowScheduleOperationOptions carries transport-owned schedule authority.
+// Authority never enters the schedule JSON payload.
+type WorkflowScheduleOperationOptions struct {
+	Authorization  *pb.AuthorizationContext
+	AuthorityScope *pb.WorkflowScheduleAuthorityScope
+}
+
+type workflowScheduleIdentity struct {
+	ID        string `json:"id"`
+	Workspace string `json:"workspace"`
+}
+
+func decodeWorkflowScheduleIdentity(data []byte) (workflowScheduleIdentity, error) {
+	var identity workflowScheduleIdentity
+	if err := json.Unmarshal(data, &identity); err != nil {
+		return identity, fmt.Errorf("decode workflow schedule identity: %w", err)
+	}
+	if identity.ID == "" || identity.Workspace == "" || identity.Workspace == "*" {
+		return identity, fmt.Errorf("workflow schedule id and exact workspace are required")
+	}
+	return identity, nil
 }
 
 // newWorkflowOps creates a new WorkflowOps helper for a client.
@@ -166,17 +195,36 @@ func (w *WorkflowOps) DeleteWorkflow(ctx context.Context, id string) (*WorkflowR
 
 // ListSchedules lists all schedules for a workspace.
 func (w *WorkflowOps) ListSchedules(ctx context.Context, workspace string) (*WorkflowResponse, error) {
+	return w.ListSchedulesAuthorized(ctx, workspace, nil)
+}
+
+// ListSchedulesAuthorized lists schedules using an optional OBO context.
+func (w *WorkflowOps) ListSchedulesAuthorized(ctx context.Context, workspace string, authorization *pb.AuthorizationContext) (*WorkflowResponse, error) {
+	if workspace == "" || workspace == "*" {
+		return nil, fmt.Errorf("an exact workflow schedule workspace is required")
+	}
 	return w.SendOpSync(ctx, &pb.WorkflowOperation{
-		Op:        pb.WorkflowOperation_LIST_SCHEDULES,
-		Workspace: workspace,
+		Op:            pb.WorkflowOperation_LIST_SCHEDULES,
+		Workspace:     workspace,
+		Authorization: authorization,
 	}, 0)
 }
 
 // CreateSchedule creates a new schedule from JSON data.
 func (w *WorkflowOps) CreateSchedule(ctx context.Context, data []byte) (*WorkflowResponse, error) {
+	return w.CreateScheduleWithOptions(ctx, data, WorkflowScheduleOperationOptions{})
+}
+
+// CreateScheduleWithOptions creates a schedule with transport-owned authority.
+func (w *WorkflowOps) CreateScheduleWithOptions(ctx context.Context, data []byte, opts WorkflowScheduleOperationOptions) (*WorkflowResponse, error) {
+	identity, err := decodeWorkflowScheduleIdentity(data)
+	if err != nil {
+		return nil, err
+	}
 	return w.SendOpSync(ctx, &pb.WorkflowOperation{
-		Op:   pb.WorkflowOperation_CREATE_SCHEDULE,
-		Data: data,
+		Op: pb.WorkflowOperation_CREATE_SCHEDULE, Id: identity.ID,
+		Workspace: identity.Workspace, Data: data,
+		Authorization: opts.Authorization, ScheduleAuthorityScope: opts.AuthorityScope,
 	}, 0)
 }
 
@@ -185,17 +233,37 @@ func (w *WorkflowOps) CreateSchedule(ctx context.Context, data []byte) (*Workflo
 // are preserved. next_fire_at is preserved for payload-only changes and
 // recomputed when schedule_type or schedule_expr changes.
 func (w *WorkflowOps) UpsertSchedule(ctx context.Context, data []byte) (*WorkflowResponse, error) {
+	return w.UpsertScheduleWithOptions(ctx, data, WorkflowScheduleOperationOptions{})
+}
+
+// UpsertScheduleWithOptions idempotently updates configuration and replaces
+// its private schedule authority in the same authenticated operation.
+func (w *WorkflowOps) UpsertScheduleWithOptions(ctx context.Context, data []byte, opts WorkflowScheduleOperationOptions) (*WorkflowResponse, error) {
+	identity, err := decodeWorkflowScheduleIdentity(data)
+	if err != nil {
+		return nil, err
+	}
 	return w.SendOpSync(ctx, &pb.WorkflowOperation{
-		Op:   pb.WorkflowOperation_UPSERT_SCHEDULE,
-		Data: data,
+		Op: pb.WorkflowOperation_UPSERT_SCHEDULE, Id: identity.ID,
+		Workspace: identity.Workspace, Data: data,
+		Authorization: opts.Authorization, ScheduleAuthorityScope: opts.AuthorityScope,
 	}, 0)
 }
 
-// DeleteSchedule deletes a schedule by ID.
-func (w *WorkflowOps) DeleteSchedule(ctx context.Context, id string) (*WorkflowResponse, error) {
+// DeleteSchedule deletes a schedule by exact workspace and ID.
+func (w *WorkflowOps) DeleteSchedule(ctx context.Context, workspace, id string) (*WorkflowResponse, error) {
+	return w.DeleteScheduleAuthorized(ctx, workspace, id, nil)
+}
+
+// DeleteScheduleAuthorized deletes an exact workspace schedule under an
+// optional OBO authority context.
+func (w *WorkflowOps) DeleteScheduleAuthorized(ctx context.Context, workspace, id string, authorization *pb.AuthorizationContext) (*WorkflowResponse, error) {
+	if workspace == "" || workspace == "*" || id == "" {
+		return nil, fmt.Errorf("workflow schedule id and exact workspace are required")
+	}
 	return w.SendOpSync(ctx, &pb.WorkflowOperation{
-		Op: pb.WorkflowOperation_DELETE_SCHEDULE,
-		Id: id,
+		Op: pb.WorkflowOperation_DELETE_SCHEDULE, Id: id,
+		Workspace: workspace, Authorization: authorization,
 	}, 0)
 }
 

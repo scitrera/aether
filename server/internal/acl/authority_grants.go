@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	AuthorityAudienceSession = "session"
-	AuthorityAudienceTask    = "task"
-	AuthorityAudienceAgent   = "agent"
-	AuthorityAudienceService = "service"
+	AuthorityAudienceSession          = "session"
+	AuthorityAudienceTask             = "task"
+	AuthorityAudienceAgent            = "agent"
+	AuthorityAudienceService          = "service"
+	AuthorityAudienceWorkflowSchedule = "workflow_schedule"
 )
 
 // AuthorityGrant is the persisted delegated-authorization capability used by
@@ -81,6 +82,33 @@ type CreateAuthorityGrantRequest struct {
 
 	Reason   string
 	Metadata map[string]interface{}
+}
+
+// ValidateAuthorityGrantScopeAttenuation verifies the non-lifetime ceilings of
+// a proposed child/root schedule grant against a resolved source grant. Durable
+// schedule authority deliberately has its own bounded lifetime, so callers use
+// this helper before creating a new root instead of bypassing workspace,
+// resource, operation, access, or hop attenuation.
+func ValidateAuthorityGrantScopeAttenuation(parent *AuthorityGrant, req CreateAuthorityGrantRequest) error {
+	if parent == nil {
+		return fmt.Errorf("authority grant parent is required")
+	}
+	if err := parent.ValidateActiveAt(time.Now()); err != nil {
+		return err
+	}
+	if !parent.CanDelegate() {
+		return ErrAuthorityGrantDelegationDenied
+	}
+	if req.MaxAccessLevel > parent.MaxAccessLevel ||
+		!stringSliceSubset(req.WorkspaceScope, parent.WorkspaceScope) ||
+		!stringSliceSubset(req.OperationScope, parent.OperationScope) ||
+		!resourceScopeSubset(req.ResourceScope, parent.ResourceScope) {
+		return ErrAuthorityGrantScopeEscalation
+	}
+	if req.RemainingHops > parent.RemainingHops-1 {
+		return ErrAuthorityGrantDelegationDenied
+	}
+	return nil
 }
 
 type AuthorityGrantFilter struct {
@@ -750,7 +778,8 @@ func authorityPrincipalRef(identity models.Identity) (string, string, error) {
 
 func isValidAuthorityAudienceType(audienceType string) bool {
 	switch audienceType {
-	case AuthorityAudienceSession, AuthorityAudienceTask, AuthorityAudienceAgent, AuthorityAudienceService:
+	case AuthorityAudienceSession, AuthorityAudienceTask, AuthorityAudienceAgent, AuthorityAudienceService,
+		AuthorityAudienceWorkflowSchedule:
 		return true
 	default:
 		return false

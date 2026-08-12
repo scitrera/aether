@@ -618,6 +618,24 @@ func (s *GatewayServer) doStop() {
 	if s.timerSeq != nil {
 		s.timerSeq.Stop()
 	}
+	// Clean up pending workflow requests before closing ACL storage so any
+	// provisional schedule grants are revoked rather than orphaned.
+	s.pendingWorkflowRequests.Range(func(key, value interface{}) bool {
+		pending, ok := value.(*pendingWorkflowRequest)
+		if ok {
+			requestID, _ := key.(string)
+			s.revokeProvisionalWorkflowGrantByID(context.Background(), pending.provisionalScheduleGrantID)
+			_ = pending.client.SafeSend(&pb.DownstreamMessage{
+				Payload: &pb.DownstreamMessage_WorkflowResponse{
+					WorkflowResponse: &pb.WorkflowResponse{
+						Success: false, Error: "server shutting down", RequestId: requestID,
+					},
+				},
+			})
+		}
+		s.pendingWorkflowRequests.Delete(key)
+		return true
+	})
 	if s.acl != nil {
 		s.acl.Close()
 		logging.Logger.Info().Msg("ACL service stopped")
@@ -627,24 +645,6 @@ func (s *GatewayServer) doStop() {
 		s.cleanupRunner.Stop()
 		logging.Logger.Info().Msg("cleanup service stopped")
 	}
-	// Clean up any pending workflow requests with error responses
-	s.pendingWorkflowRequests.Range(func(key, value interface{}) bool {
-		pending, ok := value.(*pendingWorkflowRequest)
-		if ok {
-			requestID, _ := key.(string)
-			_ = pending.client.SafeSend(&pb.DownstreamMessage{
-				Payload: &pb.DownstreamMessage_WorkflowResponse{
-					WorkflowResponse: &pb.WorkflowResponse{
-						Success:   false,
-						Error:     "server shutting down",
-						RequestId: requestID,
-					},
-				},
-			})
-		}
-		s.pendingWorkflowRequests.Delete(key)
-		return true
-	})
 	// orchestration cleanup
 	s.CleanupOrchestration()
 }

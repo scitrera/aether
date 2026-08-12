@@ -34,6 +34,11 @@ type GrantAudienceContext struct {
 	// (pending/running/assigned). Used when ValidWhileAudienceActive=true and
 	// AudienceType=task. If nil, only the AssociatedTaskID match is checked.
 	TaskActive func(taskID string) bool
+
+	// WorkflowScheduleID is supplied only on authenticated WorkflowEngine
+	// operations that create tasks or manage the private grant for one exact
+	// schedule.
+	WorkflowScheduleID string
 }
 
 // ResolvedAuthority is the validated authority envelope for a single request.
@@ -164,6 +169,11 @@ func validateGrantAudience(grant *AuthorityGrant, actor models.Identity, audienc
 		}
 	case AuthorityAudienceService:
 		if actor.Type != models.PrincipalService || actor.CanonicalPrincipalID() != grant.AudienceID {
+			return ErrAuthorityGrantAudienceMismatch
+		}
+	case AuthorityAudienceWorkflowSchedule:
+		if actor.Type != models.PrincipalWorkflowEngine || audience.WorkflowScheduleID == "" ||
+			grant.AudienceID != audience.WorkflowScheduleID {
 			return ErrAuthorityGrantAudienceMismatch
 		}
 	default:
