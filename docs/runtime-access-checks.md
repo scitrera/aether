@@ -77,6 +77,62 @@ The Go SDK exposes this through `SendMessageOptions.CheckedAccess`; Python has
 `send_checked_message`; TypeScript accepts `checkedAccess` on
 `OutgoingMessage`.
 
+## Authority continuations
+
+`SendMessage.authority_continuation` can attach a gateway-derived OBO child to
+the trusted delivery metadata. The child preserves the caller subject and root
+grant lineage, is short-lived and non-delegable, and remains subject to normal
+ACL checks when the recipient uses it downstream. The sender's own bearer grant
+is never copied into the application payload.
+
+Two scope modes are deliberately distinct:
+
+- `SCOPE_MODE_INHERIT_PARENT` is accepted only for an exact concrete service.
+  It carries no binding or requested scope and may reuse an active service leaf.
+  This supports trusted policy services that must evaluate arbitrary resources
+  within the caller's existing ceiling.
+- `SCOPE_MODE_ATTENUATE` accepts an exact service or agent. It requires an
+  allowed `checked_access` receipt, a binding ID equal to that check's
+  correlation ID, one exact checked workspace, and explicit non-empty resource
+  and operation scopes plus a maximum access level. The request must fit within
+  the parent grant and a fresh leaf is minted for every invocation.
+
+The recipient receives `binding_id` and the gateway-authored effective `scope`
+beside the child `AuthorizationContext`. An agent tool host should compare the
+binding with the application call ID and access receipt, validate the receipt's
+exact tool resource, compare the effective scope with its local invocation
+policy, and install the authorization only in that call's context.
+
+Go service example:
+
+```go
+opts.AuthorityContinuation = &pb.AuthorityContinuationRequest{
+    ScopeMode: pb.AuthorityContinuationRequest_SCOPE_MODE_INHERIT_PARENT,
+}
+```
+
+Go invocation-bound agent example:
+
+```go
+opts.CheckedAccess = &pb.ResourceAccessRequest{
+    ResourceType: "tool-catalog/entry", ResourceId: resourceID,
+    Operation: "tool.invoke.read", Workspace: "workspace-1",
+    RequiredAccessLevel: 10, CorrelationId: "call-1",
+}
+opts.AuthorityContinuation = &pb.AuthorityContinuationRequest{
+    ScopeMode: pb.AuthorityContinuationRequest_SCOPE_MODE_ATTENUATE,
+    BindingId: "call-1",
+    Scope: &pb.AuthorityContinuationScope{
+        WorkspaceScope: []string{"workspace-1"},
+        ResourceScope: []*pb.ACLAuthorityGrantResourceScopeEntry{
+            {ResourceType: "vfs", Patterns: []string{"workspace-1/*"}},
+        },
+        OperationScope: []string{"read"},
+        MaxAccessLevel: 10,
+    },
+}
+```
+
 ## SDK examples
 
 Go:

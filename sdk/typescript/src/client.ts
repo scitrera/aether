@@ -496,7 +496,7 @@ export class AetherClient {
         appWorkspace: message.appWorkspace ?? "",
         authorization: message.authorization,
         checkedAccess: message.checkedAccess,
-        forwardAuthorization: message.forwardAuthorization ?? false,
+        authorityContinuation: message.authorityContinuation,
       },
     });
   }
@@ -1899,6 +1899,29 @@ export class AetherClient {
       rootGrantId: String(raw["rootGrantId"] ?? raw["root_grant_id"] ?? ""),
       expiresAtMs: Number(raw["expiresAtMs"] ?? raw["expires_at_ms"] ?? 0),
       deliveryTarget: String(raw["deliveryTarget"] ?? raw["delivery_target"] ?? ""),
+      bindingId: String(raw["bindingId"] ?? raw["binding_id"] ?? ""),
+      scope: this._parseAuthorityContinuationScope(raw["scope"]),
+    };
+  }
+
+  private _parseAuthorityContinuationScope(value: unknown): import("./types.js").AuthorityContinuationScope {
+    const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    const resourcesRaw = raw["resourceScope"] ?? raw["resource_scope"];
+    const resourceScope = Array.isArray(resourcesRaw) ? resourcesRaw.map((item) => {
+      const resource = item && typeof item === "object" ? item as Record<string, unknown> : {};
+      const patterns = resource["patterns"];
+      return {
+        resourceType: String(resource["resourceType"] ?? resource["resource_type"] ?? ""),
+        patterns: Array.isArray(patterns) ? patterns.map(String) : [],
+      };
+    }) : [];
+    const workspaces = raw["workspaceScope"] ?? raw["workspace_scope"];
+    const operations = raw["operationScope"] ?? raw["operation_scope"];
+    return {
+      workspaceScope: Array.isArray(workspaces) ? workspaces.map(String) : [],
+      resourceScope,
+      operationScope: Array.isArray(operations) ? operations.map(String) : [],
+      maxAccessLevel: Number(raw["maxAccessLevel"] ?? raw["max_access_level"] ?? 0),
     };
   }
 

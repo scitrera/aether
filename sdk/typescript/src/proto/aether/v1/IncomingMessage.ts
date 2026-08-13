@@ -37,7 +37,7 @@ export interface IncomingMessage {
   'accessReceipt'?: (_aether_v1_AccessDecisionReceipt | null);
   /**
    * Gateway-derived authority continuation for this exact delivery target.
-   * Populated only when SendMessage.forward_authorization was explicitly set
+   * Populated only when SendMessage.authority_continuation was explicitly set
    * and the sender's resolved grant could delegate. Recipients can pass the
    * authorization context to CheckAccess / BatchCheckAccess; root_grant_id,
    * expiry, and delivery_target are trusted binding/audit metadata.
@@ -77,7 +77,7 @@ export interface IncomingMessage__Output {
   'accessReceipt': (_aether_v1_AccessDecisionReceipt__Output | null);
   /**
    * Gateway-derived authority continuation for this exact delivery target.
-   * Populated only when SendMessage.forward_authorization was explicitly set
+   * Populated only when SendMessage.authority_continuation was explicitly set
    * and the sender's resolved grant could delegate. Recipients can pass the
    * authorization context to CheckAccess / BatchCheckAccess; root_grant_id,
    * expiry, and delivery_target are trusted binding/audit metadata.

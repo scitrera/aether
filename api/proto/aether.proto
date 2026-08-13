@@ -371,10 +371,39 @@ message SendMessage {
   // for the resolved recipient. The gateway only honors this when the send is
   // already operating under a validated OBO grant with delegation capacity.
   // For sv::{implementation} targets, wildcard resolution happens first and
-  // the child grant is bound to the concrete service instance. The recipient
-  // receives the result in IncomingMessage.forwarded_authorization; payload
-  // data can never populate that trusted field.
-  bool forward_authorization = 7;
+  // the child grant is bound to the concrete service instance. Exact agent
+  // targets require an invocation-bound, explicitly attenuated scope. The
+  // recipient receives the result in IncomingMessage.forwarded_authorization;
+  // payload data can never populate that trusted field.
+  AuthorityContinuationRequest authority_continuation = 7;
+}
+
+// Explicit scope ceiling for a derived message authority continuation. Empty
+// axes retain the AuthorityGrant meaning of unrestricted, so an attenuated
+// agent continuation requires every axis to be populated and validated.
+message AuthorityContinuationScope {
+  repeated string workspace_scope = 1;
+  repeated ACLAuthorityGrantResourceScopeEntry resource_scope = 2;
+  repeated string operation_scope = 3;
+  int32 max_access_level = 4;
+}
+
+message AuthorityContinuationRequest {
+  enum ScopeMode {
+    SCOPE_MODE_UNSPECIFIED = 0;
+    // Service-only mode used when a trusted service must evaluate arbitrary
+    // resources within the caller's existing authority ceiling.
+    SCOPE_MODE_INHERIT_PARENT = 1;
+    // Required for agent recipients. The requested scope is validated as a
+    // strict subset of the parent and the child is minted per invocation.
+    SCOPE_MODE_ATTENUATE = 2;
+  }
+  ScopeMode scope_mode = 1;
+  // Opaque invocation identifier. Required for ATTENUATE and matched to the
+  // checked-access correlation ID so the trusted receipt, child, and payload
+  // can be validated as one call by the recipient.
+  string binding_id = 2;
+  AuthorityContinuationScope scope = 3;
 }
 
 enum MessageType {
@@ -628,7 +657,7 @@ message IncomingMessage {
   AccessDecisionReceipt access_receipt = 6;
 
   // Gateway-derived authority continuation for this exact delivery target.
-  // Populated only when SendMessage.forward_authorization was explicitly set
+  // Populated only when SendMessage.authority_continuation was explicitly set
   // and the sender's resolved grant could delegate. Recipients can pass the
   // authorization context to CheckAccess / BatchCheckAccess; root_grant_id,
   // expiry, and delivery_target are trusted binding/audit metadata.
@@ -643,6 +672,11 @@ message ForwardedAuthorization {
   string root_grant_id = 2;
   int64 expires_at_ms = 3;
   string delivery_target = 4;
+  // Empty only for a reusable service continuation using INHERIT_PARENT.
+  string binding_id = 5;
+  // Gateway-authored projection of the effective child scope. Recipients use
+  // this to enforce their local, server-owned invocation authority profile.
+  AuthorityContinuationScope scope = 6;
 }
 
 message ConfigSnapshot {

@@ -990,7 +990,9 @@ func (c *BaseClient) SendWithOptions(opts SendMessageOptions) error {
 	if opts.CheckedAccess != nil {
 		send.CheckedAccess = opts.CheckedAccess
 	}
-	send.ForwardAuthorization = opts.ForwardAuthorization
+	if opts.AuthorityContinuation != nil {
+		send.AuthorityContinuation = opts.AuthorityContinuation
+	}
 	return c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_Send{Send: send},
 	})

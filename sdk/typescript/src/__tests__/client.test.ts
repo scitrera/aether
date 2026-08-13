@@ -259,6 +259,13 @@ describe("runtime access checks", () => {
           rootGrantId: "root-grant-1",
           expiresAtMs: "1786478400000",
           deliveryTarget: "sv::tools::one",
+          bindingId: "call-1",
+          scope: {
+            workspaceScope: ["workspace-1"],
+            resourceScope: [{ resourceType: "vfs", patterns: ["workspace-1/*"] }],
+            operationScope: ["read"],
+            maxAccessLevel: 10,
+          },
         },
       },
     });
@@ -275,6 +282,8 @@ describe("runtime access checks", () => {
       rootGrantId: "root-grant-1",
       expiresAtMs: 1786478400000,
       deliveryTarget: "sv::tools::one",
+      bindingId: "call-1",
+      scope: { workspaceScope: ["workspace-1"], operationScope: ["read"], maxAccessLevel: 10 },
     });
   });
 
@@ -286,9 +295,9 @@ describe("runtime access checks", () => {
     await client.send({
       targetTopic: "sv::tool-catalog",
       payload: new Uint8Array([1]),
-      forwardAuthorization: true,
+      authorityContinuation: { scopeMode: 1 },
     });
-    expect(upstream.send.forwardAuthorization).toBe(true);
+    expect(upstream.send.authorityContinuation.scopeMode).toBe(1);
   });
 });
 

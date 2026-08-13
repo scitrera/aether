@@ -397,8 +397,10 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 	// route target is concrete, the sender's OBO context has been validated,
 	// and both the route and optional exact-resource checks have passed.
 	var forwardedAuthorization *pb.ForwardedAuthorization
-	if msg.GetForwardAuthorization() {
-		forwardedAuthorization, err = s.deriveMessageAuthorityContinuation(ctx, resolvedAuthority, msg.TargetTopic, sessionUUID)
+	if continuation := msg.GetAuthorityContinuation(); continuation != nil {
+		forwardedAuthorization, err = s.deriveMessageAuthorityContinuation(
+			ctx, resolvedAuthority, msg.TargetTopic, continuation, accessReceipt, sessionUUID,
+		)
 		if err != nil {
 			logging.Logger.Warn().Str("from", sender.ToTopic()).Str("to", msg.TargetTopic).Err(err).Msg("message authority continuation denied")
 			messageErrors.WithLabelValues(sender.Workspace, "authority_continuation_denied").Inc()

@@ -576,22 +576,52 @@ class ResolvedAuthorityInfo(_message.Message):
     def __init__(self, root_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., audience_type: _Optional[str] = ..., audience_id: _Optional[str] = ..., max_access_level: _Optional[int] = ..., workspace_scope: _Optional[_Iterable[str]] = ..., expires_at_ms: _Optional[int] = ...) -> None: ...
 
 class SendMessage(_message.Message):
-    __slots__ = ("target_topic", "payload", "message_type", "authorization", "app_workspace", "checked_access", "forward_authorization")
+    __slots__ = ("target_topic", "payload", "message_type", "authorization", "app_workspace", "checked_access", "authority_continuation")
     TARGET_TOPIC_FIELD_NUMBER: _ClassVar[int]
     PAYLOAD_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_TYPE_FIELD_NUMBER: _ClassVar[int]
     AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
     APP_WORKSPACE_FIELD_NUMBER: _ClassVar[int]
     CHECKED_ACCESS_FIELD_NUMBER: _ClassVar[int]
-    FORWARD_AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
+    AUTHORITY_CONTINUATION_FIELD_NUMBER: _ClassVar[int]
     target_topic: str
     payload: bytes
     message_type: MessageType
     authorization: AuthorizationContext
     app_workspace: str
     checked_access: ResourceAccessRequest
-    forward_authorization: bool
-    def __init__(self, target_topic: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., app_workspace: _Optional[str] = ..., checked_access: _Optional[_Union[ResourceAccessRequest, _Mapping]] = ..., forward_authorization: _Optional[bool] = ...) -> None: ...
+    authority_continuation: AuthorityContinuationRequest
+    def __init__(self, target_topic: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., app_workspace: _Optional[str] = ..., checked_access: _Optional[_Union[ResourceAccessRequest, _Mapping]] = ..., authority_continuation: _Optional[_Union[AuthorityContinuationRequest, _Mapping]] = ...) -> None: ...
+
+class AuthorityContinuationScope(_message.Message):
+    __slots__ = ("workspace_scope", "resource_scope", "operation_scope", "max_access_level")
+    WORKSPACE_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    OPERATION_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    MAX_ACCESS_LEVEL_FIELD_NUMBER: _ClassVar[int]
+    workspace_scope: _containers.RepeatedScalarFieldContainer[str]
+    resource_scope: _containers.RepeatedCompositeFieldContainer[ACLAuthorityGrantResourceScopeEntry]
+    operation_scope: _containers.RepeatedScalarFieldContainer[str]
+    max_access_level: int
+    def __init__(self, workspace_scope: _Optional[_Iterable[str]] = ..., resource_scope: _Optional[_Iterable[_Union[ACLAuthorityGrantResourceScopeEntry, _Mapping]]] = ..., operation_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ...) -> None: ...
+
+class AuthorityContinuationRequest(_message.Message):
+    __slots__ = ("scope_mode", "binding_id", "scope")
+    class ScopeMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        SCOPE_MODE_UNSPECIFIED: _ClassVar[AuthorityContinuationRequest.ScopeMode]
+        SCOPE_MODE_INHERIT_PARENT: _ClassVar[AuthorityContinuationRequest.ScopeMode]
+        SCOPE_MODE_ATTENUATE: _ClassVar[AuthorityContinuationRequest.ScopeMode]
+    SCOPE_MODE_UNSPECIFIED: AuthorityContinuationRequest.ScopeMode
+    SCOPE_MODE_INHERIT_PARENT: AuthorityContinuationRequest.ScopeMode
+    SCOPE_MODE_ATTENUATE: AuthorityContinuationRequest.ScopeMode
+    SCOPE_MODE_FIELD_NUMBER: _ClassVar[int]
+    BINDING_ID_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_FIELD_NUMBER: _ClassVar[int]
+    scope_mode: AuthorityContinuationRequest.ScopeMode
+    binding_id: str
+    scope: AuthorityContinuationScope
+    def __init__(self, scope_mode: _Optional[_Union[AuthorityContinuationRequest.ScopeMode, str]] = ..., binding_id: _Optional[str] = ..., scope: _Optional[_Union[AuthorityContinuationScope, _Mapping]] = ...) -> None: ...
 
 class Metric(_message.Message):
     __slots__ = ("trace_id", "entries", "metadata", "client_timestamp_ms")
@@ -760,16 +790,20 @@ class IncomingMessage(_message.Message):
     def __init__(self, source_topic: _Optional[str] = ..., payload: _Optional[bytes] = ..., message_type: _Optional[_Union[MessageType, str]] = ..., workspace: _Optional[str] = ..., on_behalf_subject: _Optional[_Union[PrincipalRef, _Mapping]] = ..., access_receipt: _Optional[_Union[AccessDecisionReceipt, _Mapping]] = ..., forwarded_authorization: _Optional[_Union[ForwardedAuthorization, _Mapping]] = ...) -> None: ...
 
 class ForwardedAuthorization(_message.Message):
-    __slots__ = ("authorization", "root_grant_id", "expires_at_ms", "delivery_target")
+    __slots__ = ("authorization", "root_grant_id", "expires_at_ms", "delivery_target", "binding_id", "scope")
     AUTHORIZATION_FIELD_NUMBER: _ClassVar[int]
     ROOT_GRANT_ID_FIELD_NUMBER: _ClassVar[int]
     EXPIRES_AT_MS_FIELD_NUMBER: _ClassVar[int]
     DELIVERY_TARGET_FIELD_NUMBER: _ClassVar[int]
+    BINDING_ID_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_FIELD_NUMBER: _ClassVar[int]
     authorization: AuthorizationContext
     root_grant_id: str
     expires_at_ms: int
     delivery_target: str
-    def __init__(self, authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., root_grant_id: _Optional[str] = ..., expires_at_ms: _Optional[int] = ..., delivery_target: _Optional[str] = ...) -> None: ...
+    binding_id: str
+    scope: AuthorityContinuationScope
+    def __init__(self, authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., root_grant_id: _Optional[str] = ..., expires_at_ms: _Optional[int] = ..., delivery_target: _Optional[str] = ..., binding_id: _Optional[str] = ..., scope: _Optional[_Union[AuthorityContinuationScope, _Mapping]] = ...) -> None: ...
 
 class ConfigSnapshot(_message.Message):
     __slots__ = ("kv", "global_kv", "task_context", "workspace_exclusive_kv", "global_exclusive_kv")

@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/server/internal/acl"
 	aclsqlite "github.com/scitrera/aether/server/internal/storage/acl/sqlite"
 	"github.com/scitrera/aether/server/pkg/models"
@@ -69,13 +71,48 @@ func createContinuationParent(t *testing.T, store *aclsqlite.Store, remainingHop
 	return resolved, actor, subject
 }
 
+func inheritedServiceContinuation() *pb.AuthorityContinuationRequest {
+	return &pb.AuthorityContinuationRequest{
+		ScopeMode: pb.AuthorityContinuationRequest_SCOPE_MODE_INHERIT_PARENT,
+	}
+}
+
+func attenuatedContinuation(bindingID, workspace string) *pb.AuthorityContinuationRequest {
+	return &pb.AuthorityContinuationRequest{
+		ScopeMode: pb.AuthorityContinuationRequest_SCOPE_MODE_ATTENUATE,
+		BindingId: bindingID,
+		Scope: &pb.AuthorityContinuationScope{
+			WorkspaceScope: []string{workspace},
+			ResourceScope: []*pb.ACLAuthorityGrantResourceScopeEntry{
+				{ResourceType: "tool", Patterns: []string{"workspace.*"}},
+			},
+			OperationScope: []string{"query"},
+			MaxAccessLevel: int32(acl.AccessRead),
+		},
+	}
+}
+
+func allowedContinuationReceipt(bindingID, workspace string) *pb.AccessDecisionReceipt {
+	return &pb.AccessDecisionReceipt{
+		DecisionId: "decision-" + bindingID,
+		Allowed:    true,
+		Request: &pb.ResourceAccessRequest{
+			ResourceType: "tool-catalog/entry", ResourceId: "provider/tool",
+			Operation: "tool.invoke.read", Workspace: workspace,
+			RequiredAccessLevel: int32(acl.AccessRead), CorrelationId: bindingID,
+		},
+	}
+}
+
 func TestDeriveMessageAuthorityContinuation_BindsLeafAndReuses(t *testing.T) {
 	gw, store := newAuthorityContinuationHarness(t)
 	authority, _, subject := createContinuationParent(t, store, 1)
 	ctx := context.Background()
 	target := "sv::tool-catalog::catalog-7"
 
-	forwarded, err := gw.deriveMessageAuthorityContinuation(ctx, authority, target, uuid.New())
+	forwarded, err := gw.deriveMessageAuthorityContinuation(
+		ctx, authority, target, inheritedServiceContinuation(), nil, uuid.New(),
+	)
 	if err != nil {
 		t.Fatalf("deriveMessageAuthorityContinuation: %v", err)
 	}
@@ -123,7 +160,9 @@ func TestDeriveMessageAuthorityContinuation_BindsLeafAndReuses(t *testing.T) {
 		t.Fatalf("service ResolveAuthority(child) = %+v, %v", resolved, err)
 	}
 
-	reused, err := gw.deriveMessageAuthorityContinuation(ctx, authority, target, uuid.New())
+	reused, err := gw.deriveMessageAuthorityContinuation(
+		ctx, authority, target, inheritedServiceContinuation(), nil, uuid.New(),
+	)
 	if err != nil {
 		t.Fatalf("deriveMessageAuthorityContinuation(reuse): %v", err)
 	}
@@ -132,22 +171,77 @@ func TestDeriveMessageAuthorityContinuation_BindsLeafAndReuses(t *testing.T) {
 	}
 }
 
+func TestDeriveMessageAuthorityContinuation_BindsAttenuatedAgentPerInvocation(t *testing.T) {
+	gw, store := newAuthorityContinuationHarness(t)
+	authority, _, subject := createContinuationParent(t, store, 1)
+	ctx := context.Background()
+	target := "ag::project-a::tool-host::one"
+	bindingID := "tool-call-1"
+
+	forwarded, err := gw.deriveMessageAuthorityContinuation(
+		ctx, authority, target, attenuatedContinuation(bindingID, "project-a"),
+		allowedContinuationReceipt(bindingID, "project-a"), uuid.New(),
+	)
+	if err != nil {
+		t.Fatalf("derive agent continuation: %v", err)
+	}
+	if forwarded.GetDeliveryTarget() != target || forwarded.GetBindingId() != bindingID {
+		t.Fatalf("forwarded binding = target:%q binding:%q", forwarded.GetDeliveryTarget(), forwarded.GetBindingId())
+	}
+	if forwarded.GetScope().GetMaxAccessLevel() != int32(acl.AccessRead) ||
+		!slices.Equal(forwarded.GetScope().GetOperationScope(), []string{"query"}) {
+		t.Fatalf("forwarded scope = %+v", forwarded.GetScope())
+	}
+
+	child, err := store.GetAuthorityGrant(ctx, forwarded.GetAuthorization().GetGrantId())
+	if err != nil {
+		t.Fatalf("GetAuthorityGrant(agent child): %v", err)
+	}
+	if child.AudienceType != acl.AuthorityAudienceAgent || child.AudienceID != target {
+		t.Fatalf("child audience = %s/%s, want agent/%s", child.AudienceType, child.AudienceID, target)
+	}
+	if child.MayDelegate || child.RemainingHops != 0 || child.MaxAccessLevel != acl.AccessRead {
+		t.Fatalf("unsafe agent child: %+v", child)
+	}
+	agent, parseErr := models.ParseIdentity(target)
+	if parseErr != nil {
+		t.Fatalf("ParseIdentity(agent): %v", parseErr)
+	}
+	resolved, err := store.ResolveAuthority(ctx, agent, acl.RequestAuthorityContext{
+		Mode: "on_behalf_of", Subject: subject, GrantID: child.GrantID,
+	}, acl.GrantAudienceContext{Actor: agent})
+	if err != nil || resolved == nil {
+		t.Fatalf("agent ResolveAuthority(child) = %+v, %v", resolved, err)
+	}
+
+	second, err := gw.deriveMessageAuthorityContinuation(
+		ctx, authority, target, attenuatedContinuation(bindingID, "project-a"),
+		allowedContinuationReceipt(bindingID, "project-a"), uuid.New(),
+	)
+	if err != nil {
+		t.Fatalf("derive second agent continuation: %v", err)
+	}
+	if second.GetAuthorization().GetGrantId() == child.GrantID {
+		t.Fatal("agent continuation was reused across invocations")
+	}
+}
+
 func TestDeriveMessageAuthorityContinuation_RejectsUnsafeInputsAndCascadesRevocation(t *testing.T) {
 	gw, store := newAuthorityContinuationHarness(t)
 	authority, _, _ := createContinuationParent(t, store, 1)
 	ctx := context.Background()
 
-	if _, err := gw.deriveMessageAuthorityContinuation(ctx, nil, "sv::tool-catalog::one", uuid.Nil); err == nil {
+	if _, err := gw.deriveMessageAuthorityContinuation(ctx, nil, "sv::tool-catalog::one", inheritedServiceContinuation(), nil, uuid.Nil); err == nil {
 		t.Fatal("expected missing authority to fail")
 	}
-	if _, err := gw.deriveMessageAuthorityContinuation(ctx, authority, "sv::tool-catalog", uuid.Nil); err == nil {
+	if _, err := gw.deriveMessageAuthorityContinuation(ctx, authority, "sv::tool-catalog", inheritedServiceContinuation(), nil, uuid.Nil); err == nil {
 		t.Fatal("expected wildcard service target to fail")
 	}
-	if _, err := gw.deriveMessageAuthorityContinuation(ctx, authority, "ag::project-a::worker::one", uuid.Nil); err == nil {
-		t.Fatal("expected non-service target to fail")
+	if _, err := gw.deriveMessageAuthorityContinuation(ctx, authority, "ag::project-a::worker::one", inheritedServiceContinuation(), nil, uuid.Nil); err == nil {
+		t.Fatal("expected inherited agent target to fail")
 	}
 
-	forwarded, err := gw.deriveMessageAuthorityContinuation(ctx, authority, "sv::tool-catalog::one", uuid.Nil)
+	forwarded, err := gw.deriveMessageAuthorityContinuation(ctx, authority, "sv::tool-catalog::one", inheritedServiceContinuation(), nil, uuid.Nil)
 	if err != nil {
 		t.Fatalf("deriveMessageAuthorityContinuation: %v", err)
 	}
@@ -163,8 +257,34 @@ func TestDeriveMessageAuthorityContinuation_RejectsUnsafeInputsAndCascadesRevoca
 	}
 
 	noHop, _, _ := createContinuationParent(t, store, 0)
-	if _, err := gw.deriveMessageAuthorityContinuation(ctx, noHop, "sv::tool-catalog::two", uuid.Nil); !errors.Is(err, acl.ErrAuthorityGrantDelegationDenied) {
+	if _, err := gw.deriveMessageAuthorityContinuation(ctx, noHop, "sv::tool-catalog::two", inheritedServiceContinuation(), nil, uuid.Nil); !errors.Is(err, acl.ErrAuthorityGrantDelegationDenied) {
 		t.Fatalf("no-hop error = %v, want delegation denied", err)
+	}
+}
+
+func TestDeriveMessageAuthorityContinuation_RejectsUnboundOrEscalatedAgentScope(t *testing.T) {
+	gw, store := newAuthorityContinuationHarness(t)
+	authority, _, _ := createContinuationParent(t, store, 1)
+	ctx := context.Background()
+	target := "ag::project-a::tool-host::one"
+	bindingID := "tool-call-1"
+
+	request := attenuatedContinuation(bindingID, "project-a")
+	if _, err := gw.deriveMessageAuthorityContinuation(ctx, authority, target, request, nil, uuid.Nil); err == nil {
+		t.Fatal("expected missing checked receipt to fail")
+	}
+	wrongCorrelation := allowedContinuationReceipt("another-call", "project-a")
+	if _, err := gw.deriveMessageAuthorityContinuation(ctx, authority, target, request, wrongCorrelation, uuid.Nil); err == nil {
+		t.Fatal("expected mismatched correlation to fail")
+	}
+	wrongWorkspace := allowedContinuationReceipt(bindingID, "project-b")
+	if _, err := gw.deriveMessageAuthorityContinuation(ctx, authority, target, request, wrongWorkspace, uuid.Nil); err == nil {
+		t.Fatal("expected mismatched workspace to fail")
+	}
+	escalated := attenuatedContinuation(bindingID, "project-a")
+	escalated.Scope.MaxAccessLevel = int32(acl.AccessManage)
+	if _, err := gw.deriveMessageAuthorityContinuation(ctx, authority, target, escalated, allowedContinuationReceipt(bindingID, "project-a"), uuid.Nil); !errors.Is(err, acl.ErrAuthorityGrantScopeEscalation) {
+		t.Fatalf("scope escalation error = %v, want scope escalation", err)
 	}
 }
 

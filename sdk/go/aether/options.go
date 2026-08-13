@@ -889,11 +889,13 @@ type SendMessageOptions struct {
 	// a denied decision prevents publication.
 	CheckedAccess *pb.ResourceAccessRequest
 
-	// ForwardAuthorization asks the gateway to derive a short-lived,
-	// non-delegable child grant for the concrete service recipient and attach it
-	// as trusted ForwardedAuthorization metadata. It requires resolved OBO
-	// authority with at least one remaining delegation hop.
-	ForwardAuthorization bool
+	// AuthorityContinuation asks the gateway to derive a short-lived,
+	// non-delegable child grant for the concrete recipient and attach it as
+	// trusted ForwardedAuthorization metadata. Service recipients may inherit the
+	// parent ceiling; agent recipients require an invocation-bound, explicitly
+	// attenuated scope. It requires resolved OBO authority with at least one
+	// remaining delegation hop.
+	AuthorityContinuation *pb.AuthorityContinuationRequest
 }
 
 // =============================================================================

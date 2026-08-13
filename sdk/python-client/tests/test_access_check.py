@@ -45,16 +45,19 @@ def test_sync_checked_send_wires_authority_and_access_request():
         subject=aether_pb2.PrincipalRef(principal_type="user", principal_id="user-1"),
         grant_id="grant-1",
     )
+    continuation = aether_pb2.AuthorityContinuationRequest(
+        scope_mode=aether_pb2.AuthorityContinuationRequest.SCOPE_MODE_INHERIT_PARENT,
+    )
 
     client.send_checked_message(
         "sv::tools", b"payload", _request(),
-        authorization=authorization, forward_authorization=True,
+        authorization=authorization, authority_continuation=continuation,
     )
 
     upstream = client.request_queue.get_nowait()
     assert upstream.send.checked_access.resource_id == "provider-1/tool-1"
     assert upstream.send.authorization.grant_id == "grant-1"
-    assert upstream.send.forward_authorization is True
+    assert upstream.send.authority_continuation.scope_mode == continuation.scope_mode
 
 
 @pytest.mark.asyncio

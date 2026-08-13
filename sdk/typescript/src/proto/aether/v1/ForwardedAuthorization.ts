@@ -1,6 +1,7 @@
 // Original file: aether.proto
 
 import type { AuthorizationContext as _aether_v1_AuthorizationContext, AuthorizationContext__Output as _aether_v1_AuthorizationContext__Output } from '../../aether/v1/AuthorizationContext';
+import type { AuthorityContinuationScope as _aether_v1_AuthorityContinuationScope, AuthorityContinuationScope__Output as _aether_v1_AuthorityContinuationScope__Output } from '../../aether/v1/AuthorityContinuationScope';
 import type { Long } from '@grpc/proto-loader';
 
 /**
@@ -13,6 +14,15 @@ export interface ForwardedAuthorization {
   'rootGrantId'?: (string);
   'expiresAtMs'?: (number | string | Long);
   'deliveryTarget'?: (string);
+  /**
+   * Empty only for a reusable service continuation using INHERIT_PARENT.
+   */
+  'bindingId'?: (string);
+  /**
+   * Gateway-authored projection of the effective child scope. Recipients use
+   * this to enforce their local, server-owned invocation authority profile.
+   */
+  'scope'?: (_aether_v1_AuthorityContinuationScope | null);
 }
 
 /**
@@ -25,4 +35,13 @@ export interface ForwardedAuthorization__Output {
   'rootGrantId': (string);
   'expiresAtMs': (string);
   'deliveryTarget': (string);
+  /**
+   * Empty only for a reusable service continuation using INHERIT_PARENT.
+   */
+  'bindingId': (string);
+  /**
+   * Gateway-authored projection of the effective child scope. Recipients use
+   * this to enforce their local, server-owned invocation authority profile.
+   */
+  'scope': (_aether_v1_AuthorityContinuationScope__Output | null);
 }

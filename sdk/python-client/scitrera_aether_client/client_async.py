@@ -1235,7 +1235,7 @@ class BaseAsyncAetherClient:
                             authorization: Optional[aether_pb2.AuthorizationContext] = None,
                             app_workspace: str = "",
                             checked_access: Optional[aether_pb2.ResourceAccessRequest] = None,
-                            forward_authorization: bool = False):
+                            authority_continuation: Optional[aether_pb2.AuthorityContinuationRequest] = None):
         """Send a message to a target topic.
 
         If ``authorization`` is provided, the message is authorized against the
@@ -1252,12 +1252,13 @@ class BaseAsyncAetherClient:
             payload=payload,
             message_type=message_type,  # type: ignore[arg-type]
             app_workspace=app_workspace,
-            forward_authorization=forward_authorization,
         )
         if authorization is not None:
             msg.authorization.CopyFrom(authorization)
         if checked_access is not None:
             msg.checked_access.CopyFrom(checked_access)
+        if authority_continuation is not None:
+            msg.authority_continuation.CopyFrom(authority_continuation)
         await self._request_queue.put(aether_pb2.UpstreamMessage(send=msg))
 
     async def send_checked_message(self, target_topic: str, payload: bytes,
@@ -1265,11 +1266,11 @@ class BaseAsyncAetherClient:
                                    message_type: int = aether_pb2.OPAQUE,
                                    authorization: Optional[aether_pb2.AuthorizationContext] = None,
                                    app_workspace: str = "",
-                                   forward_authorization: bool = False) -> None:
+                                   authority_continuation: Optional[aether_pb2.AuthorityContinuationRequest] = None) -> None:
         """Send only when the gateway allows ``checked_access``."""
         await self._send_message(target_topic, payload, message_type,
                                  authorization, app_workspace, checked_access,
-                                 forward_authorization)
+                                 authority_continuation)
 
     async def check_access(self, access: aether_pb2.ResourceAccessRequest,
                            authorization: Optional[aether_pb2.AuthorizationContext] = None,

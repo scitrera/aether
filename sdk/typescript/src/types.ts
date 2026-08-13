@@ -162,7 +162,7 @@ export interface IncomingMessage {
   readonly onBehalfSubject?: PrincipalRef;
   /** Gateway-authored exact-resource receipt for a checked send. */
   readonly accessReceipt?: AccessDecisionReceipt;
-  /** Gateway-derived leaf authority for this exact service recipient. */
+  /** Gateway-derived leaf authority for this exact service or agent recipient. */
   readonly forwardedAuthorization?: ForwardedAuthorization;
   /** Local timestamp when the message was received. */
   readonly receivedAt: Date;
@@ -185,7 +185,7 @@ export interface OutgoingMessage {
   /** Optional exact logical-resource check, additive to topic authorization. */
   checkedAccess?: ResourceAccessRequest;
   /** Explicitly derive and attach target-bound authority for the recipient. */
-  forwardAuthorization?: boolean;
+  authorityContinuation?: AuthorityContinuationRequest;
 }
 
 /** Stable principal reference used by runtime authorization metadata. */
@@ -207,6 +207,34 @@ export interface ForwardedAuthorization {
   readonly rootGrantId: string;
   readonly expiresAtMs: number;
   readonly deliveryTarget: string;
+  readonly bindingId: string;
+  readonly scope: AuthorityContinuationScope;
+}
+
+/** Scope ceiling for a target-bound authority continuation. */
+export interface AuthorityContinuationScope {
+  readonly workspaceScope: string[];
+  readonly resourceScope: AuthorityGrantResourceScopeEntry[];
+  readonly operationScope: string[];
+  readonly maxAccessLevel: number;
+}
+
+export interface AuthorityGrantResourceScopeEntry {
+  readonly resourceType: string;
+  readonly patterns: string[];
+}
+
+export enum AuthorityContinuationScopeMode {
+  Unspecified = 0,
+  InheritParent = 1,
+  Attenuate = 2,
+}
+
+/** Request for gateway-derived recipient authority. */
+export interface AuthorityContinuationRequest {
+  readonly scopeMode: AuthorityContinuationScopeMode;
+  readonly bindingId?: string;
+  readonly scope?: AuthorityContinuationScope;
 }
 
 /** Exact logical-resource tuple evaluated by the Aether gateway. */

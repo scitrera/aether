@@ -1001,7 +1001,7 @@ class BaseAetherClient:
                       app_workspace: str = "",
                       authorization: Optional[aether_pb2.AuthorizationContext] = None,
                       checked_access: Optional[aether_pb2.ResourceAccessRequest] = None,
-                      forward_authorization: bool = False):
+                      authority_continuation: Optional[aether_pb2.AuthorityContinuationRequest] = None):
         """Send a message to a target topic.
 
         ``app_workspace`` is an optional hint carrying the user's active app
@@ -1015,12 +1015,13 @@ class BaseAetherClient:
             payload=payload,
             message_type=message_type,  # type: ignore[arg-type]
             app_workspace=app_workspace,
-            forward_authorization=forward_authorization,
         )
         if authorization is not None:
             msg.authorization.CopyFrom(authorization)
         if checked_access is not None:
             msg.checked_access.CopyFrom(checked_access)
+        if authority_continuation is not None:
+            msg.authority_continuation.CopyFrom(authority_continuation)
         self.request_queue.put(aether_pb2.UpstreamMessage(send=msg))
 
     def send_checked_message(self, target_topic: str, payload: bytes,
@@ -1028,10 +1029,10 @@ class BaseAetherClient:
                              message_type: int = aether_pb2.OPAQUE,
                              app_workspace: str = "",
                              authorization: Optional[aether_pb2.AuthorizationContext] = None,
-                             forward_authorization: bool = False) -> None:
+                             authority_continuation: Optional[aether_pb2.AuthorityContinuationRequest] = None) -> None:
         """Send only when the gateway allows ``checked_access``."""
         self._send_message(target_topic, payload, message_type, app_workspace,
-                           authorization, checked_access, forward_authorization)
+                           authorization, checked_access, authority_continuation)
 
     def check_access(self, access: aether_pb2.ResourceAccessRequest,
                      authorization: Optional[aether_pb2.AuthorizationContext] = None,

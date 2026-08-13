@@ -109,6 +109,7 @@ export {
   KVScope,
   TaskAssignmentMode,
   TargetOfflinePolicy,
+  AuthorityContinuationScopeMode,
   SignalType,
 } from "./types.js";
 
@@ -118,6 +119,10 @@ export type {
   OutgoingMessage,
   PrincipalRef,
   AuthorizationContext,
+  ForwardedAuthorization,
+  AuthorityContinuationScope,
+  AuthorityContinuationRequest,
+  AuthorityGrantResourceScopeEntry,
   ResourceAccessRequest,
   AccessDecisionReceipt,
   ConfigSnapshot,

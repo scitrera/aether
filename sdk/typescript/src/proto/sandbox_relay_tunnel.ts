@@ -43,6 +43,8 @@ import type { AgentResponse as _aether_v1_AgentResponse, AgentResponse__Output a
 import type { AuditEntry as _aether_v1_AuditEntry, AuditEntry__Output as _aether_v1_AuditEntry__Output } from './aether/v1/AuditEntry';
 import type { AuditQuery as _aether_v1_AuditQuery, AuditQuery__Output as _aether_v1_AuditQuery__Output } from './aether/v1/AuditQuery';
 import type { AuditQueryResponse as _aether_v1_AuditQueryResponse, AuditQueryResponse__Output as _aether_v1_AuditQueryResponse__Output } from './aether/v1/AuditQueryResponse';
+import type { AuthorityContinuationRequest as _aether_v1_AuthorityContinuationRequest, AuthorityContinuationRequest__Output as _aether_v1_AuthorityContinuationRequest__Output } from './aether/v1/AuthorityContinuationRequest';
+import type { AuthorityContinuationScope as _aether_v1_AuthorityContinuationScope, AuthorityContinuationScope__Output as _aether_v1_AuthorityContinuationScope__Output } from './aether/v1/AuthorityContinuationScope';
 import type { AuthorityGrantBatchExchangeRequest as _aether_v1_AuthorityGrantBatchExchangeRequest, AuthorityGrantBatchExchangeRequest__Output as _aether_v1_AuthorityGrantBatchExchangeRequest__Output } from './aether/v1/AuthorityGrantBatchExchangeRequest';
 import type { AuthorityGrantDeriveForTargetRequest as _aether_v1_AuthorityGrantDeriveForTargetRequest, AuthorityGrantDeriveForTargetRequest__Output as _aether_v1_AuthorityGrantDeriveForTargetRequest__Output } from './aether/v1/AuthorityGrantDeriveForTargetRequest';
 import type { AuthorityGrantDeriveRequest as _aether_v1_AuthorityGrantDeriveRequest, AuthorityGrantDeriveRequest__Output as _aether_v1_AuthorityGrantDeriveRequest__Output } from './aether/v1/AuthorityGrantDeriveRequest';
@@ -217,6 +219,8 @@ export interface ProtoGrpcType {
       AuditEntry: MessageTypeDefinition<_aether_v1_AuditEntry, _aether_v1_AuditEntry__Output>
       AuditQuery: MessageTypeDefinition<_aether_v1_AuditQuery, _aether_v1_AuditQuery__Output>
       AuditQueryResponse: MessageTypeDefinition<_aether_v1_AuditQueryResponse, _aether_v1_AuditQueryResponse__Output>
+      AuthorityContinuationRequest: MessageTypeDefinition<_aether_v1_AuthorityContinuationRequest, _aether_v1_AuthorityContinuationRequest__Output>
+      AuthorityContinuationScope: MessageTypeDefinition<_aether_v1_AuthorityContinuationScope, _aether_v1_AuthorityContinuationScope__Output>
       AuthorityGrantBatchExchangeRequest: MessageTypeDefinition<_aether_v1_AuthorityGrantBatchExchangeRequest, _aether_v1_AuthorityGrantBatchExchangeRequest__Output>
       AuthorityGrantDeriveForTargetRequest: MessageTypeDefinition<_aether_v1_AuthorityGrantDeriveForTargetRequest, _aether_v1_AuthorityGrantDeriveForTargetRequest__Output>
       AuthorityGrantDeriveRequest: MessageTypeDefinition<_aether_v1_AuthorityGrantDeriveRequest, _aether_v1_AuthorityGrantDeriveRequest__Output>

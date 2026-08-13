@@ -541,14 +541,17 @@ func TestSendWithOptions_ThreadsAuthorization(t *testing.T) {
 		RequiredAccessLevel: 20,
 		CorrelationId:       "call-1",
 	}
+	continuation := &pb.AuthorityContinuationRequest{
+		ScopeMode: pb.AuthorityContinuationRequest_SCOPE_MODE_INHERIT_PARENT,
+	}
 	c := newRunningClient()
 	if err := c.SendWithOptions(SendMessageOptions{
-		TargetTopic:          "test.topic",
-		Payload:              []byte("hi"),
-		MessageType:          MessageTypeChat,
-		Authorization:        authz,
-		CheckedAccess:        checked,
-		ForwardAuthorization: true,
+		TargetTopic:           "test.topic",
+		Payload:               []byte("hi"),
+		MessageType:           MessageTypeChat,
+		Authorization:         authz,
+		CheckedAccess:         checked,
+		AuthorityContinuation: continuation,
 	}); err != nil {
 		t.Fatalf("SendWithOptions() error = %v", err)
 	}
@@ -562,8 +565,8 @@ func TestSendWithOptions_ThreadsAuthorization(t *testing.T) {
 	if got := send.GetCheckedAccess().GetCorrelationId(); got != "call-1" {
 		t.Errorf("checked access correlation = %q, want call-1", got)
 	}
-	if !send.GetForwardAuthorization() {
-		t.Error("expected forward_authorization on SendMessage")
+	if send.GetAuthorityContinuation().GetScopeMode() != pb.AuthorityContinuationRequest_SCOPE_MODE_INHERIT_PARENT {
+		t.Error("expected authority_continuation on SendMessage")
 	}
 
 	// Bare send (no authorization) stays nil.
@@ -575,7 +578,7 @@ func TestSendWithOptions_ThreadsAuthorization(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SendWithOptions() error = %v", err)
 	}
-	if send := dequeueSend(c2); send.GetAuthorization() != nil || send.GetCheckedAccess() != nil || send.GetForwardAuthorization() {
+	if send := dequeueSend(c2); send.GetAuthorization() != nil || send.GetCheckedAccess() != nil || send.GetAuthorityContinuation() != nil {
 		t.Error("bare send must not assume authorization or an exact resource check")
 	}
 }

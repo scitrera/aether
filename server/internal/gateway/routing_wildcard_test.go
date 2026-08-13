@@ -334,7 +334,7 @@ func TestRouteMessage_PayloadCannotSpoofForwardedAuthorization(t *testing.T) {
 	}
 }
 
-func TestRouteMessage_ForwardAuthorizationRequiresResolvedOBO(t *testing.T) {
+func TestRouteMessage_AuthorityContinuationRequiresResolvedOBO(t *testing.T) {
 	router := newMockMessageRouter()
 	s := newWildcardTestServer(router)
 	s.identityIndex.Store("sv::tool-catalog::pod-one", "session-one")
@@ -345,7 +345,9 @@ func TestRouteMessage_ForwardAuthorizationRequiresResolvedOBO(t *testing.T) {
 
 	s.routeMessage(context.Background(), client, &pb.SendMessage{
 		TargetTopic: "sv::tool-catalog", MessageType: pb.MessageType_OPAQUE,
-		Payload: []byte("query"), ForwardAuthorization: true,
+		Payload: []byte("query"), AuthorityContinuation: &pb.AuthorityContinuationRequest{
+			ScopeMode: pb.AuthorityContinuationRequest_SCOPE_MODE_INHERIT_PARENT,
+		},
 	})
 	router.mu.Lock()
 	published := len(router.publishedMessages)
