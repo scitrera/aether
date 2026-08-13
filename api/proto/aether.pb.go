@@ -17308,8 +17308,16 @@ type ProxyHttpRequest struct {
 	// upward by the sidecar relay floor (sandboxes can bump higher but never
 	// lower than the inbound chain depth they observed).
 	ProxyChainDepth uint32 `protobuf:"varint,16,opt,name=proxy_chain_depth,json=proxyChainDepth,proto3" json:"proxy_chain_depth,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Optional exact logical-resource authorization evaluated by the gateway
+	// after route authorization and wildcard target resolution. A denied or
+	// unavailable check prevents delivery to the terminator.
+	CheckedAccess *ResourceAccessRequest `protobuf:"bytes,17,opt,name=checked_access,json=checkedAccess,proto3" json:"checked_access,omitempty"`
+	// Gateway-authored result of checked_access. The gateway always clears any
+	// caller-supplied value before evaluation; terminators must trust this only
+	// as transport metadata on the delivered envelope.
+	AccessReceipt *AccessDecisionReceipt `protobuf:"bytes,18,opt,name=access_receipt,json=accessReceipt,proto3" json:"access_receipt,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ProxyHttpRequest) Reset() {
@@ -17452,6 +17460,20 @@ func (x *ProxyHttpRequest) GetProxyChainDepth() uint32 {
 		return x.ProxyChainDepth
 	}
 	return 0
+}
+
+func (x *ProxyHttpRequest) GetCheckedAccess() *ResourceAccessRequest {
+	if x != nil {
+		return x.CheckedAccess
+	}
+	return nil
+}
+
+func (x *ProxyHttpRequest) GetAccessReceipt() *AccessDecisionReceipt {
+	if x != nil {
+		return x.AccessReceipt
+	}
+	return nil
 }
 
 // ProxyHttpResponse is sent in reply to a ProxyHttpRequest. Errors are
@@ -19170,8 +19192,8 @@ type AccessDecisionReceipt struct {
 	EvaluatedAtMs        int64                  `protobuf:"varint,12,opt,name=evaluated_at_ms,json=evaluatedAtMs,proto3" json:"evaluated_at_ms,omitempty"`
 	ExpiresAtMs          int64                  `protobuf:"varint,13,opt,name=expires_at_ms,json=expiresAtMs,proto3" json:"expires_at_ms,omitempty"`
 	DenialCode           string                 `protobuf:"bytes,14,opt,name=denial_code,json=denialCode,proto3" json:"denial_code,omitempty"` // stable code; empty for allowed checks
-	// Populated only for checked SendMessage. This binds the receipt to the
-	// concrete post-wildcard-resolution target that received the envelope.
+	// Populated for checked SendMessage and ProxyHTTP delivery. This binds the
+	// receipt to the concrete post-wildcard-resolution target that received it.
 	DeliveryTarget string `protobuf:"bytes,15,opt,name=delivery_target,json=deliveryTarget,proto3" json:"delivery_target,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
@@ -21327,7 +21349,7 @@ const file_aether_proto_rawDesc = "" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12\x1d\n" +
 	"\n" +
 	"error_code\x18\x03 \x01(\tR\terrorCode\x12#\n" +
-	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\"\xea\x05\n" +
+	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\"\xfc\x06\n" +
 	"\x10ProxyHttpRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12!\n" +
@@ -21347,7 +21369,9 @@ const file_aether_proto_rawDesc = "" +
 	"\x1cstream_response_indefinitely\x18\r \x01(\bR\x1astreamResponseIndefinitely\x123\n" +
 	"\x16stream_idle_timeout_ms\x18\x0e \x01(\x03R\x13streamIdleTimeoutMs\x125\n" +
 	"\x17max_response_body_bytes\x18\x0f \x01(\x03R\x14maxResponseBodyBytes\x12*\n" +
-	"\x11proxy_chain_depth\x18\x10 \x01(\rR\x0fproxyChainDepth\x1a:\n" +
+	"\x11proxy_chain_depth\x18\x10 \x01(\rR\x0fproxyChainDepth\x12G\n" +
+	"\x0echecked_access\x18\x11 \x01(\v2 .aether.v1.ResourceAccessRequestR\rcheckedAccess\x12G\n" +
+	"\x0eaccess_receipt\x18\x12 \x01(\v2 .aether.v1.AccessDecisionReceiptR\raccessReceipt\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb8\x02\n" +
@@ -22245,48 +22269,50 @@ var file_aether_proto_depIdxs = []int32{
 	231, // 313: aether.v1.SubmitAuditEventRequest.metadata:type_name -> aether.v1.SubmitAuditEventRequest.MetadataEntry
 	232, // 314: aether.v1.ProxyHttpRequest.headers:type_name -> aether.v1.ProxyHttpRequest.HeadersEntry
 	54,  // 315: aether.v1.ProxyHttpRequest.authorization:type_name -> aether.v1.AuthorizationContext
-	233, // 316: aether.v1.ProxyHttpResponse.headers:type_name -> aether.v1.ProxyHttpResponse.HeadersEntry
-	174, // 317: aether.v1.ProxyHttpResponse.error:type_name -> aether.v1.ProxyError
-	33,  // 318: aether.v1.ProxyError.kind:type_name -> aether.v1.ProxyError.Kind
-	34,  // 319: aether.v1.TunnelOpen.protocol:type_name -> aether.v1.TunnelOpen.Protocol
-	234, // 320: aether.v1.TunnelOpen.metadata:type_name -> aether.v1.TunnelOpen.MetadataEntry
-	54,  // 321: aether.v1.TunnelOpen.authorization:type_name -> aether.v1.AuthorizationContext
-	35,  // 322: aether.v1.TunnelClose.reason:type_name -> aether.v1.TunnelClose.Reason
-	53,  // 323: aether.v1.ResolveAuthorityRequest.actor:type_name -> aether.v1.PrincipalRef
-	53,  // 324: aether.v1.ResolveAuthorityRequest.subject:type_name -> aether.v1.PrincipalRef
-	181, // 325: aether.v1.ResolveAuthorityResponse.authority:type_name -> aether.v1.ResolvedAuthority
-	53,  // 326: aether.v1.ResolvedAuthority.actor:type_name -> aether.v1.PrincipalRef
-	53,  // 327: aether.v1.ResolvedAuthority.subject:type_name -> aether.v1.PrincipalRef
-	182, // 328: aether.v1.ResolvedAuthority.grant:type_name -> aether.v1.AuthorityGrantInfo
-	53,  // 329: aether.v1.ConnectionStatusRequest.principal:type_name -> aether.v1.PrincipalRef
-	36,  // 330: aether.v1.TaskSubscriptionOperation.op:type_name -> aether.v1.TaskSubscriptionOperation.OpType
-	188, // 331: aether.v1.TaskEvent.status_changed:type_name -> aether.v1.TaskStatusChangedEvent
-	189, // 332: aether.v1.TaskEvent.progress:type_name -> aether.v1.TaskProgressEvent
-	190, // 333: aether.v1.TaskEvent.child_lifecycle:type_name -> aether.v1.TaskChildLifecycleEvent
-	191, // 334: aether.v1.TaskEvent.authority_request:type_name -> aether.v1.TaskAuthorityRequestEventRelay
-	2,   // 335: aether.v1.TaskStatusChangedEvent.from_status:type_name -> aether.v1.TaskStatus
-	2,   // 336: aether.v1.TaskStatusChangedEvent.to_status:type_name -> aether.v1.TaskStatus
-	235, // 337: aether.v1.TaskProgressEvent.metadata:type_name -> aether.v1.TaskProgressEvent.MetadataEntry
-	2,   // 338: aether.v1.TaskChildLifecycleEvent.child_status:type_name -> aether.v1.TaskStatus
-	152, // 339: aether.v1.TaskAuthorityRequestEventRelay.event:type_name -> aether.v1.AuthorityRequestEvent
-	192, // 340: aether.v1.AccessDecisionReceipt.request:type_name -> aether.v1.ResourceAccessRequest
-	53,  // 341: aether.v1.AccessDecisionReceipt.actor:type_name -> aether.v1.PrincipalRef
-	53,  // 342: aether.v1.AccessDecisionReceipt.subject:type_name -> aether.v1.PrincipalRef
-	53,  // 343: aether.v1.AccessDecisionReceipt.root_subject:type_name -> aether.v1.PrincipalRef
-	192, // 344: aether.v1.AccessCheckOperation.access:type_name -> aether.v1.ResourceAccessRequest
-	54,  // 345: aether.v1.AccessCheckOperation.authorization:type_name -> aether.v1.AuthorizationContext
-	193, // 346: aether.v1.AccessCheckResponse.decision:type_name -> aether.v1.AccessDecisionReceipt
-	192, // 347: aether.v1.BatchAccessCheckOperation.access:type_name -> aether.v1.ResourceAccessRequest
-	54,  // 348: aether.v1.BatchAccessCheckOperation.authorization:type_name -> aether.v1.AuthorizationContext
-	193, // 349: aether.v1.BatchAccessCheckResponse.decisions:type_name -> aether.v1.AccessDecisionReceipt
-	81,  // 350: aether.v1.HealthInfo.ChecksEntry.value:type_name -> aether.v1.HealthCheck
-	37,  // 351: aether.v1.AetherGateway.Connect:input_type -> aether.v1.UpstreamMessage
-	38,  // 352: aether.v1.AetherGateway.Connect:output_type -> aether.v1.DownstreamMessage
-	352, // [352:353] is the sub-list for method output_type
-	351, // [351:352] is the sub-list for method input_type
-	351, // [351:351] is the sub-list for extension type_name
-	351, // [351:351] is the sub-list for extension extendee
-	0,   // [0:351] is the sub-list for field type_name
+	192, // 316: aether.v1.ProxyHttpRequest.checked_access:type_name -> aether.v1.ResourceAccessRequest
+	193, // 317: aether.v1.ProxyHttpRequest.access_receipt:type_name -> aether.v1.AccessDecisionReceipt
+	233, // 318: aether.v1.ProxyHttpResponse.headers:type_name -> aether.v1.ProxyHttpResponse.HeadersEntry
+	174, // 319: aether.v1.ProxyHttpResponse.error:type_name -> aether.v1.ProxyError
+	33,  // 320: aether.v1.ProxyError.kind:type_name -> aether.v1.ProxyError.Kind
+	34,  // 321: aether.v1.TunnelOpen.protocol:type_name -> aether.v1.TunnelOpen.Protocol
+	234, // 322: aether.v1.TunnelOpen.metadata:type_name -> aether.v1.TunnelOpen.MetadataEntry
+	54,  // 323: aether.v1.TunnelOpen.authorization:type_name -> aether.v1.AuthorizationContext
+	35,  // 324: aether.v1.TunnelClose.reason:type_name -> aether.v1.TunnelClose.Reason
+	53,  // 325: aether.v1.ResolveAuthorityRequest.actor:type_name -> aether.v1.PrincipalRef
+	53,  // 326: aether.v1.ResolveAuthorityRequest.subject:type_name -> aether.v1.PrincipalRef
+	181, // 327: aether.v1.ResolveAuthorityResponse.authority:type_name -> aether.v1.ResolvedAuthority
+	53,  // 328: aether.v1.ResolvedAuthority.actor:type_name -> aether.v1.PrincipalRef
+	53,  // 329: aether.v1.ResolvedAuthority.subject:type_name -> aether.v1.PrincipalRef
+	182, // 330: aether.v1.ResolvedAuthority.grant:type_name -> aether.v1.AuthorityGrantInfo
+	53,  // 331: aether.v1.ConnectionStatusRequest.principal:type_name -> aether.v1.PrincipalRef
+	36,  // 332: aether.v1.TaskSubscriptionOperation.op:type_name -> aether.v1.TaskSubscriptionOperation.OpType
+	188, // 333: aether.v1.TaskEvent.status_changed:type_name -> aether.v1.TaskStatusChangedEvent
+	189, // 334: aether.v1.TaskEvent.progress:type_name -> aether.v1.TaskProgressEvent
+	190, // 335: aether.v1.TaskEvent.child_lifecycle:type_name -> aether.v1.TaskChildLifecycleEvent
+	191, // 336: aether.v1.TaskEvent.authority_request:type_name -> aether.v1.TaskAuthorityRequestEventRelay
+	2,   // 337: aether.v1.TaskStatusChangedEvent.from_status:type_name -> aether.v1.TaskStatus
+	2,   // 338: aether.v1.TaskStatusChangedEvent.to_status:type_name -> aether.v1.TaskStatus
+	235, // 339: aether.v1.TaskProgressEvent.metadata:type_name -> aether.v1.TaskProgressEvent.MetadataEntry
+	2,   // 340: aether.v1.TaskChildLifecycleEvent.child_status:type_name -> aether.v1.TaskStatus
+	152, // 341: aether.v1.TaskAuthorityRequestEventRelay.event:type_name -> aether.v1.AuthorityRequestEvent
+	192, // 342: aether.v1.AccessDecisionReceipt.request:type_name -> aether.v1.ResourceAccessRequest
+	53,  // 343: aether.v1.AccessDecisionReceipt.actor:type_name -> aether.v1.PrincipalRef
+	53,  // 344: aether.v1.AccessDecisionReceipt.subject:type_name -> aether.v1.PrincipalRef
+	53,  // 345: aether.v1.AccessDecisionReceipt.root_subject:type_name -> aether.v1.PrincipalRef
+	192, // 346: aether.v1.AccessCheckOperation.access:type_name -> aether.v1.ResourceAccessRequest
+	54,  // 347: aether.v1.AccessCheckOperation.authorization:type_name -> aether.v1.AuthorizationContext
+	193, // 348: aether.v1.AccessCheckResponse.decision:type_name -> aether.v1.AccessDecisionReceipt
+	192, // 349: aether.v1.BatchAccessCheckOperation.access:type_name -> aether.v1.ResourceAccessRequest
+	54,  // 350: aether.v1.BatchAccessCheckOperation.authorization:type_name -> aether.v1.AuthorizationContext
+	193, // 351: aether.v1.BatchAccessCheckResponse.decisions:type_name -> aether.v1.AccessDecisionReceipt
+	81,  // 352: aether.v1.HealthInfo.ChecksEntry.value:type_name -> aether.v1.HealthCheck
+	37,  // 353: aether.v1.AetherGateway.Connect:input_type -> aether.v1.UpstreamMessage
+	38,  // 354: aether.v1.AetherGateway.Connect:output_type -> aether.v1.DownstreamMessage
+	354, // [354:355] is the sub-list for method output_type
+	353, // [353:354] is the sub-list for method input_type
+	353, // [353:353] is the sub-list for extension type_name
+	353, // [353:353] is the sub-list for extension extendee
+	0,   // [0:353] is the sub-list for field type_name
 }
 
 func init() { file_aether_proto_init() }

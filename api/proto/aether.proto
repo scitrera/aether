@@ -3217,6 +3217,14 @@ message ProxyHttpRequest {
   // upward by the sidecar relay floor (sandboxes can bump higher but never
   // lower than the inbound chain depth they observed).
   uint32 proxy_chain_depth               = 16;
+  // Optional exact logical-resource authorization evaluated by the gateway
+  // after route authorization and wildcard target resolution. A denied or
+  // unavailable check prevents delivery to the terminator.
+  ResourceAccessRequest checked_access    = 17;
+  // Gateway-authored result of checked_access. The gateway always clears any
+  // caller-supplied value before evaluation; terminators must trust this only
+  // as transport metadata on the delivered envelope.
+  AccessDecisionReceipt access_receipt    = 18;
 }
 
 // ProxyHttpResponse is sent in reply to a ProxyHttpRequest. Errors are
@@ -3533,8 +3541,8 @@ message AccessDecisionReceipt {
   int64 evaluated_at_ms = 12;
   int64 expires_at_ms = 13;
   string denial_code = 14;             // stable code; empty for allowed checks
-  // Populated only for checked SendMessage. This binds the receipt to the
-  // concrete post-wildcard-resolution target that received the envelope.
+  // Populated for checked SendMessage and ProxyHTTP delivery. This binds the
+  // receipt to the concrete post-wildcard-resolution target that received it.
   string delivery_target = 15;
 }
 

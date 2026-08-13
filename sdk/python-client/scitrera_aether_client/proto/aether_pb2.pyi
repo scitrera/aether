@@ -3420,7 +3420,7 @@ class SubmitAuditEventResponse(_message.Message):
     def __init__(self, client_request_id: _Optional[str] = ..., success: _Optional[bool] = ..., error_code: _Optional[str] = ..., error_message: _Optional[str] = ...) -> None: ...
 
 class ProxyHttpRequest(_message.Message):
-    __slots__ = ("request_id", "target_topic", "method", "path", "headers", "body", "body_chunked", "authorization", "app_workspace", "timeout_ms", "follow_redirects", "backend_name", "stream_response_indefinitely", "stream_idle_timeout_ms", "max_response_body_bytes", "proxy_chain_depth")
+    __slots__ = ("request_id", "target_topic", "method", "path", "headers", "body", "body_chunked", "authorization", "app_workspace", "timeout_ms", "follow_redirects", "backend_name", "stream_response_indefinitely", "stream_idle_timeout_ms", "max_response_body_bytes", "proxy_chain_depth", "checked_access", "access_receipt")
     class HeadersEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -3444,6 +3444,8 @@ class ProxyHttpRequest(_message.Message):
     STREAM_IDLE_TIMEOUT_MS_FIELD_NUMBER: _ClassVar[int]
     MAX_RESPONSE_BODY_BYTES_FIELD_NUMBER: _ClassVar[int]
     PROXY_CHAIN_DEPTH_FIELD_NUMBER: _ClassVar[int]
+    CHECKED_ACCESS_FIELD_NUMBER: _ClassVar[int]
+    ACCESS_RECEIPT_FIELD_NUMBER: _ClassVar[int]
     request_id: str
     target_topic: str
     method: str
@@ -3460,7 +3462,9 @@ class ProxyHttpRequest(_message.Message):
     stream_idle_timeout_ms: int
     max_response_body_bytes: int
     proxy_chain_depth: int
-    def __init__(self, request_id: _Optional[str] = ..., target_topic: _Optional[str] = ..., method: _Optional[str] = ..., path: _Optional[str] = ..., headers: _Optional[_Mapping[str, str]] = ..., body: _Optional[bytes] = ..., body_chunked: _Optional[bool] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., app_workspace: _Optional[str] = ..., timeout_ms: _Optional[int] = ..., follow_redirects: _Optional[bool] = ..., backend_name: _Optional[str] = ..., stream_response_indefinitely: _Optional[bool] = ..., stream_idle_timeout_ms: _Optional[int] = ..., max_response_body_bytes: _Optional[int] = ..., proxy_chain_depth: _Optional[int] = ...) -> None: ...
+    checked_access: ResourceAccessRequest
+    access_receipt: AccessDecisionReceipt
+    def __init__(self, request_id: _Optional[str] = ..., target_topic: _Optional[str] = ..., method: _Optional[str] = ..., path: _Optional[str] = ..., headers: _Optional[_Mapping[str, str]] = ..., body: _Optional[bytes] = ..., body_chunked: _Optional[bool] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., app_workspace: _Optional[str] = ..., timeout_ms: _Optional[int] = ..., follow_redirects: _Optional[bool] = ..., backend_name: _Optional[str] = ..., stream_response_indefinitely: _Optional[bool] = ..., stream_idle_timeout_ms: _Optional[int] = ..., max_response_body_bytes: _Optional[int] = ..., proxy_chain_depth: _Optional[int] = ..., checked_access: _Optional[_Union[ResourceAccessRequest, _Mapping]] = ..., access_receipt: _Optional[_Union[AccessDecisionReceipt, _Mapping]] = ...) -> None: ...
 
 class ProxyHttpResponse(_message.Message):
     __slots__ = ("request_id", "status_code", "headers", "body", "body_chunked", "error")

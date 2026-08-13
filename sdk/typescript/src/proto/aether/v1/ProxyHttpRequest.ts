@@ -1,6 +1,8 @@
 // Original file: aether.proto
 
 import type { AuthorizationContext as _aether_v1_AuthorizationContext, AuthorizationContext__Output as _aether_v1_AuthorizationContext__Output } from '../../aether/v1/AuthorizationContext';
+import type { ResourceAccessRequest as _aether_v1_ResourceAccessRequest, ResourceAccessRequest__Output as _aether_v1_ResourceAccessRequest__Output } from '../../aether/v1/ResourceAccessRequest';
+import type { AccessDecisionReceipt as _aether_v1_AccessDecisionReceipt, AccessDecisionReceipt__Output as _aether_v1_AccessDecisionReceipt__Output } from '../../aether/v1/AccessDecisionReceipt';
 import type { Long } from '@grpc/proto-loader';
 
 /**
@@ -57,6 +59,18 @@ export interface ProxyHttpRequest {
    * lower than the inbound chain depth they observed).
    */
   'proxyChainDepth'?: (number);
+  /**
+   * Optional exact logical-resource authorization evaluated by the gateway
+   * after route authorization and wildcard target resolution. A denied or
+   * unavailable check prevents delivery to the terminator.
+   */
+  'checkedAccess'?: (_aether_v1_ResourceAccessRequest | null);
+  /**
+   * Gateway-authored result of checked_access. The gateway always clears any
+   * caller-supplied value before evaluation; terminators must trust this only
+   * as transport metadata on the delivered envelope.
+   */
+  'accessReceipt'?: (_aether_v1_AccessDecisionReceipt | null);
 }
 
 /**
@@ -113,4 +127,16 @@ export interface ProxyHttpRequest__Output {
    * lower than the inbound chain depth they observed).
    */
   'proxyChainDepth': (number);
+  /**
+   * Optional exact logical-resource authorization evaluated by the gateway
+   * after route authorization and wildcard target resolution. A denied or
+   * unavailable check prevents delivery to the terminator.
+   */
+  'checkedAccess': (_aether_v1_ResourceAccessRequest__Output | null);
+  /**
+   * Gateway-authored result of checked_access. The gateway always clears any
+   * caller-supplied value before evaluation; terminators must trust this only
+   * as transport metadata on the delivered envelope.
+   */
+  'accessReceipt': (_aether_v1_AccessDecisionReceipt__Output | null);
 }

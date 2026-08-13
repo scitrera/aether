@@ -100,6 +100,10 @@ class MintedRequest:
     request_id: str
     authorization: Optional[aether_pb2.AuthorizationContext] = None
     app_workspace: str = ""
+    # Gateway-authored exact-resource decision carried on the Aether
+    # transport envelope. Applications must not reconstruct this from HTTP
+    # headers or request bodies.
+    access_receipt: Optional[aether_pb2.AccessDecisionReceipt] = None
 
 
 @dataclass
@@ -836,6 +840,9 @@ class ProxyHttpTerminator:
                 req.authorization if req.HasField("authorization") else None
             ),
             app_workspace=req.app_workspace,
+            access_receipt=(
+                req.access_receipt if req.HasField("access_receipt") else None
+            ),
         )
 
         # Streaming-response path is not yet implemented (out of scope per

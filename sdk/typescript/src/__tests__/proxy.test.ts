@@ -405,3 +405,29 @@ describe("proxyHttp backend option", () => {
     expect(msg.proxyHttpRequest["backendName"]).toBe("primary");
   });
 });
+
+describe("proxyHttp checked access", () => {
+  it("clones the descriptor and binds an empty correlation ID", () => {
+    const client = makeClient();
+    const checkedAccess = {
+      resourceType: "vfs",
+      resourceId: "workspaces/ws-1/entries/ref-1",
+      operation: "read",
+      workspace: "ws-1",
+      requiredAccessLevel: 10,
+      correlationId: "",
+    };
+
+    void proxyHttp(client, "sv::data-connectors", "GET", "/v1/vfs/ref-1", {
+      appWorkspace: "ws-1",
+      checkedAccess,
+    });
+
+    const msg = client._sentMessages[0] as { proxyHttpRequest: Record<string, unknown> };
+    const emitted = msg.proxyHttpRequest["checkedAccess"] as Record<string, unknown>;
+    expect(emitted["correlationId"]).toBe(msg.proxyHttpRequest["requestId"]);
+    expect(msg.proxyHttpRequest["appWorkspace"]).toBe("ws-1");
+    expect(checkedAccess.correlationId).toBe("");
+    expect(emitted).not.toBe(checkedAccess);
+  });
+});

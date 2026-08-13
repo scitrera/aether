@@ -333,6 +333,7 @@ def _build_request(
     body: bytes,
     body_chunked: bool,
     authorization: Optional[aether_pb2.AuthorizationContext],
+    checked_access: Optional[aether_pb2.ResourceAccessRequest],
     app_workspace: Optional[str],
     timeout_ms: int,
     follow_redirects: bool,
@@ -361,6 +362,10 @@ def _build_request(
             req.headers[k] = v
     if authorization is not None:
         req.authorization.CopyFrom(authorization)
+    if checked_access is not None:
+        req.checked_access.CopyFrom(checked_access)
+        if not req.checked_access.correlation_id:
+            req.checked_access.correlation_id = request_id
     return req
 
 
@@ -602,6 +607,7 @@ def proxy_http(
     app_workspace: Optional[str] = None,
     request_id: Optional[str] = None,
     authorization: Optional[aether_pb2.AuthorizationContext] = None,
+    checked_access: Optional[aether_pb2.ResourceAccessRequest] = None,
     authority_mode: Optional[str] = None,
     subject_type: Optional[str] = None,
     subject_id: Optional[str] = None,
@@ -654,6 +660,7 @@ def proxy_http(
         body=body,
         body_chunked=body_chunked,
         authorization=auth,
+        checked_access=checked_access,
         app_workspace=app_workspace,
         timeout_ms=int(timeout * 1000) if timeout else 0,
         follow_redirects=follow_redirects,
@@ -742,6 +749,7 @@ async def proxy_http_async(
     app_workspace: Optional[str] = None,
     request_id: Optional[str] = None,
     authorization: Optional[aether_pb2.AuthorizationContext] = None,
+    checked_access: Optional[aether_pb2.ResourceAccessRequest] = None,
     authority_mode: Optional[str] = None,
     subject_type: Optional[str] = None,
     subject_id: Optional[str] = None,
@@ -777,6 +785,7 @@ async def proxy_http_async(
         body=body,
         body_chunked=body_chunked,
         authorization=auth,
+        checked_access=checked_access,
         app_workspace=app_workspace,
         timeout_ms=int(timeout * 1000) if timeout else 0,
         follow_redirects=follow_redirects,

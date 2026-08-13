@@ -43,8 +43,8 @@ export interface AccessDecisionReceipt {
    */
   'denialCode'?: (string);
   /**
-   * Populated only for checked SendMessage. This binds the receipt to the
-   * concrete post-wildcard-resolution target that received the envelope.
+   * Populated for checked SendMessage and ProxyHTTP delivery. This binds the
+   * receipt to the concrete post-wildcard-resolution target that received it.
    */
   'deliveryTarget'?: (string);
 }
@@ -88,8 +88,8 @@ export interface AccessDecisionReceipt__Output {
    */
   'denialCode': (string);
   /**
-   * Populated only for checked SendMessage. This binds the receipt to the
-   * concrete post-wildcard-resolution target that received the envelope.
+   * Populated for checked SendMessage and ProxyHTTP delivery. This binds the
+   * receipt to the concrete post-wildcard-resolution target that received it.
    */
   'deliveryTarget': (string);
 }

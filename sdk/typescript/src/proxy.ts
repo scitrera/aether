@@ -13,6 +13,7 @@
 
 import type { AetherClient } from "./client.js";
 import { ConnectionError, TimeoutError } from "./errors.js";
+import type { AuthorizationContext, ResourceAccessRequest } from "./types.js";
 
 // =============================================================================
 // Constants
@@ -62,6 +63,12 @@ export interface ProxyHttpOptions {
   timeoutMs?: number;
   /** Whether to follow HTTP redirects (default: true). */
   followRedirects?: boolean;
+  /** Optional application workspace context for the proxied request. */
+  appWorkspace?: string;
+  /** Optional direct or on-behalf-of authority context. */
+  authorization?: AuthorizationContext;
+  /** Exact logical resource the gateway must authorize before delivery. */
+  checkedAccess?: ResourceAccessRequest;
   /**
    * Pin the request to a named terminator backend. The backend's allow-list
    * still applies — explicit naming selects which backend's ACL is consulted,
@@ -135,6 +142,14 @@ export async function proxyHttp(
   const body = opts.body ?? new Uint8Array(0);
   const headers = opts.headers ?? {};
   const followRedirects = opts.followRedirects ?? true;
+  const appWorkspace = opts.appWorkspace ?? "";
+  const authorization = opts.authorization;
+  const checkedAccess = opts.checkedAccess
+    ? {
+        ...opts.checkedAccess,
+        correlationId: opts.checkedAccess.correlationId || requestId,
+      }
+    : undefined;
   const backendName = opts.backend ?? "";
   const streamResponse = opts.streamResponse ?? false;
   const streamIdleTimeoutMs = opts.streamIdleTimeoutMs ?? 0;
@@ -221,6 +236,9 @@ export async function proxyHttp(
           bodyChunked: false,
           timeoutMs,
           followRedirects,
+          appWorkspace,
+          authorization,
+          checkedAccess,
           backendName,
           streamResponseIndefinitely: streamResponse,
           streamIdleTimeoutMs,
@@ -240,6 +258,9 @@ export async function proxyHttp(
           bodyChunked: true,
           timeoutMs,
           followRedirects,
+          appWorkspace,
+          authorization,
+          checkedAccess,
           backendName,
           streamResponseIndefinitely: streamResponse,
           streamIdleTimeoutMs,

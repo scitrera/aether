@@ -10,7 +10,10 @@ package gateway
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,8 +21,11 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
+	"github.com/scitrera/aether/server/internal/acl"
 	"github.com/scitrera/aether/server/internal/circuitbreaker"
+	aclsqlite "github.com/scitrera/aether/server/internal/storage/acl/sqlite"
 	"github.com/scitrera/aether/server/pkg/models"
+	_ "modernc.org/sqlite"
 )
 
 // ---------------------------------------------------------------------------
@@ -44,6 +50,27 @@ func newProxyClient(identity models.Identity, stream *mockStream) *ClientSession
 	c := newRoutingTestClient(identity, stream)
 	c.SessionUUID = uuid.New()
 	return c
+}
+
+func installProxyACLStore(t *testing.T, s *GatewayServer) *aclsqlite.Store {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "proxy-acl.db")
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000", dbPath))
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	store, err := aclsqlite.New(db, nil, nil, "proxy-test")
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("aclsqlite.New: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = store.Close()
+		_ = db.Close()
+	})
+	s.acl = store
+	return store
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +99,109 @@ func TestRouteProxyHttpRequest_Success_PublishesToConcreteTopic(t *testing.T) {
 	}
 	if router.publishedMessages[0].topic != "sv::memorylayer::pod-a" {
 		t.Errorf("expected publish to concrete sv::memorylayer::pod-a, got %q", router.publishedMessages[0].topic)
+	}
+}
+
+func TestRouteProxyHttpRequest_CheckedAccessStampsConcreteReceipt(t *testing.T) {
+	router := newMockMessageRouter()
+	s := newProxyTestServer(router)
+	store := installProxyACLStore(t, s)
+	stream := &mockStream{}
+	sender := models.Identity{Type: models.PrincipalAgent, Workspace: "ws1", Implementation: "caller", Specifier: "v1"}
+	client := newProxyClient(sender, stream)
+	principalID := sender.CanonicalPrincipalID()
+	principalType := acl.PrincipalTypeForModel(sender.Type)
+	if _, err := store.GrantAccess(context.Background(), principalType, principalID, acl.ResourceTypeWorkspace, "ws1", acl.AccessReadWrite, "test", "route", nil); err != nil {
+		t.Fatalf("GrantAccess(workspace): %v", err)
+	}
+	resourceID := "workspaces/ws1/entries/ref-1"
+	if _, err := store.GrantAccess(context.Background(), principalType, principalID, "vfs", resourceID, acl.AccessRead, "test", "entry", nil); err != nil {
+		t.Fatalf("GrantAccess(vfs): %v", err)
+	}
+	if decision, err := store.CheckAccess(context.Background(), sender, "vfs", resourceID, "read", "ws1", client.SessionUUID, acl.AccessRead); err != nil || decision.Denied() {
+		t.Fatalf("preflight VFS access decision=%+v err=%v", decision, err)
+	}
+
+	req := &pb.ProxyHttpRequest{
+		RequestId:   "req-checked",
+		TargetTopic: "sv::data-connectors::pod-a",
+		Method:      "GET",
+		Path:        "/v1/vfs/ref-1",
+		CheckedAccess: &pb.ResourceAccessRequest{
+			ResourceType: "vfs", ResourceId: resourceID, Operation: "read",
+			Workspace: "ws1", RequiredAccessLevel: int32(acl.AccessRead), CorrelationId: "req-checked",
+		},
+		AccessReceipt: &pb.AccessDecisionReceipt{DecisionId: "forged"},
+	}
+	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{httpReq: req})
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.publishedMessages) != 1 {
+		stream.mu.Lock()
+		defer stream.mu.Unlock()
+		t.Fatalf("expected one publish, got %d; responses=%+v", len(router.publishedMessages), stream.sent)
+	}
+	delivered := unwrapProxyDownstream(t, router.publishedMessages[0].payload).GetProxyHttpRequest()
+	receipt := delivered.GetAccessReceipt()
+	if receipt == nil || !receipt.GetAllowed() || receipt.GetDecisionId() == "forged" {
+		t.Fatalf("missing gateway-authored allow receipt: %+v", receipt)
+	}
+	if receipt.GetDeliveryTarget() != "sv::data-connectors::pod-a" {
+		t.Fatalf("delivery_target = %q", receipt.GetDeliveryTarget())
+	}
+	if receipt.GetRequest().GetResourceId() != resourceID {
+		t.Fatalf("receipt resource = %+v", receipt.GetRequest())
+	}
+}
+
+func TestRouteProxyHttpRequest_CheckedAccessDeniedDoesNotPublish(t *testing.T) {
+	router := newMockMessageRouter()
+	s := newProxyTestServer(router)
+	store := installProxyACLStore(t, s)
+	stream := &mockStream{}
+	sender := models.Identity{Type: models.PrincipalAgent, Workspace: "ws1", Implementation: "caller", Specifier: "v1"}
+	client := newProxyClient(sender, stream)
+	if _, err := store.GrantAccess(context.Background(), acl.PrincipalTypeForModel(sender.Type), sender.CanonicalPrincipalID(), acl.ResourceTypeWorkspace, "ws1", acl.AccessReadWrite, "test", "route", nil); err != nil {
+		t.Fatalf("GrantAccess(workspace): %v", err)
+	}
+
+	req := &pb.ProxyHttpRequest{
+		RequestId:   "req-denied",
+		TargetTopic: "sv::data-connectors::pod-a",
+		CheckedAccess: &pb.ResourceAccessRequest{
+			ResourceType: "vfs", ResourceId: "workspaces/ws1/entries/ref-1", Operation: "read",
+			Workspace: "ws1", RequiredAccessLevel: int32(acl.AccessRead), CorrelationId: "req-denied",
+		},
+	}
+	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{httpReq: req})
+
+	if len(router.publishedMessages) != 0 {
+		t.Fatalf("checked denial published %d messages", len(router.publishedMessages))
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if len(stream.sent) != 1 || stream.sent[0].GetProxyHttpResponse().GetError().GetKind() != pb.ProxyError_ACL_DENIED {
+		t.Fatalf("expected ACL_DENIED proxy response, got %+v", stream.sent)
+	}
+}
+
+func TestRouteProxyHttpRequest_ClearsReceiptWithoutCheckedAccess(t *testing.T) {
+	router := newMockMessageRouter()
+	s := newProxyTestServer(router)
+	client := newProxyClient(models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"}, &mockStream{})
+	req := &pb.ProxyHttpRequest{
+		RequestId: "req-forged", TargetTopic: "sv::svc::one",
+		AccessReceipt: &pb.AccessDecisionReceipt{DecisionId: "forged", Allowed: true},
+	}
+	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{httpReq: req})
+
+	if len(router.publishedMessages) != 1 {
+		t.Fatalf("expected one publish, got %d", len(router.publishedMessages))
+	}
+	delivered := unwrapProxyDownstream(t, router.publishedMessages[0].payload).GetProxyHttpRequest()
+	if delivered.GetAccessReceipt() != nil {
+		t.Fatalf("caller-supplied receipt survived: %+v", delivered.GetAccessReceipt())
 	}
 }
 
