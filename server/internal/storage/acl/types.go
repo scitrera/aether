@@ -205,10 +205,11 @@ const (
 
 // Authority audience types — acl_authority_grants.audience_type values.
 const (
-	AuthorityAudienceSession = legacy.AuthorityAudienceSession
-	AuthorityAudienceTask    = legacy.AuthorityAudienceTask
-	AuthorityAudienceAgent   = legacy.AuthorityAudienceAgent
-	AuthorityAudienceService = legacy.AuthorityAudienceService
+	AuthorityAudienceSession          = legacy.AuthorityAudienceSession
+	AuthorityAudienceTask             = legacy.AuthorityAudienceTask
+	AuthorityAudienceAgent            = legacy.AuthorityAudienceAgent
+	AuthorityAudienceService          = legacy.AuthorityAudienceService
+	AuthorityAudienceWorkflowSchedule = legacy.AuthorityAudienceWorkflowSchedule
 )
 
 // Sentinel errors surfaced by the Store contract.

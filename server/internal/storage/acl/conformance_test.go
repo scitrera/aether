@@ -380,6 +380,45 @@ func runAuthorityGrantLifecycle(t *testing.T, store acl.Store) {
 	if revoked.RevokedAt == nil {
 		t.Fatalf("expected RevokedAt to be populated after revoke")
 	}
+
+	// WorkflowEngine schedules use a private audience type. Keep it in the
+	// shared conformance suite so native and external stores cannot drift from
+	// the authority model accepted by the gateway.
+	scheduleReq := req
+	scheduleReq.AudienceType = acl.AuthorityAudienceWorkflowSchedule
+	scheduleActor := models.Identity{Type: models.PrincipalWorkflowEngine}
+	scheduleReq.Delegate = scheduleActor
+	scheduleReq.AudienceID = uniqueID(t, "schedule")
+	scheduleReq.Reason = "conformance workflow schedule grant"
+	scheduleGrant, err := store.CreateAuthorityGrant(ctx, scheduleReq)
+	if err != nil {
+		t.Fatalf("CreateAuthorityGrant workflow_schedule audience: %v", err)
+	}
+	scheduleGot, err := store.GetAuthorityGrant(ctx, scheduleGrant.GrantID)
+	if err != nil {
+		t.Fatalf("GetAuthorityGrant workflow_schedule audience: %v", err)
+	}
+	if scheduleGot.AudienceType != acl.AuthorityAudienceWorkflowSchedule ||
+		scheduleGot.AudienceID != scheduleReq.AudienceID {
+		t.Fatalf("workflow_schedule audience = %q:%q, want %q:%q",
+			scheduleGot.AudienceType, scheduleGot.AudienceID,
+			scheduleReq.AudienceType, scheduleReq.AudienceID)
+	}
+	resolved, err := store.ResolveAuthority(ctx, scheduleActor, acl.RequestAuthorityContext{
+		Mode: "on_behalf_of", Subject: subject, GrantID: scheduleGrant.GrantID,
+	}, acl.GrantAudienceContext{
+		Actor: scheduleActor, WorkflowScheduleID: scheduleReq.AudienceID,
+	})
+	if err != nil {
+		t.Fatalf("ResolveAuthority workflow_schedule audience: %v", err)
+	}
+	if resolved == nil || resolved.Grant == nil || resolved.Grant.GrantID != scheduleGrant.GrantID {
+		t.Fatalf("ResolveAuthority workflow_schedule audience = %+v, want grant %q",
+			resolved, scheduleGrant.GrantID)
+	}
+	if err := store.RevokeAuthorityGrant(ctx, scheduleGrant.GrantID); err != nil {
+		t.Fatalf("RevokeAuthorityGrant workflow_schedule audience: %v", err)
+	}
 }
 
 // runAuthorityRequestLifecycle is the Phase 2 Stage A sanity test for the

@@ -1681,6 +1681,11 @@ func validateGrantAudience(grant *aclstore.AuthorityGrant, actor models.Identity
 		if actor.Type != models.PrincipalService || actor.CanonicalPrincipalID() != grant.AudienceID {
 			return aclstore.ErrAuthorityGrantAudienceMismatch
 		}
+	case aclstore.AuthorityAudienceWorkflowSchedule:
+		if actor.Type != models.PrincipalWorkflowEngine || audience.WorkflowScheduleID == "" ||
+			grant.AudienceID != audience.WorkflowScheduleID {
+			return aclstore.ErrAuthorityGrantAudienceMismatch
+		}
 	default:
 		return aclstore.ErrAuthorityGrantAudienceMismatch
 	}
@@ -1740,7 +1745,8 @@ func authorityPrincipalRef(identity models.Identity) (string, string, error) {
 func isValidAuthorityAudienceType(audienceType string) bool {
 	switch audienceType {
 	case aclstore.AuthorityAudienceSession, aclstore.AuthorityAudienceTask,
-		aclstore.AuthorityAudienceAgent, aclstore.AuthorityAudienceService:
+		aclstore.AuthorityAudienceAgent, aclstore.AuthorityAudienceService,
+		aclstore.AuthorityAudienceWorkflowSchedule:
 		return true
 	default:
 		return false
