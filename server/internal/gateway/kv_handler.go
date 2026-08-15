@@ -165,6 +165,65 @@ func isInfraCoordAccess(identity models.Identity, key string) bool {
 	}
 }
 
+// resolveUserScopeSubject enforces the user axis of the KV scope taxonomy.
+//
+// ScopeSpec has two independent axes: Sharing decides which AGENTS rendezvous
+// on a key (exclusive embeds the agent identity, shared does not), and Identity
+// decides WHOSE data it is. "user-shared" therefore means one user, every
+// agent — the sharing axis was never meant to relax the user boundary.
+//
+// That boundary had no enforcement behind it: op.UserId is client-supplied and
+// ValidateScopeSpec only checks it is non-empty, so any caller could name
+// another user and address their namespace directly. What stood in for it was
+// an ACL default-deny on the shared user scopes — a mitigation at the wrong
+// layer, which is why the shared scopes could not be opened for a legitimate
+// same-user read without also permitting cross-user reads.
+//
+// Under an on-behalf-of grant the subject IS the user, so the user axis is
+// derivable rather than assertable: it is filled in when omitted and must match
+// when supplied. A mismatch is a caller trying to reach a namespace its grant
+// does not cover.
+//
+// Callers acting under their OWN authority are untouched: platform-server
+// legitimately writes per-user session state for the browser's user, and its
+// reach is bounded by the explicit kv_scope grants it holds. Direct user
+// principals cannot reach KV at all (the type gate in HandleKVOperation), so
+// OBO is the only path that can assert a foreign user id.
+func resolveUserScopeSubject(scope kv.KVScope, identity models.Identity, authority *acl.ResolvedAuthority, userID string) (string, error) {
+	if authority == nil || authority.Subject.Type != models.PrincipalUser {
+		return userID, nil
+	}
+	spec, ok := kv.ScopeSpecFromKVScope(scope)
+	if !ok {
+		// Unrecognized scope: leave it alone, ValidateScopeConfig rejects it.
+		return userID, nil
+	}
+	if spec.Identity != kv.IdentityScopeUser && spec.Identity != kv.IdentityScopeUserWorkspace {
+		return userID, nil
+	}
+
+	subject := authority.Subject.ID
+	if subject == "" {
+		logging.Logger.Warn().
+			Str("identity", identity.String()).Str("scope", string(scope)).
+			Msg("on-behalf-of subject carries no user id for a user-scoped KV operation")
+		return "", status.Error(codes.PermissionDenied,
+			"on-behalf-of subject has no user id for a user-scoped KV operation")
+	}
+	if userID == "" {
+		return subject, nil
+	}
+	if userID != subject {
+		logging.Logger.Warn().
+			Str("identity", identity.String()).Str("scope", string(scope)).
+			Str("requested_user", userID).Str("subject_user", subject).
+			Msg("KV user-scope mismatch: request names a different user than the on-behalf-of subject")
+		return "", status.Error(codes.PermissionDenied,
+			"user-scoped KV operation names a different user than the on-behalf-of subject")
+	}
+	return userID, nil
+}
+
 // checkScopeReadPermission checks scope-level read permission (used for LIST which has no specific key).
 func (h *KVHandler) checkScopeReadPermission(ctx context.Context, identity models.Identity, authority *acl.ResolvedAuthority, scope kv.KVScope, operation, workspace string, sessionID uuid.UUID) error {
 	if h.aclService == nil {
@@ -254,6 +313,12 @@ func (h *KVHandler) HandleKVOperation(
 	workspace := op.Workspace
 	if workspace == "" {
 		workspace = identity.Workspace
+	}
+
+	// Enforce the user axis of the scope taxonomy (see resolveUserScopeSubject).
+	var err error
+	if userID, err = resolveUserScopeSubject(scope, identity, authority, userID); err != nil {
+		return err
 	}
 
 	// Validate scope configuration
