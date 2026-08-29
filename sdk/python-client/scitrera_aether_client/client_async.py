@@ -37,6 +37,7 @@ from ._common import (
     SELF_ASSIGN,
     TARGETED,
     POOL,
+    TARGET_OFFLINE_UNSPECIFIED,
     _scope_to_proto,
     _env_tls_kwargs_filter,
 )
@@ -798,6 +799,12 @@ class BaseAsyncAetherClient:
                     pending = self._pending_requests.pop(req_id, None) if req_id else None
                     if pending and not pending.done():
                         pending.set_result(resp)
+                elif payload_type in ("access_check_response", "batch_access_check_response"):
+                    resp = getattr(response, payload_type)
+                    req_id = resp.request_id
+                    pending = self._pending_requests.pop(req_id, None) if req_id else None
+                    if pending and not pending.done():
+                        pending.set_result(resp)
                 elif payload_type == "resolve_authority_response":
                     resp = response.resolve_authority_response
                     req_id = resp.request_id
@@ -1226,7 +1233,9 @@ class BaseAsyncAetherClient:
     async def _send_message(self, target_topic: str, payload: bytes,
                             message_type: int = aether_pb2.OPAQUE,
                             authorization: Optional[aether_pb2.AuthorizationContext] = None,
-                            app_workspace: str = ""):
+                            app_workspace: str = "",
+                            checked_access: Optional[aether_pb2.ResourceAccessRequest] = None,
+                            authority_continuation: Optional[aether_pb2.AuthorityContinuationRequest] = None):
         """Send a message to a target topic.
 
         If ``authorization`` is provided, the message is authorized against the
@@ -1242,10 +1251,58 @@ class BaseAsyncAetherClient:
             target_topic=target_topic,
             payload=payload,
             message_type=message_type,  # type: ignore[arg-type]
-            authorization=authorization,
             app_workspace=app_workspace,
         )
+        if authorization is not None:
+            msg.authorization.CopyFrom(authorization)
+        if checked_access is not None:
+            msg.checked_access.CopyFrom(checked_access)
+        if authority_continuation is not None:
+            msg.authority_continuation.CopyFrom(authority_continuation)
         await self._request_queue.put(aether_pb2.UpstreamMessage(send=msg))
+
+    async def send_checked_message(self, target_topic: str, payload: bytes,
+                                   checked_access: aether_pb2.ResourceAccessRequest,
+                                   message_type: int = aether_pb2.OPAQUE,
+                                   authorization: Optional[aether_pb2.AuthorizationContext] = None,
+                                   app_workspace: str = "",
+                                   authority_continuation: Optional[aether_pb2.AuthorityContinuationRequest] = None) -> None:
+        """Send only when the gateway allows ``checked_access``."""
+        await self._send_message(target_topic, payload, message_type,
+                                 authorization, app_workspace, checked_access,
+                                 authority_continuation)
+
+    async def check_access(self, access: aether_pb2.ResourceAccessRequest,
+                           authorization: Optional[aether_pb2.AuthorizationContext] = None,
+                           timeout: float = 10.0):
+        """Evaluate one logical resource; denial returns an allowed=false receipt."""
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.AccessCheckOperation(request_id=request_id, access=access)
+        if authorization is not None:
+            op.authorization.CopyFrom(authorization)
+        response = await self._send_sync_op(
+            aether_pb2.UpstreamMessage(access_check=op), request_id, timeout)
+        if response is None:
+            return None
+        if not response.success:
+            raise InvalidArgumentError(response.error, code="ACCESS_CHECK_FAILED")
+        return response.decision
+
+    async def batch_check_access(self, access: List[aether_pb2.ResourceAccessRequest],
+                                 authorization: Optional[aether_pb2.AuthorizationContext] = None,
+                                 timeout: float = 10.0):
+        """Evaluate 1-100 resources and return ordered decision receipts."""
+        request_id = str(uuid.uuid4())
+        op = aether_pb2.BatchAccessCheckOperation(request_id=request_id, access=access)
+        if authorization is not None:
+            op.authorization.CopyFrom(authorization)
+        response = await self._send_sync_op(
+            aether_pb2.UpstreamMessage(batch_access_check=op), request_id, timeout)
+        if response is None:
+            return None
+        if not response.success:
+            raise InvalidArgumentError(response.error, code="BATCH_ACCESS_CHECK_FAILED")
+        return list(response.decisions)
 
     async def _switch_workspace(self, new_workspace_id: str):
         """Switch to a different workspace."""
@@ -1619,7 +1676,10 @@ class BaseAsyncAetherClient:
                           task_class: int = 0,
                           context_id: str = "",
                           priority: int = 0,
-                          retry_policy: Optional[aether_pb2.RetryPolicy] = None) -> None:
+                          retry_policy: Optional[aether_pb2.RetryPolicy] = None,
+                          parent_task_id: str = "",
+                          required_downstream_authority_hops: int = 0,
+                          target_offline_policy: int = TARGET_OFFLINE_UNSPECIFIED) -> None:
         """
         Create a new task.
 
@@ -1637,6 +1697,10 @@ class BaseAsyncAetherClient:
                 automatic child grants are minted for assigned workers.
             context_id: Optional client-minted session identifier (A2A contextId). Tasks
                 sharing a context_id are groupable via TaskFilter.context_id.
+            parent_task_id: Optional active parent assigned to this calling identity.
+                The gateway validates and applies the binding only to this request.
+            target_offline_policy: TARGETED behavior while the exact target is
+                disconnected. Defaults to orchestration-compatible UNSPECIFIED.
         """
         if target_agent_id and assignment_mode == SELF_ASSIGN:
             assignment_mode = TARGETED
@@ -1656,6 +1720,9 @@ class BaseAsyncAetherClient:
             context_id=context_id,
             priority=priority,  # type: ignore[arg-type]
             retry_policy=retry_policy,
+            parent_task_id=parent_task_id,
+            required_downstream_authority_hops=required_downstream_authority_hops,
+            target_offline_policy=target_offline_policy,  # type: ignore[arg-type]
         )
         await self._request_queue.put(aether_pb2.UpstreamMessage(create_task=req))
 
@@ -1672,7 +1739,10 @@ class BaseAsyncAetherClient:
                                context_id: str = "",
                                priority: int = 0,
                                retry_policy: Optional[aether_pb2.RetryPolicy] = None,
-                               timeout: float = 10.0) -> Optional[aether_pb2.CreateTaskResponse]:
+                               timeout: float = 10.0,
+                               parent_task_id: str = "",
+                               required_downstream_authority_hops: int = 0,
+                               target_offline_policy: int = TARGET_OFFLINE_UNSPECIFIED) -> Optional[aether_pb2.CreateTaskResponse]:
         """
         Create a new task and wait for the server's response containing the task_id.
 
@@ -1698,6 +1768,10 @@ class BaseAsyncAetherClient:
             context_id: Optional client-minted session identifier (A2A contextId). Tasks
                 sharing a context_id are groupable via TaskFilter.context_id.
             timeout: Timeout in seconds (default 10.0)
+            parent_task_id: Optional active parent assigned to this calling identity.
+                The gateway validates and applies the binding only to this request.
+            target_offline_policy: TARGETED behavior while the exact target is
+                disconnected. Defaults to orchestration-compatible UNSPECIFIED.
 
         Returns:
             CreateTaskResponse with task_id, status, etc., or None on timeout
@@ -1723,6 +1797,9 @@ class BaseAsyncAetherClient:
             request_id=request_id,
             priority=priority,  # type: ignore[arg-type]
             retry_policy=retry_policy,
+            parent_task_id=parent_task_id,
+            required_downstream_authority_hops=required_downstream_authority_hops,
+            target_offline_policy=target_offline_policy,  # type: ignore[arg-type]
         )
         return await self._send_sync_op(
             aether_pb2.UpstreamMessage(create_task=req), request_id, timeout,
@@ -3802,12 +3879,14 @@ class BaseAsyncAetherClient:
 
     async def create_schedule(self, schedule_id: str, name: str,
                               schedule_type: str, schedule_expr: str,
+                              workspace: str,
                               action: Optional[dict] = None,
                               workflow_id: str = "",
-                              workspace: str = "*",
                               miss_policy: str = "skip",
                               max_concurrent: int = 0,
-                              timeout: float = 10.0):
+                              timeout: float = 10.0,
+                              authorization: Optional[aether_pb2.AuthorizationContext] = None,
+                              authority_scope: Optional[aether_pb2.WorkflowScheduleAuthorityScope] = None):
         """Create a new schedule.
 
         Args:
@@ -3817,7 +3896,7 @@ class BaseAsyncAetherClient:
             schedule_expr: Cron expression, Go duration (e.g. "21600s"), or RFC3339 timestamp.
             action: Action definition dict (required if no workflow_id).
             workflow_id: Workflow ID to trigger (required if no action).
-            workspace: Workspace scope (default "*").
+            workspace: Exact workspace scope.
             miss_policy: "skip", "fire_once", or "fire_all" (default "skip").
             max_concurrent: Max concurrent executions; 0=unlimited, 1=no overlap (default 0).
             timeout: RPC timeout in seconds.
@@ -3826,6 +3905,8 @@ class BaseAsyncAetherClient:
             WorkflowResponse protobuf or None on timeout.
         """
         import json as _json
+        if not workspace or workspace == "*":
+            raise ValueError("an exact workflow schedule workspace is required")
         data = {
             "id": schedule_id,
             "name": name,
@@ -3842,18 +3923,26 @@ class BaseAsyncAetherClient:
 
         op = aether_pb2.WorkflowOperation(
             op=aether_pb2.WorkflowOperation.CREATE_SCHEDULE,
+            id=schedule_id,
+            workspace=workspace,
             data=_json.dumps(data).encode(),
         )
+        if authorization is not None:
+            op.authorization.CopyFrom(authorization)
+        if authority_scope is not None:
+            op.schedule_authority_scope.CopyFrom(authority_scope)
         return await self.workflow_op(op, timeout=timeout)
 
     async def upsert_schedule(self, schedule_id: str, name: str,
                               schedule_type: str, schedule_expr: str,
+                              workspace: str,
                               action: Optional[dict] = None,
                               workflow_id: str = "",
-                              workspace: str = "*",
                               miss_policy: str = "skip",
                               max_concurrent: int = 0,
-                              timeout: float = 10.0):
+                              timeout: float = 10.0,
+                              authorization: Optional[aether_pb2.AuthorizationContext] = None,
+                              authority_scope: Optional[aether_pb2.WorkflowScheduleAuthorityScope] = None):
         """Create or update a schedule idempotently.
 
         Same parameters as create_schedule. If a schedule with the given ID
@@ -3864,6 +3953,8 @@ class BaseAsyncAetherClient:
             WorkflowResponse protobuf or None on timeout.
         """
         import json as _json
+        if not workspace or workspace == "*":
+            raise ValueError("an exact workflow schedule workspace is required")
         data = {
             "id": schedule_id,
             "name": name,
@@ -3880,32 +3971,50 @@ class BaseAsyncAetherClient:
 
         op = aether_pb2.WorkflowOperation(
             op=aether_pb2.WorkflowOperation.UPSERT_SCHEDULE,
+            id=schedule_id,
+            workspace=workspace,
             data=_json.dumps(data).encode(),
         )
+        if authorization is not None:
+            op.authorization.CopyFrom(authorization)
+        if authority_scope is not None:
+            op.schedule_authority_scope.CopyFrom(authority_scope)
         return await self.workflow_op(op, timeout=timeout)
 
-    async def delete_schedule(self, schedule_id: str, timeout: float = 10.0):
+    async def delete_schedule(self, schedule_id: str, workspace: str,
+                              timeout: float = 10.0,
+                              authorization: Optional[aether_pb2.AuthorizationContext] = None):
         """Delete a schedule by ID.
 
         Returns:
             WorkflowResponse protobuf or None on timeout.
         """
+        if not workspace or workspace == "*":
+            raise ValueError("an exact workflow schedule workspace is required")
         op = aether_pb2.WorkflowOperation(
             op=aether_pb2.WorkflowOperation.DELETE_SCHEDULE,
             id=schedule_id,
+            workspace=workspace,
         )
+        if authorization is not None:
+            op.authorization.CopyFrom(authorization)
         return await self.workflow_op(op, timeout=timeout)
 
-    async def list_schedules(self, workspace: str = "*", timeout: float = 10.0):
+    async def list_schedules(self, workspace: str, timeout: float = 10.0,
+                             authorization: Optional[aether_pb2.AuthorizationContext] = None):
         """List all schedules for a workspace.
 
         Returns:
             WorkflowResponse protobuf or None on timeout.
         """
+        if not workspace or workspace == "*":
+            raise ValueError("an exact workflow schedule workspace is required")
         op = aether_pb2.WorkflowOperation(
             op=aether_pb2.WorkflowOperation.LIST_SCHEDULES,
             workspace=workspace,
         )
+        if authorization is not None:
+            op.authorization.CopyFrom(authorization)
         return await self.workflow_op(op, timeout=timeout)
 
     async def close(self):

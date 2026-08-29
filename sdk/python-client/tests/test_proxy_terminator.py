@@ -72,6 +72,7 @@ def _build_request(
     body: bytes = b"",
     body_chunked: bool = False,
     authorization: Optional[aether_pb2.AuthorizationContext] = None,
+    access_receipt: Optional[aether_pb2.AccessDecisionReceipt] = None,
     app_workspace: str = "",
     stream_response_indefinitely: bool = False,
 ) -> aether_pb2.ProxyHttpRequest:
@@ -90,6 +91,8 @@ def _build_request(
             req.headers[k] = v
     if authorization is not None:
         req.authorization.CopyFrom(authorization)
+    if access_receipt is not None:
+        req.access_receipt.CopyFrom(access_receipt)
     return req
 
 
@@ -741,6 +744,43 @@ async def test_minted_request_query_string_split():
 
     assert captured[0].path == "/v1/search"
     assert captured[0].query == "q=hello&limit=10"
+
+
+@pytest.mark.asyncio
+async def test_minted_request_preserves_gateway_access_receipt():
+    client = _AsyncClientStub()
+    captured: List[MintedRequest] = []
+
+    async def handler(req: MintedRequest) -> aether_pb2.ProxyHttpResponse:
+        captured.append(req)
+        return aether_pb2.ProxyHttpResponse(request_id=req.request_id, status_code=200)
+
+    receipt = aether_pb2.AccessDecisionReceipt(
+        decision_id="decision-1",
+        allowed=True,
+        decision="ALLOW",
+        delivery_target="sv::data-connectors::one",
+        request=aether_pb2.ResourceAccessRequest(
+            resource_type="vfs",
+            resource_id="workspaces/ws-1/entries/ref-1",
+            operation="read",
+            workspace="ws-1",
+            required_access_level=10,
+            correlation_id="req-receipt",
+        ),
+    )
+    term = ProxyHttpTerminator(client=client, handler=handler, allow_paths=["/*"])
+    await term.start()
+
+    dispatcher = _get_terminator_dispatcher(client)
+    await dispatcher.handle_request(
+        _build_request("req-receipt", access_receipt=receipt)
+    )
+    await dispatcher.wait_idle()
+
+    assert captured[0].access_receipt is not None
+    assert captured[0].access_receipt.decision_id == "decision-1"
+    assert captured[0].access_receipt.request.resource_type == "vfs"
 
 
 @pytest.mark.asyncio

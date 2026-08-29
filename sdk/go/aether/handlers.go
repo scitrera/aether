@@ -33,12 +33,26 @@ type Message struct {
 	// MessageType is the type of the message (CHAT, CONTROL, TOOL_CALL, EVENT, METRIC).
 	MessageType pb.MessageType
 
+	// Workspace is the gateway-verified logical workspace context for this
+	// message, when one applies.
+	Workspace string
+
+	// AccessReceipt is gateway-authored metadata for a checked send. Nil for
+	// ordinary sends. Consumers should validate its correlation ID, resource,
+	// delivery target, and expiry before acting on it.
+	AccessReceipt *pb.AccessDecisionReceipt
+
 	// OnBehalfSubject is the gateway-resolved on-behalf-of subject the message
 	// was sent for, when the sender supplied an OBO AuthorizationContext.
 	// Gateway-set and spoof-proof (like SourceTopic). Nil for direct (non-OBO)
 	// sends. Lets a recipient identify the user a message is sent for, distinct
 	// from the sending identity in SourceTopic.
 	OnBehalfSubject *pb.PrincipalRef
+
+	// ForwardedAuthorization is a gateway-derived, target-bound leaf authority
+	// grant for this recipient. Nil for sends that did not explicitly request
+	// continuation. Use Authorization with CheckAccess or BatchCheckAccess.
+	ForwardedAuthorization *pb.ForwardedAuthorization
 
 	// ReceivedAt is the local time when the message was received.
 	ReceivedAt time.Time
@@ -157,6 +171,11 @@ type TaskAssignment struct {
 
 	// Payload is optional binary data carried from the task creator.
 	Payload []byte
+
+	// Authorization is the task-scoped on-behalf-of authority prepared by the
+	// gateway for this assignee. The grant is audience-bound to the assigned
+	// executor/task and is revoked with the task lifecycle.
+	Authorization *pb.AuthorizationContext
 }
 
 // CheckpointResponse represents a response to a checkpoint operation.
@@ -250,6 +269,10 @@ type TaskQueryResponse struct {
 
 	// TotalCount is the total number of tasks matching the filter.
 	TotalCount int32
+
+	// NextPageToken is the opaque cursor for the next LIST page. Empty means
+	// the server did not report another page. Clients must not interpret it.
+	NextPageToken string
 }
 
 // TaskInfo represents a task's information.
@@ -292,6 +315,43 @@ type TaskInfo struct {
 
 	// Metadata contains task-specific metadata.
 	Metadata map[string]string
+
+	// AuthorityMode is the persisted task authority mode (direct or
+	// on_behalf_of). The remaining authority fields are public-safe lineage
+	// projections already present on the wire TaskInfo.
+	AuthorityMode          string
+	SubjectType            string
+	SubjectID              string
+	RootSubjectType        string
+	RootSubjectID          string
+	AuthorityGrantID       string
+	RootAuthorityGrantID   string
+	ParentAuthorityGrantID string
+	CreatorActorID         string
+
+	// ParentTaskID is populated for native tasks created by a task principal.
+	ParentTaskID string
+
+	// TaskClass is the protobuf enum name for the task's UI presentation hint.
+	TaskClass string
+
+	// ContextID groups tasks within one logical session or conversation.
+	ContextID string
+
+	// Priority is the protobuf enum name for the persisted dispatch priority.
+	Priority string
+
+	// CorrelationID groups fan-out tasks for joins and queries.
+	CorrelationID string
+
+	// RootTaskID identifies the top of the task tree or fan-out run.
+	RootTaskID string
+
+	// DisconnectedAt and GraceWindowMS expose the task's persisted
+	// connection-as-heartbeat state. DisconnectedAt is Unix seconds; zero means
+	// the assigned worker is currently connected.
+	DisconnectedAt int64
+	GraceWindowMS  int64
 }
 
 // TaskOperationResponse represents a response to a task operation.
@@ -588,6 +648,11 @@ type CreateTaskResponse struct {
 	// connect as TargetIdentity. Empty when the task did not request a
 	// token (no TargetIdentity) or the issue-token check denied it.
 	TaskToken string
+
+	// AuthorityGrantID is the task-scoped grant derived from the creator's OBO
+	// authorization. Forward it when delivering the task's work envelope so the
+	// assignee acts with the exact task scope instead of a long-lived grant.
+	AuthorityGrantID string
 }
 
 // CreateTaskResponseHandler handles create task responses.

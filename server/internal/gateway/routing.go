@@ -365,6 +365,58 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 		return
 	}
 
+	// 0b.1 Optional exact logical-resource authorization. This is additive to
+	// the route ACL above: reaching a provider topic does not imply permission
+	// to invoke every tool or bind every execution view behind it. In OBO mode
+	// this check evaluates the subject intersected with the validated grant and
+	// deliberately does not use the route check's actor-first fallback.
+	var accessReceipt *pb.AccessDecisionReceipt
+	if checked := msg.GetCheckedAccess(); checked != nil {
+		if validateErr := validateResourceAccessRequest(checked); validateErr != nil {
+			logging.Logger.Warn().Str("from", sender.ToTopic()).Str("to", msg.TargetTopic).Err(validateErr).Msg("invalid checked message access request")
+			messageErrors.WithLabelValues(sender.Workspace, "checked_access_invalid").Inc()
+			sendClientError(client, "ERR_INVALID_ACCESS_REQUEST", validateErr.Error())
+			return
+		}
+		accessReceipt, err = evaluateResourceAccess(ctx, s.acl, sender, resolvedAuthority, sessionUUID, checked, msg.TargetTopic, time.Now())
+		if err != nil {
+			logging.Logger.Warn().Str("from", sender.ToTopic()).Str("to", msg.TargetTopic).Err(err).Msg("checked message access evaluation failed")
+			messageErrors.WithLabelValues(sender.Workspace, "checked_access_failed").Inc()
+			sendClientError(client, "ERR_AUTHORIZATION_UNAVAILABLE", "checked access evaluation unavailable", withRetryable(true))
+			return
+		}
+		if !accessReceipt.GetAllowed() {
+			logging.Logger.Warn().Str("from", sender.ToTopic()).Str("to", msg.TargetTopic).Str("resource_type", checked.GetResourceType()).Str("resource_id", checked.GetResourceId()).Msg("checked message access denied")
+			messageErrors.WithLabelValues(sender.Workspace, "checked_access_denied").Inc()
+			sendClientError(client, "ERR_PERMISSION_DENIED", "not authorized for checked logical resource")
+			return
+		}
+	}
+
+	// Authority continuation is explicit and fail-closed. At this point the
+	// route target is concrete, the sender's OBO context has been validated,
+	// and both the route and optional exact-resource checks have passed.
+	var forwardedAuthorization *pb.ForwardedAuthorization
+	if continuation := msg.GetAuthorityContinuation(); continuation != nil {
+		forwardedAuthorization, err = s.deriveMessageAuthorityContinuation(
+			ctx, resolvedAuthority, msg.TargetTopic, continuation, accessReceipt, sessionUUID,
+		)
+		if err != nil {
+			logging.Logger.Warn().Str("from", sender.ToTopic()).Str("to", msg.TargetTopic).Err(err).Msg("message authority continuation denied")
+			messageErrors.WithLabelValues(sender.Workspace, "authority_continuation_denied").Inc()
+			event := audit.NewMessageEvent(string(sender.Type), sender.String(), audit.OpMessageRouteFailed, msg.TargetTopic, sender.Workspace, sessionUUID, false, err.Error(), map[string]interface{}{
+				"from":          sender.ToTopic(),
+				"to":            msg.TargetTopic,
+				"message_type":  msg.MessageType.String(),
+				"denied_reason": "authority_continuation_denied",
+			})
+			applyResolvedAuthorityToAuditEvent(event, resolvedAuthority)
+			s.auditLog(ctx, event)
+			sendClientError(client, "ERR_AUTHORITY_CONTINUATION_DENIED", "unable to forward authorization to message recipient")
+			return
+		}
+	}
+
 	// 0c. Metric negative-delta authorization. Runs after authority resolution
 	// so on-behalf-of grants (subject's capability/metric_credit) are honored, and
 	// so the rejection audit row carries full authority lineage.
@@ -473,10 +525,13 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 		effectiveWorkspace = sender.Workspace
 	}
 	envelope := &pb.MessageEnvelope{
-		Source:      sender.ToTopic(),
-		Payload:     msg.Payload,
-		MessageType: msg.MessageType,
-		TimestampMs: now.UnixMilli(),
+		Source:                 sender.ToTopic(),
+		Payload:                msg.Payload,
+		MessageType:            msg.MessageType,
+		TimestampMs:            now.UnixMilli(),
+		Workspace:              effectiveWorkspace,
+		AccessReceipt:          accessReceipt,
+		ForwardedAuthorization: forwardedAuthorization,
 	}
 	if effectiveWorkspace != "" {
 		// Always allocate the map only when we have data — avoids inflating
@@ -1533,6 +1588,51 @@ func protoTaskStatusToTasks(s pb.TaskStatus) tasks.TaskStatus {
 	}
 }
 
+// appendProtoTaskStatusFilter expands the coarser wire status projection back
+// to every persisted state that taskStatusToProto maps to it. Filter semantics
+// must round-trip the public projection: QUEUED includes pending, assigned, and
+// starting; FAILED includes failed and dead-letter tasks.
+func appendProtoTaskStatusFilter(dst []tasks.TaskStatus, status pb.TaskStatus) []tasks.TaskStatus {
+	var projected []tasks.TaskStatus
+	switch status {
+	case pb.TaskStatus_TASK_STATUS_QUEUED:
+		projected = []tasks.TaskStatus{
+			tasks.TaskStatusPending, tasks.TaskStatusAssigned, tasks.TaskStatusStarting,
+		}
+	case pb.TaskStatus_TASK_STATUS_FAILED:
+		projected = []tasks.TaskStatus{tasks.TaskStatusFailed, tasks.TaskStatusDLQ}
+	case pb.TaskStatus_TASK_STATUS_RUNNING,
+		pb.TaskStatus_TASK_STATUS_COMPLETED,
+		pb.TaskStatus_TASK_STATUS_CANCELLED,
+		pb.TaskStatus_TASK_STATUS_WAITING_INPUT,
+		pb.TaskStatus_TASK_STATUS_WAITING_AUTHORITY,
+		pb.TaskStatus_TASK_STATUS_WAITING_DEPENDENCY,
+		pb.TaskStatus_TASK_STATUS_HIBERNATED,
+		pb.TaskStatus_TASK_STATUS_REJECTED:
+		projected = []tasks.TaskStatus{protoTaskStatusToTasks(status)}
+	case pb.TaskStatus_TASK_STATUS_UNSPECIFIED:
+		return dst
+	default:
+		// Preserve the previous fail-closed behavior for an unknown concrete
+		// enum: include an impossible persisted status rather than silently
+		// broadening the query to every task.
+		projected = []tasks.TaskStatus{protoTaskStatusToTasks(status)}
+	}
+	for _, candidate := range projected {
+		seen := false
+		for _, existing := range dst {
+			if existing == candidate {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			dst = append(dst, candidate)
+		}
+	}
+	return dst
+}
+
 // completionConfigFromProto converts the proto TaskCompletionEvent into the
 // persisted model config. nil ⇒ nil (task did not opt into feed B). OnStatuses
 // are mapped through the canonical proto↔model status converter.
@@ -1843,13 +1943,10 @@ func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSessi
 			// Prefer repeated statuses over singular status
 			if len(query.Filter.Statuses) > 0 {
 				for _, s := range query.Filter.Statuses {
-					if s != pb.TaskStatus_TASK_STATUS_UNSPECIFIED {
-						filter.Statuses = append(filter.Statuses, protoTaskStatusToTasks(s))
-					}
+					filter.Statuses = appendProtoTaskStatusFilter(filter.Statuses, s)
 				}
 			} else if query.Filter.Status != pb.TaskStatus_TASK_STATUS_UNSPECIFIED {
-				status := protoTaskStatusToTasks(query.Filter.Status)
-				filter.Status = &status
+				filter.Statuses = appendProtoTaskStatusFilter(filter.Statuses, query.Filter.Status)
 			}
 			filter.Workspace = query.Filter.Workspace
 			filter.TaskType = query.Filter.TaskType
@@ -1871,9 +1968,8 @@ func (s *GatewayServer) handleTaskQuery(ctx context.Context, client *ClientSessi
 			filter.CorrelationID = query.Filter.GetCorrelationId()
 			filter.RootTaskID = query.Filter.GetRootTaskId()
 			if len(query.Filter.ExcludeStatuses) > 0 {
-				filter.ExcludeStatuses = make([]tasks.TaskStatus, 0, len(query.Filter.ExcludeStatuses))
 				for _, s := range query.Filter.ExcludeStatuses {
-					filter.ExcludeStatuses = append(filter.ExcludeStatuses, protoTaskStatusToTasks(s))
+					filter.ExcludeStatuses = appendProtoTaskStatusFilter(filter.ExcludeStatuses, s)
 				}
 			}
 			// Phase 4 management-surface filters.

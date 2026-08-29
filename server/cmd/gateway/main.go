@@ -16,6 +16,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	pb "github.com/scitrera/aether/api/proto"
+	aclcore "github.com/scitrera/aether/server/internal/acl"
 	"github.com/scitrera/aether/server/internal/admin"
 	"github.com/scitrera/aether/server/internal/audit"
 	"github.com/scitrera/aether/server/internal/auth"
@@ -571,9 +572,9 @@ func main() {
 
 	// Cleanup service (added last so orchestration is available when it runs)
 	cleanupConfig := &cleanup.Config{
-		TaskPurgeInterval:      cfg.Cleanup.GetTaskPurgeInterval(),
-		CompletedTaskRetention: cfg.Cleanup.GetCompletedTaskRetention(),
-		FailedTaskRetention:    cfg.Cleanup.GetFailedTaskRetention(),
+		TaskPurgeInterval:             cfg.Cleanup.GetTaskPurgeInterval(),
+		CompletedTaskRetention:        cfg.Cleanup.GetCompletedTaskRetention(),
+		FailedTaskRetention:           cfg.Cleanup.GetFailedTaskRetention(),
 		CancelledTaskRetention:        cfg.Cleanup.GetCancelledTaskRetention(),
 		ReconciliationInterval:        cfg.Cleanup.GetReconciliationInterval(),
 		InteractiveTaskTTL:            cfg.Cleanup.GetInteractiveTaskTTL(),
@@ -630,6 +631,14 @@ func main() {
 	var sharedACLService *aclpg.Store
 	if db != nil {
 		sharedACLService = aclpg.NewWithSharedAudit(db, auditLogger, db, cfg.Gateway.GatewayID)
+		if *devMode {
+			for _, principalType := range []string{aclcore.PrincipalTypeUser, aclcore.PrincipalTypeAgent} {
+				category := aclcore.RuleCategory(principalType, aclcore.ResourceTypeWorkflowSchedule)
+				if err := sharedACLService.SetFallbackPolicy(context.Background(), category, aclcore.AccessManage, aclcore.SystemPrincipal); err != nil {
+					logging.Logger.Fatal().Err(err).Str("category", category).Msg("failed to enable development workflow schedule access")
+				}
+			}
+		}
 		gatewayOpts = append(gatewayOpts, gateway.WithACLService(sharedACLService))
 		logging.Logger.Debug().Msg("shared ACL service initialized")
 	}

@@ -1,4 +1,7 @@
-__version__ = "0.2.2"
+__version__ = "0.2.3"
+
+# Current deterministic WorkflowScheduleAuthorityScope policy shape.
+WORKFLOW_SCHEDULE_AUTHORITY_POLICY_VERSION = 1
 
 # Import the proxy module for its side effect: installs the
 # ``ProxyHttpResponse`` / ``ProxyHttpBodyChunk`` dispatcher hook on
@@ -24,6 +27,10 @@ from ._common import (
     SELF_ASSIGN,
     TARGETED,
     POOL,
+    TARGET_OFFLINE_UNSPECIFIED,
+    TARGET_OFFLINE_ORCHESTRATE,
+    TARGET_OFFLINE_QUEUE,
+    TARGET_OFFLINE_REJECT,
 
     # KV operation type constants
     KV_GET,

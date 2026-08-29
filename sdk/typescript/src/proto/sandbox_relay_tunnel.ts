@@ -26,6 +26,9 @@ import type { ACLRoleRequest as _aether_v1_ACLRoleRequest, ACLRoleRequest__Outpu
 import type { ACLRuleFilter as _aether_v1_ACLRuleFilter, ACLRuleFilter__Output as _aether_v1_ACLRuleFilter__Output } from './aether/v1/ACLRuleFilter';
 import type { ACLRuleInfo as _aether_v1_ACLRuleInfo, ACLRuleInfo__Output as _aether_v1_ACLRuleInfo__Output } from './aether/v1/ACLRuleInfo';
 import type { ACLSetFallbackRequest as _aether_v1_ACLSetFallbackRequest, ACLSetFallbackRequest__Output as _aether_v1_ACLSetFallbackRequest__Output } from './aether/v1/ACLSetFallbackRequest';
+import type { AccessCheckOperation as _aether_v1_AccessCheckOperation, AccessCheckOperation__Output as _aether_v1_AccessCheckOperation__Output } from './aether/v1/AccessCheckOperation';
+import type { AccessCheckResponse as _aether_v1_AccessCheckResponse, AccessCheckResponse__Output as _aether_v1_AccessCheckResponse__Output } from './aether/v1/AccessCheckResponse';
+import type { AccessDecisionReceipt as _aether_v1_AccessDecisionReceipt, AccessDecisionReceipt__Output as _aether_v1_AccessDecisionReceipt__Output } from './aether/v1/AccessDecisionReceipt';
 import type { AdminQuery as _aether_v1_AdminQuery, AdminQuery__Output as _aether_v1_AdminQuery__Output } from './aether/v1/AdminQuery';
 import type { AdminResponse as _aether_v1_AdminResponse, AdminResponse__Output as _aether_v1_AdminResponse__Output } from './aether/v1/AdminResponse';
 import type { AetherGatewayClient as _aether_v1_AetherGatewayClient, AetherGatewayDefinition as _aether_v1_AetherGatewayDefinition } from './aether/v1/AetherGateway';
@@ -40,6 +43,8 @@ import type { AgentResponse as _aether_v1_AgentResponse, AgentResponse__Output a
 import type { AuditEntry as _aether_v1_AuditEntry, AuditEntry__Output as _aether_v1_AuditEntry__Output } from './aether/v1/AuditEntry';
 import type { AuditQuery as _aether_v1_AuditQuery, AuditQuery__Output as _aether_v1_AuditQuery__Output } from './aether/v1/AuditQuery';
 import type { AuditQueryResponse as _aether_v1_AuditQueryResponse, AuditQueryResponse__Output as _aether_v1_AuditQueryResponse__Output } from './aether/v1/AuditQueryResponse';
+import type { AuthorityContinuationRequest as _aether_v1_AuthorityContinuationRequest, AuthorityContinuationRequest__Output as _aether_v1_AuthorityContinuationRequest__Output } from './aether/v1/AuthorityContinuationRequest';
+import type { AuthorityContinuationScope as _aether_v1_AuthorityContinuationScope, AuthorityContinuationScope__Output as _aether_v1_AuthorityContinuationScope__Output } from './aether/v1/AuthorityContinuationScope';
 import type { AuthorityGrantBatchExchangeRequest as _aether_v1_AuthorityGrantBatchExchangeRequest, AuthorityGrantBatchExchangeRequest__Output as _aether_v1_AuthorityGrantBatchExchangeRequest__Output } from './aether/v1/AuthorityGrantBatchExchangeRequest';
 import type { AuthorityGrantDeriveForTargetRequest as _aether_v1_AuthorityGrantDeriveForTargetRequest, AuthorityGrantDeriveForTargetRequest__Output as _aether_v1_AuthorityGrantDeriveForTargetRequest__Output } from './aether/v1/AuthorityGrantDeriveForTargetRequest';
 import type { AuthorityGrantDeriveRequest as _aether_v1_AuthorityGrantDeriveRequest, AuthorityGrantDeriveRequest__Output as _aether_v1_AuthorityGrantDeriveRequest__Output } from './aether/v1/AuthorityGrantDeriveRequest';
@@ -59,6 +64,8 @@ import type { AuthorityRequestResourceScopeEntry as _aether_v1_AuthorityRequestR
 import type { AuthorityRequestRoutingTarget as _aether_v1_AuthorityRequestRoutingTarget, AuthorityRequestRoutingTarget__Output as _aether_v1_AuthorityRequestRoutingTarget__Output } from './aether/v1/AuthorityRequestRoutingTarget';
 import type { AuthoritySpan as _aether_v1_AuthoritySpan, AuthoritySpan__Output as _aether_v1_AuthoritySpan__Output } from './aether/v1/AuthoritySpan';
 import type { AuthorizationContext as _aether_v1_AuthorizationContext, AuthorizationContext__Output as _aether_v1_AuthorizationContext__Output } from './aether/v1/AuthorizationContext';
+import type { BatchAccessCheckOperation as _aether_v1_BatchAccessCheckOperation, BatchAccessCheckOperation__Output as _aether_v1_BatchAccessCheckOperation__Output } from './aether/v1/BatchAccessCheckOperation';
+import type { BatchAccessCheckResponse as _aether_v1_BatchAccessCheckResponse, BatchAccessCheckResponse__Output as _aether_v1_BatchAccessCheckResponse__Output } from './aether/v1/BatchAccessCheckResponse';
 import type { BridgeIdentity as _aether_v1_BridgeIdentity, BridgeIdentity__Output as _aether_v1_BridgeIdentity__Output } from './aether/v1/BridgeIdentity';
 import type { BuildInfo as _aether_v1_BuildInfo, BuildInfo__Output as _aether_v1_BuildInfo__Output } from './aether/v1/BuildInfo';
 import type { CheckpointOperation as _aether_v1_CheckpointOperation, CheckpointOperation__Output as _aether_v1_CheckpointOperation__Output } from './aether/v1/CheckpointOperation';
@@ -77,6 +84,7 @@ import type { ErrorResponse as _aether_v1_ErrorResponse, ErrorResponse__Output a
 import type { ExtensionDeclaration as _aether_v1_ExtensionDeclaration, ExtensionDeclaration__Output as _aether_v1_ExtensionDeclaration__Output } from './aether/v1/ExtensionDeclaration';
 import type { FlowEdge as _aether_v1_FlowEdge, FlowEdge__Output as _aether_v1_FlowEdge__Output } from './aether/v1/FlowEdge';
 import type { FlowNode as _aether_v1_FlowNode, FlowNode__Output as _aether_v1_FlowNode__Output } from './aether/v1/FlowNode';
+import type { ForwardedAuthorization as _aether_v1_ForwardedAuthorization, ForwardedAuthorization__Output as _aether_v1_ForwardedAuthorization__Output } from './aether/v1/ForwardedAuthorization';
 import type { GatewayInfo as _aether_v1_GatewayInfo, GatewayInfo__Output as _aether_v1_GatewayInfo__Output } from './aether/v1/GatewayInfo';
 import type { GatewayStats as _aether_v1_GatewayStats, GatewayStats__Output as _aether_v1_GatewayStats__Output } from './aether/v1/GatewayStats';
 import type { HealthCheck as _aether_v1_HealthCheck, HealthCheck__Output as _aether_v1_HealthCheck__Output } from './aether/v1/HealthCheck';
@@ -107,6 +115,7 @@ import type { ResolveAuthorityRequestPayload as _aether_v1_ResolveAuthorityReque
 import type { ResolveAuthorityResponse as _aether_v1_ResolveAuthorityResponse, ResolveAuthorityResponse__Output as _aether_v1_ResolveAuthorityResponse__Output } from './aether/v1/ResolveAuthorityResponse';
 import type { ResolvedAuthority as _aether_v1_ResolvedAuthority, ResolvedAuthority__Output as _aether_v1_ResolvedAuthority__Output } from './aether/v1/ResolvedAuthority';
 import type { ResolvedAuthorityInfo as _aether_v1_ResolvedAuthorityInfo, ResolvedAuthorityInfo__Output as _aether_v1_ResolvedAuthorityInfo__Output } from './aether/v1/ResolvedAuthorityInfo';
+import type { ResourceAccessRequest as _aether_v1_ResourceAccessRequest, ResourceAccessRequest__Output as _aether_v1_ResourceAccessRequest__Output } from './aether/v1/ResourceAccessRequest';
 import type { RetryPolicy as _aether_v1_RetryPolicy, RetryPolicy__Output as _aether_v1_RetryPolicy__Output } from './aether/v1/RetryPolicy';
 import type { SandboxRelayTunnelClient as _aether_v1_SandboxRelayTunnelClient, SandboxRelayTunnelDefinition as _aether_v1_SandboxRelayTunnelDefinition } from './aether/v1/SandboxRelayTunnel';
 import type { SendMessage as _aether_v1_SendMessage, SendMessage__Output as _aether_v1_SendMessage__Output } from './aether/v1/SendMessage';
@@ -152,7 +161,9 @@ import type { WaitSpec as _aether_v1_WaitSpec, WaitSpec__Output as _aether_v1_Wa
 import type { WatchTenantsRequest as _aether_v1_WatchTenantsRequest, WatchTenantsRequest__Output as _aether_v1_WatchTenantsRequest__Output } from './aether/v1/WatchTenantsRequest';
 import type { WorkflowEngineIdentity as _aether_v1_WorkflowEngineIdentity, WorkflowEngineIdentity__Output as _aether_v1_WorkflowEngineIdentity__Output } from './aether/v1/WorkflowEngineIdentity';
 import type { WorkflowOperation as _aether_v1_WorkflowOperation, WorkflowOperation__Output as _aether_v1_WorkflowOperation__Output } from './aether/v1/WorkflowOperation';
+import type { WorkflowRequestContext as _aether_v1_WorkflowRequestContext, WorkflowRequestContext__Output as _aether_v1_WorkflowRequestContext__Output } from './aether/v1/WorkflowRequestContext';
 import type { WorkflowResponse as _aether_v1_WorkflowResponse, WorkflowResponse__Output as _aether_v1_WorkflowResponse__Output } from './aether/v1/WorkflowResponse';
+import type { WorkflowScheduleAuthorityScope as _aether_v1_WorkflowScheduleAuthorityScope, WorkflowScheduleAuthorityScope__Output as _aether_v1_WorkflowScheduleAuthorityScope__Output } from './aether/v1/WorkflowScheduleAuthorityScope';
 import type { WorkspaceFilter as _aether_v1_WorkspaceFilter, WorkspaceFilter__Output as _aether_v1_WorkspaceFilter__Output } from './aether/v1/WorkspaceFilter';
 import type { WorkspaceInfo as _aether_v1_WorkspaceInfo, WorkspaceInfo__Output as _aether_v1_WorkspaceInfo__Output } from './aether/v1/WorkspaceInfo';
 import type { WorkspaceOperation as _aether_v1_WorkspaceOperation, WorkspaceOperation__Output as _aether_v1_WorkspaceOperation__Output } from './aether/v1/WorkspaceOperation';
@@ -190,6 +201,9 @@ export interface ProtoGrpcType {
       ACLRuleFilter: MessageTypeDefinition<_aether_v1_ACLRuleFilter, _aether_v1_ACLRuleFilter__Output>
       ACLRuleInfo: MessageTypeDefinition<_aether_v1_ACLRuleInfo, _aether_v1_ACLRuleInfo__Output>
       ACLSetFallbackRequest: MessageTypeDefinition<_aether_v1_ACLSetFallbackRequest, _aether_v1_ACLSetFallbackRequest__Output>
+      AccessCheckOperation: MessageTypeDefinition<_aether_v1_AccessCheckOperation, _aether_v1_AccessCheckOperation__Output>
+      AccessCheckResponse: MessageTypeDefinition<_aether_v1_AccessCheckResponse, _aether_v1_AccessCheckResponse__Output>
+      AccessDecisionReceipt: MessageTypeDefinition<_aether_v1_AccessDecisionReceipt, _aether_v1_AccessDecisionReceipt__Output>
       AccessLevel: EnumTypeDefinition
       AdminQuery: MessageTypeDefinition<_aether_v1_AdminQuery, _aether_v1_AdminQuery__Output>
       AdminResponse: MessageTypeDefinition<_aether_v1_AdminResponse, _aether_v1_AdminResponse__Output>
@@ -205,6 +219,8 @@ export interface ProtoGrpcType {
       AuditEntry: MessageTypeDefinition<_aether_v1_AuditEntry, _aether_v1_AuditEntry__Output>
       AuditQuery: MessageTypeDefinition<_aether_v1_AuditQuery, _aether_v1_AuditQuery__Output>
       AuditQueryResponse: MessageTypeDefinition<_aether_v1_AuditQueryResponse, _aether_v1_AuditQueryResponse__Output>
+      AuthorityContinuationRequest: MessageTypeDefinition<_aether_v1_AuthorityContinuationRequest, _aether_v1_AuthorityContinuationRequest__Output>
+      AuthorityContinuationScope: MessageTypeDefinition<_aether_v1_AuthorityContinuationScope, _aether_v1_AuthorityContinuationScope__Output>
       AuthorityGrantBatchExchangeRequest: MessageTypeDefinition<_aether_v1_AuthorityGrantBatchExchangeRequest, _aether_v1_AuthorityGrantBatchExchangeRequest__Output>
       AuthorityGrantDeriveForTargetRequest: MessageTypeDefinition<_aether_v1_AuthorityGrantDeriveForTargetRequest, _aether_v1_AuthorityGrantDeriveForTargetRequest__Output>
       AuthorityGrantDeriveRequest: MessageTypeDefinition<_aether_v1_AuthorityGrantDeriveRequest, _aether_v1_AuthorityGrantDeriveRequest__Output>
@@ -226,6 +242,8 @@ export interface ProtoGrpcType {
       AuthoritySpan: MessageTypeDefinition<_aether_v1_AuthoritySpan, _aether_v1_AuthoritySpan__Output>
       AuthorizationContext: MessageTypeDefinition<_aether_v1_AuthorizationContext, _aether_v1_AuthorizationContext__Output>
       BackoffStrategy: EnumTypeDefinition
+      BatchAccessCheckOperation: MessageTypeDefinition<_aether_v1_BatchAccessCheckOperation, _aether_v1_BatchAccessCheckOperation__Output>
+      BatchAccessCheckResponse: MessageTypeDefinition<_aether_v1_BatchAccessCheckResponse, _aether_v1_BatchAccessCheckResponse__Output>
       BridgeIdentity: MessageTypeDefinition<_aether_v1_BridgeIdentity, _aether_v1_BridgeIdentity__Output>
       BuildInfo: MessageTypeDefinition<_aether_v1_BuildInfo, _aether_v1_BuildInfo__Output>
       CheckpointOperation: MessageTypeDefinition<_aether_v1_CheckpointOperation, _aether_v1_CheckpointOperation__Output>
@@ -244,6 +262,7 @@ export interface ProtoGrpcType {
       ExtensionDeclaration: MessageTypeDefinition<_aether_v1_ExtensionDeclaration, _aether_v1_ExtensionDeclaration__Output>
       FlowEdge: MessageTypeDefinition<_aether_v1_FlowEdge, _aether_v1_FlowEdge__Output>
       FlowNode: MessageTypeDefinition<_aether_v1_FlowNode, _aether_v1_FlowNode__Output>
+      ForwardedAuthorization: MessageTypeDefinition<_aether_v1_ForwardedAuthorization, _aether_v1_ForwardedAuthorization__Output>
       GatewayInfo: MessageTypeDefinition<_aether_v1_GatewayInfo, _aether_v1_GatewayInfo__Output>
       GatewayStats: MessageTypeDefinition<_aether_v1_GatewayStats, _aether_v1_GatewayStats__Output>
       HealthCheck: MessageTypeDefinition<_aether_v1_HealthCheck, _aether_v1_HealthCheck__Output>
@@ -279,6 +298,7 @@ export interface ProtoGrpcType {
       ResolveAuthorityResponse: MessageTypeDefinition<_aether_v1_ResolveAuthorityResponse, _aether_v1_ResolveAuthorityResponse__Output>
       ResolvedAuthority: MessageTypeDefinition<_aether_v1_ResolvedAuthority, _aether_v1_ResolvedAuthority__Output>
       ResolvedAuthorityInfo: MessageTypeDefinition<_aether_v1_ResolvedAuthorityInfo, _aether_v1_ResolvedAuthorityInfo__Output>
+      ResourceAccessRequest: MessageTypeDefinition<_aether_v1_ResourceAccessRequest, _aether_v1_ResourceAccessRequest__Output>
       RetryPolicy: MessageTypeDefinition<_aether_v1_RetryPolicy, _aether_v1_RetryPolicy__Output>
       /**
        * SandboxRelayTunnel is the aggregator's relay-facing surface. A tenant-relay
@@ -297,6 +317,7 @@ export interface ProtoGrpcType {
       SubmitAuditEventRequest: MessageTypeDefinition<_aether_v1_SubmitAuditEventRequest, _aether_v1_SubmitAuditEventRequest__Output>
       SubmitAuditEventResponse: MessageTypeDefinition<_aether_v1_SubmitAuditEventResponse, _aether_v1_SubmitAuditEventResponse__Output>
       SwitchWorkspace: MessageTypeDefinition<_aether_v1_SwitchWorkspace, _aether_v1_SwitchWorkspace__Output>
+      TargetOfflinePolicy: EnumTypeDefinition
       TaskAssignment: MessageTypeDefinition<_aether_v1_TaskAssignment, _aether_v1_TaskAssignment__Output>
       TaskAssignmentMode: EnumTypeDefinition
       TaskAuthorityRequestEventRelay: MessageTypeDefinition<_aether_v1_TaskAuthorityRequestEventRelay, _aether_v1_TaskAuthorityRequestEventRelay__Output>
@@ -335,9 +356,12 @@ export interface ProtoGrpcType {
       WaitReason: EnumTypeDefinition
       WaitSpec: MessageTypeDefinition<_aether_v1_WaitSpec, _aether_v1_WaitSpec__Output>
       WatchTenantsRequest: MessageTypeDefinition<_aether_v1_WatchTenantsRequest, _aether_v1_WatchTenantsRequest__Output>
+      WorkflowAuthorityLifetimeMode: EnumTypeDefinition
       WorkflowEngineIdentity: MessageTypeDefinition<_aether_v1_WorkflowEngineIdentity, _aether_v1_WorkflowEngineIdentity__Output>
       WorkflowOperation: MessageTypeDefinition<_aether_v1_WorkflowOperation, _aether_v1_WorkflowOperation__Output>
+      WorkflowRequestContext: MessageTypeDefinition<_aether_v1_WorkflowRequestContext, _aether_v1_WorkflowRequestContext__Output>
       WorkflowResponse: MessageTypeDefinition<_aether_v1_WorkflowResponse, _aether_v1_WorkflowResponse__Output>
+      WorkflowScheduleAuthorityScope: MessageTypeDefinition<_aether_v1_WorkflowScheduleAuthorityScope, _aether_v1_WorkflowScheduleAuthorityScope__Output>
       WorkspaceFilter: MessageTypeDefinition<_aether_v1_WorkspaceFilter, _aether_v1_WorkspaceFilter__Output>
       WorkspaceInfo: MessageTypeDefinition<_aether_v1_WorkspaceInfo, _aether_v1_WorkspaceInfo__Output>
       WorkspaceOperation: MessageTypeDefinition<_aether_v1_WorkspaceOperation, _aether_v1_WorkspaceOperation__Output>

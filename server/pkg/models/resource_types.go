@@ -34,4 +34,18 @@ const (
 	// mint per-task tokens for service principals (preventing arbitrary
 	// agents from forging tokens for impls they don't own).
 	ResourceTypeServiceImpl = "service_impl"
+	// ResourceTypeWorkspaceExecutionView authorizes a concrete execution view
+	// within a logical MemoryLayer workspace. The resource ID is the stable
+	// view ID, not a client-local filesystem path.
+	ResourceTypeWorkspaceExecutionView = "workspace-execution/view"
+	// ResourceTypeToolCatalogProvider authorizes catalog lifecycle operations
+	// for one provider identity.
+	ResourceTypeToolCatalogProvider = "tool-catalog/provider"
+	// ResourceTypeToolCatalogEntry authorizes discovery and invocation of one
+	// provider-qualified catalog entry.
+	ResourceTypeToolCatalogEntry = "tool-catalog/entry"
+	// ResourceTypeWorkflowSchedule authorizes exact WorkflowEngine schedule
+	// definitions. Resource IDs are canonical
+	// workspaces/{workspace}/schedules/{schedule} paths.
+	ResourceTypeWorkflowSchedule = "workflow/schedule"
 )

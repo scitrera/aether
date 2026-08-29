@@ -65,6 +65,10 @@ import type {
   TokenInfo,
   AuditSubmitResponse,
   AuditSubmitResponseHandler,
+  AuthorizationContext,
+  ResourceAccessRequest,
+  AccessDecisionReceipt,
+  PrincipalRef,
 } from "./types.js";
 import { MessageType, KVScope, SignalType } from "./types.js";
 import {
@@ -262,6 +266,8 @@ export class AetherClient {
   private _pendingWorkflowRequests = new Map<string, (response: WorkflowResponse) => void>();
   private _pendingAuditSubmitRequests = new Map<string, (response: AuditSubmitResponse) => void>();
   private _pendingTokenRequests = new Map<string, (response: TokenResponse) => void>();
+  private _pendingAccessCheckRequests = new Map<string, (response: { success: boolean; error: string; decision?: AccessDecisionReceipt }) => void>();
+  private _pendingBatchAccessCheckRequests = new Map<string, (response: { success: boolean; error: string; decisions: AccessDecisionReceipt[] }) => void>();
 
   // Proxy HTTP pending requests: request_id → resolver
   // @internal
@@ -487,7 +493,51 @@ export class AetherClient {
         targetTopic: message.targetTopic,
         payload: message.payload,
         messageType: message.messageType ?? MessageType.Opaque,
+        appWorkspace: message.appWorkspace ?? "",
+        authorization: message.authorization,
+        checkedAccess: message.checkedAccess,
+        authorityContinuation: message.authorityContinuation,
       },
+    });
+  }
+
+  /** Evaluate one exact logical resource. Denial resolves normally with allowed=false. */
+  checkAccess(access: ResourceAccessRequest, authorization?: AuthorizationContext, timeout = 10000): Promise<AccessDecisionReceipt> {
+    const requestId = this.nextRequestId();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._pendingAccessCheckRequests.delete(requestId);
+        reject(new Error("access check timed out"));
+      }, timeout);
+      this._pendingAccessCheckRequests.set(requestId, (response) => {
+        clearTimeout(timer);
+        if (!response.success || !response.decision) {
+          reject(new InvalidArgumentError(response.error || "access check failed", "access"));
+          return;
+        }
+        resolve(response.decision);
+      });
+      this._sendUpstream({ accessCheck: { requestId, access, authorization } });
+    });
+  }
+
+  /** Evaluate 1-100 exact logical resources, preserving input order. */
+  batchCheckAccess(access: ResourceAccessRequest[], authorization?: AuthorizationContext, timeout = 10000): Promise<AccessDecisionReceipt[]> {
+    const requestId = this.nextRequestId();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._pendingBatchAccessCheckRequests.delete(requestId);
+        reject(new Error("batch access check timed out"));
+      }, timeout);
+      this._pendingBatchAccessCheckRequests.set(requestId, (response) => {
+        clearTimeout(timer);
+        if (!response.success) {
+          reject(new InvalidArgumentError(response.error || "batch access check failed", "access"));
+          return;
+        }
+        resolve(response.decisions);
+      });
+      this._sendUpstream({ batchAccessCheck: { requestId, access, authorization } });
     });
   }
 
@@ -989,6 +1039,10 @@ export class AetherClient {
         sourceTopic: String(msg["sourceTopic"] ?? msg["source_topic"] ?? ""),
         payload: msg["payload"] instanceof Uint8Array ? msg["payload"] : new Uint8Array(),
         messageType: Number(msg["messageType"] ?? msg["message_type"] ?? 0),
+        workspace: String(msg["workspace"] ?? ""),
+        onBehalfSubject: this._parsePrincipalRef(msg["onBehalfSubject"] ?? msg["on_behalf_subject"]),
+        accessReceipt: this._parseAccessReceipt(msg["accessReceipt"] ?? msg["access_receipt"]),
+        forwardedAuthorization: this._parseForwardedAuthorization(msg["forwardedAuthorization"] ?? msg["forwarded_authorization"]),
         receivedAt: new Date(),
       };
       this._onMessage(incoming);
@@ -1092,6 +1146,22 @@ export class AetherClient {
 
     if (data["taskAssignment"] || data["task_assignment"]) {
       const ta = (data["taskAssignment"] ?? data["task_assignment"]) as Record<string, unknown>;
+      const rawAuthorization = ta["authorization"];
+      const authorization = rawAuthorization && typeof rawAuthorization === "object"
+        ? rawAuthorization as Record<string, unknown>
+        : undefined;
+      const rawSubject = authorization?.["subject"];
+      const subject = rawSubject && typeof rawSubject === "object"
+        ? rawSubject as Record<string, unknown>
+        : undefined;
+      const rawResolved = authorization?.["resolved"];
+      const resolved = rawResolved && typeof rawResolved === "object"
+        ? rawResolved as Record<string, unknown>
+        : undefined;
+      const rawRootSubject = resolved?.["rootSubject"] ?? resolved?.["root_subject"];
+      const rootSubject = rawRootSubject && typeof rawRootSubject === "object"
+        ? rawRootSubject as Record<string, unknown>
+        : undefined;
       const assignment: TaskAssignment = {
         taskId: String(ta["taskId"] ?? ta["task_id"] ?? ""),
         taskType: String(ta["taskType"] ?? ta["task_type"] ?? ""),
@@ -1103,6 +1173,31 @@ export class AetherClient {
         targetImplementation: String(ta["targetImplementation"] ?? ta["target_implementation"] ?? ""),
         workspace: String(ta["workspace"] ?? ""),
         specifier: String(ta["specifier"] ?? ""),
+        payload: ta["payload"] instanceof Uint8Array ? new Uint8Array(ta["payload"]) : new Uint8Array(),
+        taskClass: Number(ta["taskClass"] ?? ta["task_class"] ?? 0),
+        checkpointKey: String(ta["checkpointKey"] ?? ta["checkpoint_key"] ?? ""),
+        resumeSessionId: String(ta["resumeSessionId"] ?? ta["resume_session_id"] ?? ""),
+        authorization: authorization ? {
+          authorityMode: String(authorization["authorityMode"] ?? authorization["authority_mode"] ?? ""),
+          subject: subject ? {
+            principalType: String(subject["principalType"] ?? subject["principal_type"] ?? ""),
+            principalId: String(subject["principalId"] ?? subject["principal_id"] ?? ""),
+          } : undefined,
+          grantId: String(authorization["grantId"] ?? authorization["grant_id"] ?? ""),
+          resolved: resolved ? {
+            rootSubject: rootSubject ? {
+              principalType: String(rootSubject["principalType"] ?? rootSubject["principal_type"] ?? ""),
+              principalId: String(rootSubject["principalId"] ?? rootSubject["principal_id"] ?? ""),
+            } : undefined,
+            audienceType: String(resolved["audienceType"] ?? resolved["audience_type"] ?? ""),
+            audienceId: String(resolved["audienceId"] ?? resolved["audience_id"] ?? ""),
+            maxAccessLevel: Number(resolved["maxAccessLevel"] ?? resolved["max_access_level"] ?? 0),
+            workspaceScope: Array.isArray(resolved["workspaceScope"] ?? resolved["workspace_scope"])
+              ? ((resolved["workspaceScope"] ?? resolved["workspace_scope"]) as unknown[]).map(String)
+              : [],
+            expiresAtMs: Number(resolved["expiresAtMs"] ?? resolved["expires_at_ms"] ?? 0),
+          } : undefined,
+        } : undefined,
       };
       this._onTaskAssignment(assignment);
       return;
@@ -1289,6 +1384,31 @@ export class AetherClient {
         pending(response);
       } else {
         this._onAuthorityGrantResponse(response);
+      }
+      return;
+    }
+
+    if (data["accessCheckResponse"] || data["access_check_response"]) {
+      const raw = (data["accessCheckResponse"] ?? data["access_check_response"]) as Record<string, unknown>;
+      const requestId = String(raw["requestId"] ?? raw["request_id"] ?? "");
+      const receipt = this._parseAccessReceipt(raw["decision"]);
+      const pending = this._pendingAccessCheckRequests.get(requestId);
+      if (pending) {
+        this._pendingAccessCheckRequests.delete(requestId);
+        pending({ success: Boolean(raw["success"]), error: String(raw["error"] ?? ""), decision: receipt });
+      }
+      return;
+    }
+
+    if (data["batchAccessCheckResponse"] || data["batch_access_check_response"]) {
+      const raw = (data["batchAccessCheckResponse"] ?? data["batch_access_check_response"]) as Record<string, unknown>;
+      const requestId = String(raw["requestId"] ?? raw["request_id"] ?? "");
+      const rawDecisions = Array.isArray(raw["decisions"]) ? raw["decisions"] as unknown[] : [];
+      const decisions = rawDecisions.map((item) => this._parseAccessReceipt(item)).filter((item): item is AccessDecisionReceipt => item !== undefined);
+      const pending = this._pendingBatchAccessCheckRequests.get(requestId);
+      if (pending) {
+        this._pendingBatchAccessCheckRequests.delete(requestId);
+        pending({ success: Boolean(raw["success"]), error: String(raw["error"] ?? ""), decisions });
       }
       return;
     }
@@ -1752,6 +1872,91 @@ export class AetherClient {
         messageType,
       },
     });
+  }
+
+  private _parsePrincipalRef(value: unknown): PrincipalRef | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const raw = value as Record<string, unknown>;
+    const principalType = String(raw["principalType"] ?? raw["principal_type"] ?? "");
+    const principalId = String(raw["principalId"] ?? raw["principal_id"] ?? "");
+    return principalType && principalId ? { principalType, principalId } : undefined;
+  }
+
+  private _parseForwardedAuthorization(value: unknown): import("./types.js").ForwardedAuthorization | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const raw = value as Record<string, unknown>;
+    const authRaw = raw["authorization"];
+    if (!authRaw || typeof authRaw !== "object") return undefined;
+    const auth = authRaw as Record<string, unknown>;
+    const authorization: AuthorizationContext = {
+      authorityMode: String(auth["authorityMode"] ?? auth["authority_mode"] ?? ""),
+      subject: this._parsePrincipalRef(auth["subject"]),
+      grantId: String(auth["grantId"] ?? auth["grant_id"] ?? ""),
+    };
+    if (!authorization.authorityMode || !authorization.grantId) return undefined;
+    return {
+      authorization,
+      rootGrantId: String(raw["rootGrantId"] ?? raw["root_grant_id"] ?? ""),
+      expiresAtMs: Number(raw["expiresAtMs"] ?? raw["expires_at_ms"] ?? 0),
+      deliveryTarget: String(raw["deliveryTarget"] ?? raw["delivery_target"] ?? ""),
+      bindingId: String(raw["bindingId"] ?? raw["binding_id"] ?? ""),
+      scope: this._parseAuthorityContinuationScope(raw["scope"]),
+    };
+  }
+
+  private _parseAuthorityContinuationScope(value: unknown): import("./types.js").AuthorityContinuationScope {
+    const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    const resourcesRaw = raw["resourceScope"] ?? raw["resource_scope"];
+    const resourceScope = Array.isArray(resourcesRaw) ? resourcesRaw.map((item) => {
+      const resource = item && typeof item === "object" ? item as Record<string, unknown> : {};
+      const patterns = resource["patterns"];
+      return {
+        resourceType: String(resource["resourceType"] ?? resource["resource_type"] ?? ""),
+        patterns: Array.isArray(patterns) ? patterns.map(String) : [],
+      };
+    }) : [];
+    const workspaces = raw["workspaceScope"] ?? raw["workspace_scope"];
+    const operations = raw["operationScope"] ?? raw["operation_scope"];
+    return {
+      workspaceScope: Array.isArray(workspaces) ? workspaces.map(String) : [],
+      resourceScope,
+      operationScope: Array.isArray(operations) ? operations.map(String) : [],
+      maxAccessLevel: Number(raw["maxAccessLevel"] ?? raw["max_access_level"] ?? 0),
+    };
+  }
+
+  private _parseAccessRequest(value: unknown): ResourceAccessRequest {
+    const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    return {
+      resourceType: String(raw["resourceType"] ?? raw["resource_type"] ?? ""),
+      resourceId: String(raw["resourceId"] ?? raw["resource_id"] ?? ""),
+      operation: String(raw["operation"] ?? ""),
+      workspace: String(raw["workspace"] ?? ""),
+      requiredAccessLevel: Number(raw["requiredAccessLevel"] ?? raw["required_access_level"] ?? 0),
+      correlationId: String(raw["correlationId"] ?? raw["correlation_id"] ?? ""),
+    };
+  }
+
+  private _parseAccessReceipt(value: unknown): AccessDecisionReceipt | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const raw = value as Record<string, unknown>;
+    return {
+      decisionId: String(raw["decisionId"] ?? raw["decision_id"] ?? ""),
+      request: this._parseAccessRequest(raw["request"]),
+      allowed: Boolean(raw["allowed"]),
+      decision: String(raw["decision"] ?? ""),
+      effectiveAccessLevel: Number(raw["effectiveAccessLevel"] ?? raw["effective_access_level"] ?? 0),
+      actor: this._parsePrincipalRef(raw["actor"]),
+      subject: this._parsePrincipalRef(raw["subject"]),
+      rootSubject: this._parsePrincipalRef(raw["rootSubject"] ?? raw["root_subject"]),
+      authorityMode: String(raw["authorityMode"] ?? raw["authority_mode"] ?? ""),
+      grantId: String(raw["grantId"] ?? raw["grant_id"] ?? ""),
+      rootGrantId: String(raw["rootGrantId"] ?? raw["root_grant_id"] ?? ""),
+      evaluatedAtMs: Number(raw["evaluatedAtMs"] ?? raw["evaluated_at_ms"] ?? 0),
+      expiresAtMs: Number(raw["expiresAtMs"] ?? raw["expires_at_ms"] ?? 0),
+      denialCode: String(raw["denialCode"] ?? raw["denial_code"] ?? ""),
+      deliveryTarget: String(raw["deliveryTarget"] ?? raw["delivery_target"] ?? ""),
+    };
   }
 
   // ===========================================================================

@@ -6,6 +6,7 @@ import type { TaskClass as _aether_v1_TaskClass, TaskClass__Output as _aether_v1
 import type { RetryPolicy as _aether_v1_RetryPolicy, RetryPolicy__Output as _aether_v1_RetryPolicy__Output } from '../../aether/v1/RetryPolicy';
 import type { TaskPriority as _aether_v1_TaskPriority, TaskPriority__Output as _aether_v1_TaskPriority__Output } from '../../aether/v1/TaskPriority';
 import type { TaskCompletionEvent as _aether_v1_TaskCompletionEvent, TaskCompletionEvent__Output as _aether_v1_TaskCompletionEvent__Output } from '../../aether/v1/TaskCompletionEvent';
+import type { TargetOfflinePolicy as _aether_v1_TargetOfflinePolicy, TargetOfflinePolicy__Output as _aether_v1_TargetOfflinePolicy__Output } from '../../aether/v1/TargetOfflinePolicy';
 
 export interface CreateTaskRequest {
   'taskType'?: (string);
@@ -95,6 +96,35 @@ export interface CreateTaskRequest {
    * reaches a (selected) terminal status. Absent/disabled = no emission.
    */
   'completionEvent'?: (_aether_v1_TaskCompletionEvent | null);
+  /**
+   * Optional native parent for a nested task created by a long-lived worker.
+   * The gateway accepts an explicit value only when the caller is the active
+   * parent task's assigned execution identity. This is a request-scoped binding:
+   * it may select a different assigned task than the connection's startup/task-
+   * token association. Empty preserves connection-associated parent inference.
+   */
+  'parentTaskId'?: (string);
+  /**
+   * TARGETED mode only. QUEUE persists the task for delivery when the exact
+   * static worker reconnects, without requiring an orchestration registry
+   * entry. REJECT fails task creation while the worker is absent.
+   */
+  'targetOfflinePolicy'?: (_aether_v1_TargetOfflinePolicy);
+  /**
+   * Minimum delegation capacity the task's final execution identity must
+   * retain after task-authority setup. Currently 0 or 1. Set to 1 when the
+   * worker must perform one explicit downstream authorization continuation
+   * (for example, Sahara querying the tool catalog under the user's authority).
+   * In POOL mode the gateway reserves the additional anchor-to-assignee hop.
+   */
+  'requiredDownstreamAuthorityHops'?: (number);
+  /**
+   * WorkflowEngine-only authority audience binding. The gateway accepts this
+   * field only from the authenticated WorkflowEngine principal and requires it
+   * to match a workflow_schedule audience on authorization. Ordinary task
+   * creators must leave it empty.
+   */
+  'originatingScheduleId'?: (string);
 }
 
 export interface CreateTaskRequest__Output {
@@ -185,4 +215,33 @@ export interface CreateTaskRequest__Output {
    * reaches a (selected) terminal status. Absent/disabled = no emission.
    */
   'completionEvent': (_aether_v1_TaskCompletionEvent__Output | null);
+  /**
+   * Optional native parent for a nested task created by a long-lived worker.
+   * The gateway accepts an explicit value only when the caller is the active
+   * parent task's assigned execution identity. This is a request-scoped binding:
+   * it may select a different assigned task than the connection's startup/task-
+   * token association. Empty preserves connection-associated parent inference.
+   */
+  'parentTaskId': (string);
+  /**
+   * TARGETED mode only. QUEUE persists the task for delivery when the exact
+   * static worker reconnects, without requiring an orchestration registry
+   * entry. REJECT fails task creation while the worker is absent.
+   */
+  'targetOfflinePolicy': (_aether_v1_TargetOfflinePolicy__Output);
+  /**
+   * Minimum delegation capacity the task's final execution identity must
+   * retain after task-authority setup. Currently 0 or 1. Set to 1 when the
+   * worker must perform one explicit downstream authorization continuation
+   * (for example, Sahara querying the tool catalog under the user's authority).
+   * In POOL mode the gateway reserves the additional anchor-to-assignee hop.
+   */
+  'requiredDownstreamAuthorityHops': (number);
+  /**
+   * WorkflowEngine-only authority audience binding. The gateway accepts this
+   * field only from the authenticated WorkflowEngine principal and requires it
+   * to match a workflow_schedule audience on authorization. Ordinary task
+   * creators must leave it empty.
+   */
+  'originatingScheduleId': (string);
 }

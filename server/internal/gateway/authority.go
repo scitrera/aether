@@ -15,6 +15,22 @@ import (
 )
 
 func (s *GatewayServer) resolveAuthorizationContext(ctx context.Context, client *ClientSession, actor models.Identity, authz *pb.AuthorizationContext) (*acl.ResolvedAuthority, error) {
+	associatedTaskID := ""
+	if client != nil {
+		associatedTaskID = client.AssociatedTaskID
+	}
+	return s.resolveAuthorizationContextForTask(ctx, client, actor, authz, associatedTaskID)
+}
+
+// resolveAuthorizationContextForTask is the request-scoped variant used by
+// explicit nested task creation. A long-lived worker is not globally associated
+// with every task it executes, so the validated parent task supplies the grant
+// audience for this request without mutating the connection session.
+func (s *GatewayServer) resolveAuthorizationContextForTask(ctx context.Context, client *ClientSession, actor models.Identity, authz *pb.AuthorizationContext, associatedTaskID string) (*acl.ResolvedAuthority, error) {
+	return s.resolveAuthorizationContextForAudience(ctx, client, actor, authz, associatedTaskID, "")
+}
+
+func (s *GatewayServer) resolveAuthorizationContextForAudience(ctx context.Context, client *ClientSession, actor models.Identity, authz *pb.AuthorizationContext, associatedTaskID, workflowScheduleID string) (*acl.ResolvedAuthority, error) {
 	if authz == nil {
 		return nil, nil
 	}
@@ -53,7 +69,7 @@ func (s *GatewayServer) resolveAuthorizationContext(ctx context.Context, client 
 		GrantID: authz.GetGrantId(),
 	}, acl.GrantAudienceContext{
 		SessionID:        client.SessionUUID,
-		AssociatedTaskID: client.AssociatedTaskID,
+		AssociatedTaskID: associatedTaskID,
 		Actor:            actor,
 		SessionActive: func(sessionID uuid.UUID) bool {
 			// SessionRegistry.IsActive keys on the identity string (e.g.
@@ -76,6 +92,7 @@ func (s *GatewayServer) resolveAuthorizationContext(ctx context.Context, client 
 			}
 			return t.Status == tasks.TaskStatusPending || t.Status == tasks.TaskStatusAssigned || t.Status == tasks.TaskStatusRunning
 		},
+		WorkflowScheduleID: workflowScheduleID,
 	})
 }
 

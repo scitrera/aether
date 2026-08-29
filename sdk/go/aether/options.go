@@ -704,6 +704,11 @@ type CreateTaskOptions struct {
 	// Required for TaskAssignmentTargeted mode.
 	TargetAgentID string
 
+	// TargetOfflinePolicy controls TARGETED creation while the exact target is
+	// disconnected. UNSPECIFIED preserves orchestration; QUEUE waits for a
+	// static worker reconnect; REJECT fails creation.
+	TargetOfflinePolicy pb.TargetOfflinePolicy
+
 	// TargetImplementation is the agent implementation type for pool assignment.
 	// Required for TaskAssignmentPool mode. When set and AssignmentMode is
 	// not explicitly specified, the mode is automatically set to POOL.
@@ -722,6 +727,46 @@ type CreateTaskOptions struct {
 	// AssignmentMode determines how the task is assigned.
 	// Default: TaskAssignmentSelfAssign.
 	AssignmentMode TaskAssignmentMode
+
+	// TaskClass is an optional UI presentation hint. It does not affect task
+	// scheduling or authorization.
+	TaskClass pb.TaskClass
+
+	// ContextID groups tasks within one logical session or conversation.
+	ContextID string
+
+	// IdempotencyKey makes task creation exactly-once under request retries. A
+	// duplicate create returns the existing task identity.
+	IdempotencyKey string
+
+	// CorrelationID groups fan-out tasks for joins and queries.
+	CorrelationID string
+
+	// RootTaskID identifies the top of a fan-out task tree. Empty lets the server
+	// derive the root from task identity and nesting.
+	RootTaskID string
+
+	// CompletionEvent optionally publishes terminal task state to the event
+	// plane for workflow joins and other consumers.
+	CompletionEvent *pb.TaskCompletionEvent
+
+	// ParentTaskID requests native parentage when a long-lived worker creates a
+	// nested task for a parent it is currently executing. The gateway validates
+	// that the caller is the active parent's assigned identity. It is a
+	// request-scoped binding and may select a different assigned task than the
+	// connection's startup/task-token association. Empty preserves
+	// connection-associated parent inference.
+	ParentTaskID string
+
+	// RequiredDownstreamAuthorityHops asks the gateway to preserve this many
+	// delegation hops on the task's final execution identity. Currently 0 or 1.
+	// Set to 1 when the worker must explicitly forward authority to one service.
+	RequiredDownstreamAuthorityHops uint32
+
+	// OriginatingScheduleID is reserved for the authenticated WorkflowEngine.
+	// It binds a workflow_schedule authority grant to the exact schedule that
+	// caused this task. Ordinary clients must leave it empty.
+	OriginatingScheduleID string
 
 	// TargetIdentity is an arbitrary principal address (e.g.
 	// "sv::sandbox-sidecar::<id>") that the gateway treats as the assignee
@@ -837,6 +882,20 @@ type SendMessageOptions struct {
 	// context set via WithOBOAuthorization, or build the *pb.AuthorizationContext
 	// directly. Nil ⇒ direct (non-OBO) send.
 	Authorization *pb.AuthorizationContext
+
+	// CheckedAccess optionally asks the gateway to authorize an exact logical
+	// resource in addition to the destination topic. An allowed decision is
+	// delivered to the recipient as gateway-authored AccessReceipt metadata;
+	// a denied decision prevents publication.
+	CheckedAccess *pb.ResourceAccessRequest
+
+	// AuthorityContinuation asks the gateway to derive a short-lived,
+	// non-delegable child grant for the concrete recipient and attach it as
+	// trusted ForwardedAuthorization metadata. Service recipients may inherit the
+	// parent ceiling; agent recipients require an invocation-bound, explicitly
+	// attenuated scope. It requires resolved OBO authority with at least one
+	// remaining delegation hop.
+	AuthorityContinuation *pb.AuthorityContinuationRequest
 }
 
 // =============================================================================

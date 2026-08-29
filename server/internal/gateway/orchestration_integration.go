@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -237,6 +238,7 @@ func (s *GatewayServer) deliverQueuedTasksToAgent(
 				Payload:    task.Payload,
 			}
 			applyHibernationHandoffToAssignment(assignment, task.Metadata)
+			applyTaskAuthorizationToAssignment(assignment, task)
 
 			err := client.SafeSend(&pb.DownstreamMessage{
 				Payload: &pb.DownstreamMessage_TaskAssignment{
@@ -279,6 +281,7 @@ func (s *GatewayServer) deliverQueuedTasksToAgent(
 				Payload:    task.Payload,
 			}
 			applyHibernationHandoffToAssignment(assignment, task.Metadata)
+			applyTaskAuthorizationToAssignment(assignment, task)
 
 			if sendErr := client.SafeSend(&pb.DownstreamMessage{
 				Payload: &pb.DownstreamMessage_TaskAssignment{
@@ -316,6 +319,54 @@ const idemTaskTTL = 24 * time.Hour
 // task_id once creation succeeds.
 const idemTaskPlaceholder = "pending"
 
+const createTaskParentDenied = "parent task not found or not authorized"
+
+// resolveCreateTaskParent turns an optional wire parent_task_id into a native
+// task parent. Connection-associated parentage remains the zero-configuration
+// path. An explicit parent is a request-scoped execution binding for long-lived
+// workers and is accepted only for the exact assigned identity while the parent
+// is assigned or running. Every failure uses one info-hiding error.
+func (s *GatewayServer) resolveCreateTaskParent(
+	ctx context.Context,
+	client *ClientSession,
+	identity models.Identity,
+	workspace string,
+	requested string,
+) (string, *tasks.Task, error) {
+	requested = strings.TrimSpace(requested)
+	associated := ""
+	if client != nil {
+		associated = client.AssociatedTaskID
+	}
+	if requested == "" {
+		if associated == "" || s.taskStore == nil {
+			return associated, nil, nil
+		}
+		parent, err := s.taskStore.GetTask(ctx, associated)
+		if err != nil {
+			// Preserve the historical connection-associated behavior. The task
+			// service/store remains responsible for rejecting an invalid native
+			// parent; the lookup here is only for correlation inheritance.
+			return associated, nil, nil
+		}
+		return associated, parent, nil
+	}
+	if s.taskStore == nil {
+		return "", nil, stderrors.New(createTaskParentDenied)
+	}
+	parent, err := s.taskStore.GetTask(ctx, requested)
+	if err != nil || parent == nil {
+		return "", nil, stderrors.New(createTaskParentDenied)
+	}
+	if parent.Workspace != workspace || parent.AssignedTo != identity.String() {
+		return "", nil, stderrors.New(createTaskParentDenied)
+	}
+	if parent.Status != tasks.TaskStatusAssigned && parent.Status != tasks.TaskStatusRunning {
+		return "", nil, stderrors.New(createTaskParentDenied)
+	}
+	return requested, parent, nil
+}
+
 // handleCreateTask processes CreateTaskRequest messages
 func (s *GatewayServer) handleCreateTask(
 	ctx context.Context,
@@ -344,6 +395,17 @@ func (s *GatewayServer) handleCreateTask(
 
 	// Extract correlation ID for optional response path.
 	requestID := req.GetRequestId()
+	originatingScheduleID := strings.TrimSpace(req.GetOriginatingScheduleId())
+	if originatingScheduleID != "" && identity.Type != models.PrincipalWorkflowEngine {
+		errMsg := "originating_schedule_id is reserved for the authenticated WorkflowEngine"
+		sendClientError(client, "ERR_INVALID_ARGUMENT", errMsg)
+		if requestID != "" {
+			_ = client.SafeSend(&pb.DownstreamMessage{Payload: &pb.DownstreamMessage_CreateTask{CreateTask: &pb.CreateTaskResponse{
+				Success: false, ErrorCode: "ERR_INVALID_ARGUMENT", ErrorMessage: errMsg, RequestId: requestID,
+			}}})
+		}
+		return nil
+	}
 
 	// mintedTaskToken is populated by maybeIssueTaskToken below (only on the
 	// success path, only when the caller passed target_identity AND the
@@ -380,6 +442,12 @@ func (s *GatewayServer) handleCreateTask(
 				},
 			},
 		})
+	}
+	if req.GetRequiredDownstreamAuthorityHops() > 1 {
+		errMsg := "required_downstream_authority_hops currently supports only 0 or 1"
+		sendClientError(client, "ERR_INVALID_ARGUMENT", errMsg)
+		sendCreateTaskResponse(false, "", "", "ERR_INVALID_ARGUMENT", errMsg, "")
+		return nil
 	}
 
 	if s.orchestration == nil || s.orchestration.TaskService == nil {
@@ -443,12 +511,37 @@ func (s *GatewayServer) handleCreateTask(
 		return nil
 	}
 
-	resolvedAuthority, err := s.resolveAuthorizationContext(ctx, client, identity, req.GetAuthorization())
+	parentTaskID, parentTask, err := s.resolveCreateTaskParent(ctx, client, identity, taskWorkspace, req.GetParentTaskId())
+	if err != nil {
+		s.logTaskCreateAudit(ctx, identity, client.SessionUUID, taskWorkspace, "", false, createTaskParentDenied, buildTaskCreateAuditMetadata(req, assignmentMode, taskWorkspace), nil)
+		sendClientError(client, "ERR_PERMISSION_DENIED", createTaskParentDenied)
+		sendCreateTaskResponse(false, "", "", "ERR_PERMISSION_DENIED", createTaskParentDenied, "")
+		return nil
+	}
+
+	var resolvedAuthority *acl.ResolvedAuthority
+	if originatingScheduleID != "" {
+		resolvedAuthority, err = s.resolveAuthorizationContextForAudience(ctx, client, identity, req.GetAuthorization(), parentTaskID, originatingScheduleID)
+	} else {
+		resolvedAuthority, err = s.resolveAuthorizationContextForTask(ctx, client, identity, req.GetAuthorization(), parentTaskID)
+	}
 	if err != nil {
 		s.logTaskCreateAudit(ctx, identity, client.SessionUUID, taskWorkspace, "", false, "invalid authorization context: "+err.Error(), buildTaskCreateAuditMetadata(req, assignmentMode, taskWorkspace), nil)
-		sendClientError(client, "ERR_PERMISSION_DENIED", "invalid authorization context")
-		sendCreateTaskResponse(false, "", "", "ERR_PERMISSION_DENIED", "invalid authorization context", "")
+		errorCode := "ERR_PERMISSION_DENIED"
+		if originatingScheduleID != "" {
+			errorCode = "ERR_AUTHORITY_INVALID"
+		}
+		sendClientError(client, errorCode, "invalid authorization context")
+		sendCreateTaskResponse(false, "", "", errorCode, "invalid authorization context", "")
 		return nil
+	}
+	if originatingScheduleID != "" && resolvedAuthority != nil {
+		if err := s.validateWorkflowScheduleSourceAuthority(ctx, resolvedAuthority.Grant); err != nil {
+			s.logTaskCreateAudit(ctx, identity, client.SessionUUID, taskWorkspace, "", false, "invalid schedule authority source: "+err.Error(), buildTaskCreateAuditMetadata(req, assignmentMode, taskWorkspace), resolvedAuthority)
+			sendClientError(client, "ERR_AUTHORITY_INVALID", "workflow schedule authority is no longer valid")
+			sendCreateTaskResponse(false, "", "", "ERR_AUTHORITY_INVALID", "workflow schedule authority is no longer valid", "")
+			return nil
+		}
 	}
 
 	// Nested task creation: when an agent currently delivering a task under a
@@ -456,11 +549,18 @@ func (s *GatewayServer) handleCreateTask(
 	// AuthorizationContext, auto-derive from its task grant so the new task
 	// inherits the subject, root subject, and grant lineage.
 	if resolvedAuthority == nil {
-		inherited, inheritedErr := s.loadCallerTaskAuthority(ctx, client, identity)
+		inherited, inheritedErr := s.loadTaskAuthorityForActor(ctx, parentTaskID, identity)
 		if inheritedErr != nil {
 			logging.Logger.Warn().Err(inheritedErr).Str("identity", identity.String()).Msg("failed to load caller task authority for nested CreateTask")
 		}
 		resolvedAuthority = inherited
+	}
+	if req.GetRequiredDownstreamAuthorityHops() > 0 && resolvedAuthority == nil {
+		errMsg := "required downstream authority hops require on-behalf-of task authority"
+		s.logTaskCreateAudit(ctx, identity, client.SessionUUID, taskWorkspace, "", false, errMsg, buildTaskCreateAuditMetadata(req, assignmentMode, taskWorkspace), nil)
+		sendClientError(client, "ERR_AUTHORITY_REQUIRED", errMsg)
+		sendCreateTaskResponse(false, "", "", "ERR_AUTHORITY_REQUIRED", errMsg, "")
+		return nil
 	}
 
 	// The WorkflowEngine is a system principal whose core function is to create
@@ -501,24 +601,44 @@ func (s *GatewayServer) handleCreateTask(
 	}
 
 	// Create task request
-	metadata = applyResolvedAuthorityToTaskMetadata(metadata, resolvedAuthority)
+	// A schedule grant is a private transport credential. The derived task grant
+	// is persisted later by establishTaskAuthorityGrant, but the source schedule
+	// grant must never be copied into caller-visible task metadata.
+	if originatingScheduleID == "" {
+		metadata = applyResolvedAuthorityToTaskMetadata(metadata, resolvedAuthority)
+	}
+	correlationID := req.GetCorrelationId()
+	rootTaskID := req.GetRootTaskId()
+	if parentTask != nil {
+		if correlationID == "" {
+			correlationID = parentTask.CorrelationID
+		}
+		if rootTaskID == "" {
+			rootTaskID = parentTask.RootTaskID
+			if rootTaskID == "" {
+				rootTaskID = parentTask.TaskID
+			}
+		}
+	}
 	taskReq := &orchestration.CreateTaskRequest{
-		TaskType:             req.TaskType,
-		TaskClass:            int32(req.TaskClass),
-		Workspace:            taskWorkspace,
-		AssignmentMode:       assignmentMode,
-		TargetAgentID:        req.TargetAgentId,
-		TargetImplementation: req.TargetImplementation,
-		LaunchParamOverrides: launchParamOverrides,
-		Metadata:             metadata,
-		Payload:              req.Payload,
-		CreatorIdentity:      identity,
-		ParentTaskID:         client.AssociatedTaskID,
-		RetryPolicy:          retryPolicyFromProto(req.GetRetryPolicy()),
-		Priority:             int32(req.GetPriority()),
-		CorrelationID:        req.GetCorrelationId(),
-		RootTaskID:           req.GetRootTaskId(),
-		CompletionEvent:      completionConfigFromProto(req.GetCompletionEvent()),
+		TaskType:                        req.TaskType,
+		TaskClass:                       int32(req.TaskClass),
+		Workspace:                       taskWorkspace,
+		AssignmentMode:                  assignmentMode,
+		TargetAgentID:                   req.TargetAgentId,
+		TargetImplementation:            req.TargetImplementation,
+		LaunchParamOverrides:            launchParamOverrides,
+		Metadata:                        metadata,
+		Payload:                         req.Payload,
+		CreatorIdentity:                 identity,
+		ParentTaskID:                    parentTaskID,
+		RetryPolicy:                     retryPolicyFromProto(req.GetRetryPolicy()),
+		Priority:                        int32(req.GetPriority()),
+		CorrelationID:                   correlationID,
+		RootTaskID:                      rootTaskID,
+		CompletionEvent:                 completionConfigFromProto(req.GetCompletionEvent()),
+		TargetOfflinePolicy:             orchestration.TargetOfflinePolicy(req.GetTargetOfflinePolicy()),
+		RequiredDownstreamAuthorityHops: int(req.GetRequiredDownstreamAuthorityHops()),
 	}
 	// Fix AA: seed the task's Authority.SubjectType/SubjectID from the resolved
 	// OBO subject so downstream consumers (buildTaskContext →
@@ -661,6 +781,13 @@ func (s *GatewayServer) handleCreateTask(
 
 		// Get target client session
 		if targetClient := s.getClientByIdentity(targetIdentity); targetClient != nil {
+			assignedTask, taskErr := s.taskStore.GetTask(ctx, response.TaskID)
+			if taskErr != nil {
+				_ = s.orchestration.TaskService.CancelTask(ctx, response.TaskID)
+				sendClientError(client, "ERR_TASK_CREATE_FAILED", "unable to load assigned task authority")
+				sendCreateTaskResponse(false, "", "", "ERR_TASK_CREATE_FAILED", "unable to load assigned task authority", "")
+				return taskErr
+			}
 			assignment := &pb.TaskAssignment{
 				TaskId:     response.TaskID,
 				TaskType:   req.TaskType,
@@ -671,6 +798,7 @@ func (s *GatewayServer) handleCreateTask(
 				Payload:    req.Payload,
 			}
 			applyHibernationHandoffToAssignment(assignment, taskReq.Metadata)
+			applyTaskAuthorizationToAssignment(assignment, assignedTask)
 
 			err := targetClient.SafeSend(&pb.DownstreamMessage{
 				Payload: &pb.DownstreamMessage_TaskAssignment{
@@ -706,6 +834,15 @@ func buildTaskCreateAuditMetadata(req *pb.CreateTaskRequest, assignmentMode, wor
 	}
 	if req.TargetImplementation != "" {
 		metadata["target_implementation"] = req.TargetImplementation
+	}
+	if req.ParentTaskId != "" {
+		metadata["parent_task_id"] = req.ParentTaskId
+	}
+	if req.GetRequiredDownstreamAuthorityHops() > 0 {
+		metadata["required_downstream_authority_hops"] = req.GetRequiredDownstreamAuthorityHops()
+	}
+	if req.GetOriginatingScheduleId() != "" {
+		metadata["originating_schedule_id"] = req.GetOriginatingScheduleId()
 	}
 	if len(req.LaunchParamOverrides) > 0 {
 		metadata["launch_param_overrides"] = len(req.LaunchParamOverrides)
@@ -962,6 +1099,31 @@ func applyHibernationHandoffToAssignment(assignment *pb.TaskAssignment, metadata
 			assignment.ResumeSessionId = s
 		}
 	}
+}
+
+// applyTaskAuthorizationToAssignment projects the authoritative, assignee-
+// bound task grant onto the typed assignment surface. It deliberately reads
+// Task.Authority rather than the metadata mirror, which is retained only for
+// audit and backward compatibility.
+func applyTaskAuthorizationToAssignment(assignment *pb.TaskAssignment, task *tasks.ExtendedTask) {
+	if assignment == nil || task == nil {
+		return
+	}
+	authority := task.Authority
+	if authority.AuthorityGrantID == "" && authority.SubjectType == "" && authority.SubjectID == "" {
+		return
+	}
+	authorization := &pb.AuthorizationContext{
+		AuthorityMode: authority.Mode,
+		GrantId:       authority.AuthorityGrantID,
+	}
+	if authority.SubjectType != "" || authority.SubjectID != "" {
+		authorization.Subject = &pb.PrincipalRef{
+			PrincipalType: authority.SubjectType,
+			PrincipalId:   authority.SubjectID,
+		}
+	}
+	assignment.Authorization = authorization
 }
 
 // configureOrchestratorDispatcher sets up the callback for the orchestrator task dispatcher
@@ -1359,6 +1521,7 @@ func (s *GatewayServer) deliverPoolTaskToWorker(ctx context.Context, taskID, tar
 		Payload:    payload,
 	}
 	applyHibernationHandoffToAssignment(assignment, task.Metadata)
+	applyTaskAuthorizationToAssignment(assignment, task)
 
 	err = worker.SafeSend(&pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_TaskAssignment{

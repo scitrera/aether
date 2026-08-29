@@ -84,6 +84,27 @@ toolchain), plus a virtualenv with the pinned `grpcio-tools` and
 `npm install` in `sdk/typescript`. If repo-tools runs outside that virtualenv,
 point it at the right interpreter with `--python .venv/bin/python`.
 
+### Releasing
+
+A release is one action: push the root tag. Everything else is CI.
+
+```bash
+# versions.yaml already holds the version; sync-versions keeps manifests in step
+git checkout main && git pull
+git tag v0.2.3 && git push origin v0.2.3
+```
+
+That single tag triggers `publish-python`, `publish-npm`, `publish-go` and
+`build-docker`. `publish-go` creates and pushes the `api/`, `sdk/go/` and
+`server/` tags that Go resolves nested modules by — they are the artifact of a
+release, not the trigger for one, and nothing keys off them.
+
+Push **only** the root tag. GitHub creates no push event when more than three
+tags arrive at once, so pushing the module tags yourself alongside it silently
+fires no workflows at all.
+
+There is no tag-release script any more; `publish-go` replaced it.
+
 ### Docker Build
 ```bash
 # Build context is the repo root

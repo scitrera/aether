@@ -425,6 +425,9 @@ class IncomingMessageLike(Protocol):
     Consumers see .source_topic and .payload without knowing it's protobuf."""
     source_topic: str
     payload: bytes
+    workspace: str
+    access_receipt: aether_pb2.AccessDecisionReceipt
+    forwarded_authorization: aether_pb2.ForwardedAuthorization
 
 
 @runtime_checkable

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 // proxyChunkSize is the maximum body size sent inline. Bodies larger than this
@@ -276,6 +277,7 @@ type proxyOptions struct {
 	streamResponse bool
 	streamIdleMs   int64
 	streamMaxBytes int64
+	checkedAccess  *pb.ResourceAccessRequest
 }
 
 // ProxyOpt configures a ProxyHTTP call.
@@ -287,6 +289,19 @@ type ProxyOpt func(*proxyOptions)
 // explicit name is supplied.
 func WithBackend(name string) ProxyOpt {
 	return func(o *proxyOptions) { o.backend = name }
+}
+
+// WithCheckedAccess asks the gateway to authorize one exact logical resource
+// before delivering this HTTP request. The access descriptor is cloned so the
+// SDK can supply a missing correlation ID without mutating caller-owned state.
+func WithCheckedAccess(access *pb.ResourceAccessRequest) ProxyOpt {
+	return func(o *proxyOptions) {
+		if access == nil {
+			o.checkedAccess = nil
+			return
+		}
+		o.checkedAccess = proto.Clone(access).(*pb.ResourceAccessRequest)
+	}
 }
 
 // WithStreamResponse opts into unbounded response streaming (SSE / log tails
@@ -387,6 +402,12 @@ func (c *BaseClient) ProxyHTTP(ctx context.Context, target string, req *http.Req
 		StreamResponseIndefinitely: o.streamResponse,
 		StreamIdleTimeoutMs:        o.streamIdleMs,
 		MaxResponseBodyBytes:       o.streamMaxBytes,
+	}
+	if o.checkedAccess != nil {
+		if o.checkedAccess.GetCorrelationId() == "" {
+			o.checkedAccess.CorrelationId = requestID
+		}
+		proxyReq.CheckedAccess = o.checkedAccess
 	}
 
 	if !chunked {

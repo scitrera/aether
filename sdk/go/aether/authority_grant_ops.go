@@ -211,6 +211,16 @@ func (a *AuthorityGrantOps) Revoke(ctx context.Context, grantID string) (*pb.Aut
 	}, 0)
 }
 
+// RevokeForWorkflowSchedule revokes a private workflow_schedule grant. The
+// gateway accepts the audience context only from an authenticated
+// WorkflowEngine and requires it to match the grant exactly.
+func (a *AuthorityGrantOps) RevokeForWorkflowSchedule(ctx context.Context, grantID, scheduleID string) (*pb.AuthorityGrantResponse, error) {
+	return a.SendOpSync(ctx, &pb.AuthorityGrantOperation{
+		Op: pb.AuthorityGrantOperation_REVOKE, GrantId: grantID,
+		WorkflowScheduleId: scheduleID,
+	}, 0)
+}
+
 // ListOpts paginates and filters list operations.
 type ListOpts struct {
 	AudienceType   string

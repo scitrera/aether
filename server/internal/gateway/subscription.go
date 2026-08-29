@@ -8,10 +8,10 @@ import (
 	"unsafe"
 
 	pb "github.com/scitrera/aether/api/proto"
+	"github.com/scitrera/aether/sdk/go/aether"
 	"github.com/scitrera/aether/server/internal/logging"
 	"github.com/scitrera/aether/server/internal/tracing"
 	"github.com/scitrera/aether/server/pkg/models"
-	"github.com/scitrera/aether/sdk/go/aether"
 	bp "github.com/scitrera/go-backpressure"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/protobuf/proto"
@@ -256,9 +256,12 @@ func (s *GatewayServer) createMessageHandler(client *ClientSession) func([]byte)
 		client.DeliverWithPriority(client.deriveDeliverCtx(), aether.PriorityRequest, &pb.DownstreamMessage{
 			Payload: &pb.DownstreamMessage_Msg{
 				Msg: &pb.IncomingMessage{
-					SourceTopic: parsed.env.Source,
-					Payload:     parsed.env.Payload,
-					MessageType: parsed.env.MessageType,
+					SourceTopic:            parsed.env.Source,
+					Payload:                parsed.env.Payload,
+					MessageType:            parsed.env.MessageType,
+					Workspace:              parsed.env.GetWorkspace(),
+					AccessReceipt:          parsed.env.GetAccessReceipt(),
+					ForwardedAuthorization: parsed.env.GetForwardedAuthorization(),
 					// Mirror the gateway-stamped OBO subject onto delivery so the
 					// recipient can identify the user the message was sent for.
 					OnBehalfSubject: parsed.env.GetOnBehalfSubject(),

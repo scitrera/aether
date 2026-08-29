@@ -1,8 +1,10 @@
 package workflow
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/vmihailenco/msgpack/v5"
@@ -10,6 +12,8 @@ import (
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/sdk/go/aether"
 )
+
+const scheduledTaskCreateTimeout = 10 * time.Second
 
 // ActionDef defines an action to dispatch to an agent via Aether.
 type ActionDef struct {
@@ -22,7 +26,19 @@ type ActionDef struct {
 	// create_task fields
 	TaskType             string `json:"task_type,omitempty" yaml:"task_type,omitempty"`
 	TargetImplementation string `json:"target_implementation,omitempty" yaml:"target_implementation,omitempty"`
-	Payload              any    `json:"payload,omitempty" yaml:"payload,omitempty"`
+	// TargetAgentID selects TARGETED assignment when a schedule must run on one
+	// concrete worker (for example, a worker-authoritative filesystem view).
+	// Empty preserves the historical implementation-pooled assignment.
+	TargetAgentID string `json:"target_agent_id,omitempty" yaml:"target_agent_id,omitempty"`
+	// TargetOfflinePolicy controls exact-target behavior while that identity is
+	// disconnected: orchestrate, queue, or reject. Empty preserves the released
+	// orchestration behavior.
+	TargetOfflinePolicy string `json:"target_offline_policy,omitempty" yaml:"target_offline_policy,omitempty"`
+	Payload             any    `json:"payload,omitempty" yaml:"payload,omitempty"`
+	// PayloadEncoding controls how Payload becomes CreateTaskRequest.payload.
+	// Empty or "msgpack" preserves the historical wire encoding; "json" is for
+	// versioned task envelopes shared with non-msgpack consumers.
+	PayloadEncoding string `json:"payload_encoding,omitempty" yaml:"payload_encoding,omitempty"`
 	// Optional retry policy for create_task actions. When set, the task
 	// store re-pends the task with a policy-driven next_retry_at on
 	// FailTask. Omitted = legacy hard-coded max_retries=3 behavior.
@@ -41,6 +57,14 @@ type ActionDef struct {
 	// CompletionEvent opts the spawned task into "feed B": it emits a domain
 	// event onto the event plane at its terminal status, which a join can gather.
 	CompletionEvent *CompletionEventConfig `json:"completion_event,omitempty" yaml:"completion_event,omitempty"`
+	// RequireTaskAuthority makes the schedule fail closed unless it has a
+	// private gateway-minted authority envelope. The envelope is stored outside
+	// this action JSON and is attached only to the CreateTask transport request.
+	RequireTaskAuthority bool `json:"require_task_authority,omitempty" yaml:"require_task_authority,omitempty"`
+	// RequiredDownstreamAuthorityHops reserves delegation capacity on the task
+	// grant established for the scheduled task. Transport currently accepts 0
+	// or 1.
+	RequiredDownstreamAuthorityHops uint32 `json:"required_downstream_authority_hops,omitempty" yaml:"required_downstream_authority_hops,omitempty"`
 }
 
 // CompletionEventConfig is the create_task-destination form of a task's feed-B
@@ -61,15 +85,34 @@ type ToolCallPayload struct {
 
 // Executor dispatches actions to agents via the Aether SDK.
 type Executor struct {
-	client           *aether.WorkflowEngineClient
-	defaultWorkspace string
+	client                  *aether.WorkflowEngineClient
+	defaultWorkspace        string
+	createScheduledTaskSync func(context.Context, string, string, aether.CreateTaskOptions, time.Duration) (*aether.CreateTaskResponse, error)
+}
+
+// ScheduleAuthorityInvalidError marks a permanent authorization failure. The
+// scheduler blocks the schedule and records a no-task skip instead of retrying
+// the same invalid credential on every poll.
+type ScheduleAuthorityInvalidError struct {
+	Code    string
+	Message string
+}
+
+func (e *ScheduleAuthorityInvalidError) Error() string {
+	if e.Code == "" {
+		return e.Message
+	}
+	return e.Code + ": " + e.Message
 }
 
 func NewExecutor(client *aether.WorkflowEngineClient, defaultWorkspace string) *Executor {
-	return &Executor{
-		client:           client,
-		defaultWorkspace: defaultWorkspace,
+	executor := &Executor{
+		client: client, defaultWorkspace: defaultWorkspace,
 	}
+	if client != nil {
+		executor.createScheduledTaskSync = client.CreateTaskSync
+	}
+	return executor
 }
 
 // DispatchAction routes an action based on its Type field.
@@ -81,6 +124,79 @@ func (e *Executor) DispatchAction(action *ActionDef) error {
 		return e.dispatchMessage(action)
 	default:
 		return fmt.Errorf("unknown action type: %s", action.Type)
+	}
+}
+
+// DispatchScheduledAction confirms scheduled task creation before the scheduler
+// advances its durable occurrence cursor. A lost response leaves the cursor due;
+// the retry uses the scheduler's per-occurrence idempotency key and converges on
+// the already-created task instead of creating a duplicate. Non-task actions
+// retain their existing dispatch behavior.
+func (e *Executor) DispatchScheduledAction(ctx context.Context, action *ActionDef, scheduleID string, authorization *pb.AuthorizationContext) error {
+	if action == nil {
+		return fmt.Errorf("scheduled action is required")
+	}
+	if action.Type != "create_task" {
+		return e.DispatchAction(action)
+	}
+	if action.RequireTaskAuthority && authorization == nil {
+		return &ScheduleAuthorityInvalidError{Code: "ERR_AUTHORITY_REQUIRED", Message: "schedule action requires task authority"}
+	}
+	request, err := buildCreateTaskRequest(action, e.defaultWorkspace)
+	if err != nil {
+		return err
+	}
+	createTask := e.createScheduledTaskSync
+	if createTask == nil {
+		if e.client == nil {
+			return fmt.Errorf("scheduled task client is not configured")
+		}
+		createTask = e.client.CreateTaskSync
+	}
+	response, err := createTask(ctx, request.TaskType, request.Workspace, aether.CreateTaskOptions{
+		TargetAgentID:                   request.TargetAgentId,
+		TargetOfflinePolicy:             request.TargetOfflinePolicy,
+		TargetIdentity:                  request.TargetIdentity,
+		TargetImplementation:            request.TargetImplementation,
+		LaunchParamOverrides:            request.LaunchParamOverrides,
+		Metadata:                        request.Metadata,
+		Payload:                         request.Payload,
+		AssignmentMode:                  aether.TaskAssignmentMode(request.AssignmentMode.String()),
+		TaskClass:                       request.TaskClass,
+		ContextID:                       request.ContextId,
+		RetryPolicy:                     request.RetryPolicy,
+		Priority:                        request.Priority,
+		IdempotencyKey:                  request.IdempotencyKey,
+		CorrelationID:                   request.CorrelationId,
+		RootTaskID:                      request.RootTaskId,
+		CompletionEvent:                 request.CompletionEvent,
+		ParentTaskID:                    request.ParentTaskId,
+		Authorization:                   authorization,
+		RequiredDownstreamAuthorityHops: action.RequiredDownstreamAuthorityHops,
+		OriginatingScheduleID:           scheduleID,
+	}, scheduledTaskCreateTimeout)
+	if err != nil {
+		return fmt.Errorf("confirm scheduled task creation: %w", err)
+	}
+	if response == nil || !response.Success {
+		message := "no response"
+		if response != nil && response.ErrorMessage != "" {
+			message = response.ErrorMessage
+		}
+		if response != nil && isPermanentScheduleAuthorityCode(response.ErrorCode) {
+			return &ScheduleAuthorityInvalidError{Code: response.ErrorCode, Message: message}
+		}
+		return fmt.Errorf("scheduled task creation was rejected: %s", message)
+	}
+	return nil
+}
+
+func isPermanentScheduleAuthorityCode(code string) bool {
+	switch code {
+	case "ERR_AUTHORITY_INVALID", "ERR_AUTHORITY_REQUIRED", "ERR_PERMISSION_DENIED":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -123,33 +239,64 @@ func (e *Executor) dispatchMessage(action *ActionDef) error {
 
 // dispatchCreateTask creates an Aether task from a schedule action.
 func (e *Executor) dispatchCreateTask(action *ActionDef) error {
-	if action.TaskType == "" {
-		return fmt.Errorf("task_type is required for create_task action")
+	request, err := buildCreateTaskRequest(action, e.defaultWorkspace)
+	if err != nil {
+		return err
 	}
 
+	log.Debug().
+		Str("task_type", request.TaskType).
+		Str("workspace", request.Workspace).
+		Str("target_impl", request.TargetImplementation).
+		Str("target_agent", request.TargetAgentId).
+		Msg("dispatching create_task action")
+	return e.client.Send(&pb.UpstreamMessage{
+		Payload: &pb.UpstreamMessage_CreateTask{CreateTask: request},
+	})
+}
+
+func buildCreateTaskRequest(action *ActionDef, defaultWorkspace string) (*pb.CreateTaskRequest, error) {
+	if action == nil {
+		return nil, fmt.Errorf("create_task action is required")
+	}
+	if action.TaskType == "" {
+		return nil, fmt.Errorf("task_type is required for create_task action")
+	}
 	workspace := action.Workspace
 	if workspace == "" {
-		workspace = e.defaultWorkspace
+		workspace = defaultWorkspace
 	}
-
 	var payload []byte
 	if action.Payload != nil {
 		var err error
-		payload, err = msgpack.Marshal(action.Payload)
-		if err != nil {
-			return fmt.Errorf("msgpack marshal create_task payload: %w", err)
+		switch action.PayloadEncoding {
+		case "", "msgpack":
+			payload, err = msgpack.Marshal(action.Payload)
+			if err != nil {
+				return nil, fmt.Errorf("msgpack marshal create_task payload: %w", err)
+			}
+		case "json":
+			payload, err = json.Marshal(action.Payload)
+			if err != nil {
+				return nil, fmt.Errorf("JSON marshal create_task payload: %w", err)
+			}
+		default:
+			return nil, fmt.Errorf("unsupported create_task payload_encoding %q", action.PayloadEncoding)
 		}
 	}
-
-	targetImpl := action.TargetImplementation
-	metadata := action.Metadata
-
-	log.Debug().
-		Str("task_type", action.TaskType).
-		Str("workspace", workspace).
-		Str("target_impl", targetImpl).
-		Msg("dispatching create_task action")
-
+	assignmentMode := pb.TaskAssignmentMode_POOL
+	targetImplementation := action.TargetImplementation
+	if action.TargetAgentID != "" {
+		assignmentMode = pb.TaskAssignmentMode_TARGETED
+		targetImplementation = ""
+	}
+	offlinePolicy, err := targetOfflinePolicyToProto(action.TargetOfflinePolicy)
+	if err != nil {
+		return nil, err
+	}
+	if offlinePolicy != pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_UNSPECIFIED && assignmentMode != pb.TaskAssignmentMode_TARGETED {
+		return nil, fmt.Errorf("target_offline_policy requires target_agent_id")
+	}
 	var completion *pb.TaskCompletionEvent
 	if action.CompletionEvent != nil {
 		completion = &pb.TaskCompletionEvent{
@@ -157,8 +304,37 @@ func (e *Executor) dispatchCreateTask(action *ActionDef) error {
 			EventName: action.CompletionEvent.EventName,
 		}
 	}
+	return &pb.CreateTaskRequest{
+		TaskType:                        action.TaskType,
+		Workspace:                       workspace,
+		AssignmentMode:                  assignmentMode,
+		TargetImplementation:            targetImplementation,
+		TargetAgentId:                   action.TargetAgentID,
+		Metadata:                        action.Metadata,
+		Payload:                         payload,
+		RetryPolicy:                     retryConfigToProto(action.Retry),
+		IdempotencyKey:                  action.IdempotencyKey,
+		CorrelationId:                   action.CorrelationID,
+		CompletionEvent:                 completion,
+		TaskClass:                       pb.TaskClass_TASK_CLASS_BACKGROUND,
+		TargetOfflinePolicy:             offlinePolicy,
+		RequiredDownstreamAuthorityHops: action.RequiredDownstreamAuthorityHops,
+	}, nil
+}
 
-	return e.CreateTaskWithType(workspace, action.TaskType, targetImpl, metadata, payload, action.Retry, action.IdempotencyKey, action.CorrelationID, completion)
+func targetOfflinePolicyToProto(value string) (pb.TargetOfflinePolicy, error) {
+	switch value {
+	case "":
+		return pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_UNSPECIFIED, nil
+	case "orchestrate":
+		return pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_ORCHESTRATE, nil
+	case "queue":
+		return pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_QUEUE, nil
+	case "reject":
+		return pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_REJECT, nil
+	default:
+		return pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_UNSPECIFIED, fmt.Errorf("unsupported target_offline_policy %q", value)
+	}
 }
 
 // EmitEvent publishes a synthetic event onto the event plane (event.*) as a
@@ -252,6 +428,8 @@ func (e *Executor) DispatchTransformResult(result *TransformResult) error {
 		Metadata:             result.Metadata,
 		TaskType:             result.TaskType,
 		TargetImplementation: result.TargetImplementation,
+		TargetAgentID:        result.TargetAgentID,
+		PayloadEncoding:      result.PayloadEncoding,
 		Payload:              result.Payload,
 		CorrelationID:        result.CorrelationID,
 		CompletionEvent:      result.CompletionEvent,

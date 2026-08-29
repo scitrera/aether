@@ -38,6 +38,7 @@ from scitrera_aether_client._common import (
     OPAQUE,
     SELF_ASSIGN,
     TARGETED,
+    TARGET_OFFLINE_QUEUE,
 )
 from scitrera_aether_client.exceptions import (
     AuthenticationError,
@@ -457,6 +458,7 @@ class TestBaseAsyncAetherClientCreateTask:
             task_type="echo",
             workspace="test-workspace",
             metadata={"key": "value"},
+            parent_task_id="parent-123",
         )
 
         msg = client._request_queue.get_nowait()
@@ -465,6 +467,7 @@ class TestBaseAsyncAetherClientCreateTask:
         assert msg.create_task.workspace == "test-workspace"
         assert msg.create_task.assignment_mode == SELF_ASSIGN
         assert msg.create_task.metadata["key"] == "value"
+        assert msg.create_task.parent_task_id == "parent-123"
 
     @pytest.mark.asyncio
     async def test_create_task_targeted(self):
@@ -475,12 +478,14 @@ class TestBaseAsyncAetherClientCreateTask:
             task_type="process",
             workspace="test-workspace",
             target_agent_id="agent-123",
+            target_offline_policy=TARGET_OFFLINE_QUEUE,
         )
 
         msg = client._request_queue.get_nowait()
         assert msg.HasField("create_task")
         assert msg.create_task.assignment_mode == TARGETED
         assert msg.create_task.target_agent_id == "agent-123"
+        assert msg.create_task.target_offline_policy == TARGET_OFFLINE_QUEUE
 
     @pytest.mark.asyncio
     async def test_create_task_with_launch_params(self):
@@ -1585,9 +1590,12 @@ class TestAsyncResponseHandling:
             task_type="sandbox_lease",
             workspace="_apps",
             timeout=0.1,
+            parent_task_id="parent-sync",
         )
 
         assert result is None
+        msg = client._request_queue.get_nowait()
+        assert msg.create_task.parent_task_id == "parent-sync"
 
 
 # =============================================================================
@@ -2107,4 +2115,3 @@ class TestListenLoopErrorCorrelation:
         assert errors_received[0].code == "CONNECTION_ERROR"
         # Cleanup.
         fut.cancel()
-

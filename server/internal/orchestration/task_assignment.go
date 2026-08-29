@@ -197,7 +197,27 @@ type CreateTaskRequest struct {
 	// CompletionEvent, when non-nil, opts the task into "feed B": the server emits
 	// a domain event onto event::* when the task reaches a selected terminal status.
 	CompletionEvent *tasks.TaskCompletionConfig
+
+	// TargetOfflinePolicy controls TARGETED creation when the exact target is
+	// absent. Zero preserves the released orchestration behavior.
+	TargetOfflinePolicy TargetOfflinePolicy
+
+	// RequiredDownstreamAuthorityHops is the delegation capacity the final
+	// execution identity must retain after task authority is established.
+	// Transport validation currently limits this to 0 or 1.
+	RequiredDownstreamAuthorityHops int
 }
+
+// TargetOfflinePolicy is kept independent from protobuf types so the task
+// assignment service remains transport-neutral.
+type TargetOfflinePolicy int32
+
+const (
+	TargetOfflinePolicyUnspecified TargetOfflinePolicy = iota
+	TargetOfflinePolicyOrchestrate
+	TargetOfflinePolicyQueue
+	TargetOfflinePolicyReject
+)
 
 // principalTypeStringForTask maps a models.PrincipalType to the lowercase
 // canonical string form used in task Authority columns ("user", "agent",
@@ -362,20 +382,16 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 	if req.TargetAgentID == "" {
 		return nil, fmt.Errorf("target_agent_id required for targeted assignment")
 	}
+	switch req.TargetOfflinePolicy {
+	case TargetOfflinePolicyUnspecified, TargetOfflinePolicyOrchestrate, TargetOfflinePolicyQueue, TargetOfflinePolicyReject:
+	default:
+		return nil, fmt.Errorf("unsupported target offline policy %d", req.TargetOfflinePolicy)
+	}
 
 	// Parse target agent identity
 	targetIdentity, err := models.ParseIdentity(req.TargetAgentID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid target_agent_id: %w", err)
-	}
-
-	// REQUIRED: Validate target agent implementation exists in registry
-	exists, err := tas.agentRegistry.Exists(ctx, targetIdentity.Implementation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check agent registry: %w", err)
-	}
-	if !exists {
-		return nil, fmt.Errorf("target agent implementation '%s' not found in registry", targetIdentity.Implementation)
 	}
 
 	taskID := uuid.New().String()
@@ -402,6 +418,31 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 	applyRetryPolicyToTask(task)
 	applyCorrelationToTask(task, req)
 
+	// A connected exact identity is already authoritative evidence that the
+	// target can consume the task. Requiring an orchestration registry entry in
+	// that case rejects durable tasks for ad-hoc/static workers even though no
+	// launch is needed. Offline targets still require a registered implementation
+	// before this service can ask an orchestrator to start them.
+	isOnline := tas.sessionRegistry.IsOnline(targetIdentity)
+	if !isOnline {
+		switch req.TargetOfflinePolicy {
+		case TargetOfflinePolicyUnspecified, TargetOfflinePolicyOrchestrate:
+			exists, err := tas.agentRegistry.Exists(ctx, targetIdentity.Implementation)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check agent registry: %w", err)
+			}
+			if !exists {
+				return nil, fmt.Errorf("target agent implementation '%s' not found in registry", targetIdentity.Implementation)
+			}
+		case TargetOfflinePolicyQueue:
+			if req.TaskType == "agent_startup" {
+				return nil, fmt.Errorf("target offline policy queue is not valid for agent_startup tasks")
+			}
+		case TargetOfflinePolicyReject:
+			return nil, fmt.Errorf("target agent %q is offline", req.TargetAgentID)
+		}
+	}
+
 	// Special case: if this IS a startup task (e.g., from admin API), go directly to
 	// createOrchestratedStartupTask which handles all duplicate prevention:
 	// - Checks if agent is already online
@@ -423,9 +464,6 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 		}, nil
 	}
 
-	// Check if target agent is online
-	isOnline := tas.sessionRegistry.IsOnline(targetIdentity)
-
 	if isOnline {
 		// Agent online: create task as pending, then assign
 		// This follows the proper state machine: pending -> assigned
@@ -444,6 +482,21 @@ func (tas *TaskAssignmentService) handleTargeted(ctx context.Context, req *Creat
 			Status:     "assigned",
 			AssignedTo: req.TargetAgentID,
 			Message:    "Task assigned to online agent",
+		}, nil
+	}
+
+	if req.TargetOfflinePolicy == TargetOfflinePolicyQueue {
+		// Static workers have no orchestration registry entry by design. Persist
+		// the exact-target task and let the existing reconnect delivery path claim
+		// it when that identity next appears.
+		task.QueuedForStartup = true
+		if err := tas.taskStore.CreateTask(ctx, task); err != nil {
+			return nil, fmt.Errorf("failed to create queued targeted task: %w", err)
+		}
+		logging.Logger.Info().Str("task_id", taskID).Str("agent_id", req.TargetAgentID).Msg("queued task for offline static agent")
+		return &CreateTaskResponse{
+			TaskID: taskID, Status: "pending", QueuedForStartup: true,
+			Message: "Task queued until the target agent reconnects",
 		}, nil
 	}
 
@@ -1364,7 +1417,13 @@ func (tas *TaskAssignmentService) reconcileTasksByStatus(
 			continue
 		}
 
+		markedDisconnected := task.DisconnectedAt != nil && task.GraceWindowMs > 0
 		if identity == "" {
+			// A marked task is already owned by DisconnectReaper. Preserve its
+			// grace window even if the generic projection cannot resolve an owner.
+			if markedDisconnected {
+				continue
+			}
 			if err := tas.FailTask(ctx, task.TaskID, emptyIdentityFailReason); err != nil {
 				logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Msg("reconcile: failed to mark task as failed (no identity)")
 			} else {
@@ -1380,7 +1439,37 @@ func (tas *TaskAssignmentService) reconcileTasksByStatus(
 			continue
 		}
 
+		// A running task with an explicit disconnect marker is owned by the
+		// DisconnectReaper. If the long-lived owner is online again, clear the
+		// marker now; otherwise leave the task recoverable for its grace window.
+		if markedDisconnected {
+			if active {
+				if err := tas.ClearTaskDisconnected(ctx, task.TaskID); err != nil {
+					logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Str(entityLogKey, identity).Msg("reconcile: failed to clear recovered task disconnect marker")
+				} else {
+					logging.Logger.Info().Str("task_id", task.TaskID).Str(entityLogKey, identity).Msg("reconcile: cleared recovered task disconnect marker")
+					reconciled++
+				}
+			}
+			continue
+		}
+
 		if !active {
+			// Long-lived agent connections are not associated with every task they
+			// claim after startup, so the stream-close path cannot always stamp those
+			// task IDs directly. Backfill the marker here and let DisconnectReaper
+			// enforce the same per-task grace window. This sweep may run again while
+			// the task is disconnected; MarkTaskDisconnected and the marked-task path
+			// above make that path idempotent.
+			if task.Status == tasks.TaskStatusRunning && task.GraceWindowMs > 0 {
+				if err := tas.MarkTaskDisconnected(ctx, task.TaskID, time.Now().UTC()); err != nil {
+					logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Str(entityLogKey, identity).Msg("reconcile: failed to mark task disconnected")
+				} else {
+					logging.Logger.Info().Str("task_id", task.TaskID).Str(entityLogKey, identity).Int64("grace_ms", task.GraceWindowMs).Msg("reconcile: marked orphaned running task disconnected for grace recovery")
+					reconciled++
+				}
+				continue
+			}
 			if err := tas.FailTask(ctx, task.TaskID, offlineFailReason); err != nil {
 				logging.Logger.Error().Err(err).Str("task_id", task.TaskID).Msg("reconcile: failed to mark task as failed")
 			} else {

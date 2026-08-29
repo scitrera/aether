@@ -10,12 +10,12 @@ import (
 
 	"github.com/google/uuid"
 	pb "github.com/scitrera/aether/api/proto"
+	"github.com/scitrera/aether/sdk/go/aether"
 	"github.com/scitrera/aether/server/internal/acl"
 	"github.com/scitrera/aether/server/internal/audit"
 	"github.com/scitrera/aether/server/internal/logging"
 	"github.com/scitrera/aether/server/pkg/identityheaders"
 	"github.com/scitrera/aether/server/pkg/models"
-	"github.com/scitrera/aether/sdk/go/aether"
 	bp "github.com/scitrera/go-backpressure"
 	"google.golang.org/protobuf/proto"
 )
@@ -171,6 +171,17 @@ func (s *GatewayServer) proxyACLCheck(ctx context.Context, client *ClientSession
 	resolved, err := s.resolveAuthorizationContext(ctx, client, sender, authz)
 	if err != nil {
 		return nil, acl.AccessNone, err
+	}
+	// Match SendMessage semantics: an agent/task connection associated with a
+	// task may inherit that task's authority when it did not attach an explicit
+	// AuthorizationContext. This keeps route and exact-resource checks on the
+	// same authority path for checked proxy requests.
+	if resolved == nil && client != nil && client.AssociatedTaskID != "" {
+		if sender.Type == models.PrincipalAgent || sender.Type == models.PrincipalTask {
+			if autoAuth, autoErr := s.loadCallerMessageAuthority(ctx, client, sender); autoErr == nil && autoAuth != nil {
+				resolved = autoAuth
+			}
+		}
 	}
 	if resolved != nil {
 		level, checkErr := s.checkMessageSendWithAuthority(ctx, sender, target, client.SessionUUID, resolved)
@@ -343,6 +354,9 @@ func sendTunnelClose(client *ClientSession, tunnelID string, reason pb.TunnelClo
 func (s *GatewayServer) routeProxyHttpRequest(ctx context.Context, client *ClientSession, sender models.Identity, req *pb.ProxyHttpRequest) {
 	requestID := req.GetRequestId()
 	target := req.GetTargetTopic()
+	// access_receipt is gateway-owned transport metadata. Clear it even when
+	// checked_access is absent so a caller can never forward a forged receipt.
+	req.AccessReceipt = nil
 
 	// 0. Body size cap.
 	maxBody := s.quotaEnforcer.getMaxRequestBodyBytes()
@@ -404,6 +418,30 @@ func (s *GatewayServer) routeProxyHttpRequest(ctx context.Context, client *Clien
 	//      passthrough terminators (e.g. MemoryLayer's in-process terminator).
 	if resolvedAuthority != nil && req.Authorization != nil && resolvedAuthority.Grant != nil {
 		req.Authorization.Resolved = grantToResolvedAuthorityInfo(resolvedAuthority.Grant)
+	}
+
+	// 2.6. Optional exact logical-resource authorization. This is additive to
+	// the route ACL: permission to reach a service does not grant access to
+	// every logical resource behind it. The receipt is bound to the resolved
+	// concrete delivery target and is delivered only on an allow decision.
+	if checked := req.GetCheckedAccess(); checked != nil {
+		accessReceipt, accessErr := evaluateResourceAccess(
+			ctx, s.acl, sender, resolvedAuthority, client.SessionUUID,
+			checked, concrete, time.Now(),
+		)
+		if accessErr != nil {
+			detail := fmt.Sprintf("checked access evaluation failed: %v", accessErr)
+			s.auditProxyHttpFailure(ctx, sender, concrete, requestID, client.SessionUUID, resolvedAuthority, detail)
+			sendProxyHttpError(client, requestID, pb.ProxyError_ACL_DENIED, detail)
+			return
+		}
+		if !accessReceipt.GetAllowed() {
+			detail := "checked logical-resource access denied"
+			s.auditProxyHttpFailure(ctx, sender, concrete, requestID, client.SessionUUID, resolvedAuthority, detail)
+			sendProxyHttpError(client, requestID, pb.ProxyError_ACL_DENIED, detail)
+			return
+		}
+		req.AccessReceipt = accessReceipt
 	}
 
 	// 3. Mint the canonical X-Auth-* trusted header set onto the envelope so

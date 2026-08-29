@@ -700,6 +700,55 @@ func TestProxyHTTP_WithBackend(t *testing.T) {
 	<-done
 }
 
+func TestProxyHTTP_WithCheckedAccessClonesAndBindsCorrelation(t *testing.T) {
+	client := newConnectedBaseClient(t)
+	req := fakeHTTPRequest(t, "GET", "http://ignored/v1/vfs/entry-1", nil)
+	access := &pb.ResourceAccessRequest{
+		ResourceType:        "vfs",
+		ResourceId:          "workspaces/ws-1/entries/entry-1",
+		Operation:           "read",
+		Workspace:           "ws-1",
+		RequiredAccessLevel: 10,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.ProxyHTTP(ctx, "sv::data-connectors", req, WithCheckedAccess(access))
+		done <- err
+	}()
+
+	var pr *pb.ProxyHttpRequest
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for time.Now().Before(deadline) && pr == nil {
+		select {
+		case msg := <-client.RequestQueue():
+			pr = msg.GetProxyHttpRequest()
+		default:
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	if pr == nil {
+		<-done
+		t.Fatal("no ProxyHttpRequest in queue")
+	}
+	if pr.GetCheckedAccess().GetCorrelationId() != pr.GetRequestId() {
+		t.Fatalf("correlation_id = %q, request_id = %q", pr.GetCheckedAccess().GetCorrelationId(), pr.GetRequestId())
+	}
+	if access.GetCorrelationId() != "" {
+		t.Fatalf("WithCheckedAccess mutated caller-owned request: %+v", access)
+	}
+	if pr.GetCheckedAccess() == access {
+		t.Fatal("checked access was not cloned")
+	}
+
+	client.resolveProxyResponse(pr.GetRequestId(), &pb.ProxyHttpResponse{
+		RequestId: pr.GetRequestId(), StatusCode: 200,
+	})
+	<-done
+}
+
 // TestProxyHTTP_NoBackendOption verifies that omitting WithBackend leaves
 // the BackendName field empty (legacy behaviour).
 func TestProxyHTTP_NoBackendOption(t *testing.T) {

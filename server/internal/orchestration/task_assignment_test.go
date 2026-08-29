@@ -1028,10 +1028,10 @@ func TestCancelStaleInteractiveTasks(t *testing.T) {
 
 	now := time.Now()
 	old := now.Add(-2 * time.Hour)
-	mk("old-interactive", taskClassInteractive, tasks.TaskStatusPending, old)     // -> cancelled
-	mk("young-interactive", taskClassInteractive, tasks.TaskStatusPending, now)   // too young -> kept
-	mk("old-background", taskClassBackground, tasks.TaskStatusPending, old)       // wrong class -> kept
-	mk("old-terminal", taskClassInteractive, tasks.TaskStatusCompleted, old)     // terminal -> kept
+	mk("old-interactive", taskClassInteractive, tasks.TaskStatusPending, old)   // -> cancelled
+	mk("young-interactive", taskClassInteractive, tasks.TaskStatusPending, now) // too young -> kept
+	mk("old-background", taskClassBackground, tasks.TaskStatusPending, old)     // wrong class -> kept
+	mk("old-terminal", taskClassInteractive, tasks.TaskStatusCompleted, old)    // terminal -> kept
 
 	n, err := service.CancelStaleInteractiveTasks(ctx, time.Hour)
 	if err != nil {
@@ -1053,7 +1053,238 @@ func TestCancelStaleInteractiveTasks(t *testing.T) {
 	assertStatus("old-interactive", tasks.TaskStatusCancelled) // reaped
 	assertStatus("young-interactive", tasks.TaskStatusPending) // under TTL
 	assertStatus("old-background", tasks.TaskStatusPending)    // not interactive
-	assertStatus("old-terminal", tasks.TaskStatusCompleted)   // already terminal
+	assertStatus("old-terminal", tasks.TaskStatusCompleted)    // already terminal
+}
+
+type alwaysOfflineSessionRegistry struct{}
+
+func (alwaysOfflineSessionRegistry) IsOnline(models.Identity) bool { return false }
+
+func (alwaysOfflineSessionRegistry) IsActive(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+type alwaysOnlineSessionRegistry struct{}
+
+func (alwaysOnlineSessionRegistry) IsOnline(models.Identity) bool { return true }
+
+func (alwaysOnlineSessionRegistry) IsActive(context.Context, string) (bool, error) {
+	return true, nil
+}
+
+func TestTargetedOnlineAgentDoesNotRequireOrchestrationRegistration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "targeted_online.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+	service := NewTaskAssignmentService(taskStore, nil, alwaysOnlineSessionRegistry{}, nil, nil)
+	target := "ag::default::ad-hoc-worker::schedule-1"
+	response, err := service.CreateTask(context.Background(), &CreateTaskRequest{
+		TaskType: "scheduled", Workspace: "default", AssignmentMode: "targeted",
+		TargetAgentID: target,
+		CreatorIdentity: models.Identity{
+			Type: models.PrincipalAgent, Workspace: "_system", Implementation: "workflow", Specifier: "shard0",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response == nil || response.AssignedTo != target || response.Status != "assigned" {
+		t.Fatalf("targeted response = %+v", response)
+	}
+	stored, err := taskStore.GetTask(context.Background(), response.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.AssignedTo != target || stored.Status != tasks.TaskStatusAssigned {
+		t.Fatalf("stored targeted task = %+v", stored)
+	}
+}
+
+func TestTargetedOfflineQueueDoesNotRequireOrchestrationRegistration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "targeted_offline_queue.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+	service := NewTaskAssignmentService(taskStore, nil, alwaysOfflineSessionRegistry{}, nil, nil)
+	target := "ag::default::static-worker::schedule-1"
+	response, err := service.CreateTask(context.Background(), &CreateTaskRequest{
+		TaskType: "scheduled", Workspace: "default", AssignmentMode: "targeted",
+		TargetAgentID: target, TargetOfflinePolicy: TargetOfflinePolicyQueue,
+		CreatorIdentity: models.Identity{
+			Type: models.PrincipalAgent, Workspace: "_system", Implementation: "workflow", Specifier: "shard0",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response == nil || response.Status != "pending" || !response.QueuedForStartup || response.StartupTaskID != "" {
+		t.Fatalf("targeted queue response = %+v", response)
+	}
+	stored, err := taskStore.GetTask(context.Background(), response.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.TargetAgentID != target || stored.Status != tasks.TaskStatusPending || !stored.QueuedForStartup {
+		t.Fatalf("stored queued task = %+v", stored)
+	}
+	targetIdentity, err := models.ParseIdentity(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivered, err := service.DeliverQueuedTasks(context.Background(), targetIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(delivered) != 1 || delivered[0].TaskID != response.TaskID {
+		t.Fatalf("delivered queued tasks = %+v", delivered)
+	}
+	stored, err = taskStore.GetTask(context.Background(), response.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != tasks.TaskStatusAssigned || stored.AssignedTo != target || stored.QueuedForStartup {
+		t.Fatalf("delivered stored task = %+v", stored)
+	}
+}
+
+func TestTargetedOfflineRejectDoesNotCreateTask(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "targeted_offline_reject.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+	service := NewTaskAssignmentService(taskStore, nil, alwaysOfflineSessionRegistry{}, nil, nil)
+	_, err = service.CreateTask(context.Background(), &CreateTaskRequest{
+		TaskType: "scheduled", Workspace: "default", AssignmentMode: "targeted",
+		TargetAgentID: "ag::default::static-worker::schedule-1", TargetOfflinePolicy: TargetOfflinePolicyReject,
+		CreatorIdentity: models.Identity{Type: models.PrincipalAgent, ID: "workflow"},
+	})
+	if err == nil {
+		t.Fatal("offline target was accepted under reject policy")
+	}
+}
+
+func TestReconcileOrphanedTasksDefersMarkedDisconnectsToGraceReaper(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orch_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+
+	ctx := context.Background()
+	const agentID = "ag::ws-test::worker::one"
+	createTask := func(id string, status tasks.TaskStatus) {
+		t.Helper()
+		if err := taskStore.CreateTask(ctx, &tasks.Task{
+			TaskID: id, TaskType: "chat_message", Workspace: "ws-test",
+			Status: status, TargetAgentID: agentID,
+			TaskClass: taskClassInteractive, GraceWindowMs: DefaultGraceWindowMs(taskClassInteractive),
+		}); err != nil {
+			t.Fatalf("CreateTask(%s): %v", id, err)
+		}
+	}
+	createTask("within-disconnect-grace", tasks.TaskStatusRunning)
+	createTask("unmarked-long-lived-agent-task", tasks.TaskStatusRunning)
+	createTask("offline-starting-task", tasks.TaskStatusStarting)
+	if err := taskStore.MarkTaskDisconnected(ctx, "within-disconnect-grace", time.Now()); err != nil {
+		t.Fatalf("MarkTaskDisconnected: %v", err)
+	}
+
+	service := NewTaskAssignmentService(taskStore, nil, alwaysOfflineSessionRegistry{}, nil, nil)
+	reconciled, err := service.ReconcileOrphanedTasks(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileOrphanedTasks: %v", err)
+	}
+	if reconciled != 2 {
+		t.Fatalf("reconciled = %d, want 1 disconnect marker and 1 failed starting task", reconciled)
+	}
+
+	withinGrace, err := taskStore.GetTask(ctx, "within-disconnect-grace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withinGrace.Status != tasks.TaskStatusRunning || withinGrace.DisconnectedAt == nil {
+		t.Fatalf("marked disconnect was not preserved for recovery: %+v", withinGrace)
+	}
+	backfilled, err := taskStore.GetTask(ctx, "unmarked-long-lived-agent-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backfilled.Status != tasks.TaskStatusRunning || backfilled.DisconnectedAt == nil {
+		t.Fatalf("long-lived agent task did not gain a recovery marker: %+v", backfilled)
+	}
+	starting, err := taskStore.GetTask(ctx, "offline-starting-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if starting.Status != tasks.TaskStatusFailed {
+		t.Fatalf("offline starting task status = %q, want failed", starting.Status)
+	}
+}
+
+func TestReconcileOrphanedTasksClearsMarkerAfterLongLivedOwnerReconnects(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orch_tasks.db")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("sql.Open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	taskStore, err := taskssqlite.New(db)
+	if err != nil {
+		t.Fatalf("taskssqlite.New: %v", err)
+	}
+
+	ctx := context.Background()
+	const taskID = "reconnected-long-lived-agent-task"
+	if err := taskStore.CreateTask(ctx, &tasks.Task{
+		TaskID: taskID, TaskType: "chat_message", Workspace: "ws-test",
+		Status: tasks.TaskStatusRunning, TargetAgentID: "ag::ws-test::worker::one",
+		TaskClass: taskClassInteractive, GraceWindowMs: DefaultGraceWindowMs(taskClassInteractive),
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := taskStore.MarkTaskDisconnected(ctx, taskID, time.Now()); err != nil {
+		t.Fatalf("MarkTaskDisconnected: %v", err)
+	}
+
+	service := NewTaskAssignmentService(taskStore, nil, alwaysOnlineSessionRegistry{}, nil, nil)
+	reconciled, err := service.ReconcileOrphanedTasks(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileOrphanedTasks: %v", err)
+	}
+	if reconciled != 1 {
+		t.Fatalf("reconciled = %d, want cleared disconnect marker", reconciled)
+	}
+	got, err := taskStore.GetTask(ctx, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != tasks.TaskStatusRunning || got.DisconnectedAt != nil {
+		t.Fatalf("reconnected task was not restored: %+v", got)
+	}
 }
 
 // TestCancelTask_RetiresQueueRowDirectlyWithoutDispatcher is the root-cause
@@ -1234,10 +1465,10 @@ func TestCancelStaleStartupTasks(t *testing.T) {
 
 	now := time.Now()
 	old := now.Add(-2 * time.Hour)
-	mk("old-startup", startupTaskType, tasks.TaskStatusPending, old)    // -> cancelled
-	mk("young-startup", startupTaskType, tasks.TaskStatusPending, now)  // too young -> kept
-	mk("old-other", "chat_message", tasks.TaskStatusPending, old)       // wrong type -> kept
-	mk("old-claimed", startupTaskType, tasks.TaskStatusAssigned, old)   // claimed (not pending) -> kept
+	mk("old-startup", startupTaskType, tasks.TaskStatusPending, old)   // -> cancelled
+	mk("young-startup", startupTaskType, tasks.TaskStatusPending, now) // too young -> kept
+	mk("old-other", "chat_message", tasks.TaskStatusPending, old)      // wrong type -> kept
+	mk("old-claimed", startupTaskType, tasks.TaskStatusAssigned, old)  // claimed (not pending) -> kept
 
 	n, err := service.CancelStaleStartupTasks(ctx, time.Hour)
 	if err != nil {

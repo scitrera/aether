@@ -356,6 +356,35 @@ def test_proxy_http_explicit_authorization_passthrough():
     assert req.authorization.subject.principal_id == "u1"
 
 
+def test_proxy_http_checked_access_is_cloned_and_correlation_is_bound():
+    client = _SyncClientStub()
+    client._proxy_dispatcher = proxy_mod._ProxyDispatcher()
+    request_id = "req-vfs"
+    access = aether_pb2.ResourceAccessRequest(
+        resource_type="vfs",
+        resource_id="workspaces/ws-1/entries/ref-1",
+        operation="read",
+        workspace="ws-1",
+        required_access_level=10,
+    )
+
+    _stream_response_into(client, request_id, b"ok", chunked=False, delay=0.05)
+    proxy_http(
+        client,
+        target_topic="sv::data-connectors",
+        method="GET",
+        path="/v1/vfs/ref-1",
+        timeout=5.0,
+        request_id=request_id,
+        checked_access=access,
+    )
+
+    req = client.drain_upstream()[0].proxy_http_request
+    assert req.checked_access.resource_id == "workspaces/ws-1/entries/ref-1"
+    assert req.checked_access.correlation_id == request_id
+    assert access.correlation_id == ""
+
+
 def test_proxy_http_no_authorization_when_unspecified():
     client = _SyncClientStub()
     client._proxy_dispatcher = proxy_mod._ProxyDispatcher()

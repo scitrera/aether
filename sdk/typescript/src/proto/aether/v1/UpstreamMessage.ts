@@ -31,6 +31,8 @@ import type { ConnectionStatusRequest as _aether_v1_ConnectionStatusRequest, Con
 import type { SubmitAuditEventRequest as _aether_v1_SubmitAuditEventRequest, SubmitAuditEventRequest__Output as _aether_v1_SubmitAuditEventRequest__Output } from '../../aether/v1/SubmitAuditEventRequest';
 import type { AuthorityRequestOperation as _aether_v1_AuthorityRequestOperation, AuthorityRequestOperation__Output as _aether_v1_AuthorityRequestOperation__Output } from '../../aether/v1/AuthorityRequestOperation';
 import type { TaskSubscriptionOperation as _aether_v1_TaskSubscriptionOperation, TaskSubscriptionOperation__Output as _aether_v1_TaskSubscriptionOperation__Output } from '../../aether/v1/TaskSubscriptionOperation';
+import type { AccessCheckOperation as _aether_v1_AccessCheckOperation, AccessCheckOperation__Output as _aether_v1_AccessCheckOperation__Output } from '../../aether/v1/AccessCheckOperation';
+import type { BatchAccessCheckOperation as _aether_v1_BatchAccessCheckOperation, BatchAccessCheckOperation__Output as _aether_v1_BatchAccessCheckOperation__Output } from '../../aether/v1/BatchAccessCheckOperation';
 
 export interface UpstreamMessage {
   'init'?: (_aether_v1_InitConnection | null);
@@ -74,7 +76,9 @@ export interface UpstreamMessage {
    * proto-side rewrites of every payload type.
    */
   'activeExtensions'?: (string)[];
-  'payload'?: "init"|"send"|"switchWorkspace"|"kvOp"|"createTask"|"checkpointOp"|"adminQuery"|"sessionOp"|"taskQuery"|"taskOp"|"workspaceOp"|"agentOp"|"aclOp"|"progress"|"workflowOp"|"workflowResponse"|"tokenOp"|"auditQuery"|"authorityGrantOp"|"proxyHttpRequest"|"proxyHttpBodyChunk"|"tunnelOpen"|"tunnelData"|"tunnelClose"|"proxyHttpResponse"|"tunnelAck"|"resolveAuthorityRequest"|"connectionStatusRequest"|"submitAuditEvent"|"authorityRequestOp"|"taskSubscriptionOp";
+  'accessCheck'?: (_aether_v1_AccessCheckOperation | null);
+  'batchAccessCheck'?: (_aether_v1_BatchAccessCheckOperation | null);
+  'payload'?: "init"|"send"|"switchWorkspace"|"kvOp"|"createTask"|"checkpointOp"|"adminQuery"|"sessionOp"|"taskQuery"|"taskOp"|"workspaceOp"|"agentOp"|"aclOp"|"progress"|"workflowOp"|"workflowResponse"|"tokenOp"|"auditQuery"|"authorityGrantOp"|"proxyHttpRequest"|"proxyHttpBodyChunk"|"tunnelOpen"|"tunnelData"|"tunnelClose"|"proxyHttpResponse"|"tunnelAck"|"resolveAuthorityRequest"|"connectionStatusRequest"|"submitAuditEvent"|"authorityRequestOp"|"taskSubscriptionOp"|"accessCheck"|"batchAccessCheck";
 }
 
 export interface UpstreamMessage__Output {
@@ -119,5 +123,7 @@ export interface UpstreamMessage__Output {
    * proto-side rewrites of every payload type.
    */
   'activeExtensions': (string)[];
-  'payload'?: "init"|"send"|"switchWorkspace"|"kvOp"|"createTask"|"checkpointOp"|"adminQuery"|"sessionOp"|"taskQuery"|"taskOp"|"workspaceOp"|"agentOp"|"aclOp"|"progress"|"workflowOp"|"workflowResponse"|"tokenOp"|"auditQuery"|"authorityGrantOp"|"proxyHttpRequest"|"proxyHttpBodyChunk"|"tunnelOpen"|"tunnelData"|"tunnelClose"|"proxyHttpResponse"|"tunnelAck"|"resolveAuthorityRequest"|"connectionStatusRequest"|"submitAuditEvent"|"authorityRequestOp"|"taskSubscriptionOp";
+  'accessCheck'?: (_aether_v1_AccessCheckOperation__Output | null);
+  'batchAccessCheck'?: (_aether_v1_BatchAccessCheckOperation__Output | null);
+  'payload'?: "init"|"send"|"switchWorkspace"|"kvOp"|"createTask"|"checkpointOp"|"adminQuery"|"sessionOp"|"taskQuery"|"taskOp"|"workspaceOp"|"agentOp"|"aclOp"|"progress"|"workflowOp"|"workflowResponse"|"tokenOp"|"auditQuery"|"authorityGrantOp"|"proxyHttpRequest"|"proxyHttpBodyChunk"|"tunnelOpen"|"tunnelData"|"tunnelClose"|"proxyHttpResponse"|"tunnelAck"|"resolveAuthorityRequest"|"connectionStatusRequest"|"submitAuditEvent"|"authorityRequestOp"|"taskSubscriptionOp"|"accessCheck"|"batchAccessCheck";
 }

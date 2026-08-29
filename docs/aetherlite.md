@@ -2,6 +2,12 @@
 
 AetherLite is a deployment mode for Aether that replaces all external services with embedded in-process alternatives. There is no Redis, no RabbitMQ, and no PostgreSQL to install or manage. Everything runs inside a single process backed by [Badger](https://github.com/dgraph-io/badger) (KV and messaging) and [SQLite](https://sqlite.org) (relational data).
 
+Scheduled task actions can optionally retain private, bounded OBO authority;
+see [Workflow schedule authority](workflow-schedule-authority.md). Production
+mode requires explicit `workflow/schedule` ACL grants. `--dev` enables the
+permissive user and agent fallbacks needed for local clients and worker-owned
+schedule reconciliation.
+
 ## When to Use AetherLite
 
 | Scenario | AetherLite | Full Aether |
@@ -54,6 +60,28 @@ AETHER_ALLOW_DEV_MODE=true ./aetherlite --data-dir /var/lib/aether-lite --insecu
 > `cmd/gateway` binary no longer supports lite mode — it exits at startup if
 > `--lite` (or `mode: lite`) is set. Use `cmd/aetherlite` for embedded
 > single-binary deployments.
+
+### Option 2: Container images
+
+The normal image selects the `aetherlite` entrypoint but does not weaken its
+security defaults. Supply production configuration and secrets explicitly:
+
+```bash
+docker run --rm ghcr.io/scitrera/aetherlite:latest --help
+```
+
+For loopback-only local development, the `dev-*` tags additionally set
+`AETHER_ALLOW_DEV_MODE=true`, `AETHER_DEV=true`, and
+`AETHER_INSECURE_ADMIN=true`:
+
+```bash
+docker run --rm -p 127.0.0.1:50051:50051 \
+  -p 127.0.0.1:31880:31880 \
+  ghcr.io/scitrera/aetherlite:dev-latest
+```
+
+The development tags deliberately enable unauthenticated administration and
+must not be exposed to an untrusted network or used in production.
 
 ## Data Directory Layout
 

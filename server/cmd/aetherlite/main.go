@@ -18,6 +18,7 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
+	aclcore "github.com/scitrera/aether/server/internal/acl"
 	"github.com/scitrera/aether/server/internal/admin"
 	"github.com/scitrera/aether/server/internal/audit"
 	"github.com/scitrera/aether/server/internal/auth"
@@ -499,11 +500,29 @@ func main() {
 		dispatcher = orchestration.NewPollingTaskDispatcher(taskStore)
 	}
 
+	// Quota defaults come from the `quotas:` config block, falling back to the
+	// same built-in values cmd/gateway uses. These were hardcoded, so the block
+	// was silently ignored in lite mode — and because the per-identity message
+	// rate also feeds the workspace rate limiter, a deployment could not raise
+	// its message throughput at all (the limit stuck at 100/s no matter what
+	// gateway.message_rate_limit or quotas.max_message_rate_per_identity said).
 	quotaDefaults := quota.DefaultQuotas{
-		MaxConnectionsPerWorkspace: 1000,
-		MaxMessageRatePerIdentity:  100,
-		MaxKVKeysPerNamespace:      10000,
-		MaxKVValueSize:             1048576,
+		MaxConnectionsPerWorkspace: cfg.Quotas.MaxConnectionsPerWorkspace,
+		MaxMessageRatePerIdentity:  cfg.Quotas.MaxMessageRatePerIdentity,
+		MaxKVKeysPerNamespace:      cfg.Quotas.MaxKVKeysPerNamespace,
+		MaxKVValueSize:             cfg.Quotas.MaxKVValueSize,
+	}
+	if quotaDefaults.MaxConnectionsPerWorkspace <= 0 {
+		quotaDefaults.MaxConnectionsPerWorkspace = 1000
+	}
+	if quotaDefaults.MaxMessageRatePerIdentity <= 0 {
+		quotaDefaults.MaxMessageRatePerIdentity = 100
+	}
+	if quotaDefaults.MaxKVKeysPerNamespace <= 0 {
+		quotaDefaults.MaxKVKeysPerNamespace = 10000
+	}
+	if quotaDefaults.MaxKVValueSize <= 0 {
+		quotaDefaults.MaxKVValueSize = 1048576 // 1MB
 	}
 	quotaManager := quota.NewMemoryQuotaManager(quotaDefaults)
 
@@ -563,6 +582,18 @@ func main() {
 		gatewayOpts = append(gatewayOpts, gateway.WithGatewayTenantID(tenantID))
 	}
 
+	// Per-client message rate limiting. Without this the gateway keeps its
+	// built-in default (100/s, burst 200) and gateway.message_rate_limit is
+	// silently ignored in lite mode — the key applies only to the workspace
+	// limiter below, so raising it appears to do nothing. Mirrors cmd/gateway.
+	if cfg.Gateway.MessageRateLimit > 0 {
+		burst := cfg.Gateway.MessageRateBurst
+		if burst <= 0 {
+			burst = int(cfg.Gateway.MessageRateLimit * 2)
+		}
+		gatewayOpts = append(gatewayOpts, gateway.WithMessageRateLimit(cfg.Gateway.MessageRateLimit, burst))
+	}
+
 	// Workspace rate limiter.
 	workspaceRL := quota.NewWorkspaceRateLimiter(cfg.Gateway.MessageRateLimit)
 	gatewayOpts = append(gatewayOpts, gateway.WithWorkspaceRateLimiter(workspaceRL))
@@ -613,6 +644,14 @@ func main() {
 	if err != nil {
 		logging.Logger.Fatal().Err(err).Msg("failed to construct native sqlite acl store")
 	}
+	if *devMode {
+		for _, principalType := range []string{aclcore.PrincipalTypeUser, aclcore.PrincipalTypeAgent} {
+			category := aclcore.RuleCategory(principalType, aclcore.ResourceTypeWorkflowSchedule)
+			if err := sharedACLService.SetFallbackPolicy(ctx, category, aclcore.AccessManage, aclcore.SystemPrincipal); err != nil {
+				logging.Logger.Fatal().Err(err).Str("category", category).Msg("failed to enable development workflow schedule access")
+			}
+		}
+	}
 
 	// Gateway-facing ACL store. In cluster mode we wrap sharedACLService in a
 	// JetStream-backed decorator so the 6 authority-request lifecycle methods
@@ -647,9 +686,9 @@ func main() {
 
 	// Cleanup service.
 	cleanupConfig := &cleanup.Config{
-		TaskPurgeInterval:      cfg.Cleanup.GetTaskPurgeInterval(),
-		CompletedTaskRetention: cfg.Cleanup.GetCompletedTaskRetention(),
-		FailedTaskRetention:    cfg.Cleanup.GetFailedTaskRetention(),
+		TaskPurgeInterval:             cfg.Cleanup.GetTaskPurgeInterval(),
+		CompletedTaskRetention:        cfg.Cleanup.GetCompletedTaskRetention(),
+		FailedTaskRetention:           cfg.Cleanup.GetFailedTaskRetention(),
 		CancelledTaskRetention:        cfg.Cleanup.GetCancelledTaskRetention(),
 		ReconciliationInterval:        cfg.Cleanup.GetReconciliationInterval(),
 		InteractiveTaskTTL:            cfg.Cleanup.GetInteractiveTaskTTL(),

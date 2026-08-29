@@ -285,7 +285,7 @@ func (s *GatewayServer) createTaskAuthorityGrant(
 	issuedBy models.Identity,
 	delegate models.Identity,
 	audienceType, audienceID, taskID, taskType, assignmentMode string,
-	requireFurtherDelegation bool,
+	requiredRemainingHops int,
 ) (*acl.AuthorityGrant, error) {
 	if s.acl == nil {
 		return nil, fmt.Errorf("ACL service not available")
@@ -308,6 +308,12 @@ func (s *GatewayServer) createTaskAuthorityGrant(
 	remainingHops := authority.Grant.RemainingHops - 1
 	intermediaryReroot := false
 	if remainingHops < 0 {
+		// An explicit downstream-hop requirement must be attenuated from the
+		// caller's parent. Trusted intermediary re-rooting is intentionally not
+		// a substitute for capacity the request declared up front.
+		if requiredRemainingHops > 0 {
+			return nil, acl.ErrAuthorityGrantDelegationDenied
+		}
 		// Hop budget exhausted on the parent grant. Allow trusted intermediary
 		// services (sandbox-provider, etc. — anyone the operator has granted
 		// capability/authority_intermediary to) to re-root the new grant from the
@@ -332,8 +338,8 @@ func (s *GatewayServer) createTaskAuthorityGrant(
 			Str("task_id", taskID).
 			Msg("authority intermediary re-root: parent grant exhausted, minting fresh hop budget under capability/authority_intermediary")
 	}
-	if requireFurtherDelegation && remainingHops < 1 {
-		return nil, fmt.Errorf("task authority grant requires at least two remaining delegation hops")
+	if remainingHops < requiredRemainingHops {
+		return nil, fmt.Errorf("task authority grant leaves %d downstream delegation hops; %d required", remainingHops, requiredRemainingHops)
 	}
 
 	metadata := map[string]interface{}{
@@ -590,11 +596,11 @@ func (s *GatewayServer) establishTaskAuthorityGrant(
 	metadata := cloneTaskMetadata(taskReq.Metadata)
 
 	var (
-		delegate                models.Identity
-		audienceType            string
-		audienceID              string
-		requireFurtherDelegates bool
-		err                     error
+		delegate              models.Identity
+		audienceType          string
+		audienceID            string
+		requiredRemainingHops = taskReq.RequiredDownstreamAuthorityHops
+		err                   error
 	)
 
 	switch taskReq.AssignmentMode {
@@ -602,7 +608,9 @@ func (s *GatewayServer) establishTaskAuthorityGrant(
 		delegate = taskGrantAnchorIdentity(taskID, taskReq.Workspace, taskReq.TaskType)
 		audienceType = acl.AuthorityAudienceTask
 		audienceID = taskID
-		requireFurtherDelegates = true
+		// The pool anchor must still derive once to the selected assignee before
+		// that final execution identity receives its requested downstream budget.
+		requiredRemainingHops++
 	case "targeted":
 		delegate, err = models.ParseIdentity(taskReq.TargetAgentID)
 		if err != nil {
@@ -648,7 +656,7 @@ func (s *GatewayServer) establishTaskAuthorityGrant(
 		taskID,
 		taskReq.TaskType,
 		taskReq.AssignmentMode,
-		requireFurtherDelegates,
+		requiredRemainingHops,
 	)
 	if err != nil {
 		return nil, err
@@ -842,11 +850,22 @@ func taskGrantRenewalTarget(grant *acl.AuthorityGrant, now time.Time) (time.Time
 // The returned grant must still support further delegation (MayDelegate +
 // RemainingHops > 0); otherwise the caller proceeds as direct.
 func (s *GatewayServer) loadCallerTaskAuthority(ctx context.Context, client *ClientSession, actor models.Identity) (*acl.ResolvedAuthority, error) {
-	if client == nil || client.AssociatedTaskID == "" || s.acl == nil || s.taskStore == nil {
+	if client == nil {
+		return nil, nil
+	}
+	return s.loadTaskAuthorityForActor(ctx, client.AssociatedTaskID, actor)
+}
+
+// loadTaskAuthorityForActor resolves delegable authority from a specific task
+// after the caller-to-parent relationship has been independently validated.
+// It is used for request-scoped explicit parentage without changing the
+// long-lived connection's AssociatedTaskID.
+func (s *GatewayServer) loadTaskAuthorityForActor(ctx context.Context, taskID string, actor models.Identity) (*acl.ResolvedAuthority, error) {
+	if taskID == "" || s.acl == nil || s.taskStore == nil {
 		return nil, nil
 	}
 
-	task, err := s.taskStore.GetTask(ctx, client.AssociatedTaskID)
+	task, err := s.taskStore.GetTask(ctx, taskID)
 	if err != nil || task == nil {
 		return nil, nil
 	}

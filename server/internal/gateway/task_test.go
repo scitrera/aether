@@ -324,6 +324,113 @@ func newTaskTestServerWithSQLiteStore(t *testing.T) (*GatewayServer, func()) {
 	return s, func() { _ = db.Close() }
 }
 
+func TestHandleTaskQuery_StatusProjectionFilters(t *testing.T) {
+	s, cleanup := newTaskTestServerWithSQLiteStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	taskType := "status-projection-filter"
+	stored := []struct {
+		id     string
+		status tasks.TaskStatus
+	}{
+		{"pending", tasks.TaskStatusPending},
+		{"assigned", tasks.TaskStatusAssigned},
+		{"starting", tasks.TaskStatusStarting},
+		{"running", tasks.TaskStatusRunning},
+		{"failed", tasks.TaskStatusFailed},
+		{"dlq", tasks.TaskStatusDLQ},
+	}
+	for _, item := range stored {
+		if err := s.taskStore.CreateTask(ctx, &tasks.Task{
+			TaskID: item.id, TaskType: taskType, Workspace: "ws1", Status: item.status,
+		}); err != nil {
+			t.Fatalf("CreateTask(%s): %v", item.id, err)
+		}
+	}
+
+	tests := []struct {
+		name   string
+		filter *pb.TaskFilter
+		want   map[string]bool
+	}{
+		{
+			name: "singular queued",
+			filter: &pb.TaskFilter{
+				Status: pb.TaskStatus_TASK_STATUS_QUEUED,
+			},
+			want: map[string]bool{"pending": true, "assigned": true, "starting": true},
+		},
+		{
+			name: "repeated queued and running",
+			filter: &pb.TaskFilter{
+				Statuses: []pb.TaskStatus{pb.TaskStatus_TASK_STATUS_QUEUED, pb.TaskStatus_TASK_STATUS_RUNNING},
+			},
+			want: map[string]bool{"pending": true, "assigned": true, "starting": true, "running": true},
+		},
+		{
+			name: "exclude queued",
+			filter: &pb.TaskFilter{
+				ExcludeStatuses: []pb.TaskStatus{pb.TaskStatus_TASK_STATUS_QUEUED},
+			},
+			want: map[string]bool{"running": true, "failed": true, "dlq": true},
+		},
+		{
+			name: "singular failed",
+			filter: &pb.TaskFilter{
+				Status: pb.TaskStatus_TASK_STATUS_FAILED,
+			},
+			want: map[string]bool{"failed": true, "dlq": true},
+		},
+		{
+			name: "repeated failed",
+			filter: &pb.TaskFilter{
+				Statuses: []pb.TaskStatus{pb.TaskStatus_TASK_STATUS_FAILED},
+			},
+			want: map[string]bool{"failed": true, "dlq": true},
+		},
+		{
+			name: "exclude failed",
+			filter: &pb.TaskFilter{
+				ExcludeStatuses: []pb.TaskStatus{pb.TaskStatus_TASK_STATUS_FAILED},
+			},
+			want: map[string]bool{"pending": true, "assigned": true, "starting": true, "running": true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.filter.Workspace = "ws1"
+			tt.filter.TaskType = taskType
+			tt.filter.Limit = 100
+			stream := &mockStream{}
+			client := newTaskTestClient(stream, defaultAgentIdentity())
+			s.handleTaskQuery(ctx, client, &pb.TaskQuery{
+				Op: pb.TaskQuery_LIST, Filter: tt.filter, RequestId: "status-filter",
+			})
+
+			stream.mu.Lock()
+			if len(stream.sent) != 1 {
+				stream.mu.Unlock()
+				t.Fatalf("responses = %d, want 1", len(stream.sent))
+			}
+			response := stream.sent[0].GetTaskQuery()
+			stream.mu.Unlock()
+			if response == nil || !response.Success {
+				t.Fatalf("response = %#v", response)
+			}
+			if len(response.Tasks) != len(tt.want) {
+				t.Fatalf("task count = %d, want %d: %#v", len(response.Tasks), len(tt.want), response.Tasks)
+			}
+			for _, task := range response.Tasks {
+				if !tt.want[task.GetTaskId()] {
+					t.Errorf("unexpected task %q", task.GetTaskId())
+				}
+			}
+		})
+	}
+}
+
 // callerIdentity returns a fully-qualified agent identity in ws1.
 func callerIdentity(impl, spec string) models.Identity {
 	return models.Identity{

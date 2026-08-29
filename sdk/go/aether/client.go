@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/proto"
 )
 
 // =============================================================================
@@ -122,6 +123,8 @@ type BaseClient struct {
 	pendingSessionRequests          pendingRequests[*SessionOperationResponse]
 	pendingAuditSubmitRequests      pendingRequests[*pb.SubmitAuditEventResponse]
 	pendingAuditQueryRequests       pendingRequests[*pb.AuditQueryResponse]
+	pendingAccessCheckRequests      pendingRequests[*pb.AccessCheckResponse]
+	pendingBatchAccessCheckRequests pendingRequests[*pb.BatchAccessCheckResponse]
 	requestIDCounter                atomic.Uint64
 
 	// rawDownstreamTap, when non-nil, is invoked for every downstream
@@ -151,28 +154,30 @@ type BaseClient struct {
 	authorityCaches  []*AuthorityGrantCache
 
 	// Cached KV, Checkpoint, and Workflow helpers (for sync mutex to work across calls)
-	kvOnce             sync.Once
-	kvInstance         *KV
-	cpOnce             sync.Once
-	cpInstance         *Checkpoint
-	workflowOnce       sync.Once
-	workflowInstance   *WorkflowOps
-	workspaceOnce      sync.Once
-	workspaceInstance  *WorkspaceOps
-	agentOnce          sync.Once
-	agentInstance      *AgentOps
-	aclOnce            sync.Once
-	aclInstance        *ACLOps
-	tokenOnce          sync.Once
-	tokenInstance      *TokenOps
-	authorityOnce      sync.Once
-	authorityInstance  *AuthorityGrantOps
-	adminOnce          sync.Once
-	adminInstance      *AdminOps
-	sessionOnce        sync.Once
-	sessionInstance    *SessionOps
-	connectionOnce     sync.Once
-	connectionInstance *ConnectionOps
+	kvOnce                 sync.Once
+	kvInstance             *KV
+	cpOnce                 sync.Once
+	cpInstance             *Checkpoint
+	workflowOnce           sync.Once
+	workflowInstance       *WorkflowOps
+	workflowHandlerOrderMu sync.Mutex
+	workflowHandlerTail    chan struct{}
+	workspaceOnce          sync.Once
+	workspaceInstance      *WorkspaceOps
+	agentOnce              sync.Once
+	agentInstance          *AgentOps
+	aclOnce                sync.Once
+	aclInstance            *ACLOps
+	tokenOnce              sync.Once
+	tokenInstance          *TokenOps
+	authorityOnce          sync.Once
+	authorityInstance      *AuthorityGrantOps
+	adminOnce              sync.Once
+	adminInstance          *AdminOps
+	sessionOnce            sync.Once
+	sessionInstance        *SessionOps
+	connectionOnce         sync.Once
+	connectionInstance     *ConnectionOps
 
 	// InitConnection message builder (set by specific client types)
 	initMsgBuilder func() *pb.InitConnection
@@ -982,6 +987,12 @@ func (c *BaseClient) SendWithOptions(opts SendMessageOptions) error {
 	if opts.Authorization != nil {
 		send.Authorization = opts.Authorization
 	}
+	if opts.CheckedAccess != nil {
+		send.CheckedAccess = opts.CheckedAccess
+	}
+	if opts.AuthorityContinuation != nil {
+		send.AuthorityContinuation = opts.AuthorityContinuation
+	}
 	return c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_Send{Send: send},
 	})
@@ -1757,7 +1768,13 @@ func (c *BaseClient) receiveLoop(ctx context.Context) error {
 		// Receive the next message from the stream
 		response, err := stream.Recv()
 		if err != nil {
-			return c.handleReceiveError(ctx, err)
+			if err := c.handleReceiveError(ctx, err); err != nil {
+				return err
+			}
+			// A nil result means handleReceiveError successfully established a
+			// replacement stream. Keep this receive loop alive so Run continues
+			// servicing that stream instead of returning a false graceful exit.
+			continue
 		}
 
 		// Dispatch the response to the appropriate handler
@@ -1768,7 +1785,10 @@ func (c *BaseClient) receiveLoop(ctx context.Context) error {
 			}
 			// For recoverable dispatch errors (e.g., graceful disconnect),
 			// use the same reconnection path as receive errors.
-			return c.handleReceiveError(ctx, err)
+			if err := c.handleReceiveError(ctx, err); err != nil {
+				return err
+			}
+			continue
 		}
 	}
 }
@@ -1908,6 +1928,14 @@ func (c *BaseClient) dispatchResponse(ctx context.Context, response *pb.Downstre
 	case *pb.DownstreamMessage_AuditResponse:
 		return c.handleAuditQueryResponse(ctx, payload.AuditResponse)
 
+	case *pb.DownstreamMessage_AccessCheckResponse:
+		c.pendingAccessCheckRequests.Resolve(payload.AccessCheckResponse.GetRequestId(), payload.AccessCheckResponse)
+		return nil
+
+	case *pb.DownstreamMessage_BatchAccessCheckResponse:
+		c.pendingBatchAccessCheckRequests.Resolve(payload.BatchAccessCheckResponse.GetRequestId(), payload.BatchAccessCheckResponse)
+		return nil
+
 	case *pb.DownstreamMessage_CreateTask:
 		return c.handleCreateTaskResponse(ctx, payload.CreateTask)
 
@@ -1979,11 +2007,14 @@ func (c *BaseClient) dispatchResponse(ctx context.Context, response *pb.Downstre
 func (c *BaseClient) handleIncomingMessage(ctx context.Context, msg *pb.IncomingMessage) error {
 	// Convert to high-level Message type
 	message := &Message{
-		SourceTopic:     msg.GetSourceTopic(),
-		Payload:         msg.GetPayload(),
-		MessageType:     msg.GetMessageType(),
-		OnBehalfSubject: msg.GetOnBehalfSubject(),
-		ReceivedAt:      time.Now(),
+		SourceTopic:            msg.GetSourceTopic(),
+		Payload:                msg.GetPayload(),
+		MessageType:            msg.GetMessageType(),
+		Workspace:              msg.GetWorkspace(),
+		AccessReceipt:          msg.GetAccessReceipt(),
+		OnBehalfSubject:        msg.GetOnBehalfSubject(),
+		ForwardedAuthorization: msg.GetForwardedAuthorization(),
+		ReceivedAt:             time.Now(),
 	}
 
 	// Dispatch to generic message handler
@@ -2195,6 +2226,7 @@ func (c *BaseClient) handleTaskAssignment(ctx context.Context, ta *pb.TaskAssign
 		Workspace:            ta.GetWorkspace(),
 		Specifier:            ta.GetSpecifier(),
 		Payload:              ta.GetPayload(),
+		Authorization:        ta.GetAuthorization(),
 	}
 
 	// Convert Unix timestamp if present
@@ -2319,9 +2351,10 @@ func (c *BaseClient) handleProgressUpdate(ctx context.Context, pu *pb.ProgressUp
 // handleTaskQueryResponse processes a task query response from the server.
 func (c *BaseClient) handleTaskQueryResponse(ctx context.Context, resp *pb.TaskQueryResponse) error {
 	tqr := &TaskQueryResponse{
-		Success:    resp.GetSuccess(),
-		Error:      resp.GetError(),
-		TotalCount: resp.GetTotalCount(),
+		Success:       resp.GetSuccess(),
+		Error:         resp.GetError(),
+		TotalCount:    resp.GetTotalCount(),
+		NextPageToken: resp.GetNextPageToken(),
 	}
 	if t := resp.GetTask(); t != nil {
 		tqr.Task = protoTaskInfoToSDK(t)
@@ -2372,14 +2405,15 @@ func (c *BaseClient) handleTaskOperationResponse(ctx context.Context, resp *pb.T
 // handleCreateTaskResponse processes a CreateTaskResponse from the server.
 func (c *BaseClient) handleCreateTaskResponse(ctx context.Context, resp *pb.CreateTaskResponse) error {
 	ctr := &CreateTaskResponse{
-		Success:      resp.GetSuccess(),
-		TaskID:       resp.GetTaskId(),
-		Status:       resp.GetStatus(),
-		ErrorCode:    resp.GetErrorCode(),
-		ErrorMessage: resp.GetErrorMessage(),
-		RequestId:    resp.GetRequestId(),
-		AssignedTo:   resp.GetAssignedTo(),
-		TaskToken:    resp.GetTaskToken(),
+		Success:          resp.GetSuccess(),
+		TaskID:           resp.GetTaskId(),
+		Status:           resp.GetStatus(),
+		ErrorCode:        resp.GetErrorCode(),
+		ErrorMessage:     resp.GetErrorMessage(),
+		RequestId:        resp.GetRequestId(),
+		AssignedTo:       resp.GetAssignedTo(),
+		TaskToken:        resp.GetTaskToken(),
+		AuthorityGrantID: resp.GetAuthorityGrantId(),
 	}
 
 	// Route to correlated pending request if available.
@@ -2397,18 +2431,28 @@ func (c *BaseClient) handleCreateTaskResponse(ctx context.Context, resp *pb.Crea
 // The server will not send a response; use CreateTaskSync when you need the task_id.
 func (c *BaseClient) CreateTask(taskType, workspace string, opts CreateTaskOptions) error {
 	req := &pb.CreateTaskRequest{
-		TaskType:             taskType,
-		Workspace:            workspace,
-		AssignmentMode:       pb.TaskAssignmentMode(pb.TaskAssignmentMode_value[string(opts.AssignmentMode)]),
-		TargetAgentId:        opts.TargetAgentID,
-		TargetIdentity:       opts.TargetIdentity,
-		TargetImplementation: opts.TargetImplementation,
-		LaunchParamOverrides: opts.LaunchParamOverrides,
-		Metadata:             opts.Metadata,
-		Payload:              opts.Payload,
-		RetryPolicy:          opts.RetryPolicy,
-		Priority:             opts.Priority,
-		Authorization:        opts.Authorization,
+		TaskType:                        taskType,
+		Workspace:                       workspace,
+		AssignmentMode:                  pb.TaskAssignmentMode(pb.TaskAssignmentMode_value[string(opts.AssignmentMode)]),
+		TargetAgentId:                   opts.TargetAgentID,
+		TargetOfflinePolicy:             opts.TargetOfflinePolicy,
+		TargetIdentity:                  opts.TargetIdentity,
+		TargetImplementation:            opts.TargetImplementation,
+		LaunchParamOverrides:            opts.LaunchParamOverrides,
+		Metadata:                        opts.Metadata,
+		Payload:                         opts.Payload,
+		TaskClass:                       opts.TaskClass,
+		ContextId:                       opts.ContextID,
+		RetryPolicy:                     opts.RetryPolicy,
+		Priority:                        opts.Priority,
+		IdempotencyKey:                  opts.IdempotencyKey,
+		CorrelationId:                   opts.CorrelationID,
+		RootTaskId:                      opts.RootTaskID,
+		CompletionEvent:                 opts.CompletionEvent,
+		ParentTaskId:                    opts.ParentTaskID,
+		RequiredDownstreamAuthorityHops: opts.RequiredDownstreamAuthorityHops,
+		OriginatingScheduleId:           opts.OriginatingScheduleID,
+		Authorization:                   opts.Authorization,
 	}
 	return c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_CreateTask{CreateTask: req},
@@ -2429,19 +2473,29 @@ func (c *BaseClient) CreateTaskSync(ctx context.Context, taskType, workspace str
 	defer c.pendingCreateTaskRequests.Delete(requestID)
 
 	req := &pb.CreateTaskRequest{
-		TaskType:             taskType,
-		Workspace:            workspace,
-		AssignmentMode:       pb.TaskAssignmentMode(pb.TaskAssignmentMode_value[string(opts.AssignmentMode)]),
-		TargetAgentId:        opts.TargetAgentID,
-		TargetIdentity:       opts.TargetIdentity,
-		TargetImplementation: opts.TargetImplementation,
-		LaunchParamOverrides: opts.LaunchParamOverrides,
-		Metadata:             opts.Metadata,
-		Payload:              opts.Payload,
-		RetryPolicy:          opts.RetryPolicy,
-		Priority:             opts.Priority,
-		Authorization:        opts.Authorization,
-		RequestId:            requestID,
+		TaskType:                        taskType,
+		Workspace:                       workspace,
+		AssignmentMode:                  pb.TaskAssignmentMode(pb.TaskAssignmentMode_value[string(opts.AssignmentMode)]),
+		TargetAgentId:                   opts.TargetAgentID,
+		TargetOfflinePolicy:             opts.TargetOfflinePolicy,
+		TargetIdentity:                  opts.TargetIdentity,
+		TargetImplementation:            opts.TargetImplementation,
+		LaunchParamOverrides:            opts.LaunchParamOverrides,
+		Metadata:                        opts.Metadata,
+		Payload:                         opts.Payload,
+		TaskClass:                       opts.TaskClass,
+		ContextId:                       opts.ContextID,
+		RetryPolicy:                     opts.RetryPolicy,
+		Priority:                        opts.Priority,
+		IdempotencyKey:                  opts.IdempotencyKey,
+		CorrelationId:                   opts.CorrelationID,
+		RootTaskId:                      opts.RootTaskID,
+		CompletionEvent:                 opts.CompletionEvent,
+		ParentTaskId:                    opts.ParentTaskID,
+		RequiredDownstreamAuthorityHops: opts.RequiredDownstreamAuthorityHops,
+		OriginatingScheduleId:           opts.OriginatingScheduleID,
+		Authorization:                   opts.Authorization,
+		RequestId:                       requestID,
 	}
 	if err := c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_CreateTask{CreateTask: req},
@@ -2464,19 +2518,36 @@ func (c *BaseClient) CreateTaskSync(ctx context.Context, taskType, workspace str
 // protoTaskInfoToSDK converts a protobuf TaskInfo to the SDK TaskInfo type.
 func protoTaskInfoToSDK(t *pb.TaskInfo) *TaskInfo {
 	return &TaskInfo{
-		TaskID:      t.GetTaskId(),
-		TaskType:    t.GetTaskType(),
-		Status:      t.GetStatus().String(),
-		Workspace:   t.GetWorkspace(),
-		TargetTopic: t.GetTargetTopic(),
-		AssignedTo:  t.GetAssignedTo(),
-		CreatedAt:   t.GetCreatedAt(),
-		StartedAt:   t.GetStartedAt(),
-		CompletedAt: t.GetCompletedAt(),
-		Attempt:     t.GetAttempt(),
-		MaxAttempts: t.GetMaxAttempts(),
-		Error:       t.GetError(),
-		Metadata:    t.GetMetadata(),
+		TaskID:                 t.GetTaskId(),
+		TaskType:               t.GetTaskType(),
+		Status:                 t.GetStatus().String(),
+		Workspace:              t.GetWorkspace(),
+		TargetTopic:            t.GetTargetTopic(),
+		AssignedTo:             t.GetAssignedTo(),
+		CreatedAt:              t.GetCreatedAt(),
+		StartedAt:              t.GetStartedAt(),
+		CompletedAt:            t.GetCompletedAt(),
+		Attempt:                t.GetAttempt(),
+		MaxAttempts:            t.GetMaxAttempts(),
+		Error:                  t.GetError(),
+		Metadata:               t.GetMetadata(),
+		AuthorityMode:          t.GetAuthorityMode(),
+		SubjectType:            t.GetSubjectType(),
+		SubjectID:              t.GetSubjectId(),
+		RootSubjectType:        t.GetRootSubjectType(),
+		RootSubjectID:          t.GetRootSubjectId(),
+		AuthorityGrantID:       t.GetAuthorityGrantId(),
+		RootAuthorityGrantID:   t.GetRootAuthorityGrantId(),
+		ParentAuthorityGrantID: t.GetParentAuthorityGrantId(),
+		CreatorActorID:         t.GetCreatorActorId(),
+		ParentTaskID:           t.GetParentTaskId(),
+		TaskClass:              t.GetTaskClass().String(),
+		ContextID:              t.GetContextId(),
+		Priority:               t.GetPriority().String(),
+		CorrelationID:          t.GetCorrelationId(),
+		RootTaskID:             t.GetRootTaskId(),
+		DisconnectedAt:         t.GetDisconnectedAt(),
+		GraceWindowMS:          t.GetGraceWindowMs(),
 	}
 }
 
@@ -2596,6 +2667,34 @@ func (c *BaseClient) handleWorkflowOperation(ctx context.Context, op *pb.Workflo
 	if c.handlers.OnWorkflowOperation == nil {
 		return nil
 	}
+	// Workflow handlers may make correlated synchronous calls back through this
+	// same client (notably revoking a replaced schedule authority). Detach them
+	// from the single receive loop so that loop remains free to deliver the
+	// nested response.
+	cloned := proto.Clone(op).(*pb.WorkflowOperation)
+	done := make(chan struct{})
+	c.workflowHandlerOrderMu.Lock()
+	previous := c.workflowHandlerTail
+	c.workflowHandlerTail = done
+	c.workflowHandlerOrderMu.Unlock()
+	go func() {
+		defer func() {
+			close(done)
+			c.workflowHandlerOrderMu.Lock()
+			if c.workflowHandlerTail == done {
+				c.workflowHandlerTail = nil
+			}
+			c.workflowHandlerOrderMu.Unlock()
+		}()
+		if previous != nil {
+			<-previous
+		}
+		_ = c.processWorkflowOperation(context.WithoutCancel(ctx), cloned)
+	}()
+	return nil
+}
+
+func (c *BaseClient) processWorkflowOperation(ctx context.Context, op *pb.WorkflowOperation) error {
 	resp, err := c.handlers.OnWorkflowOperation(ctx, op)
 	if err != nil {
 		resp = &pb.WorkflowResponse{

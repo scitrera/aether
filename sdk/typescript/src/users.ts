@@ -13,7 +13,7 @@
 
 import { AetherClient } from "./client.js";
 import type { AetherClientOptions } from "./client.js";
-import { MessageType, TaskAssignmentMode } from "./types.js";
+import { MessageType, TargetOfflinePolicy, TaskAssignmentMode } from "./types.js";
 import type { MessageHandler } from "./types.js";
 import { InvalidArgumentError } from "./errors.js";
 import {
@@ -322,9 +322,12 @@ export class UserClient extends AetherClient {
         workspace,
         assignmentMode,
         targetAgentId: opts.targetAgentId ?? "",
+        targetOfflinePolicy: opts.targetOfflinePolicy ?? TargetOfflinePolicy.Unspecified,
         targetImplementation: opts.targetImplementation ?? "",
         launchParamOverrides: opts.launchParamOverrides ?? {},
         metadata: opts.metadata ?? {},
+        parentTaskId: opts.parentTaskId ?? "",
+        requiredDownstreamAuthorityHops: opts.requiredDownstreamAuthorityHops ?? 0,
       },
     });
   }

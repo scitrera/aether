@@ -1,11 +1,128 @@
 package workflow
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/robfig/cron/v3"
+	pb "github.com/scitrera/aether/api/proto"
 )
+
+type scheduleCursorUpdate struct {
+	occurrence ScheduleOccurrence
+	nextFire   *time.Time
+}
+
+type schedulePollStore struct {
+	WorkflowStore
+	due           []Schedule
+	updates       []scheduleCursorUpdate
+	blockedReason string
+}
+
+func (s *schedulePollStore) GetDueSchedules(context.Context, time.Time) ([]Schedule, error) {
+	return append([]Schedule(nil), s.due...), nil
+}
+
+func (s *schedulePollStore) RecordScheduleOccurrence(_ context.Context, _ string, occurrence ScheduleOccurrence, nextFire *time.Time) error {
+	var nextCopy *time.Time
+	if nextFire != nil {
+		value := *nextFire
+		nextCopy = &value
+	}
+	s.updates = append(s.updates, scheduleCursorUpdate{occurrence: occurrence, nextFire: nextCopy})
+	return nil
+}
+
+func (s *schedulePollStore) GetDueJoinDeadlines(context.Context, time.Time) ([]Join, error) {
+	return nil, nil
+}
+
+func (s *schedulePollStore) SetScheduleAuthorityBlocked(_ context.Context, _ string, reason string) error {
+	s.blockedReason = reason
+	return nil
+}
+
+type recordingScheduleDispatcher struct {
+	actions []*ActionDef
+	failAt  int
+	err     error
+}
+
+func (d *recordingScheduleDispatcher) DispatchScheduledAction(_ context.Context, action *ActionDef, _ string, _ *pb.AuthorizationContext) error {
+	if d.failAt > 0 && len(d.actions)+1 == d.failAt {
+		if d.err != nil {
+			return d.err
+		}
+		return errors.New("injected dispatch failure")
+	}
+	copy := *action
+	copy.Metadata = cloneStringMap(action.Metadata)
+	d.actions = append(d.actions, &copy)
+	return nil
+}
+
+func TestSchedulerBlocksPermanentAuthorityFailureAndRecordsNoTaskSkip(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
+	schedule := dueCreateTaskSchedule(now, 0, ScheduleMissPolicyFireOnce)
+	var action ActionDef
+	if err := json.Unmarshal(schedule.Action, &action); err != nil {
+		t.Fatal(err)
+	}
+	action.RequireTaskAuthority = true
+	schedule.Action, _ = json.Marshal(action)
+
+	scheduler, store, dispatcher := newSchedulePollHarness(now, schedule)
+	dispatcher.failAt = 1
+	dispatcher.err = &ScheduleAuthorityInvalidError{Code: "ERR_AUTHORITY_INVALID", Message: "revoked"}
+	if err := scheduler.poll(context.Background()); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if store.blockedReason == "" || len(store.updates) != 1 {
+		t.Fatalf("blockedReason=%q updates=%+v", store.blockedReason, store.updates)
+	}
+	if got := store.updates[0].occurrence; got.Disposition != ScheduleDispositionSkipped ||
+		got.Reason != ScheduleSkipReasonAuthorityInvalid || got.DispatchedAt != nil {
+		t.Fatalf("authority skip occurrence = %+v", got)
+	}
+}
+
+func TestSchedulerLeavesTransientFailureDue(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.UTC)
+	scheduler, store, dispatcher := newSchedulePollHarness(now, dueCreateTaskSchedule(now, 0, ScheduleMissPolicyFireOnce))
+	dispatcher.failAt = 1
+	if err := scheduler.poll(context.Background()); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if store.blockedReason != "" || len(store.updates) != 0 {
+		t.Fatalf("transient failure advanced or blocked schedule: reason=%q updates=%+v", store.blockedReason, store.updates)
+	}
+}
+
+func newSchedulePollHarness(now time.Time, schedule Schedule) (*Scheduler, *schedulePollStore, *recordingScheduleDispatcher) {
+	store := &schedulePollStore{due: []Schedule{schedule}}
+	dispatcher := &recordingScheduleDispatcher{}
+	scheduler := NewScheduler(store, dispatcher, nil, nil, nil, time.Second)
+	scheduler.now = func() time.Time { return now }
+	return scheduler, store, dispatcher
+}
+
+func dueCreateTaskSchedule(now time.Time, overdue time.Duration, policy string) Schedule {
+	dueAt := now.Add(-overdue)
+	action, _ := json.Marshal(ActionDef{
+		Type: "create_task", TaskType: "test.schedule", Workspace: "workspace-a",
+		Metadata: map[string]string{"caller": "preserved"},
+	})
+	return Schedule{
+		ID: "schedule-a", Name: "Schedule A", Workspace: "workspace-a",
+		ScheduleType: ScheduleTypeInterval, ScheduleExpr: "1m", Action: action,
+		Enabled: true, NextFireAt: &dueAt, MissPolicy: policy,
+	}
+}
 
 // newTestScheduler builds a Scheduler with nil store/executor/dagEng/leader — safe
 // for unit tests that only exercise pure computation methods.
@@ -13,6 +130,177 @@ func newTestScheduler() *Scheduler {
 	return &Scheduler{
 		parser:   cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
 		interval: time.Second,
+	}
+}
+
+func TestScheduleMissPolicyValidation(t *testing.T) {
+	for _, policy := range []string{ScheduleMissPolicySkip, ScheduleMissPolicyFireOnce, ScheduleMissPolicyFireAll} {
+		if !validScheduleMissPolicy(policy) {
+			t.Fatalf("supported policy %q was rejected", policy)
+		}
+	}
+	if validScheduleMissPolicy("") || validScheduleMissPolicy("eventually") {
+		t.Fatal("empty or unknown missed-fire policy was accepted")
+	}
+}
+
+func TestSchedulerPollSkipFiresSingleDueOccurrenceButDropsBacklog(t *testing.T) {
+	now := time.Date(2026, 8, 10, 18, 0, 0, 0, time.UTC)
+	for name, overdue := range map[string]time.Duration{
+		"single due occurrence":    30 * time.Second,
+		"multiple due occurrences": 90 * time.Second,
+	} {
+		t.Run(name, func(t *testing.T) {
+			scheduler, store, dispatcher := newSchedulePollHarness(now, dueCreateTaskSchedule(now, overdue, "skip"))
+			if err := scheduler.poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			wantFires := 1
+			if overdue > time.Minute {
+				wantFires = 0
+			}
+			if len(dispatcher.actions) != wantFires {
+				t.Fatalf("dispatched actions = %d, want %d", len(dispatcher.actions), wantFires)
+			}
+			if len(store.updates) != 1 || store.updates[0].nextFire == nil || !store.updates[0].nextFire.After(now) {
+				t.Fatalf("cursor updates = %+v, want one future cursor", store.updates)
+			}
+			wantDisposition := ScheduleDispositionOrdinary
+			wantReason := ""
+			wantBacklog := 1
+			if wantFires == 0 {
+				wantDisposition = ScheduleDispositionSkipped
+				wantReason = ScheduleSkipReasonMissPolicy
+				wantBacklog = 2
+			}
+			got := store.updates[0].occurrence
+			if got.Disposition != wantDisposition || got.Reason != wantReason || got.BacklogCount != wantBacklog || got.BacklogTruncated {
+				t.Fatalf("occurrence = %+v", got)
+			}
+		})
+	}
+}
+
+func TestSchedulerPollFireOnceCoalescesWithDeterministicOccurrenceIdentity(t *testing.T) {
+	now := time.Date(2026, 8, 10, 18, 0, 0, 0, time.UTC)
+	schedule := dueCreateTaskSchedule(now, 150*time.Second, "fire_once")
+	scheduler, store, dispatcher := newSchedulePollHarness(now, schedule)
+	if err := scheduler.poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatcher.actions) != 1 {
+		t.Fatalf("dispatched actions = %d, want 1", len(dispatcher.actions))
+	}
+	action := dispatcher.actions[0]
+	wantScheduledFor := schedule.NextFireAt.UTC().Format(time.RFC3339Nano)
+	if action.Metadata["caller"] != "preserved" ||
+		action.Metadata[scheduleMetadataID] != schedule.ID ||
+		action.Metadata[scheduleMetadataScheduledFor] != wantScheduledFor ||
+		action.Metadata[scheduleMetadataDispatchedAt] != now.Format(time.RFC3339Nano) ||
+		action.Metadata[scheduleMetadataMissPolicy] != "fire_once" ||
+		action.Metadata[scheduleMetadataDisposition] != ScheduleDispositionCoalesced ||
+		action.Metadata[scheduleMetadataBacklogCount] != "3" ||
+		action.Metadata[scheduleMetadataBacklogTruncated] != "false" ||
+		action.Metadata[scheduleMetadataBacklogIndex] != "1" {
+		t.Fatalf("scheduled action metadata = %#v", action.Metadata)
+	}
+	wantKey := scheduleOccurrenceIdempotencyKey(schedule, *schedule.NextFireAt)
+	if action.IdempotencyKey != wantKey || action.IdempotencyKey == "" {
+		t.Fatalf("idempotency key = %q, want %q", action.IdempotencyKey, wantKey)
+	}
+	if len(store.updates) != 1 || store.updates[0].nextFire == nil || !store.updates[0].nextFire.After(now) {
+		t.Fatalf("cursor updates = %+v, want one future cursor", store.updates)
+	}
+	if got := store.updates[0].occurrence; got.Disposition != ScheduleDispositionCoalesced || got.BacklogCount != 3 || got.BacklogIndex != 1 {
+		t.Fatalf("coalesced occurrence = %+v", got)
+	}
+
+	// A response-loss retry of the same durable cursor produces the same key,
+	// allowing the gateway idempotency ledger to suppress a duplicate task.
+	if err := scheduler.poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatcher.actions) != 2 || dispatcher.actions[1].IdempotencyKey != wantKey {
+		t.Fatalf("retry idempotency keys = %q, %q", dispatcher.actions[0].IdempotencyKey, dispatcher.actions[1].IdempotencyKey)
+	}
+}
+
+func TestSchedulerPollFireAllAdvancesEveryOccurrenceWithoutDiscardingCappedBacklog(t *testing.T) {
+	now := time.Date(2026, 8, 10, 18, 0, 0, 0, time.UTC)
+	schedule := dueCreateTaskSchedule(now, 150*time.Second, "fire_all")
+	scheduler, store, dispatcher := newSchedulePollHarness(now, schedule)
+	if err := scheduler.poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatcher.actions) != 3 || len(store.updates) != 3 {
+		t.Fatalf("actions/updates = %d/%d, want 3/3", len(dispatcher.actions), len(store.updates))
+	}
+	seenKeys := map[string]struct{}{}
+	for i, action := range dispatcher.actions {
+		if _, duplicate := seenKeys[action.IdempotencyKey]; duplicate || action.IdempotencyKey == "" {
+			t.Fatalf("occurrence %d idempotency key = %q", i, action.IdempotencyKey)
+		}
+		seenKeys[action.IdempotencyKey] = struct{}{}
+		if action.Metadata[scheduleMetadataDisposition] != ScheduleDispositionCatchUp ||
+			action.Metadata[scheduleMetadataBacklogCount] != "3" ||
+			action.Metadata[scheduleMetadataBacklogIndex] != strconv.Itoa(i+1) {
+			t.Fatalf("catch-up occurrence %d metadata = %#v", i, action.Metadata)
+		}
+	}
+	if last := store.updates[len(store.updates)-1].nextFire; last == nil || !last.After(now) {
+		t.Fatalf("final cursor = %v, want future", last)
+	}
+
+	large := dueCreateTaskSchedule(now, (maxScheduleCatchUpPerPoll+2)*time.Minute+30*time.Second, "fire_all")
+	largeScheduler, largeStore, largeDispatcher := newSchedulePollHarness(now, large)
+	if err := largeScheduler.poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(largeDispatcher.actions) != maxScheduleCatchUpPerPoll || len(largeStore.updates) != maxScheduleCatchUpPerPoll {
+		t.Fatalf("capped actions/updates = %d/%d", len(largeDispatcher.actions), len(largeStore.updates))
+	}
+	if last := largeStore.updates[len(largeStore.updates)-1].nextFire; last == nil || last.After(now) {
+		t.Fatalf("capped cursor = %v, want retained due backlog", last)
+	}
+	if got := largeStore.updates[len(largeStore.updates)-1].occurrence; got.Disposition != ScheduleDispositionCatchUp ||
+		got.BacklogCount != maxScheduleCatchUpPerPoll+1 || !got.BacklogTruncated || got.BacklogIndex != maxScheduleCatchUpPerPoll {
+		t.Fatalf("bounded catch-up occurrence = %+v", got)
+	}
+}
+
+func TestSchedulerPollRecordsMaxConcurrentSkipWithoutOverwritingARealFire(t *testing.T) {
+	now := time.Date(2026, 8, 10, 18, 0, 0, 0, time.UTC)
+	schedule := dueCreateTaskSchedule(now, 90*time.Second, ScheduleMissPolicyFireAll)
+	schedule.MaxConcurrent = 1
+	schedule.ActiveTaskID = now.Add(-10 * time.Second).Format(time.RFC3339)
+	scheduler, store, dispatcher := newSchedulePollHarness(now, schedule)
+	if err := scheduler.poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatcher.actions) != 0 || len(store.updates) != 1 {
+		t.Fatalf("actions/updates = %d/%d", len(dispatcher.actions), len(store.updates))
+	}
+	got := store.updates[0].occurrence
+	if got.DispatchedAt != nil || got.Disposition != ScheduleDispositionSkipped ||
+		got.Reason != ScheduleSkipReasonMaxConcurrent || got.BacklogCount != 2 {
+		t.Fatalf("max-concurrent occurrence = %+v", got)
+	}
+}
+
+func TestSchedulerPollFireAllLeavesFailedOccurrenceAtDurableCursor(t *testing.T) {
+	now := time.Date(2026, 8, 10, 18, 0, 0, 0, time.UTC)
+	schedule := dueCreateTaskSchedule(now, 150*time.Second, "fire_all")
+	scheduler, store, dispatcher := newSchedulePollHarness(now, schedule)
+	dispatcher.failAt = 2
+	if err := scheduler.poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatcher.actions) != 1 || len(store.updates) != 1 {
+		t.Fatalf("actions/updates = %d/%d, want first occurrence only", len(dispatcher.actions), len(store.updates))
+	}
+	wantRetryCursor := schedule.NextFireAt.Add(time.Minute)
+	if store.updates[0].nextFire == nil || !store.updates[0].nextFire.Equal(wantRetryCursor) {
+		t.Fatalf("retry cursor = %v, want %v", store.updates[0].nextFire, wantRetryCursor)
 	}
 }
 
@@ -145,87 +433,6 @@ func TestScheduler_advanceToFuture_intervalReturnsFutureTime(t *testing.T) {
 	}
 	if !next.After(now) {
 		t.Errorf("advanceToFuture() = %v is not after now=%v", next, now)
-	}
-}
-
-// ---- countMissedFires ----
-
-func TestScheduler_countMissedFires_returnsOneWhenNoNextFireAt(t *testing.T) {
-	s := newTestScheduler()
-	sc := Schedule{
-		ScheduleType: ScheduleTypeInterval,
-		ScheduleExpr: "1m",
-		NextFireAt:   nil,
-	}
-
-	count := s.countMissedFires(sc, time.Now())
-	if count != 1 {
-		t.Errorf("countMissedFires() = %d, want 1 when NextFireAt is nil", count)
-	}
-}
-
-func TestScheduler_countMissedFires_intervalCountsMissedPeriods(t *testing.T) {
-	s := newTestScheduler()
-	base := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
-	// NextFireAt is 3 minutes ago, interval is 1m → should count 3 misses
-	nextFire := base.Add(-3 * time.Minute)
-	sc := Schedule{
-		ScheduleType: ScheduleTypeInterval,
-		ScheduleExpr: "1m",
-		NextFireAt:   &nextFire,
-	}
-
-	count := s.countMissedFires(sc, base)
-	if count < 3 {
-		t.Errorf("countMissedFires() = %d, want ≥3 for 3-minute gap with 1m interval", count)
-	}
-}
-
-func TestScheduler_countMissedFires_cronCountsMissedSlots(t *testing.T) {
-	s := newTestScheduler()
-	// nextFire was 3 hours ago, cron fires every hour → 3 missed
-	base := time.Date(2025, 1, 15, 15, 0, 0, 0, time.UTC)
-	nextFire := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
-	sc := Schedule{
-		ScheduleType: ScheduleTypeCron,
-		ScheduleExpr: "0 * * * *", // top of hour
-		NextFireAt:   &nextFire,
-	}
-
-	count := s.countMissedFires(sc, base)
-	if count < 3 {
-		t.Errorf("countMissedFires() = %d, want ≥3 for 3-hour gap with hourly cron", count)
-	}
-}
-
-func TestScheduler_countMissedFires_invalidIntervalReturnsOne(t *testing.T) {
-	s := newTestScheduler()
-	now := time.Now()
-	nextFire := now.Add(-5 * time.Minute)
-	sc := Schedule{
-		ScheduleType: ScheduleTypeInterval,
-		ScheduleExpr: "bad-duration",
-		NextFireAt:   &nextFire,
-	}
-
-	count := s.countMissedFires(sc, now)
-	if count != 1 {
-		t.Errorf("countMissedFires() = %d with invalid interval, want 1", count)
-	}
-}
-
-func TestScheduler_countMissedFires_nonIntervalNonCronReturnsOne(t *testing.T) {
-	s := newTestScheduler()
-	now := time.Now()
-	nextFire := now.Add(-1 * time.Minute)
-	sc := Schedule{
-		ScheduleType: ScheduleTypeOnce,
-		NextFireAt:   &nextFire,
-	}
-
-	count := s.countMissedFires(sc, now)
-	if count != 1 {
-		t.Errorf("countMissedFires() = %d for once schedule, want 1", count)
 	}
 }
 

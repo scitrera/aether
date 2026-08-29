@@ -96,20 +96,31 @@ func TestKVHandler_UserIdentity_ReturnsPermissionDenied(t *testing.T) {
 	}
 }
 
-func TestKVHandler_OrchestratorIdentity_ReturnsPermissionDenied(t *testing.T) {
-	h := newTestKVHandler(newMockKVReadWriter())
-	cb, _ := captureResponses()
+// Orchestrators were originally denied KV outright. They are now permitted at the
+// TYPE gate so they can hold a private space for passing init args to the tasks
+// they create — access to any individual key still requires an explicit ACL grant
+// (acl_seed.py seeds narrow ones: provision/*, *ikv:provision:*,
+// *ikv:api_key:MODAL_*). Denying the type outright made those grants unreachable
+// and left workers launched with no environment.
+func TestKVHandler_OrchestratorIdentity_Permitted(t *testing.T) {
+	store := newMockKVReadWriter()
+	h := newTestKVHandler(store)
+	cb, msgs := captureResponses()
 
 	orchIdentity := models.Identity{Type: models.PrincipalOrchestrator, Implementation: "k8s", Specifier: "primary"}
 	op := &pb.KVOperation{
-		Op:    pb.KVOperation_GET,
-		Scope: pb.KVOperation_GLOBAL,
-		Key:   "some-key",
+		Op:        pb.KVOperation_GET,
+		Scope:     pb.KVOperation_GLOBAL,
+		Key:       "test-key",
+		Workspace: "ws1",
 	}
 
 	err := h.HandleKVOperation(context.Background(), orchIdentity, uuid.New(), nil, op, cb)
-	if err == nil {
-		t.Fatal("expected error for Orchestrator identity accessing KV store, got nil")
+	if err != nil {
+		t.Fatalf("unexpected error for Orchestrator identity: %v", err)
+	}
+	if len(*msgs) == 0 {
+		t.Error("expected a response message to be sent for successful GET")
 	}
 }
 

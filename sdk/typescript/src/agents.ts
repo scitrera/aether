@@ -11,7 +11,7 @@
 
 import { AetherClient } from "./client.js";
 import type { AetherClientOptions } from "./client.js";
-import { MessageType, TaskAssignmentMode, TaskPriority } from "./types.js";
+import { MessageType, TargetOfflinePolicy, TaskAssignmentMode, TaskPriority } from "./types.js";
 import type { MessageHandler } from "./types.js";
 import { InvalidArgumentError } from "./errors.js";
 import {
@@ -57,6 +57,8 @@ export interface CreateTaskOptions {
   workspace?: string;
   /** For TARGETED mode: the agent to assign to. */
   targetAgentId?: string;
+  /** TARGETED behavior while the exact target is disconnected. */
+  targetOfflinePolicy?: TargetOfflinePolicy;
   /** For POOL mode: the agent implementation type to match. */
   targetImplementation?: string;
   /** Optional parameter overrides for orchestration. */
@@ -66,11 +68,18 @@ export interface CreateTaskOptions {
   /** Assignment mode. Default: SelfAssign. */
   assignmentMode?: TaskAssignmentMode;
   /**
+   * Optional active parent assigned to this calling identity. The gateway
+   * validates and applies the binding only to this creation request.
+   */
+  parentTaskId?: string;
+  /**
    * Optional dispatch priority. Higher priority pending tasks are delivered
    * before lower ones. Defaults to Unspecified, which the server normalizes
    * to Normal.
    */
   priority?: TaskPriority;
+  /** Delegation capacity the final worker must retain. Currently 0 or 1. */
+  requiredDownstreamAuthorityHops?: number;
 }
 
 // =============================================================================
@@ -390,10 +399,13 @@ export class AgentClient extends AetherClient {
         workspace,
         assignmentMode,
         targetAgentId: opts.targetAgentId ?? "",
+        targetOfflinePolicy: opts.targetOfflinePolicy ?? TargetOfflinePolicy.Unspecified,
         targetImplementation: opts.targetImplementation ?? "",
         launchParamOverrides: opts.launchParamOverrides ?? {},
         metadata: opts.metadata ?? {},
+        parentTaskId: opts.parentTaskId ?? "",
         priority: opts.priority ?? TaskPriority.Unspecified,
+        requiredDownstreamAuthorityHops: opts.requiredDownstreamAuthorityHops ?? 0,
       },
     });
   }

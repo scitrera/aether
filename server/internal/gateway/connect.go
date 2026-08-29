@@ -485,6 +485,10 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 			// keeps streaming TaskEvent deliveries until UNSUBSCRIBE or
 			// disconnect.
 			go s.handleTaskSubscriptionOp(sessionCtx, client, p.TaskSubscriptionOp)
+		case *pb.UpstreamMessage_AccessCheck:
+			s.handleAccessCheck(sessionCtx, client, p.AccessCheck)
+		case *pb.UpstreamMessage_BatchAccessCheck:
+			s.handleBatchAccessCheck(sessionCtx, client, p.BatchAccessCheck)
 		case *pb.UpstreamMessage_WorkflowOp:
 			s.handleWorkflowOp(sessionCtx, client, p.WorkflowOp)
 		case *pb.UpstreamMessage_WorkflowResponse:

@@ -242,6 +242,27 @@ func TestDisconnectReaper_StillFailsRunningTasks(t *testing.T) {
 	}
 }
 
+func TestDisconnectReaper_PreservesRunningTaskWhenLongLivedOwnerReconnected(t *testing.T) {
+	store, db, cleanup := newReaperStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	task := buildRunningTaskForReaper(t, ctx, store, "reconnected")
+	forceDisconnectedRow(t, ctx, db, task.TaskID, tasks.TaskStatusRunning, time.Now().Add(-time.Hour), 1000)
+
+	service := &TaskAssignmentService{taskStore: store, sessionRegistry: alwaysOnlineSessionRegistry{}}
+	reaper := NewDisconnectReaper(store, service, reaperLivenessAllOffline{})
+	reaper.scan(ctx)
+
+	got, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask after reaper scan: %v", err)
+	}
+	if got.Status != tasks.TaskStatusRunning || got.DisconnectedAt != nil {
+		t.Fatalf("reconnected long-lived owner was reaped: %+v", got)
+	}
+}
+
 // fixedListStore wraps a real Store but overrides ListDisconnectedTasks to
 // return a fixed slice. Used by the waiting/hibernated tests because the real
 // store's status='running' filter would exclude the rows we want the reaper

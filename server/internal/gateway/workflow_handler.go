@@ -12,8 +12,9 @@ import (
 
 // pendingWorkflowRequest tracks an in-flight WorkflowOperation waiting for a response.
 type pendingWorkflowRequest struct {
-	client    *ClientSession
-	createdAt time.Time
+	client                     *ClientSession
+	createdAt                  time.Time
+	provisionalScheduleGrantID string
 }
 
 // handleWorkflowOp forwards a WorkflowOperation from a client to the connected workflow engine.
@@ -32,6 +33,16 @@ func (s *GatewayServer) handleWorkflowOp(ctx context.Context, client *ClientSess
 		})
 		return
 	}
+	forwarded, provisionalGrant, err := s.prepareWorkflowOperation(ctx, client, op)
+	if err != nil {
+		_ = client.SafeSend(&pb.DownstreamMessage{
+			Payload: &pb.DownstreamMessage_WorkflowResponse{WorkflowResponse: &pb.WorkflowResponse{
+				Success: false, Error: err.Error(), RequestId: op.GetRequestId(),
+			}},
+		})
+		return
+	}
+	op = forwarded
 
 	// Ensure a request_id exists for correlation
 	requestID := op.RequestId
@@ -42,8 +53,8 @@ func (s *GatewayServer) handleWorkflowOp(ctx context.Context, client *ClientSess
 
 	// Store the pending request so the response can be routed back
 	s.pendingWorkflowRequests.Store(requestID, &pendingWorkflowRequest{
-		client:    client,
-		createdAt: time.Now(),
+		client: client, createdAt: time.Now(),
+		provisionalScheduleGrantID: workflowGrantID(provisionalGrant),
 	})
 
 	// Forward the operation downstream to the workflow engine
@@ -54,6 +65,7 @@ func (s *GatewayServer) handleWorkflowOp(ctx context.Context, client *ClientSess
 	}); err != nil {
 		logging.Logger.Error().Err(err).Str("request_id", requestID).Msg("failed to forward workflow op to workflow engine")
 		s.pendingWorkflowRequests.Delete(requestID)
+		s.revokeProvisionalWorkflowGrant(ctx, provisionalGrant)
 		_ = client.SafeSend(&pb.DownstreamMessage{
 			Payload: &pb.DownstreamMessage_WorkflowResponse{
 				WorkflowResponse: &pb.WorkflowResponse{
@@ -76,6 +88,9 @@ func (s *GatewayServer) handleWorkflowResponse(ctx context.Context, client *Clie
 	}
 
 	origReq := val.(*pendingWorkflowRequest)
+	if !resp.GetSuccess() {
+		s.revokeProvisionalWorkflowGrantByID(ctx, origReq.provisionalScheduleGrantID)
+	}
 	if err := origReq.client.SafeSend(&pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_WorkflowResponse{
 			WorkflowResponse: resp,
@@ -138,6 +153,7 @@ func (s *GatewayServer) sweepTimedOutWorkflowRequests() {
 		if pending.createdAt.Before(cutoff) {
 			requestID, _ := key.(string)
 			if _, deleted := s.pendingWorkflowRequests.LoadAndDelete(key); deleted {
+				s.revokeProvisionalWorkflowGrantByID(context.Background(), pending.provisionalScheduleGrantID)
 				logging.Logger.Warn().Str("request_id", requestID).Msg("workflow request timed out")
 				_ = pending.client.SafeSend(&pb.DownstreamMessage{
 					Payload: &pb.DownstreamMessage_WorkflowResponse{
@@ -166,6 +182,7 @@ func (s *GatewayServer) cleanupPendingWorkflowRequests(client *ClientSession) {
 		if pending.client == client {
 			requestID, _ := key.(string)
 			if _, deleted := s.pendingWorkflowRequests.LoadAndDelete(key); deleted {
+				s.revokeProvisionalWorkflowGrantByID(context.Background(), pending.provisionalScheduleGrantID)
 				logging.Logger.Debug().Str("request_id", requestID).Str("identity", client.Identity.String()).Msg("cleaning up pending workflow request on client disconnect")
 			}
 		}

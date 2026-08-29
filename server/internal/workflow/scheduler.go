@@ -2,12 +2,34 @@ package workflow
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"strconv"
 	"time"
 
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
+	pb "github.com/scitrera/aether/api/proto"
 )
+
+const (
+	maxScheduleCatchUpPerPoll = 100
+
+	scheduleMetadataID               = "aether.schedule.id"
+	scheduleMetadataScheduledFor     = "aether.schedule.scheduled_for"
+	scheduleMetadataDispatchedAt     = "aether.schedule.dispatched_at"
+	scheduleMetadataMissPolicy       = "aether.schedule.miss_policy"
+	scheduleMetadataDisposition      = "aether.schedule.disposition"
+	scheduleMetadataBacklogCount     = "aether.schedule.backlog_count"
+	scheduleMetadataBacklogTruncated = "aether.schedule.backlog_truncated"
+	scheduleMetadataBacklogIndex     = "aether.schedule.backlog_index"
+)
+
+type scheduleActionDispatcher interface {
+	DispatchScheduledAction(ctx context.Context, action *ActionDef, scheduleID string, authorization *pb.AuthorizationContext) error
+}
 
 // joinDeadlineHandler fires the timeout path for an open join whose deadline
 // has elapsed. *JoinEngine satisfies it.
@@ -18,15 +40,16 @@ type joinDeadlineHandler interface {
 // Scheduler handles recurring and one-time scheduled tasks.
 type Scheduler struct {
 	store    WorkflowStore
-	executor *Executor
+	executor scheduleActionDispatcher
 	dagEng   *DAGEngine
 	leader   LeaderElector
 	joins    joinDeadlineHandler
 	parser   cron.Parser
 	interval time.Duration
+	now      func() time.Time
 }
 
-func NewScheduler(store WorkflowStore, executor *Executor, dagEng *DAGEngine, leader LeaderElector, joins joinDeadlineHandler, pollInterval time.Duration) *Scheduler {
+func NewScheduler(store WorkflowStore, executor scheduleActionDispatcher, dagEng *DAGEngine, leader LeaderElector, joins joinDeadlineHandler, pollInterval time.Duration) *Scheduler {
 	return &Scheduler{
 		store:    store,
 		executor: executor,
@@ -35,6 +58,7 @@ func NewScheduler(store WorkflowStore, executor *Executor, dagEng *DAGEngine, le
 		joins:    joins,
 		parser:   cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
 		interval: pollInterval,
+		now:      time.Now,
 	}
 }
 
@@ -62,13 +86,19 @@ func (s *Scheduler) Run(ctx context.Context) {
 }
 
 func (s *Scheduler) poll(ctx context.Context) error {
-	now := time.Now()
+	now := s.now()
 	schedules, err := s.store.GetDueSchedules(ctx, now)
 	if err != nil {
 		return err
 	}
 
 	for _, sc := range schedules {
+		dueAt := now
+		if sc.NextFireAt != nil {
+			dueAt = *sc.NextFireAt
+		}
+		backlogCount, backlogTruncated := s.measureBacklog(sc, dueAt, now)
+
 		// Concurrency control: if max_concurrent=1 and a task is active, check staleness
 		if sc.MaxConcurrent == 1 && sc.ActiveTaskID != "" {
 			if markerTime, err := time.Parse(time.RFC3339, sc.ActiveTaskID); err == nil {
@@ -80,7 +110,7 @@ func (s *Scheduler) poll(ctx context.Context) error {
 				} else {
 					log.Debug().Str("schedule_id", sc.ID).Msg("skipping schedule: previous task still active")
 					nextFire := s.advanceToFuture(sc, now)
-					if err := s.store.UpdateScheduleAfterFire(ctx, sc.ID, now, nextFire); err != nil {
+					if err := s.recordSkipped(ctx, sc, dueAt, nextFire, ScheduleSkipReasonMaxConcurrent, backlogCount, backlogTruncated); err != nil {
 						log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to advance skipped schedule")
 					}
 					continue
@@ -89,38 +119,58 @@ func (s *Scheduler) poll(ctx context.Context) error {
 				// Non-timestamp marker; skip
 				log.Debug().Str("schedule_id", sc.ID).Msg("skipping schedule: active task marker set")
 				nextFire := s.advanceToFuture(sc, now)
-				if err := s.store.UpdateScheduleAfterFire(ctx, sc.ID, now, nextFire); err != nil {
+				if err := s.recordSkipped(ctx, sc, dueAt, nextFire, ScheduleSkipReasonMaxConcurrent, backlogCount, backlogTruncated); err != nil {
 					log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to advance skipped schedule")
 				}
 				continue
 			}
 		}
 
-		// Apply miss_policy
+		// Apply miss_policy. A single due occurrence is an ordinary on-time fire;
+		// "skip" only discards a backlog containing more than one occurrence.
+		// This distinction matters because every scheduler poll necessarily sees
+		// an occurrence after its exact due timestamp.
 		switch sc.MissPolicy {
-		case "skip":
-			// If multiple fires were missed, advance to next future time without firing
-			nextFire := s.advanceToFuture(sc, now)
-			if err := s.store.UpdateScheduleAfterFire(ctx, sc.ID, now, nextFire); err != nil {
-				log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to advance schedule")
+		case ScheduleMissPolicySkip:
+			if backlogCount > 1 {
+				nextFire := s.advanceToFuture(sc, now)
+				if err := s.recordSkipped(ctx, sc, dueAt, nextFire, ScheduleSkipReasonMissPolicy, backlogCount, backlogTruncated); err != nil {
+					log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to advance skipped schedule backlog")
+				}
+				continue
 			}
-			continue
 
-		case "fire_all":
-			// Fire once per missed interval, capped at 100
-			count := s.countMissedFires(sc, now)
-			if count > 100 {
-				count = 100
+		case ScheduleMissPolicyFireAll:
+			// Advance the durable cursor after every emitted occurrence. The batch
+			// cap bounds one poll without discarding older backlog; a still-due
+			// cursor is picked up by the next poll. Per-occurrence idempotency makes
+			// a retry safe when dispatch succeeds but cursor persistence does not.
+			occurrence := dueAt
+			disposition := ScheduleDispositionOrdinary
+			if backlogCount > 1 {
+				disposition = ScheduleDispositionCatchUp
 			}
-			for i := 0; i < count; i++ {
-				if err := s.fire(ctx, sc, now); err != nil {
+			for i := 0; i < maxScheduleCatchUpPerPoll && !occurrence.After(now); i++ {
+				decision := ScheduleOccurrence{
+					ScheduledFor: occurrence, DispatchedAt: timePointer(now), Disposition: disposition,
+					BacklogCount: backlogCount, BacklogTruncated: backlogTruncated, BacklogIndex: i + 1,
+				}
+				if err := s.fire(ctx, sc, decision); err != nil {
+					if s.blockOnPermanentAuthorityError(ctx, sc, decision, err, now) {
+						break
+					}
 					log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to fire schedule (fire_all)")
 					break
 				}
-			}
-			nextFire := s.advanceToFuture(sc, now)
-			if err := s.store.UpdateScheduleAfterFire(ctx, sc.ID, now, nextFire); err != nil {
-				log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to update schedule after fire_all")
+				nextFire := s.calculateNextFire(sc, occurrence)
+				if err := s.store.RecordScheduleOccurrence(ctx, sc.ID, decision, nextFire); err != nil {
+					log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to update schedule during fire_all")
+					break
+				}
+				if nextFire == nil {
+					break
+				}
+				occurrence = *nextFire
 			}
 			continue
 
@@ -128,7 +178,18 @@ func (s *Scheduler) poll(ctx context.Context) error {
 			// Fire exactly once, then advance to next future time
 		}
 
-		if err := s.fire(ctx, sc, now); err != nil {
+		disposition := ScheduleDispositionOrdinary
+		if backlogCount > 1 {
+			disposition = ScheduleDispositionCoalesced
+		}
+		decision := ScheduleOccurrence{
+			ScheduledFor: dueAt, DispatchedAt: timePointer(now), Disposition: disposition,
+			BacklogCount: backlogCount, BacklogTruncated: backlogTruncated, BacklogIndex: 1,
+		}
+		if err := s.fire(ctx, sc, decision); err != nil {
+			if s.blockOnPermanentAuthorityError(ctx, sc, decision, err, now) {
+				continue
+			}
 			log.Error().Err(err).
 				Str("schedule_id", sc.ID).
 				Str("name", sc.Name).
@@ -137,7 +198,7 @@ func (s *Scheduler) poll(ctx context.Context) error {
 		}
 
 		nextFire := s.advanceToFuture(sc, now)
-		if err := s.store.UpdateScheduleAfterFire(ctx, sc.ID, now, nextFire); err != nil {
+		if err := s.store.RecordScheduleOccurrence(ctx, sc.ID, decision, nextFire); err != nil {
 			log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to update schedule after fire")
 		}
 	}
@@ -161,7 +222,66 @@ func (s *Scheduler) poll(ctx context.Context) error {
 	return nil
 }
 
-func (s *Scheduler) fire(ctx context.Context, sc Schedule, now time.Time) error {
+func (s *Scheduler) blockOnPermanentAuthorityError(ctx context.Context, sc Schedule, occurrence ScheduleOccurrence, dispatchErr error, now time.Time) bool {
+	var authorityErr *ScheduleAuthorityInvalidError
+	if !errors.As(dispatchErr, &authorityErr) {
+		return false
+	}
+	reason := authorityErr.Error()
+	if err := s.store.SetScheduleAuthorityBlocked(ctx, sc.ID, reason); err != nil {
+		log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to block schedule with invalid authority")
+		return true
+	}
+	nextFire := s.advanceToFuture(sc, now)
+	if err := s.recordSkipped(ctx, sc, occurrence.ScheduledFor, nextFire,
+		ScheduleSkipReasonAuthorityInvalid, occurrence.BacklogCount, occurrence.BacklogTruncated); err != nil {
+		log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to record schedule authority skip")
+	}
+	log.Warn().Err(dispatchErr).Str("schedule_id", sc.ID).Msg("blocked schedule after permanent authority failure")
+	return true
+}
+
+// measureBacklog returns the bounded number of occurrences due at this poll.
+// The cap is one beyond the per-poll fire_all dispatch limit, which is enough to
+// say whether a completed batch still leaves work without walking an unbounded
+// outage gap.
+func (s *Scheduler) measureBacklog(sc Schedule, firstDue, now time.Time) (int, bool) {
+	const detailLimit = maxScheduleCatchUpPerPoll + 1
+	count := 1
+	current := firstDue
+	for count < detailLimit {
+		next := s.calculateNextFire(sc, current)
+		if next == nil || next.After(now) {
+			return count, false
+		}
+		current = *next
+		count++
+	}
+	next := s.calculateNextFire(sc, current)
+	return count, next != nil && !next.After(now)
+}
+
+func (s *Scheduler) recordSkipped(
+	ctx context.Context,
+	sc Schedule,
+	scheduledFor time.Time,
+	nextFire *time.Time,
+	reason string,
+	backlogCount int,
+	backlogTruncated bool,
+) error {
+	return s.store.RecordScheduleOccurrence(ctx, sc.ID, ScheduleOccurrence{
+		ScheduledFor: scheduledFor, Disposition: ScheduleDispositionSkipped, Reason: reason,
+		BacklogCount: backlogCount, BacklogTruncated: backlogTruncated,
+	}, nextFire)
+}
+
+func timePointer(value time.Time) *time.Time {
+	copy := value
+	return &copy
+}
+
+func (s *Scheduler) fire(ctx context.Context, sc Schedule, occurrence ScheduleOccurrence) error {
 	log.Info().
 		Str("schedule_id", sc.ID).
 		Str("name", sc.Name).
@@ -171,9 +291,14 @@ func (s *Scheduler) fire(ctx context.Context, sc Schedule, now time.Time) error 
 	// If schedule triggers a DAG, start the DAG execution
 	if sc.WorkflowID != "" {
 		triggerData, _ := json.Marshal(map[string]any{
-			"schedule_id":   sc.ID,
-			"schedule_name": sc.Name,
-			"fired_at":      now.Format(time.RFC3339),
+			"schedule_id":       sc.ID,
+			"schedule_name":     sc.Name,
+			"scheduled_for":     occurrence.ScheduledFor.UTC().Format(time.RFC3339Nano),
+			"fired_at":          occurrence.DispatchedAt.UTC().Format(time.RFC3339Nano),
+			"disposition":       occurrence.Disposition,
+			"backlog_count":     occurrence.BacklogCount,
+			"backlog_truncated": occurrence.BacklogTruncated,
+			"backlog_index":     occurrence.BacklogIndex,
 		})
 		_, err := s.dagEng.StartExecution(ctx, sc.WorkflowID, sc.Workspace, triggerData)
 		return err
@@ -187,20 +312,61 @@ func (s *Scheduler) fire(ctx context.Context, sc Schedule, now time.Time) error 
 	if action.Workspace == "" {
 		action.Workspace = sc.Workspace
 	}
+	action.Metadata = cloneStringMap(action.Metadata)
+	action.Metadata[scheduleMetadataID] = sc.ID
+	action.Metadata[scheduleMetadataScheduledFor] = occurrence.ScheduledFor.UTC().Format(time.RFC3339Nano)
+	action.Metadata[scheduleMetadataDispatchedAt] = occurrence.DispatchedAt.UTC().Format(time.RFC3339Nano)
+	action.Metadata[scheduleMetadataMissPolicy] = normalizedMissPolicy(sc.MissPolicy)
+	action.Metadata[scheduleMetadataDisposition] = occurrence.Disposition
+	action.Metadata[scheduleMetadataBacklogCount] = strconv.Itoa(occurrence.BacklogCount)
+	action.Metadata[scheduleMetadataBacklogTruncated] = strconv.FormatBool(occurrence.BacklogTruncated)
+	action.Metadata[scheduleMetadataBacklogIndex] = strconv.Itoa(occurrence.BacklogIndex)
+	if action.Type == "create_task" && action.IdempotencyKey == "" {
+		action.IdempotencyKey = scheduleOccurrenceIdempotencyKey(sc, occurrence.ScheduledFor)
+	}
 
-	if err := s.executor.DispatchAction(&action); err != nil {
+	var authorization *pb.AuthorizationContext
+	if sc.Authority != nil {
+		if !sc.Authority.ExpiresAt.After(s.now()) {
+			return &ScheduleAuthorityInvalidError{Code: "ERR_AUTHORITY_INVALID", Message: "workflow schedule authority expired"}
+		}
+		authorization = sc.Authority.Authorization
+	}
+	if err := s.executor.DispatchScheduledAction(ctx, &action, sc.ID, authorization); err != nil {
 		return err
 	}
 
 	// Track active task for concurrency control
 	if sc.MaxConcurrent == 1 {
-		marker := now.Format(time.RFC3339)
+		marker := occurrence.DispatchedAt.Format(time.RFC3339)
 		if err := s.store.SetScheduleActiveTask(ctx, sc.ID, marker); err != nil {
 			log.Error().Err(err).Str("schedule_id", sc.ID).Msg("failed to set active task marker")
 		}
 	}
 
 	return nil
+}
+
+func normalizedMissPolicy(policy string) string {
+	switch policy {
+	case ScheduleMissPolicySkip, ScheduleMissPolicyFireAll:
+		return policy
+	default:
+		return ScheduleMissPolicyFireOnce
+	}
+}
+
+func scheduleOccurrenceIdempotencyKey(sc Schedule, scheduledFor time.Time) string {
+	sum := sha256.Sum256([]byte(sc.Workspace + "\x00" + sc.ID + "\x00" + scheduledFor.UTC().Format(time.RFC3339Nano)))
+	return "schedule:" + hex.EncodeToString(sum[:])
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	cloned := make(map[string]string, len(source)+8)
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func (s *Scheduler) calculateNextFire(sc Schedule, now time.Time) *time.Time {
@@ -267,43 +433,6 @@ func (s *Scheduler) advanceToFuture(sc Schedule, now time.Time) *time.Time {
 
 	default:
 		return nil
-	}
-}
-
-// countMissedFires returns how many interval fires were missed between
-// the scheduled next_fire_at and now.
-func (s *Scheduler) countMissedFires(sc Schedule, now time.Time) int {
-	if sc.NextFireAt == nil {
-		return 1
-	}
-	switch sc.ScheduleType {
-	case ScheduleTypeInterval:
-		d, err := time.ParseDuration(sc.ScheduleExpr)
-		if err != nil || d <= 0 {
-			return 1
-		}
-		missed := int(now.Sub(*sc.NextFireAt)/d) + 1
-		if missed < 1 {
-			return 1
-		}
-		return missed
-	case ScheduleTypeCron:
-		schedule, err := s.parser.Parse(sc.ScheduleExpr)
-		if err != nil {
-			return 1
-		}
-		count := 0
-		t := *sc.NextFireAt
-		for t.Before(now) && count < 101 {
-			count++
-			t = schedule.Next(t)
-		}
-		if count < 1 {
-			return 1
-		}
-		return count
-	default:
-		return 1
 	}
 }
 

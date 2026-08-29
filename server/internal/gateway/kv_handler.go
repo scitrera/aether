@@ -165,6 +165,65 @@ func isInfraCoordAccess(identity models.Identity, key string) bool {
 	}
 }
 
+// resolveUserScopeSubject enforces the user axis of the KV scope taxonomy.
+//
+// ScopeSpec has two independent axes: Sharing decides which AGENTS rendezvous
+// on a key (exclusive embeds the agent identity, shared does not), and Identity
+// decides WHOSE data it is. "user-shared" therefore means one user, every
+// agent — the sharing axis was never meant to relax the user boundary.
+//
+// That boundary had no enforcement behind it: op.UserId is client-supplied and
+// ValidateScopeSpec only checks it is non-empty, so any caller could name
+// another user and address their namespace directly. What stood in for it was
+// an ACL default-deny on the shared user scopes — a mitigation at the wrong
+// layer, which is why the shared scopes could not be opened for a legitimate
+// same-user read without also permitting cross-user reads.
+//
+// Under an on-behalf-of grant the subject IS the user, so the user axis is
+// derivable rather than assertable: it is filled in when omitted and must match
+// when supplied. A mismatch is a caller trying to reach a namespace its grant
+// does not cover.
+//
+// Callers acting under their OWN authority are untouched: platform-server
+// legitimately writes per-user session state for the browser's user, and its
+// reach is bounded by the explicit kv_scope grants it holds. Direct user
+// principals cannot reach KV at all (the type gate in HandleKVOperation), so
+// OBO is the only path that can assert a foreign user id.
+func resolveUserScopeSubject(scope kv.KVScope, identity models.Identity, authority *acl.ResolvedAuthority, userID string) (string, error) {
+	if authority == nil || authority.Subject.Type != models.PrincipalUser {
+		return userID, nil
+	}
+	spec, ok := kv.ScopeSpecFromKVScope(scope)
+	if !ok {
+		// Unrecognized scope: leave it alone, ValidateScopeConfig rejects it.
+		return userID, nil
+	}
+	if spec.Identity != kv.IdentityScopeUser && spec.Identity != kv.IdentityScopeUserWorkspace {
+		return userID, nil
+	}
+
+	subject := authority.Subject.ID
+	if subject == "" {
+		logging.Logger.Warn().
+			Str("identity", identity.String()).Str("scope", string(scope)).
+			Msg("on-behalf-of subject carries no user id for a user-scoped KV operation")
+		return "", status.Error(codes.PermissionDenied,
+			"on-behalf-of subject has no user id for a user-scoped KV operation")
+	}
+	if userID == "" {
+		return subject, nil
+	}
+	if userID != subject {
+		logging.Logger.Warn().
+			Str("identity", identity.String()).Str("scope", string(scope)).
+			Str("requested_user", userID).Str("subject_user", subject).
+			Msg("KV user-scope mismatch: request names a different user than the on-behalf-of subject")
+		return "", status.Error(codes.PermissionDenied,
+			"user-scoped KV operation names a different user than the on-behalf-of subject")
+	}
+	return userID, nil
+}
+
 // checkScopeReadPermission checks scope-level read permission (used for LIST which has no specific key).
 func (h *KVHandler) checkScopeReadPermission(ctx context.Context, identity models.Identity, authority *acl.ResolvedAuthority, scope kv.KVScope, operation, workspace string, sessionID uuid.UUID) error {
 	if h.aclService == nil {
@@ -206,12 +265,26 @@ func (h *KVHandler) HandleKVOperation(
 	// to the tenant's internal KV. Like the WorkflowEngine, this only opens the
 	// type gate — every key it touches still requires an explicit ACL grant via
 	// checkKeyPermission (seeded for metrics::shard0 in acl_seed.py).
+	// Orchestrators are permitted for the same reason: they must read the tenant
+	// ProvisionSpec and per-tenant launcher credentials from KV in order to build
+	// a worker's environment. acl_seed.py already seeds NARROW grants for exactly
+	// that (orc::<impl>::* -> kv_key/provision/*, *ikv:provision:*, and
+	// *ikv:api_key:MODAL_*) — but those grants could never take effect, because
+	// this type gate rejected orchestrators before checkKeyPermission was ever
+	// consulted. The result was a worker launched with no environment: the agent
+	// came up and then failed to resolve its provider secrets. The gateway logged
+	// the real cause (PermissionDenied) while the orchestrator only ever saw a
+	// generic "[KV_ERROR] internal error processing KV operation".
+	//
+	// As with the WorkflowEngine and MetricsBridge above, this ONLY opens the type
+	// gate; every key an orchestrator touches still requires an explicit ACL grant.
 	if identity.Type != models.PrincipalAgent &&
 		identity.Type != models.PrincipalTask &&
 		identity.Type != models.PrincipalService &&
 		identity.Type != models.PrincipalWorkflowEngine &&
-		identity.Type != models.PrincipalMetricsBridge {
-		return status.Error(codes.PermissionDenied, "only agents, tasks, services, the metrics bridge, and the workflow engine can access KV store")
+		identity.Type != models.PrincipalMetricsBridge &&
+		identity.Type != models.PrincipalOrchestrator {
+		return status.Error(codes.PermissionDenied, "only agents, tasks, services, orchestrators, the metrics bridge, and the workflow engine can access KV store")
 	}
 
 	// Map proto enum scope to internal KVScope (default to workspace for backward compatibility)
@@ -240,6 +313,12 @@ func (h *KVHandler) HandleKVOperation(
 	workspace := op.Workspace
 	if workspace == "" {
 		workspace = identity.Workspace
+	}
+
+	// Enforce the user axis of the scope taxonomy (see resolveUserScopeSubject).
+	var err error
+	if userID, err = resolveUserScopeSubject(scope, identity, authority, userID); err != nil {
+		return err
 	}
 
 	// Validate scope configuration
@@ -860,17 +939,36 @@ func (h *KVHandler) handleIncrement(
 		return err
 	}
 
+	// Establish the window boundary ATOMICALLY, BEFORE incrementing. SetNX writes
+	// the key with its TTL only when absent, so a counter cannot come into
+	// existence without an expiry.
+	//
+	// This replaces a set-TTL-after-first-increment approach that was load-bearing
+	// and unsound: the expiry was applied only when some caller observed
+	// counterVal == 1, through a SEPARATE Set. Any key that began life another way
+	// — that Set failing, two first-increments racing so neither saw 1, or a key
+	// written by some other path — never received a TTL, incremented forever, and
+	// pinned its principal at "limit exceeded" permanently. Nothing self-healed,
+	// because the state lives here rather than in the caller: restarting the
+	// client, the server, or anything between them changed nothing.
+	//
+	// Observed in production 2026-08-05: a MemoryLayer per-user rate-limit counter
+	// stuck at 10078 against a limit of 10000, returning 429 indefinitely and
+	// surviving every restart. The old Set also clobbered the value back to "1",
+	// silently discarding concurrent increments.
+	if ttl > 0 {
+		if _, nxErr := h.kvStore.SetNX(ctx, identity, scope, key, "0", userID, workspace, ttl); nxErr != nil {
+			logging.Logger.Warn().Err(nxErr).Str("identity", identity.String()).Str("key", key).Msg("KV INCREMENT: SetNX window init failed; falling back to post-increment TTL")
+		}
+	}
+
 	counterVal, err := h.kvStore.Increment(ctx, identity, scope, key, userID, workspace)
 
-	// If a TTL is specified and this is the first increment (counterVal == 1),
-	// set the expiry on the key. We re-set the key with the string representation
-	// of the counter value so the TTL takes effect without losing the numeric value.
-	// NOTE: This two-step approach (INCR then EXPIRE via SET) is not fully atomic.
-	// For strict atomicity (e.g., sliding rate limit windows), a Lua script should
-	// be used instead. This is acceptable for fixed-window rate limit use cases
-	// where the window is established on the first increment.
+	// Fallback for the case where SetNX above failed: Increment may then have
+	// created the key with no expiry. counterVal == 1 proves the key was absent
+	// before this increment, so writing "1" with the TTL cannot lose a concurrent
+	// update. Without this a SetNX outage would reintroduce the permanent-pin bug.
 	if err == nil && ttl > 0 && counterVal == 1 {
-		// Only set TTL on the first increment to establish the window boundary
 		if setErr := h.kvStore.Set(ctx, identity, scope, key, "1", userID, workspace, ttl); setErr != nil {
 			logging.Logger.Error().Err(setErr).Str("identity", identity.String()).Str("key", key).Msg("KV INCREMENT: failed to set TTL after first increment")
 		}

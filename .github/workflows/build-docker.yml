@@ -168,7 +168,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: server
-          file: server/Dockerfile.aetherlite-dev
+          file: server/Dockerfile.aetherlite
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}

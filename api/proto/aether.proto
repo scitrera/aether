@@ -44,6 +44,8 @@ message UpstreamMessage {
     SubmitAuditEventRequest submit_audit_event = 29;
     AuthorityRequestOperation authority_request_op = 30;
     TaskSubscriptionOperation task_subscription_op = 31;
+    AccessCheckOperation access_check = 33;
+    BatchAccessCheckOperation batch_access_check = 34;
   }
   // Phase 6: URIs of extensions active on this specific message. When the
   // receiver does not support a URI listed here and the extension was
@@ -94,6 +96,8 @@ message DownstreamMessage {
     TaskHibernated task_hibernated = 35;
     TaskSubscriptionOperationResponse task_subscription_response = 36;
     TaskEvent task_event = 37;
+    AccessCheckResponse access_check_response = 39;
+    BatchAccessCheckResponse batch_access_check_response = 40;
   }
   // Phase 6: URIs of extensions active on this specific message. Same
   // semantics as UpstreamMessage.active_extensions: receivers reject when
@@ -357,6 +361,49 @@ message SendMessage {
   // secondary once authproxy-issued root grants are used as the primary
   // scope source.
   string app_workspace = 5;
+  // Optional exact logical-resource check evaluated in addition to ordinary
+  // topic-route authorization. On allow, the resulting receipt is attached to
+  // the trusted MessageEnvelope/IncomingMessage metadata; on deny, nothing is
+  // published. Existing sends without this field retain their current path.
+  ResourceAccessRequest checked_access = 6;
+
+  // Explicitly request a gateway-derived, short-lived authorization context
+  // for the resolved recipient. The gateway only honors this when the send is
+  // already operating under a validated OBO grant with delegation capacity.
+  // For sv::{implementation} targets, wildcard resolution happens first and
+  // the child grant is bound to the concrete service instance. Exact agent
+  // targets require an invocation-bound, explicitly attenuated scope. The
+  // recipient receives the result in IncomingMessage.forwarded_authorization;
+  // payload data can never populate that trusted field.
+  AuthorityContinuationRequest authority_continuation = 7;
+}
+
+// Explicit scope ceiling for a derived message authority continuation. Empty
+// axes retain the AuthorityGrant meaning of unrestricted, so an attenuated
+// agent continuation requires every axis to be populated and validated.
+message AuthorityContinuationScope {
+  repeated string workspace_scope = 1;
+  repeated ACLAuthorityGrantResourceScopeEntry resource_scope = 2;
+  repeated string operation_scope = 3;
+  int32 max_access_level = 4;
+}
+
+message AuthorityContinuationRequest {
+  enum ScopeMode {
+    SCOPE_MODE_UNSPECIFIED = 0;
+    // Service-only mode used when a trusted service must evaluate arbitrary
+    // resources within the caller's existing authority ceiling.
+    SCOPE_MODE_INHERIT_PARENT = 1;
+    // Required for agent recipients. The requested scope is validated as a
+    // strict subset of the parent and the child is minted per invocation.
+    SCOPE_MODE_ATTENUATE = 2;
+  }
+  ScopeMode scope_mode = 1;
+  // Opaque invocation identifier. Required for ATTENUATE and matched to the
+  // checked-access correlation ID so the trusted receipt, child, and payload
+  // can be validated as one call by the recipient.
+  string binding_id = 2;
+  AuthorityContinuationScope scope = 3;
 }
 
 enum MessageType {
@@ -605,6 +652,31 @@ message IncomingMessage {
   // for, distinct from the sending identity in source_topic. Empty for direct
   // (non-OBO) sends. See MessageEnvelope.on_behalf_subject.
   PrincipalRef on_behalf_subject = 5;
+  // Gateway-authored receipt from SendMessage.checked_access. Never populated
+  // from the application payload.
+  AccessDecisionReceipt access_receipt = 6;
+
+  // Gateway-derived authority continuation for this exact delivery target.
+  // Populated only when SendMessage.authority_continuation was explicitly set
+  // and the sender's resolved grant could delegate. Recipients can pass the
+  // authorization context to CheckAccess / BatchCheckAccess; root_grant_id,
+  // expiry, and delivery_target are trusted binding/audit metadata.
+  ForwardedAuthorization forwarded_authorization = 7;
+}
+
+// Trusted authorization continuation carried outside the application payload.
+// The child grant is non-delegable, scope-attenuated to its parent, short-lived,
+// and linked into the parent's revocation cascade.
+message ForwardedAuthorization {
+  AuthorizationContext authorization = 1;
+  string root_grant_id = 2;
+  int64 expires_at_ms = 3;
+  string delivery_target = 4;
+  // Empty only for a reusable service continuation using INHERIT_PARENT.
+  string binding_id = 5;
+  // Gateway-authored projection of the effective child scope. Recipients use
+  // this to enforce their local, server-owned invocation authority profile.
+  AuthorityContinuationScope scope = 6;
 }
 
 message ConfigSnapshot {
@@ -739,6 +811,16 @@ message TaskCompletionEvent {
   repeated TaskStatus on_statuses = 3;
 }
 
+// Controls what TARGETED task creation does when the exact target identity is
+// not connected. UNSPECIFIED deliberately preserves the released behavior:
+// validate the implementation and ask an orchestrator to start the worker.
+enum TargetOfflinePolicy {
+  TARGET_OFFLINE_POLICY_UNSPECIFIED = 0;
+  TARGET_OFFLINE_POLICY_ORCHESTRATE = 1;
+  TARGET_OFFLINE_POLICY_QUEUE = 2;
+  TARGET_OFFLINE_POLICY_REJECT = 3;
+}
+
 message CreateTaskRequest {
   string task_type = 1;
   string workspace = 2;
@@ -816,6 +898,31 @@ message CreateTaskRequest {
   // Optional "feed B" config: emit a domain event onto event::* when this task
   // reaches a (selected) terminal status. Absent/disabled = no emission.
   TaskCompletionEvent completion_event = 19;
+
+  // Optional native parent for a nested task created by a long-lived worker.
+  // The gateway accepts an explicit value only when the caller is the active
+  // parent task's assigned execution identity. This is a request-scoped binding:
+  // it may select a different assigned task than the connection's startup/task-
+  // token association. Empty preserves connection-associated parent inference.
+  string parent_task_id = 20;
+
+  // TARGETED mode only. QUEUE persists the task for delivery when the exact
+  // static worker reconnects, without requiring an orchestration registry
+  // entry. REJECT fails task creation while the worker is absent.
+  TargetOfflinePolicy target_offline_policy = 21;
+
+  // Minimum delegation capacity the task's final execution identity must
+  // retain after task-authority setup. Currently 0 or 1. Set to 1 when the
+  // worker must perform one explicit downstream authorization continuation
+  // (for example, Sahara querying the tool catalog under the user's authority).
+  // In POOL mode the gateway reserves the additional anchor-to-assignee hop.
+  uint32 required_downstream_authority_hops = 22;
+
+  // WorkflowEngine-only authority audience binding. The gateway accepts this
+  // field only from the authenticated WorkflowEngine principal and requires it
+  // to match a workflow_schedule audience on authorization. Ordinary task
+  // creators must leave it empty.
+  string originating_schedule_id = 23;
 }
 
 // CreateTaskResponse is sent in response to CreateTaskRequest when the
@@ -886,6 +993,12 @@ message TaskAssignment {
 
   // Hibernation rehydration: session id to resume. Empty = fresh session.
   string resume_session_id = 14;
+
+  // Task-scoped on-behalf-of authority prepared for the assigned executor.
+  // The grant is audience-bound to this assignee/task and is revoked with the
+  // task lifecycle. It is delivered on the typed execution plane rather than
+  // requiring workers to parse server-enriched metadata.
+  AuthorizationContext authorization = 15;
 }
 
 // ============================================================================
@@ -2225,6 +2338,10 @@ message AuthorityGrantOperation {
 
   // For DERIVE_FOR_TARGET
   AuthorityGrantDeriveForTargetRequest derive_for_target_request = 9;
+
+  // WorkflowEngine-only audience context for GET/REVOKE of a
+  // workflow_schedule grant. Ignored for other actors and operations.
+  string workflow_schedule_id = 10;
 }
 
 // AuthorityGrantExchangeRequest bootstraps a grant for the current actor.
@@ -2781,6 +2898,48 @@ message ProgressUpdate {
 // Workflow Management Messages
 // ============================================================================
 
+enum WorkflowAuthorityLifetimeMode {
+  WORKFLOW_AUTHORITY_LIFETIME_SOURCE_BOUND = 0;
+  WORKFLOW_AUTHORITY_LIFETIME_DURABLE = 1;
+}
+
+// Requested ceiling for the private authority attached to one schedule. The
+// gateway validates/attenuates this against the authenticated caller context;
+// the WorkflowEngine never trusts it directly and never stores it in action
+// JSON. Empty resource or operation scope is invalid.
+message WorkflowScheduleAuthorityScope {
+  repeated string workspace_scope = 1;
+  repeated ACLAuthorityGrantResourceScopeEntry resource_scope = 2;
+  repeated string operation_scope = 3;
+  int32 max_access_level = 4;
+  int64 expires_at = 5;
+  int64 renewable_until = 6;
+  uint32 required_task_authority_hops = 7;
+  WorkflowAuthorityLifetimeMode lifetime_mode = 8;
+  // Version of the deterministic schedule-authority policy shape. Callers
+  // currently send 1; unknown versions fail closed instead of being silently
+  // reinterpreted after an upgrade.
+  uint32 policy_version = 9;
+}
+
+// Gateway-authored workflow request identity and schedule authority. The
+// gateway clears any client-supplied value before forwarding. Schedule grant
+// IDs remain outside action JSON, task payload/metadata, and workflow response
+// data. Consumers must treat this object as trusted only on the authenticated
+// WorkflowEngine connection from the gateway.
+message WorkflowRequestContext {
+  PrincipalRef actor = 1;
+  PrincipalRef subject = 2;
+  string actor_session_id = 3;
+  AuthorizationContext schedule_authorization = 4;
+  string root_grant_id = 5;
+  string source_grant_id = 6;
+  int64 expires_at_ms = 7;
+  string policy_digest = 8;
+  WorkflowAuthorityLifetimeMode lifetime_mode = 9;
+  uint32 policy_version = 10;
+}
+
 // WorkflowOperation allows clients to manage workflow rules, definitions,
 // schedules, executions, and state machines through the gRPC streaming interface.
 // Operations are forwarded by the gateway to the connected workflow engine and
@@ -2830,6 +2989,18 @@ message WorkflowOperation {
   bytes data = 5;             // JSON payload for CREATE/UPDATE ops
   string request_id = 6;      // Correlation ID
   string status_filter = 7;   // For LIST_EXECUTIONS
+
+  // Optional caller OBO authority. Resolved by the gateway before the request
+  // is authorized and forwarded.
+  AuthorizationContext authorization = 8;
+
+  // Optional requested authority for CREATE_SCHEDULE / UPSERT_SCHEDULE. The
+  // gateway derives or mints the exact WorkflowEngine schedule grant and
+  // forwards only the resulting trusted request_context.
+  WorkflowScheduleAuthorityScope schedule_authority_scope = 9;
+
+  // Gateway-authored; caller values are always discarded.
+  WorkflowRequestContext request_context = 10;
 }
 
 // WorkflowResponse is sent in response to WorkflowOperation.
@@ -2896,6 +3067,12 @@ message MessageEnvelope {
   // need to *act for* the subject use the task authority-grant path
   // (CreateTaskResponse.authority_grant_id), not this field.
   PrincipalRef on_behalf_subject = 7;
+  // Gateway-authored exact-resource decision propagated to the recipient.
+  AccessDecisionReceipt access_receipt = 8;
+
+  // Gateway-authored authority continuation. This internal envelope field is
+  // copied to IncomingMessage and is never accepted from application payloads.
+  ForwardedAuthorization forwarded_authorization = 9;
 }
 
 // =========================================================================
@@ -3040,6 +3217,14 @@ message ProxyHttpRequest {
   // upward by the sidecar relay floor (sandboxes can bump higher but never
   // lower than the inbound chain depth they observed).
   uint32 proxy_chain_depth               = 16;
+  // Optional exact logical-resource authorization evaluated by the gateway
+  // after route authorization and wildcard target resolution. A denied or
+  // unavailable check prevents delivery to the terminator.
+  ResourceAccessRequest checked_access    = 17;
+  // Gateway-authored result of checked_access. The gateway always clears any
+  // caller-supplied value before evaluation; terminators must trust this only
+  // as transport metadata on the delivered envelope.
+  AccessDecisionReceipt access_receipt    = 18;
 }
 
 // ProxyHttpResponse is sent in reply to a ProxyHttpRequest. Errors are
@@ -3317,4 +3502,73 @@ message TaskChildLifecycleEvent {
 // task. Just embeds the existing event type.
 message TaskAuthorityRequestEventRelay {
   AuthorityRequestEvent event = 1;
+}
+
+// =============================================================================
+// Portable runtime logical-resource authorization
+// =============================================================================
+
+// ResourceAccessRequest is the portable runtime authorization tuple evaluated
+// by the gateway. It is intentionally independent of any tool protocol: the
+// same primitive gates workspace views, catalog providers/entries, and future
+// logical resources. All string fields are required except workspace.
+message ResourceAccessRequest {
+  string resource_type = 1;
+  string resource_id = 2;
+  string operation = 3;
+  string workspace = 4;
+  int32 required_access_level = 5;
+  // Caller-generated correlation binding for a single logical action. A
+  // recipient compares this value with its application payload/request.
+  string correlation_id = 6;
+}
+
+// AccessDecisionReceipt is gateway-authored transport metadata. Receivers may
+// trust it only when it arrived in the Aether envelope, never when an
+// equivalent object appears inside an application payload.
+message AccessDecisionReceipt {
+  string decision_id = 1;
+  ResourceAccessRequest request = 2;
+  bool allowed = 3;
+  string decision = 4;                 // "ALLOW" or "DENY"
+  int32 effective_access_level = 5;
+  PrincipalRef actor = 6;              // authenticated connected principal
+  PrincipalRef subject = 7;            // populated for on-behalf-of checks
+  PrincipalRef root_subject = 8;       // populated when the grant records one
+  string authority_mode = 9;           // "direct" or "on_behalf_of"
+  string grant_id = 10;
+  string root_grant_id = 11;
+  int64 evaluated_at_ms = 12;
+  int64 expires_at_ms = 13;
+  string denial_code = 14;             // stable code; empty for allowed checks
+  // Populated for checked SendMessage and ProxyHTTP delivery. This binds the
+  // receipt to the concrete post-wildcard-resolution target that received it.
+  string delivery_target = 15;
+}
+
+message AccessCheckOperation {
+  string request_id = 1;
+  ResourceAccessRequest access = 2;
+  AuthorizationContext authorization = 3;
+}
+
+message AccessCheckResponse {
+  string request_id = 1;
+  bool success = 2;                    // evaluation completed; denial is success
+  string error = 3;
+  AccessDecisionReceipt decision = 4;
+}
+
+message BatchAccessCheckOperation {
+  string request_id = 1;
+  repeated ResourceAccessRequest access = 2;
+  AuthorizationContext authorization = 3;
+}
+
+message BatchAccessCheckResponse {
+  string request_id = 1;
+  bool success = 2;
+  string error = 3;
+  // Same order and cardinality as BatchAccessCheckOperation.access.
+  repeated AccessDecisionReceipt decisions = 4;
 }

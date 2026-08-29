@@ -37,6 +37,8 @@ import type { AuthorityRequestEvent as _aether_v1_AuthorityRequestEvent, Authori
 import type { TaskHibernated as _aether_v1_TaskHibernated, TaskHibernated__Output as _aether_v1_TaskHibernated__Output } from '../../aether/v1/TaskHibernated';
 import type { TaskSubscriptionOperationResponse as _aether_v1_TaskSubscriptionOperationResponse, TaskSubscriptionOperationResponse__Output as _aether_v1_TaskSubscriptionOperationResponse__Output } from '../../aether/v1/TaskSubscriptionOperationResponse';
 import type { TaskEvent as _aether_v1_TaskEvent, TaskEvent__Output as _aether_v1_TaskEvent__Output } from '../../aether/v1/TaskEvent';
+import type { AccessCheckResponse as _aether_v1_AccessCheckResponse, AccessCheckResponse__Output as _aether_v1_AccessCheckResponse__Output } from '../../aether/v1/AccessCheckResponse';
+import type { BatchAccessCheckResponse as _aether_v1_BatchAccessCheckResponse, BatchAccessCheckResponse__Output as _aether_v1_BatchAccessCheckResponse__Output } from '../../aether/v1/BatchAccessCheckResponse';
 
 export interface DownstreamMessage {
   'msg'?: (_aether_v1_IncomingMessage | null);
@@ -83,7 +85,9 @@ export interface DownstreamMessage {
    * unknown URIs are ignored.
    */
   'activeExtensions'?: (string)[];
-  'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse"|"authorityRequestResponse"|"authorityRequestEvent"|"taskHibernated"|"taskSubscriptionResponse"|"taskEvent";
+  'accessCheckResponse'?: (_aether_v1_AccessCheckResponse | null);
+  'batchAccessCheckResponse'?: (_aether_v1_BatchAccessCheckResponse | null);
+  'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse"|"authorityRequestResponse"|"authorityRequestEvent"|"taskHibernated"|"taskSubscriptionResponse"|"taskEvent"|"accessCheckResponse"|"batchAccessCheckResponse";
 }
 
 export interface DownstreamMessage__Output {
@@ -131,5 +135,7 @@ export interface DownstreamMessage__Output {
    * unknown URIs are ignored.
    */
   'activeExtensions': (string)[];
-  'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse"|"authorityRequestResponse"|"authorityRequestEvent"|"taskHibernated"|"taskSubscriptionResponse"|"taskEvent";
+  'accessCheckResponse'?: (_aether_v1_AccessCheckResponse__Output | null);
+  'batchAccessCheckResponse'?: (_aether_v1_BatchAccessCheckResponse__Output | null);
+  'payload'?: "msg"|"config"|"signal"|"error"|"kv"|"taskAssignment"|"connectionAck"|"checkpoint"|"admin"|"sessionResponse"|"taskQuery"|"taskOp"|"workspace"|"agent"|"acl"|"progressUpdate"|"workflowResponse"|"workflowOp"|"token"|"auditResponse"|"authorityGrant"|"createTask"|"proxyHttpResponse"|"proxyHttpBodyChunk"|"tunnelAck"|"tunnelClose"|"tunnelData"|"proxyHttpRequest"|"resolveAuthorityResponse"|"connectionStatusResponse"|"authorityGrantRevocation"|"submitAuditEventResponse"|"authorityRequestResponse"|"authorityRequestEvent"|"taskHibernated"|"taskSubscriptionResponse"|"taskEvent"|"accessCheckResponse"|"batchAccessCheckResponse";
 }

@@ -136,6 +136,11 @@ export interface AuthorityGrantOperation {
    * For DERIVE_FOR_TARGET
    */
   'deriveForTargetRequest'?: (_aether_v1_AuthorityGrantDeriveForTargetRequest | null);
+  /**
+   * WorkflowEngine-only audience context for GET/REVOKE of a
+   * workflow_schedule grant. Ignored for other actors and operations.
+   */
+  'workflowScheduleId'?: (string);
 }
 
 /**
@@ -177,4 +182,9 @@ export interface AuthorityGrantOperation__Output {
    * For DERIVE_FOR_TARGET
    */
   'deriveForTargetRequest': (_aether_v1_AuthorityGrantDeriveForTargetRequest__Output | null);
+  /**
+   * WorkflowEngine-only audience context for GET/REVOKE of a
+   * workflow_schedule grant. Ignored for other actors and operations.
+   */
+  'workflowScheduleId': (string);
 }

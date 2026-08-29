@@ -36,7 +36,7 @@ classifiers = [
 ]
 dependencies = [
     "scitrera-aether-client>=0.2.0",
-    "ag2>=0.10",
+    "autogen>=0.14.1,<1",
     "pydantic>=2.0",
 ]
 

@@ -105,6 +105,18 @@ export enum TaskAssignmentMode {
 }
 
 /**
+ * TARGETED task behavior while the exact target identity is disconnected.
+ * Unspecified preserves orchestration; Queue waits for a static worker to
+ * reconnect; Reject fails creation.
+ */
+export enum TargetOfflinePolicy {
+  Unspecified = 0,
+  Orchestrate = 1,
+  Queue = 2,
+  Reject = 3,
+}
+
+/**
  * Dispatch priority for tasks. Higher priority pending tasks are delivered
  * before lower ones (ties break FIFO). Values are spaced to allow inserting
  * new levels later. Unspecified (0) is normalized to Normal by the server.
@@ -144,6 +156,14 @@ export interface IncomingMessage {
   readonly payload: Uint8Array;
   /** The type of the message (Chat, Control, ToolCall, Event, Metric). */
   readonly messageType?: number;
+  /** Gateway-verified workspace context, when one applies. */
+  readonly workspace: string;
+  /** Gateway-resolved OBO subject, when the sender acted for another principal. */
+  readonly onBehalfSubject?: PrincipalRef;
+  /** Gateway-authored exact-resource receipt for a checked send. */
+  readonly accessReceipt?: AccessDecisionReceipt;
+  /** Gateway-derived leaf authority for this exact service or agent recipient. */
+  readonly forwardedAuthorization?: ForwardedAuthorization;
   /** Local timestamp when the message was received. */
   readonly receivedAt: Date;
 }
@@ -158,6 +178,92 @@ export interface OutgoingMessage {
   payload: Uint8Array;
   /** The type of message. Defaults to Chat. */
   messageType?: MessageType;
+  /** Optional user/application workspace context. */
+  appWorkspace?: string;
+  /** Optional on-behalf-of authority context. */
+  authorization?: AuthorizationContext;
+  /** Optional exact logical-resource check, additive to topic authorization. */
+  checkedAccess?: ResourceAccessRequest;
+  /** Explicitly derive and attach target-bound authority for the recipient. */
+  authorityContinuation?: AuthorityContinuationRequest;
+}
+
+/** Stable principal reference used by runtime authorization metadata. */
+export interface PrincipalRef {
+  readonly principalType: string;
+  readonly principalId: string;
+}
+
+/** Caller-supplied direct or on-behalf-of authorization context. */
+export interface AuthorizationContext {
+  readonly authorityMode: string;
+  readonly subject?: PrincipalRef;
+  readonly grantId?: string;
+}
+
+/** Gateway-derived, target-bound authorization continuation. */
+export interface ForwardedAuthorization {
+  readonly authorization: AuthorizationContext;
+  readonly rootGrantId: string;
+  readonly expiresAtMs: number;
+  readonly deliveryTarget: string;
+  readonly bindingId: string;
+  readonly scope: AuthorityContinuationScope;
+}
+
+/** Scope ceiling for a target-bound authority continuation. */
+export interface AuthorityContinuationScope {
+  readonly workspaceScope: string[];
+  readonly resourceScope: AuthorityGrantResourceScopeEntry[];
+  readonly operationScope: string[];
+  readonly maxAccessLevel: number;
+}
+
+export interface AuthorityGrantResourceScopeEntry {
+  readonly resourceType: string;
+  readonly patterns: string[];
+}
+
+export enum AuthorityContinuationScopeMode {
+  Unspecified = 0,
+  InheritParent = 1,
+  Attenuate = 2,
+}
+
+/** Request for gateway-derived recipient authority. */
+export interface AuthorityContinuationRequest {
+  readonly scopeMode: AuthorityContinuationScopeMode;
+  readonly bindingId?: string;
+  readonly scope?: AuthorityContinuationScope;
+}
+
+/** Exact logical-resource tuple evaluated by the Aether gateway. */
+export interface ResourceAccessRequest {
+  readonly resourceType: string;
+  readonly resourceId: string;
+  readonly operation: string;
+  readonly workspace?: string;
+  readonly requiredAccessLevel: number;
+  readonly correlationId: string;
+}
+
+/** Gateway-authored, short-lived result of one exact resource check. */
+export interface AccessDecisionReceipt {
+  readonly decisionId: string;
+  readonly request: ResourceAccessRequest;
+  readonly allowed: boolean;
+  readonly decision: string;
+  readonly effectiveAccessLevel: number;
+  readonly actor?: PrincipalRef;
+  readonly subject?: PrincipalRef;
+  readonly rootSubject?: PrincipalRef;
+  readonly authorityMode: string;
+  readonly grantId: string;
+  readonly rootGrantId: string;
+  readonly evaluatedAtMs: number;
+  readonly expiresAtMs: number;
+  readonly denialCode: string;
+  readonly deliveryTarget: string;
 }
 
 /**
@@ -214,6 +320,25 @@ export interface ConnectionAck {
 /**
  * A task assignment received by orchestrators.
  */
+export interface TaskAssignmentResolvedAuthority {
+  readonly rootSubject?: AuthorityGrantPrincipalRef;
+  readonly audienceType: string;
+  readonly audienceId: string;
+  readonly maxAccessLevel: number;
+  readonly workspaceScope: string[];
+  readonly expiresAtMs: number;
+}
+
+/**
+ * Task-scoped authority prepared by the gateway for the assigned executor.
+ */
+export interface TaskAssignmentAuthorization {
+  readonly authorityMode: string;
+  readonly subject?: AuthorityGrantPrincipalRef;
+  readonly grantId: string;
+  readonly resolved?: TaskAssignmentResolvedAuthority;
+}
+
 export interface TaskAssignment {
   readonly taskId: string;
   readonly taskType: string;
@@ -225,6 +350,11 @@ export interface TaskAssignment {
   readonly targetImplementation: string;
   readonly workspace: string;
   readonly specifier: string;
+  readonly payload: Uint8Array;
+  readonly taskClass: number;
+  readonly checkpointKey: string;
+  readonly resumeSessionId: string;
+  readonly authorization?: TaskAssignmentAuthorization;
 }
 
 // =============================================================================

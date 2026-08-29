@@ -5,6 +5,7 @@ import {
   MessageType,
   KVScope,
   TaskAssignmentMode,
+  TargetOfflinePolicy,
   SignalType,
   // Topic helpers
   agentTopic,
@@ -98,6 +99,15 @@ describe("PrincipalType", () => {
   });
 });
 
+describe("TargetOfflinePolicy", () => {
+  it("matches the protobuf wire values", () => {
+    expect(TargetOfflinePolicy.Unspecified).toBe(0);
+    expect(TargetOfflinePolicy.Orchestrate).toBe(1);
+    expect(TargetOfflinePolicy.Queue).toBe(2);
+    expect(TargetOfflinePolicy.Reject).toBe(3);
+  });
+});
+
 describe("MessageType", () => {
   it("has all expected values", () => {
     expect(MessageType.Unspecified).toBe(0);
@@ -124,6 +134,170 @@ describe("TaskAssignmentMode", () => {
     expect(TaskAssignmentMode.SelfAssign).toBe(0);
     expect(TaskAssignmentMode.Targeted).toBe(1);
     expect(TaskAssignmentMode.Pool).toBe(2);
+  });
+});
+
+describe("TaskAssignment delivery", () => {
+  it("maps payload, resume fields, and typed authorization", () => {
+    const client = new AetherClient({ address: "localhost:50051" });
+    let received: Parameters<Parameters<typeof client.onTaskAssignment>[0]>[0] | undefined;
+    client.onTaskAssignment((assignment) => {
+      received = assignment;
+    });
+
+    (client as any)._handleDownstreamMessage({
+      taskAssignment: {
+        taskId: "task-1",
+        taskType: "worker",
+        assignedTo: "ag::prod::worker::one",
+        payload: new Uint8Array([1, 2, 3]),
+        taskClass: 2,
+        checkpointKey: "checkpoint-1",
+        resumeSessionId: "session-1",
+        authorization: {
+          authorityMode: "on_behalf_of",
+          subject: { principalType: "user", principalId: "alice" },
+          grantId: "grant-1",
+          resolved: {
+            rootSubject: { principalType: "user", principalId: "alice" },
+            audienceType: "task",
+            audienceId: "task-1",
+            maxAccessLevel: 20,
+            workspaceScope: ["prod"],
+            expiresAtMs: 1234,
+          },
+        },
+      },
+    });
+
+    expect(received?.payload).toEqual(new Uint8Array([1, 2, 3]));
+    expect(received?.taskClass).toBe(2);
+    expect(received?.checkpointKey).toBe("checkpoint-1");
+    expect(received?.resumeSessionId).toBe("session-1");
+    expect(received?.authorization).toEqual({
+      authorityMode: "on_behalf_of",
+      subject: { principalType: "user", principalId: "alice" },
+      grantId: "grant-1",
+      resolved: {
+        rootSubject: { principalType: "user", principalId: "alice" },
+        audienceType: "task",
+        audienceId: "task-1",
+        maxAccessLevel: 20,
+        workspaceScope: ["prod"],
+        expiresAtMs: 1234,
+      },
+    });
+  });
+});
+
+describe("runtime access checks", () => {
+  const access = {
+    resourceType: "tool-catalog/entry",
+    resourceId: "provider-1/tool-1",
+    operation: "invoke",
+    workspace: "workspace-1",
+    requiredAccessLevel: 20,
+    correlationId: "call-1",
+  };
+
+  it("correlates a single denial as a normal decision", async () => {
+    const client = new AetherClient({ address: "localhost:50051" });
+    let upstream: any;
+    (client as any)._stream = { write: (message: any) => { upstream = message; } };
+
+    const result = client.checkAccess(access);
+    const requestId = upstream.accessCheck.requestId;
+    expect(upstream.accessCheck.access).toEqual(access);
+
+    (client as any)._handleDownstreamMessage({
+      accessCheckResponse: {
+        requestId,
+        success: true,
+        decision: {
+          decisionId: "decision-1",
+          request: access,
+          allowed: false,
+          decision: "DENY",
+          denialCode: "access_denied",
+          expiresAtMs: "1786478400000",
+        },
+      },
+    });
+
+    await expect(result).resolves.toMatchObject({
+      decisionId: "decision-1",
+      allowed: false,
+      denialCode: "access_denied",
+      request: access,
+    });
+  });
+
+  it("surfaces workspace, OBO subject, and checked-send receipt", () => {
+    const client = new AetherClient({ address: "localhost:50051" });
+    let received: any;
+    client.onMessage((message) => { received = message; });
+
+    (client as any)._handleDownstreamMessage({
+      msg: {
+        sourceTopic: "sv::tools::one",
+        payload: new Uint8Array([1]),
+        workspace: "workspace-1",
+        onBehalfSubject: { principalType: "user", principalId: "user-1" },
+        accessReceipt: {
+          decisionId: "decision-1",
+          request: access,
+          allowed: true,
+          decision: "ALLOW",
+          deliveryTarget: "sv::tools::one",
+        },
+        forwardedAuthorization: {
+          authorization: {
+            authorityMode: "on_behalf_of",
+            subject: { principalType: "user", principalId: "user-1" },
+            grantId: "child-grant-1",
+          },
+          rootGrantId: "root-grant-1",
+          expiresAtMs: "1786478400000",
+          deliveryTarget: "sv::tools::one",
+          bindingId: "call-1",
+          scope: {
+            workspaceScope: ["workspace-1"],
+            resourceScope: [{ resourceType: "vfs", patterns: ["workspace-1/*"] }],
+            operationScope: ["read"],
+            maxAccessLevel: 10,
+          },
+        },
+      },
+    });
+
+    expect(received.workspace).toBe("workspace-1");
+    expect(received.onBehalfSubject).toEqual({ principalType: "user", principalId: "user-1" });
+    expect(received.accessReceipt).toMatchObject({
+      decisionId: "decision-1",
+      allowed: true,
+      deliveryTarget: "sv::tools::one",
+    });
+    expect(received.forwardedAuthorization).toMatchObject({
+      authorization: { grantId: "child-grant-1" },
+      rootGrantId: "root-grant-1",
+      expiresAtMs: 1786478400000,
+      deliveryTarget: "sv::tools::one",
+      bindingId: "call-1",
+      scope: { workspaceScope: ["workspace-1"], operationScope: ["read"], maxAccessLevel: 10 },
+    });
+  });
+
+  it("threads an explicit authority-continuation request onto sends", async () => {
+    const client = new AetherClient({ address: "localhost:50051" });
+    let upstream: any;
+    (client as any)._connected = true;
+    (client as any)._stream = { write: (message: any) => { upstream = message; } };
+    await client.send({
+      targetTopic: "sv::tool-catalog",
+      payload: new Uint8Array([1]),
+      authorityContinuation: { scopeMode: 1 },
+    });
+    expect(upstream.send.authorityContinuation.scopeMode).toBe(1);
   });
 });
 

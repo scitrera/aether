@@ -46,6 +46,8 @@ type TransformResult struct {
 	Type                 string `yaml:"type" json:"type"`
 	TaskType             string `yaml:"task_type" json:"task_type"`
 	TargetImplementation string `yaml:"target_implementation" json:"target_implementation"`
+	TargetAgentID        string `yaml:"target_agent_id" json:"target_agent_id"`
+	PayloadEncoding      string `yaml:"payload_encoding" json:"payload_encoding"`
 	Payload              any    `yaml:"payload" json:"payload"`
 	// Fan-out tagging for spawned tasks: a correlation id (the join's barrier
 	// key) and an optional feed-B completion-event opt-in.

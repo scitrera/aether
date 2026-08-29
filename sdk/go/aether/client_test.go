@@ -52,6 +52,59 @@ func TestNewBaseClient_DefaultValues(t *testing.T) {
 	}
 }
 
+func TestWorkflowOperationHandlersRunOffReceiveLoopInArrivalOrder(t *testing.T) {
+	client := &BaseClient{handlers: NewHandlers()}
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	secondStarted := make(chan struct{})
+	client.handlers.OnWorkflowOperation = func(_ context.Context, op *pb.WorkflowOperation) (*pb.WorkflowResponse, error) {
+		switch op.GetRequestId() {
+		case "first":
+			close(firstStarted)
+			<-releaseFirst
+		case "second":
+			close(secondStarted)
+		}
+		return nil, nil
+	}
+
+	if err := client.handleWorkflowOperation(context.Background(), &pb.WorkflowOperation{RequestId: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first workflow handler did not start asynchronously")
+	}
+	if err := client.handleWorkflowOperation(context.Background(), &pb.WorkflowOperation{RequestId: "second"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-secondStarted:
+		t.Fatal("second workflow handler overtook the first")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(releaseFirst)
+	select {
+	case <-secondStarted:
+	case <-time.After(time.Second):
+		t.Fatal("second workflow handler did not run after the first completed")
+	}
+}
+
+func TestWorkflowScheduleOperationsRequireExactWorkspace(t *testing.T) {
+	ops := &WorkflowOps{}
+	if _, err := ops.ListSchedules(context.Background(), "*"); err == nil {
+		t.Fatal("ListSchedules accepted wildcard workspace")
+	}
+	if _, err := ops.DeleteSchedule(context.Background(), "", "schedule-a"); err == nil {
+		t.Fatal("DeleteSchedule accepted empty workspace")
+	}
+	if _, err := ops.CreateSchedule(context.Background(), []byte(`{"id":"schedule-a","workspace":"*"}`)); err == nil {
+		t.Fatal("CreateSchedule accepted wildcard workspace")
+	}
+}
+
 func TestNewBaseClient_CustomValues(t *testing.T) {
 	cfg := BaseClientConfig{
 		ServerAddr: TestServerAddr,
@@ -480,12 +533,25 @@ func TestSendWithOptions_ThreadsAuthorization(t *testing.T) {
 		Subject:       &pb.PrincipalRef{PrincipalType: "user", PrincipalId: "alice@example.com"},
 		GrantId:       "grant-123",
 	}
+	checked := &pb.ResourceAccessRequest{
+		ResourceType:        "tool-catalog/entry",
+		ResourceId:          "provider-1/tool-1",
+		Operation:           "invoke",
+		Workspace:           "workspace-1",
+		RequiredAccessLevel: 20,
+		CorrelationId:       "call-1",
+	}
+	continuation := &pb.AuthorityContinuationRequest{
+		ScopeMode: pb.AuthorityContinuationRequest_SCOPE_MODE_INHERIT_PARENT,
+	}
 	c := newRunningClient()
 	if err := c.SendWithOptions(SendMessageOptions{
-		TargetTopic:   "test.topic",
-		Payload:       []byte("hi"),
-		MessageType:   MessageTypeChat,
-		Authorization: authz,
+		TargetTopic:           "test.topic",
+		Payload:               []byte("hi"),
+		MessageType:           MessageTypeChat,
+		Authorization:         authz,
+		CheckedAccess:         checked,
+		AuthorityContinuation: continuation,
 	}); err != nil {
 		t.Fatalf("SendWithOptions() error = %v", err)
 	}
@@ -495,6 +561,12 @@ func TestSendWithOptions_ThreadsAuthorization(t *testing.T) {
 	}
 	if got := send.GetAuthorization().GetSubject().GetPrincipalId(); got != "alice@example.com" {
 		t.Errorf("authorization subject = %q, want alice@example.com", got)
+	}
+	if got := send.GetCheckedAccess().GetCorrelationId(); got != "call-1" {
+		t.Errorf("checked access correlation = %q, want call-1", got)
+	}
+	if send.GetAuthorityContinuation().GetScopeMode() != pb.AuthorityContinuationRequest_SCOPE_MODE_INHERIT_PARENT {
+		t.Error("expected authority_continuation on SendMessage")
 	}
 
 	// Bare send (no authorization) stays nil.
@@ -506,8 +578,8 @@ func TestSendWithOptions_ThreadsAuthorization(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SendWithOptions() error = %v", err)
 	}
-	if send := dequeueSend(c2); send.GetAuthorization() != nil {
-		t.Error("bare send must not assume an OBO authorization")
+	if send := dequeueSend(c2); send.GetAuthorization() != nil || send.GetCheckedAccess() != nil || send.GetAuthorityContinuation() != nil {
+		t.Error("bare send must not assume authorization or an exact resource check")
 	}
 }
 
@@ -785,6 +857,17 @@ func TestBaseClient_DispatchResponse_IncomingMessage(t *testing.T) {
 
 	ctx := context.Background()
 	response := newMockIncomingMessage("ag.test.impl.spec", testPayload())
+	incoming := response.GetMsg()
+	incoming.Workspace = "workspace-1"
+	incoming.AccessReceipt = &pb.AccessDecisionReceipt{
+		DecisionId: "decision-1",
+		Allowed:    true,
+		Request:    &pb.ResourceAccessRequest{CorrelationId: "call-1"},
+	}
+	incoming.ForwardedAuthorization = &pb.ForwardedAuthorization{
+		Authorization: &pb.AuthorizationContext{GrantId: "child-grant-1"},
+		RootGrantId:   "root-grant-1", DeliveryTarget: "sv::tools::one",
+	}
 
 	err = client.dispatchResponse(ctx, response)
 	if err != nil {
@@ -793,6 +876,15 @@ func TestBaseClient_DispatchResponse_IncomingMessage(t *testing.T) {
 
 	if tracker.MessageCount() != 1 {
 		t.Errorf("Message handler called %d times, want 1", tracker.MessageCount())
+	}
+	if got := tracker.messages[0].Workspace; got != "workspace-1" {
+		t.Errorf("Message.Workspace = %q, want workspace-1", got)
+	}
+	if got := tracker.messages[0].AccessReceipt.GetRequest().GetCorrelationId(); got != "call-1" {
+		t.Errorf("Message.AccessReceipt correlation = %q, want call-1", got)
+	}
+	if got := tracker.messages[0].ForwardedAuthorization.GetRootGrantId(); got != "root-grant-1" {
+		t.Errorf("Message.ForwardedAuthorization root = %q, want root-grant-1", got)
 	}
 }
 
@@ -991,6 +1083,11 @@ func TestBaseClient_DispatchResponse_TaskAssignment(t *testing.T) {
 
 	ctx := context.Background()
 	response := newMockTaskAssignment("task-123", "process", "ag.test.worker.inst")
+	response.GetTaskAssignment().Authorization = &pb.AuthorizationContext{
+		AuthorityMode: "on_behalf_of",
+		GrantId:       "grant-task-123",
+		Subject:       &pb.PrincipalRef{PrincipalType: "user", PrincipalId: "alice"},
+	}
 
 	err = client.dispatchResponse(ctx, response)
 	if err != nil {
@@ -1014,15 +1111,45 @@ func TestBaseClient_DispatchResponse_TaskAssignment(t *testing.T) {
 	}
 	tracker.mu.Lock()
 	got := len(tracker.tasks)
+	var assignment *TaskAssignment
+	if got == 1 {
+		assignment = tracker.tasks[0]
+	}
 	tracker.mu.Unlock()
 	if got != 1 {
 		t.Errorf("Task assignment handler called %d times, want 1", got)
+	}
+	if assignment == nil || assignment.Authorization == nil ||
+		assignment.Authorization.GetGrantId() != "grant-task-123" ||
+		assignment.Authorization.GetSubject().GetPrincipalId() != "alice" {
+		t.Errorf("Task assignment authorization = %#v", assignment)
 	}
 }
 
 // =============================================================================
 // Task Lifecycle Tests
 // =============================================================================
+
+func TestBaseClient_CreateTaskResponseMapsAuthorityGrantID(t *testing.T) {
+	client, err := NewBaseClient(BaseClientConfig{ServerAddr: TestServerAddr})
+	if err != nil {
+		t.Fatalf("NewBaseClient() error = %v", err)
+	}
+	responses := client.RegisterPendingCreateTaskRequest("create-authority")
+	if err := client.handleCreateTaskResponse(context.Background(), &pb.CreateTaskResponse{
+		Success: true, TaskId: "task-123", RequestId: "create-authority", AuthorityGrantId: "grant-task-123",
+	}); err != nil {
+		t.Fatalf("handleCreateTaskResponse() error = %v", err)
+	}
+	select {
+	case response := <-responses:
+		if response.AuthorityGrantID != "grant-task-123" {
+			t.Fatalf("AuthorityGrantID = %q, want grant-task-123", response.AuthorityGrantID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for create-task response")
+	}
+}
 
 func TestBaseClient_QueryTasks(t *testing.T) {
 	cfg := BaseClientConfig{ServerAddr: TestServerAddr}
@@ -1103,6 +1230,95 @@ func TestBaseClient_GetTask(t *testing.T) {
 	// (already drained by goroutine above — just check success)
 	if !resp.Success {
 		t.Error("Response should be successful")
+	}
+}
+
+func TestBaseClient_CreateTaskForwardsDurableCoordinationFields(t *testing.T) {
+	client, err := NewBaseClient(BaseClientConfig{ServerAddr: TestServerAddr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.running.Store(true)
+	completion := &pb.TaskCompletionEvent{Enabled: true, EventName: "child.done"}
+	if err := client.CreateTask("child", "routing", CreateTaskOptions{
+		AssignmentMode:                  TaskAssignmentTargeted,
+		TargetAgentID:                   "ag::routing::worker::static-1",
+		TargetOfflinePolicy:             pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_QUEUE,
+		TaskClass:                       pb.TaskClass_TASK_CLASS_BACKGROUND,
+		ContextID:                       "session-1",
+		RetryPolicy:                     &pb.RetryPolicy{MaxAttempts: 1},
+		Priority:                        pb.TaskPriority_TASK_PRIORITY_HIGH,
+		IdempotencyKey:                  "invocation-1",
+		CorrelationID:                   "fanout-1",
+		RootTaskID:                      "root-1",
+		CompletionEvent:                 completion,
+		ParentTaskID:                    "parent-1",
+		RequiredDownstreamAuthorityHops: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	message := <-client.RequestQueue()
+	request := message.GetCreateTask()
+	if request == nil {
+		t.Fatal("missing CreateTaskRequest")
+	}
+	if request.GetTaskClass() != pb.TaskClass_TASK_CLASS_BACKGROUND || request.GetContextId() != "session-1" || request.GetIdempotencyKey() != "invocation-1" {
+		t.Fatalf("durable identity fields = class:%s context:%q idempotency:%q", request.GetTaskClass(), request.GetContextId(), request.GetIdempotencyKey())
+	}
+	if request.GetCorrelationId() != "fanout-1" || request.GetRootTaskId() != "root-1" {
+		t.Fatalf("coordination fields = correlation:%q root:%q", request.GetCorrelationId(), request.GetRootTaskId())
+	}
+	if request.GetParentTaskId() != "parent-1" {
+		t.Fatalf("parent task id = %q", request.GetParentTaskId())
+	}
+	if request.GetRequiredDownstreamAuthorityHops() != 1 {
+		t.Fatalf("required downstream authority hops = %d", request.GetRequiredDownstreamAuthorityHops())
+	}
+	if request.GetTargetOfflinePolicy() != pb.TargetOfflinePolicy_TARGET_OFFLINE_POLICY_QUEUE {
+		t.Fatalf("target offline policy = %s", request.GetTargetOfflinePolicy())
+	}
+	if request.GetRetryPolicy().GetMaxAttempts() != 1 || request.GetPriority() != pb.TaskPriority_TASK_PRIORITY_HIGH {
+		t.Fatalf("execution policy = retry:%+v priority:%s", request.GetRetryPolicy(), request.GetPriority())
+	}
+	if request.GetCompletionEvent().GetEventName() != "child.done" {
+		t.Fatalf("completion event = %+v", request.GetCompletionEvent())
+	}
+}
+
+func TestProtoTaskInfoToSDKIncludesCoordinationIdentity(t *testing.T) {
+	got := protoTaskInfoToSDK(&pb.TaskInfo{
+		TaskId:                 "child-1",
+		ParentTaskId:           "parent-1",
+		TaskClass:              pb.TaskClass_TASK_CLASS_BACKGROUND,
+		ContextId:              "session-1",
+		Priority:               pb.TaskPriority_TASK_PRIORITY_HIGH,
+		CorrelationId:          "fanout-1",
+		RootTaskId:             "root-1",
+		AuthorityMode:          "on_behalf_of",
+		SubjectType:            "user",
+		SubjectId:              "alice",
+		RootSubjectType:        "user",
+		RootSubjectId:          "alice",
+		AuthorityGrantId:       "grant-task",
+		RootAuthorityGrantId:   "grant-root",
+		ParentAuthorityGrantId: "grant-parent",
+		CreatorActorId:         "agent-parent",
+		DisconnectedAt:         1234,
+		GraceWindowMs:          45000,
+	})
+	if got.ParentTaskID != "parent-1" || got.TaskClass != pb.TaskClass_TASK_CLASS_BACKGROUND.String() || got.ContextID != "session-1" {
+		t.Fatalf("task identity projection = %+v", got)
+	}
+	if got.Priority != pb.TaskPriority_TASK_PRIORITY_HIGH.String() || got.CorrelationID != "fanout-1" || got.RootTaskID != "root-1" {
+		t.Fatalf("task coordination projection = %+v", got)
+	}
+	if got.AuthorityMode != "on_behalf_of" || got.SubjectType != "user" || got.SubjectID != "alice" ||
+		got.RootSubjectType != "user" || got.RootSubjectID != "alice" || got.AuthorityGrantID != "grant-task" ||
+		got.RootAuthorityGrantID != "grant-root" || got.ParentAuthorityGrantID != "grant-parent" || got.CreatorActorID != "agent-parent" {
+		t.Fatalf("task authority projection = %+v", got)
+	}
+	if got.DisconnectedAt != 1234 || got.GraceWindowMS != 45000 {
+		t.Fatalf("task disconnect projection = %+v", got)
 	}
 }
 
@@ -1349,7 +1565,7 @@ func TestBaseClient_DispatchResponse_TaskQueryResponse_RequestID(t *testing.T) {
 	ctx := context.Background()
 	response := &pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_TaskQuery{
-			TaskQuery: &pb.TaskQueryResponse{Success: true, TotalCount: 3},
+			TaskQuery: &pb.TaskQueryResponse{Success: true, TotalCount: 3, NextPageToken: "opaque-next-page"},
 		},
 	}
 
@@ -1365,6 +1581,9 @@ func TestBaseClient_DispatchResponse_TaskQueryResponse_RequestID(t *testing.T) {
 		}
 		if resp.TotalCount != 3 {
 			t.Errorf("TotalCount = %d, want 3", resp.TotalCount)
+		}
+		if resp.NextPageToken != "opaque-next-page" {
+			t.Errorf("NextPageToken = %q, want opaque-next-page", resp.NextPageToken)
 		}
 	default:
 		t.Error("Pending task query request should have been resolved")

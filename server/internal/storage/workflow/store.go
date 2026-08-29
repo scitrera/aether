@@ -221,18 +221,25 @@ type Store interface {
 	GetSchedule(ctx context.Context, id string) (*Schedule, error)
 
 	// UpsertSchedule inserts a new schedule row, or updates the existing
-	// row with the same id, preserving created_at across updates.
+	// row with the same id, preserving created_at and last_fired_at. It keeps
+	// next_fire_at for payload-only changes and replaces it when the schedule
+	// type or expression changes.
 	// Populates sc.CreatedAt and sc.UpdatedAt from the RETURNING clause.
 	UpsertSchedule(ctx context.Context, sc *Schedule) error
 
-	// UpdateScheduleAfterFire stamps last_fired_at and rolls next_fire_at
-	// forward (or to NULL for one-shot schedules) after a successful fire.
-	UpdateScheduleAfterFire(ctx context.Context, id string, lastFired time.Time, nextFire *time.Time) error
+	// RecordScheduleOccurrence persists the latest bounded scheduler decision
+	// and rolls next_fire_at forward. A nil occurrence.DispatchedAt records a
+	// no-task skip without overwriting the prior real last_fired_at.
+	RecordScheduleOccurrence(ctx context.Context, id string, occurrence ScheduleOccurrence, nextFire *time.Time) error
 
 	// SetScheduleActiveTask records the task id currently running for the
 	// given schedule (NULL-equivalent when taskID is ""). Used by the
 	// max_concurrent=1 enforcement path.
 	SetScheduleActiveTask(ctx context.Context, scheduleID, taskID string) error
+
+	// SetScheduleAuthorityBlocked prevents future dispatch after a permanent
+	// schedule-authority failure. Re-authorizing through upsert clears it.
+	SetScheduleAuthorityBlocked(ctx context.Context, scheduleID, reason string) error
 
 	// =========================================================================
 	// Joins — workflow_joins table

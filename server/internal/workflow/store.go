@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	pb "github.com/scitrera/aether/api/proto"
 )
 
 // Store provides database operations for all workflow tables.
@@ -445,21 +447,53 @@ func (s *Store) GetStepByTaskID(ctx context.Context, taskID string) (*StepState,
 // =============================================================================
 
 type Schedule struct {
-	ID            string          `json:"id"`
-	Name          string          `json:"name"`
-	Workspace     string          `json:"workspace"`
-	ScheduleType  string          `json:"schedule_type"`
-	ScheduleExpr  string          `json:"schedule_expr"`
-	Action        json.RawMessage `json:"action"`
-	WorkflowID    string          `json:"workflow_id"`
-	Enabled       bool            `json:"enabled"`
-	NextFireAt    *time.Time      `json:"next_fire_at,omitempty"`
-	LastFiredAt   *time.Time      `json:"last_fired_at,omitempty"`
-	MissPolicy    string          `json:"miss_policy"`
-	MaxConcurrent int             `json:"max_concurrent"` // 0 = unlimited; 1 = don't fire if previous still running
-	ActiveTaskID  string          `json:"active_task_id"` // Tracks currently running task (for max_concurrent=1)
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	ID             string              `json:"id"`
+	Name           string              `json:"name"`
+	Workspace      string              `json:"workspace"`
+	ScheduleType   string              `json:"schedule_type"`
+	ScheduleExpr   string              `json:"schedule_expr"`
+	Action         json.RawMessage     `json:"action"`
+	WorkflowID     string              `json:"workflow_id"`
+	Enabled        bool                `json:"enabled"`
+	NextFireAt     *time.Time          `json:"next_fire_at,omitempty"`
+	LastFiredAt    *time.Time          `json:"last_fired_at,omitempty"`
+	LastOccurrence *ScheduleOccurrence `json:"last_occurrence,omitempty"`
+	MissPolicy     string              `json:"miss_policy"`
+	MaxConcurrent  int                 `json:"max_concurrent"` // 0 = unlimited; 1 = don't fire if previous still running
+	ActiveTaskID   string              `json:"active_task_id"` // Tracks currently running task (for max_concurrent=1)
+	Authority      *ScheduleAuthority  `json:"-"`
+	CreatedAt      time.Time           `json:"created_at"`
+	UpdatedAt      time.Time           `json:"updated_at"`
+}
+
+// ScheduleAuthority is the private, gateway-minted authority used when a
+// schedule creates a task. It is intentionally excluded from schedule JSON and
+// workflow responses: callers replace it only through WorkflowOperation's
+// trusted request context.
+type ScheduleAuthority struct {
+	Authorization *pb.AuthorizationContext
+	RootGrantID   string
+	SourceGrantID string
+	ExpiresAt     time.Time
+	PolicyDigest  string
+	PolicyVersion uint32
+	LifetimeMode  pb.WorkflowAuthorityLifetimeMode
+	Blocked       bool
+	BlockedReason string
+}
+
+// ScheduleOccurrence is the bounded authoritative summary of the latest
+// scheduler decision. DispatchedAt is nil when the occurrence was skipped and
+// no action/task exists. BacklogCount is capped; BacklogTruncated says more due
+// occurrences existed beyond the reported count.
+type ScheduleOccurrence struct {
+	ScheduledFor     time.Time  `json:"scheduled_for"`
+	DispatchedAt     *time.Time `json:"dispatched_at,omitempty"`
+	Disposition      string     `json:"disposition"`
+	Reason           string     `json:"reason,omitempty"`
+	BacklogCount     int        `json:"backlog_count"`
+	BacklogTruncated bool       `json:"backlog_truncated"`
+	BacklogIndex     int        `json:"backlog_index"`
 }
 
 const (
@@ -467,16 +501,40 @@ const (
 	ScheduleTypeInterval     = "interval"
 	ScheduleTypeOnce         = "once"
 	ScheduleTypeEventDelayed = "event_delayed"
+
+	ScheduleMissPolicySkip     = "skip"
+	ScheduleMissPolicyFireOnce = "fire_once"
+	ScheduleMissPolicyFireAll  = "fire_all"
+
+	ScheduleDispositionOrdinary  = "ordinary"
+	ScheduleDispositionSkipped   = "skipped"
+	ScheduleDispositionCoalesced = "coalesced"
+	ScheduleDispositionCatchUp   = "catch_up"
+
+	ScheduleSkipReasonMissPolicy       = "miss_policy"
+	ScheduleSkipReasonMaxConcurrent    = "max_concurrent"
+	ScheduleSkipReasonAuthorityInvalid = "authority_invalid"
 )
+
+func validScheduleMissPolicy(policy string) bool {
+	return policy == ScheduleMissPolicySkip || policy == ScheduleMissPolicyFireOnce || policy == ScheduleMissPolicyFireAll
+}
 
 func (s *Store) GetDueSchedules(ctx context.Context, now time.Time) ([]Schedule, error) {
 	query := `
 		SELECT id, name, workspace, schedule_type, schedule_expr, action,
-		       COALESCE(workflow_id, ''), enabled, next_fire_at, last_fired_at, miss_policy,
+		       COALESCE(workflow_id, ''), enabled, next_fire_at, last_fired_at,
+		       last_occurrence_at, last_occurrence_disposition, last_occurrence_reason,
+		       last_backlog_count, last_backlog_truncated, last_backlog_index, miss_policy,
 		       max_concurrent, COALESCE(active_task_id, ''),
+		       authority_grant_id, authority_subject_type, authority_subject_id,
+		       authority_root_grant_id, authority_source_grant_id, authority_expires_at,
+		       authority_policy_digest, authority_policy_version, authority_lifetime_mode,
+		       authority_blocked, authority_blocked_reason,
 		       created_at, updated_at
 		FROM workflow_schedules
-		WHERE enabled = true AND next_fire_at IS NOT NULL AND next_fire_at <= $1
+		WHERE enabled = true AND authority_blocked = false
+		  AND next_fire_at IS NOT NULL AND next_fire_at <= $1
 		ORDER BY next_fire_at ASC
 	`
 	if !s.isSQLite {
@@ -490,13 +548,8 @@ func (s *Store) GetDueSchedules(ctx context.Context, now time.Time) ([]Schedule,
 
 	var schedules []Schedule
 	for rows.Next() {
-		var sc Schedule
-		if err := rows.Scan(
-			&sc.ID, &sc.Name, &sc.Workspace, &sc.ScheduleType, &sc.ScheduleExpr, &sc.Action,
-			&sc.WorkflowID, &sc.Enabled, &sc.NextFireAt, &sc.LastFiredAt, &sc.MissPolicy,
-			&sc.MaxConcurrent, &sc.ActiveTaskID,
-			&sc.CreatedAt, &sc.UpdatedAt,
-		); err != nil {
+		sc, err := scanSchedule(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan schedule: %w", err)
 		}
 		schedules = append(schedules, sc)
@@ -504,22 +557,37 @@ func (s *Store) GetDueSchedules(ctx context.Context, now time.Time) ([]Schedule,
 	return schedules, rows.Err()
 }
 
-func (s *Store) UpdateScheduleAfterFire(ctx context.Context, id string, lastFired time.Time, nextFire *time.Time) error {
-	query := `UPDATE workflow_schedules SET last_fired_at = $2, next_fire_at = $3 WHERE id = $1`
-	_, err := s.db.ExecContext(ctx, query, id, lastFired, nextFire)
+func (s *Store) RecordScheduleOccurrence(ctx context.Context, id string, occurrence ScheduleOccurrence, nextFire *time.Time) error {
+	query := `UPDATE workflow_schedules SET
+		last_fired_at = COALESCE($2, last_fired_at), next_fire_at = $3,
+		last_occurrence_at = $4, last_occurrence_disposition = $5,
+		last_occurrence_reason = $6, last_backlog_count = $7,
+		last_backlog_truncated = $8, last_backlog_index = $9
+		WHERE id = $1`
+	_, err := s.db.ExecContext(ctx, query, id, occurrence.DispatchedAt, nextFire,
+		occurrence.ScheduledFor, occurrence.Disposition, occurrence.Reason,
+		occurrence.BacklogCount, occurrence.BacklogTruncated, occurrence.BacklogIndex)
 	return err
 }
 
 func (s *Store) CreateSchedule(ctx context.Context, sc *Schedule) error {
 	query := `
 		INSERT INTO workflow_schedules (id, name, workspace, schedule_type, schedule_expr, action,
-		                                workflow_id, enabled, next_fire_at, miss_policy, max_concurrent)
-		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, $9, $10, $11)
+		                                workflow_id, enabled, next_fire_at, miss_policy, max_concurrent,
+		                                authority_grant_id, authority_subject_type, authority_subject_id,
+		                                authority_root_grant_id, authority_source_grant_id, authority_expires_at,
+		                                authority_policy_digest, authority_policy_version, authority_lifetime_mode,
+		                                authority_blocked, authority_blocked_reason)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, $9, $10, $11,
+		        NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''), NULLIF($15, ''), NULLIF($16, ''),
+		        $17, NULLIF($18, ''), $19, $20, $21, $22)
 		RETURNING created_at, updated_at
 	`
+	grantID, subjectType, subjectID, rootGrantID, sourceGrantID, expiresAt, digest, policyVersion, lifetime, blocked, blockedReason := scheduleAuthoritySQLValues(sc.Authority)
 	return s.db.QueryRowContext(ctx, query,
 		sc.ID, sc.Name, sc.Workspace, sc.ScheduleType, sc.ScheduleExpr, sc.Action,
 		sc.WorkflowID, sc.Enabled, sc.NextFireAt, sc.MissPolicy, sc.MaxConcurrent,
+		grantID, subjectType, subjectID, rootGrantID, sourceGrantID, expiresAt, digest, policyVersion, lifetime, blocked, blockedReason,
 	).Scan(&sc.CreatedAt, &sc.UpdatedAt)
 }
 
@@ -531,8 +599,14 @@ func (s *Store) DeleteSchedule(ctx context.Context, id string) error {
 func (s *Store) ListSchedules(ctx context.Context, workspace string) ([]Schedule, error) {
 	query := `
 		SELECT id, name, workspace, schedule_type, schedule_expr, action,
-		       COALESCE(workflow_id, ''), enabled, next_fire_at, last_fired_at, miss_policy,
+		       COALESCE(workflow_id, ''), enabled, next_fire_at, last_fired_at,
+		       last_occurrence_at, last_occurrence_disposition, last_occurrence_reason,
+		       last_backlog_count, last_backlog_truncated, last_backlog_index, miss_policy,
 		       max_concurrent, COALESCE(active_task_id, ''),
+		       authority_grant_id, authority_subject_type, authority_subject_id,
+		       authority_root_grant_id, authority_source_grant_id, authority_expires_at,
+		       authority_policy_digest, authority_policy_version, authority_lifetime_mode,
+		       authority_blocked, authority_blocked_reason,
 		       created_at, updated_at
 		FROM workflow_schedules
 		WHERE workspace = $1 OR workspace = '*'
@@ -546,13 +620,8 @@ func (s *Store) ListSchedules(ctx context.Context, workspace string) ([]Schedule
 
 	var schedules []Schedule
 	for rows.Next() {
-		var sc Schedule
-		if err := rows.Scan(
-			&sc.ID, &sc.Name, &sc.Workspace, &sc.ScheduleType, &sc.ScheduleExpr, &sc.Action,
-			&sc.WorkflowID, &sc.Enabled, &sc.NextFireAt, &sc.LastFiredAt, &sc.MissPolicy,
-			&sc.MaxConcurrent, &sc.ActiveTaskID,
-			&sc.CreatedAt, &sc.UpdatedAt,
-		); err != nil {
+		sc, err := scanSchedule(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan schedule: %w", err)
 		}
 		schedules = append(schedules, sc)
@@ -563,19 +632,19 @@ func (s *Store) ListSchedules(ctx context.Context, workspace string) ([]Schedule
 func (s *Store) GetSchedule(ctx context.Context, id string) (*Schedule, error) {
 	query := `
 		SELECT id, name, workspace, schedule_type, schedule_expr, action,
-		       COALESCE(workflow_id, ''), enabled, next_fire_at, last_fired_at, miss_policy,
+		       COALESCE(workflow_id, ''), enabled, next_fire_at, last_fired_at,
+		       last_occurrence_at, last_occurrence_disposition, last_occurrence_reason,
+		       last_backlog_count, last_backlog_truncated, last_backlog_index, miss_policy,
 		       max_concurrent, COALESCE(active_task_id, ''),
+		       authority_grant_id, authority_subject_type, authority_subject_id,
+		       authority_root_grant_id, authority_source_grant_id, authority_expires_at,
+		       authority_policy_digest, authority_policy_version, authority_lifetime_mode,
+		       authority_blocked, authority_blocked_reason,
 		       created_at, updated_at
 		FROM workflow_schedules
 		WHERE id = $1
 	`
-	var sc Schedule
-	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&sc.ID, &sc.Name, &sc.Workspace, &sc.ScheduleType, &sc.ScheduleExpr, &sc.Action,
-		&sc.WorkflowID, &sc.Enabled, &sc.NextFireAt, &sc.LastFiredAt, &sc.MissPolicy,
-		&sc.MaxConcurrent, &sc.ActiveTaskID,
-		&sc.CreatedAt, &sc.UpdatedAt,
-	)
+	sc, err := scanSchedule(s.db.QueryRowContext(ctx, query, id))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -585,26 +654,105 @@ func (s *Store) GetSchedule(ctx context.Context, id string) (*Schedule, error) {
 	return &sc, nil
 }
 
+type scheduleScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanSchedule(scanner scheduleScanner) (Schedule, error) {
+	var sc Schedule
+	var occurrenceAt sql.NullTime
+	var disposition, reason string
+	var backlogCount, backlogIndex int
+	var backlogTruncated bool
+	var grantID, subjectType, subjectID, rootGrantID, sourceGrantID sql.NullString
+	var authorityExpiresAt sql.NullTime
+	var policyDigest, blockedReason sql.NullString
+	var policyVersion, lifetimeMode sql.NullInt64
+	var authorityBlocked bool
+	err := scanner.Scan(
+		&sc.ID, &sc.Name, &sc.Workspace, &sc.ScheduleType, &sc.ScheduleExpr, &sc.Action,
+		&sc.WorkflowID, &sc.Enabled, &sc.NextFireAt, &sc.LastFiredAt,
+		&occurrenceAt, &disposition, &reason, &backlogCount, &backlogTruncated, &backlogIndex, &sc.MissPolicy,
+		&sc.MaxConcurrent, &sc.ActiveTaskID,
+		&grantID, &subjectType, &subjectID, &rootGrantID, &sourceGrantID, &authorityExpiresAt,
+		&policyDigest, &policyVersion, &lifetimeMode, &authorityBlocked, &blockedReason,
+		&sc.CreatedAt, &sc.UpdatedAt,
+	)
+	if err != nil {
+		return Schedule{}, err
+	}
+	if occurrenceAt.Valid {
+		sc.LastOccurrence = &ScheduleOccurrence{
+			ScheduledFor: occurrenceAt.Time, Disposition: disposition, Reason: reason,
+			BacklogCount: backlogCount, BacklogTruncated: backlogTruncated, BacklogIndex: backlogIndex,
+		}
+		if disposition != ScheduleDispositionSkipped && sc.LastFiredAt != nil {
+			dispatchedAt := *sc.LastFiredAt
+			sc.LastOccurrence.DispatchedAt = &dispatchedAt
+		}
+	}
+	if grantID.Valid {
+		sc.Authority = &ScheduleAuthority{
+			Authorization: &pb.AuthorizationContext{
+				AuthorityMode: "on_behalf_of",
+				Subject:       &pb.PrincipalRef{PrincipalType: subjectType.String, PrincipalId: subjectID.String},
+				GrantId:       grantID.String,
+			},
+			RootGrantID: rootGrantID.String, SourceGrantID: sourceGrantID.String,
+			ExpiresAt: authorityExpiresAt.Time, PolicyDigest: policyDigest.String,
+			PolicyVersion: uint32(policyVersion.Int64),
+			LifetimeMode:  pb.WorkflowAuthorityLifetimeMode(lifetimeMode.Int64),
+			Blocked:       authorityBlocked, BlockedReason: blockedReason.String,
+		}
+	}
+	return sc, nil
+}
+
 func (s *Store) UpsertSchedule(ctx context.Context, sc *Schedule) error {
 	query := `
 		INSERT INTO workflow_schedules (id, name, workspace, schedule_type, schedule_expr, action,
-		                                workflow_id, enabled, next_fire_at, miss_policy, max_concurrent)
-		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, $9, $10, $11)
+		                                workflow_id, enabled, next_fire_at, miss_policy, max_concurrent,
+		                                authority_grant_id, authority_subject_type, authority_subject_id,
+		                                authority_root_grant_id, authority_source_grant_id, authority_expires_at,
+		                                authority_policy_digest, authority_policy_version, authority_lifetime_mode,
+		                                authority_blocked, authority_blocked_reason)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, $9, $10, $11,
+		        NULLIF($12, ''), NULLIF($13, ''), NULLIF($14, ''), NULLIF($15, ''), NULLIF($16, ''),
+		        $17, NULLIF($18, ''), $19, $20, $21, $22)
 		ON CONFLICT (id) DO UPDATE SET
 			name = EXCLUDED.name,
 			workspace = EXCLUDED.workspace,
+			next_fire_at = CASE
+				WHEN workflow_schedules.schedule_type <> EXCLUDED.schedule_type
+					OR workflow_schedules.schedule_expr <> EXCLUDED.schedule_expr
+				THEN EXCLUDED.next_fire_at
+				ELSE workflow_schedules.next_fire_at
+			END,
 			schedule_type = EXCLUDED.schedule_type,
 			schedule_expr = EXCLUDED.schedule_expr,
 			action = EXCLUDED.action,
 			workflow_id = EXCLUDED.workflow_id,
 			enabled = EXCLUDED.enabled,
 			miss_policy = EXCLUDED.miss_policy,
-			max_concurrent = EXCLUDED.max_concurrent
+			max_concurrent = EXCLUDED.max_concurrent,
+			authority_grant_id = EXCLUDED.authority_grant_id,
+			authority_subject_type = EXCLUDED.authority_subject_type,
+			authority_subject_id = EXCLUDED.authority_subject_id,
+			authority_root_grant_id = EXCLUDED.authority_root_grant_id,
+			authority_source_grant_id = EXCLUDED.authority_source_grant_id,
+			authority_expires_at = EXCLUDED.authority_expires_at,
+			authority_policy_digest = EXCLUDED.authority_policy_digest,
+			authority_policy_version = EXCLUDED.authority_policy_version,
+			authority_lifetime_mode = EXCLUDED.authority_lifetime_mode,
+			authority_blocked = EXCLUDED.authority_blocked,
+			authority_blocked_reason = EXCLUDED.authority_blocked_reason
 		RETURNING created_at, updated_at
 	`
+	grantID, subjectType, subjectID, rootGrantID, sourceGrantID, expiresAt, digest, policyVersion, lifetime, blocked, blockedReason := scheduleAuthoritySQLValues(sc.Authority)
 	return s.db.QueryRowContext(ctx, query,
 		sc.ID, sc.Name, sc.Workspace, sc.ScheduleType, sc.ScheduleExpr, sc.Action,
 		sc.WorkflowID, sc.Enabled, sc.NextFireAt, sc.MissPolicy, sc.MaxConcurrent,
+		grantID, subjectType, subjectID, rootGrantID, sourceGrantID, expiresAt, digest, policyVersion, lifetime, blocked, blockedReason,
 	).Scan(&sc.CreatedAt, &sc.UpdatedAt)
 }
 
@@ -612,6 +760,22 @@ func (s *Store) SetScheduleActiveTask(ctx context.Context, scheduleID, taskID st
 	query := `UPDATE workflow_schedules SET active_task_id = NULLIF($2, '') WHERE id = $1`
 	_, err := s.db.ExecContext(ctx, query, scheduleID, taskID)
 	return err
+}
+
+func (s *Store) SetScheduleAuthorityBlocked(ctx context.Context, scheduleID, reason string) error {
+	query := `UPDATE workflow_schedules SET authority_blocked = true, authority_blocked_reason = $2 WHERE id = $1`
+	_, err := s.db.ExecContext(ctx, query, scheduleID, reason)
+	return err
+}
+
+func scheduleAuthoritySQLValues(authority *ScheduleAuthority) (grantID, subjectType, subjectID, rootGrantID, sourceGrantID string, expiresAt any, digest string, policyVersion uint32, lifetime any, blocked bool, blockedReason string) {
+	if authority == nil || authority.Authorization == nil {
+		return "", "", "", "", "", nil, "", 0, nil, false, ""
+	}
+	subject := authority.Authorization.GetSubject()
+	return authority.Authorization.GetGrantId(), subject.GetPrincipalType(), subject.GetPrincipalId(),
+		authority.RootGrantID, authority.SourceGrantID, authority.ExpiresAt, authority.PolicyDigest, authority.PolicyVersion,
+		int32(authority.LifetimeMode), authority.Blocked, authority.BlockedReason
 }
 
 // =============================================================================
@@ -638,9 +802,9 @@ type Join struct {
 	OnTimeout        string
 	OnPartialFailure string
 	DeadlineAt       *time.Time
-	LingerUntil    *time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	LingerUntil      *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 const (
@@ -655,7 +819,7 @@ const (
 )
 
 // nullableText stores an empty string as SQL NULL so optional TEXT columns
-// (on_complete/on_timeout/on_partial_failure) stay NULL rather than '' when unset.
+// (on_complete/on_timeout/on_partial_failure) stay NULL rather than ” when unset.
 func nullableText(s string) interface{} {
 	if s == "" {
 		return nil
