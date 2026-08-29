@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -351,17 +352,17 @@ func (s *GatewayServer) resolveCreateTaskParent(
 		return associated, parent, nil
 	}
 	if s.taskStore == nil {
-		return "", nil, fmt.Errorf(createTaskParentDenied)
+		return "", nil, stderrors.New(createTaskParentDenied)
 	}
 	parent, err := s.taskStore.GetTask(ctx, requested)
 	if err != nil || parent == nil {
-		return "", nil, fmt.Errorf(createTaskParentDenied)
+		return "", nil, stderrors.New(createTaskParentDenied)
 	}
 	if parent.Workspace != workspace || parent.AssignedTo != identity.String() {
-		return "", nil, fmt.Errorf(createTaskParentDenied)
+		return "", nil, stderrors.New(createTaskParentDenied)
 	}
 	if parent.Status != tasks.TaskStatusAssigned && parent.Status != tasks.TaskStatusRunning {
-		return "", nil, fmt.Errorf(createTaskParentDenied)
+		return "", nil, stderrors.New(createTaskParentDenied)
 	}
 	return requested, parent, nil
 }

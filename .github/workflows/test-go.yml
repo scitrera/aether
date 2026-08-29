@@ -33,7 +33,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.14'
           cache-dependency-path: api/go.sum
 
       - name: go vet
@@ -60,7 +60,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.14'
           cache-dependency-path: api/go.sum
 
       - name: golangci-lint
@@ -77,7 +77,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.14'
           cache-dependency-path: api/go.sum
 
       - name: Install govulncheck
@@ -130,7 +130,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.14'
           cache-dependency-path: server/go.sum
 
       - name: go vet
@@ -157,7 +157,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.14'
           cache-dependency-path: server/go.sum
 
       - name: golangci-lint
@@ -174,7 +174,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.14'
           cache-dependency-path: server/go.sum
 
       - name: Install govulncheck
@@ -227,7 +227,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.14'
           cache-dependency-path: sdk/go/go.sum
 
       - name: go vet
@@ -254,7 +254,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.14'
           cache-dependency-path: sdk/go/go.sum
 
       - name: golangci-lint
@@ -271,7 +271,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.12'
+          go-version: '1.25.14'
           cache-dependency-path: sdk/go/go.sum
 
       - name: Install govulncheck
@@ -280,11 +280,9 @@ jobs:
       - name: Run govulncheck
         working-directory: sdk/go
         env:
-          # GO-2026-4887: docker/docker <= v28.5.2; no upstream fix; see SECURITY.md
-          # GO-2026-4883: docker/docker <= v28.5.2; no upstream fix; see SECURITY.md
-          # GO-2026-5617: docker cp bind-mount redirection race; no upstream fix; see SECURITY.md
-          # GO-2026-5668: docker cp symlink-swap empty-file race; no upstream fix; see SECURITY.md
-          IGNORED_ADVISORIES: "GO-2026-4887 GO-2026-4883 GO-2026-5617 GO-2026-5668"
+          # GO-2026-4887: legacy docker client module; Engine-only advisory; see SECURITY.md
+          # GO-2026-4883: legacy docker client module; Engine-only advisory; see SECURITY.md
+          IGNORED_ADVISORIES: "GO-2026-4887 GO-2026-4883"
         run: |
           set -uo pipefail
           report="$RUNNER_TEMP/govulncheck-aether-sdk-go.json"

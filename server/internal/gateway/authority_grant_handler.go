@@ -574,10 +574,6 @@ func (s *GatewayServer) renewVisibleAuthorityGrant(ctx context.Context, client *
 	return s.acl.RenewAuthorityGrantOpts(ctx, grant.GrantID, opts)
 }
 
-func (s *GatewayServer) revokeVisibleAuthorityGrant(ctx context.Context, client *ClientSession, actor models.Identity, grantID string) (*acl.AuthorityGrant, error) {
-	return s.revokeVisibleAuthorityGrantForSchedule(ctx, client, actor, grantID, "")
-}
-
 func (s *GatewayServer) revokeVisibleAuthorityGrantForSchedule(ctx context.Context, client *ClientSession, actor models.Identity, grantID, workflowScheduleID string) (*acl.AuthorityGrant, error) {
 	grant, err := s.getVisibleAuthorityGrantForSchedule(ctx, client, actor, grantID, workflowScheduleID)
 	if err != nil {

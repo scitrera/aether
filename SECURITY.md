@@ -49,16 +49,14 @@ Out of scope:
 
 ## Known Issues
 
-The following vulnerabilities are tracked but unresolved at the time of the current release because no upstream fix is yet available. They are reachable from the published Go SDK (`github.com/scitrera/aether/sdk/go`) via the Docker-based orchestrator (`sdk/go/orchestrators/docker`):
+The following Docker Engine advisories are tracked for the published Go SDK (`github.com/scitrera/aether/sdk/go`) because it imports the legacy `github.com/docker/docker` client module. Aether uses the client packages, not the affected Engine plugin implementation, but the Go vulnerability records do not provide symbol-level data or a fixed version for this legacy module path, so `govulncheck` conservatively reports them as reachable:
 
 | Advisory | Affected | Status |
 |---|---|---|
-| [GO-2026-4887](https://pkg.go.dev/vuln/GO-2026-4887) | `github.com/docker/docker` ≤ v28.5.2 | No upstream fix released. Tracking. |
-| [GO-2026-4883](https://pkg.go.dev/vuln/GO-2026-4883) | `github.com/docker/docker` ≤ v28.5.2 | No upstream fix released. Tracking. |
-| [GO-2026-5617](https://pkg.go.dev/vuln/GO-2026-5617) | `github.com/docker/docker` ≤ v28.5.2 | `docker cp` bind-mount redirection race. No upstream fix released. Tracking. |
-| [GO-2026-5668](https://pkg.go.dev/vuln/GO-2026-5668) | `github.com/docker/docker` ≤ v28.5.2 | `docker cp` symlink-swap arbitrary-empty-file race. No upstream fix released. Tracking. |
+| [GO-2026-4887](https://pkg.go.dev/vuln/GO-2026-4887) | Docker Engine < 29.3.1; legacy Go module has no fixed release | Engine AuthZ-plugin bypass; Aether imports only the Docker API client. Tracking migration to `github.com/moby/moby/client`. |
+| [GO-2026-4883](https://pkg.go.dev/vuln/GO-2026-4883) | Docker Engine < 29.3.1; legacy Go module has no fixed release | Engine plugin privilege-validation issue; Aether imports only the Docker API client. Tracking migration to `github.com/moby/moby/client`. |
 
-Mitigation: callers that don't need the Docker orchestrator can build their applications without importing `sdk/go/orchestrators/docker`. We will bump the dependency immediately when upstream ships fixed releases.
+Mitigation: callers that don't need the Docker orchestrator can build their applications without importing `sdk/go/orchestrators/docker`. We will migrate to the separately versioned Moby client module once compatibility is validated.
 
 ## Security Best Practices
 
