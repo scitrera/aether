@@ -1768,7 +1768,13 @@ func (c *BaseClient) receiveLoop(ctx context.Context) error {
 		// Receive the next message from the stream
 		response, err := stream.Recv()
 		if err != nil {
-			return c.handleReceiveError(ctx, err)
+			if err := c.handleReceiveError(ctx, err); err != nil {
+				return err
+			}
+			// A nil result means handleReceiveError successfully established a
+			// replacement stream. Keep this receive loop alive so Run continues
+			// servicing that stream instead of returning a false graceful exit.
+			continue
 		}
 
 		// Dispatch the response to the appropriate handler
@@ -1779,7 +1785,10 @@ func (c *BaseClient) receiveLoop(ctx context.Context) error {
 			}
 			// For recoverable dispatch errors (e.g., graceful disconnect),
 			// use the same reconnection path as receive errors.
-			return c.handleReceiveError(ctx, err)
+			if err := c.handleReceiveError(ctx, err); err != nil {
+				return err
+			}
+			continue
 		}
 	}
 }
