@@ -6,11 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Aet
 
 ---
 
-## [Unreleased]
+## [0.2.4] - 2026-09-11
 
 ### Added
 
 - **[AUTHPROXY] Redis/Valkey browser-session inventory and revocation.** The optional `login.SessionManager` API lists session metadata and supports individual and per-user bulk revocation across replicas. Management IDs cannot authenticate as browser cookies. Session creation and legacy migration prune expired index entries; logout and individual revocation restore a finite index lifetime after its last nonexpiring session is removed.
+
+### Changed
+
+- **[RELEASE] Gateway, Go SDK and API module tags advance together to `0.2.4`.** The Go SDK and API have no functional changes in this release. Python and TypeScript remain at `0.2.3`; the AG2 adapter remains at `0.0.2`.
+- **[CI] Releases skip Python/npm package versions already present in their registries.** The root tag is checked against the gateway version, allowing Go releases without SDK version changes in other languages. Release tooling is pinned to `scitrera-repo-tools==0.1.20` for these generated publish guards.
 
 ### Upgrade notes
 
@@ -254,7 +259,8 @@ Initial public OSS release of the Aether gateway, SDKs (Go, Python, TypeScript),
 
 ---
 
-[Unreleased]: https://github.com/scitrera/aether/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/scitrera/aether/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/scitrera/aether/compare/v0.2.3...v0.2.4
 [0.1.60]: https://github.com/scitrera/aether/compare/v0.1.59...v0.1.60
 [0.1.59]: https://github.com/scitrera/aether/compare/v0.1.58...v0.1.59
 [0.1.58]: https://github.com/scitrera/aether/releases/tag/v0.1.58

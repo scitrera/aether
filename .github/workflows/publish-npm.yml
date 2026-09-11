@@ -43,7 +43,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Rewrite local refs to version pins
-        run: uvx --from 'scitrera-repo-tools==0.1.19' sync-versions --release
+        run: uvx --from 'scitrera-repo-tools==0.1.20' sync-versions --release
 
       - name: Install dependencies
         run: npm ci
@@ -53,7 +53,22 @@ jobs:
         run: npm run build --if-present
         working-directory: sdk/typescript
 
+      - name: Check whether this version is already published
+        id: published
+        working-directory: sdk/typescript
+        run: |
+          set -euo pipefail
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$name@$version is already on npm; skipping publish"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to npm
+        if: steps.published.outputs.skip != 'true'
         run: npm publish --access public --provenance
         working-directory: sdk/typescript
         env:
