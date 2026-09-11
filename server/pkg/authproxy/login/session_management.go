@@ -98,6 +98,8 @@ else
   redis.call('SET', KEYS[1], record)
 end
 local index = ARGV[7] .. ':index:' .. generation
+-- Ordinary login traffic must reclaim expired members without ListSessions.
+redis.call('ZREMRANGEBYSCORE', index, '-inf', ARGV[8])
 local previous = redis.call('PTTL', index)
 redis.call('ZADD', index, ARGV[3], ARGV[6])
 if ttl == 0 or previous == -1 then redis.call('PERSIST', index)
@@ -110,10 +112,11 @@ func (s *RedisOpaqueSessionStore) persist(ctx context.Context, id string, data *
 	if data == nil {
 		return false, errors.New("nil session")
 	}
+	now := time.Now()
 	var ttl int64
 	score := "+inf"
 	if !data.ExpiresAt.IsZero() {
-		ttl = time.Until(data.ExpiresAt).Milliseconds()
+		ttl = data.ExpiresAt.Sub(now).Milliseconds()
 		if ttl <= 0 {
 			return false, errors.New("session ExpiresAt is in the past")
 		}
@@ -128,7 +131,7 @@ func (s *RedisOpaqueSessionStore) persist(ctx context.Context, id string, data *
 	if legacy != "" {
 		mode = "legacy"
 	}
-	result, err := createSession.Run(ctx, s.client, []string{s.sessionKey(digest(id)), subject + ":generation", s.prefix + id}, payload, ttl, score, mode, legacy, digest(id), subject).Int()
+	result, err := createSession.Run(ctx, s.client, []string{s.sessionKey(digest(id)), subject + ":generation", s.prefix + id}, payload, ttl, score, mode, legacy, digest(id), subject, now.UnixMilli()).Int()
 	return result == 1, err
 }
 
@@ -241,7 +244,14 @@ var deleteSession = redis.NewScript(`
 local raw = redis.call('GET', KEYS[1])
 if raw then
   local record = cjson.decode(raw)
-  redis.call('ZREM', record['_subject_key'] .. ':index:' .. record['_generation'], ARGV[1])
+  local index = record['_subject_key'] .. ':index:' .. record['_generation']
+  redis.call('ZREM', index, ARGV[1])
+  -- Restore a finite lifetime after the last nonexpiring session is removed.
+  -- ZREM deletes an empty index; an expired last score also expires the index.
+  local last = redis.call('ZRANGE', index, -1, -1, 'WITHSCORES')
+  if #last > 0 and last[2] ~= 'inf' then
+    redis.call('PEXPIRE', index, tonumber(last[2]) - tonumber(ARGV[2]))
+  end
 end
 redis.call('DEL', KEYS[1])
 if #KEYS > 1 then redis.call('DEL', KEYS[2]) end
@@ -253,7 +263,7 @@ func (s *RedisOpaqueSessionStore) remove(ctx context.Context, id string, legacyK
 	if legacyKey != "" {
 		keys = append(keys, legacyKey)
 	}
-	return deleteSession.Run(ctx, s.client, keys, id).Err()
+	return deleteSession.Run(ctx, s.client, keys, id, time.Now().UnixMilli()).Err()
 }
 
 // ListSessions returns unexpired sessions ordered by expiry, then ID.

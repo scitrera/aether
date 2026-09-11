@@ -275,6 +275,13 @@ disabling JWT signature verification during development.
 
 ### Auth Proxy — Browser login flow
 
+**Redis browser-session upgrade:** drain and stop all older replicas before the
+new session-store version serves requests, even if session management is not
+exposed. Keep the same primary, DB and prefix to preserve valid sessions during
+upgrade. Rollback or recovery from stale/lost revocation state requires a fresh,
+never-used `AUTH_PROXY_SESSION_REDIS_PREFIX` on every replica and new sign-ins.
+See [upgrade and rollback steps](../server/docs/auth-proxy-sessions.md#upgrade-and-rollback).
+
 The login flow is **enabled iff** `AUTH_PROXY_LOGIN_PROVIDERS` is non-empty.
 Each provider name maps to a set of per-provider variables (the provider
 name is upper-cased and `-` is replaced with `_` when forming the key).

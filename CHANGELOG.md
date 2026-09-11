@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Aet
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **[AUTHPROXY] Redis/Valkey browser-session inventory and revocation.** The optional `login.SessionManager` API lists session metadata and supports individual and per-user bulk revocation across replicas. Management IDs cannot authenticate as browser cookies. Session creation and legacy migration prune expired index entries; logout and individual revocation restore a finite index lifetime after its last nonexpiring session is removed.
+
+### Upgrade notes
+
+- **[AUTHPROXY] Coordinated upgrade required for Redis browser sessions**, including deployments that do not expose session management. Drain and stop every old replica before any new replica serves requests; mixed versions cannot consistently read sessions or enforce revocation. Keep the same Redis primary, DB and prefix to migrate valid legacy sessions on use. **Rollback, stale-backup restore, or recovery from acknowledged-write loss requires a fresh, never-used session prefix on every replica and new sign-ins.** Do not reset generation counters while retaining session records. See the [browser-session upgrade and rollback guide](server/docs/auth-proxy-sessions.md#upgrade-and-rollback). JWT mode is unaffected.
+
+---
+
 ## [0.2.2] - Unreleased
 
 Work landed since the **v0.2.1** release (2026-05-22); not yet tagged.
@@ -242,7 +254,7 @@ Initial public OSS release of the Aether gateway, SDKs (Go, Python, TypeScript),
 
 ---
 
-[Unreleased]: https://github.com/scitrera/aether/compare/v0.1.60...HEAD
+[Unreleased]: https://github.com/scitrera/aether/compare/v0.2.3...HEAD
 [0.1.60]: https://github.com/scitrera/aether/compare/v0.1.59...v0.1.60
 [0.1.59]: https://github.com/scitrera/aether/compare/v0.1.58...v0.1.59
 [0.1.58]: https://github.com/scitrera/aether/releases/tag/v0.1.58
