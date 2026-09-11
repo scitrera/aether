@@ -13,9 +13,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -64,8 +62,8 @@ type SessionStore interface {
 var ErrSessionNotFound = errors.New("session not found")
 
 // RedisOpaqueSessionStore stores sessions in Redis under
-// "<prefix>:<opaque-id>", with the opaque id placed in the cookie. This is
-// the production default — server-side revocation is a single Redis DEL.
+// a namespaced key derived from the cookie, with per-subject indexes.
+// Only the browser receives the bearer credential; management IDs cannot log in.
 type RedisOpaqueSessionStore struct {
 	client *redis.Client
 	prefix string
@@ -84,66 +82,6 @@ func NewRedisOpaqueSessionStore(client *redis.Client, prefix string) *RedisOpaqu
 
 // Name implements SessionStore.
 func (s *RedisOpaqueSessionStore) Name() string { return "redis_opaque" }
-
-// New implements SessionStore. The opaque id is 64 hex chars (32 bytes of
-// crypto/rand). TTL is derived from data.ExpiresAt; if unset, the session
-// is persisted with no Redis TTL (caller is expected to set a sane default).
-func (s *RedisOpaqueSessionStore) New(ctx context.Context, data *SessionData) (string, error) {
-	id, err := newOpaqueID(s.idLen)
-	if err != nil {
-		return "", fmt.Errorf("generate session id: %w", err)
-	}
-	payload, err := json.Marshal(data)
-	if err != nil {
-		return "", fmt.Errorf("marshal session: %w", err)
-	}
-	var ttl time.Duration
-	if !data.ExpiresAt.IsZero() {
-		ttl = time.Until(data.ExpiresAt)
-		if ttl <= 0 {
-			return "", errors.New("session ExpiresAt is in the past")
-		}
-	}
-	if err := s.client.Set(ctx, s.prefix+id, payload, ttl).Err(); err != nil {
-		return "", fmt.Errorf("redis set: %w", err)
-	}
-	return id, nil
-}
-
-// Get implements SessionStore.
-func (s *RedisOpaqueSessionStore) Get(ctx context.Context, id string) (*SessionData, error) {
-	if id == "" {
-		return nil, nil
-	}
-	payload, err := s.client.Get(ctx, s.prefix+id).Bytes()
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("redis get: %w", err)
-	}
-	var data SessionData
-	if err := json.Unmarshal(payload, &data); err != nil {
-		return nil, fmt.Errorf("unmarshal session: %w", err)
-	}
-	if data.IsExpired() {
-		// Best-effort cleanup; ignore delete errors.
-		_ = s.client.Del(ctx, s.prefix+id).Err()
-		return nil, nil
-	}
-	return &data, nil
-}
-
-// Delete implements SessionStore.
-func (s *RedisOpaqueSessionStore) Delete(ctx context.Context, id string) error {
-	if id == "" {
-		return nil
-	}
-	if err := s.client.Del(ctx, s.prefix+id).Err(); err != nil {
-		return fmt.Errorf("redis del: %w", err)
-	}
-	return nil
-}
 
 // newOpaqueID returns a hex-encoded random id of n bytes.
 func newOpaqueID(n int) (string, error) {

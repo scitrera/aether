@@ -88,6 +88,7 @@ jobs:
 
     env:
       REDIS_ADDR: localhost:56379
+      AUTH_TEST_REDIS_ADDR: localhost:56379
       RABBITMQ_STREAM_URL: rabbitmq-stream://guest:guest@localhost:55552
       RABBITMQ_AMQP_URL: amqp://guest:guest@localhost:55672/
       POSTGRES_DSN: postgres://aether:aether_test@localhost:5432/aether?sslmode=disable
