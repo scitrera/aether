@@ -9,9 +9,9 @@
 # directives in each go.mod handle local builds; the `require` pins handle downstream
 # `go get` from pkg.go.dev. The gomod_require rules below keep those pins in sync.
 
-aether-gateway: 0.2.3
+aether-gateway: 0.2.4
 
-aether-sdk-go: 0.2.3         # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
+aether-sdk-go: 0.2.4         # github.com/scitrera/aether/sdk/go (also drives github.com/scitrera/aether/api require pins)
 
 aether-sdk-typescript: 0.2.3  # @scitrera/aether-client
 
@@ -64,7 +64,7 @@ ci:
   # release, which is the same unpinned-tooling drift proto-check exists to
   # catch. Bump in lockstep with the proto toolchain when repo-tools changes
   # generated output.
-  repo_tools_source: "scitrera-repo-tools==0.1.19"
+  repo_tools_source: "scitrera-repo-tools==0.1.20"
   # `push_branches` is deliberately unset, so develop stays in both the push and
   # pull_request trigger lists and every check runs twice for a commit pushed to
   # an open PR's branch. That is the intended trade: both runs complete and both
@@ -94,10 +94,10 @@ ci:
     # under preferred_versions.python so the linter cannot float — once those are
     # cleaned up. Leaving it on today would make every PR red.
     lint: none
-    # Refuse to publish when the pushed tag disagrees with versions.yaml. Names
-    # the one Python project whose version tracks the tag; ag2 is versioned
-    # independently (0.0.2), so a single tag cannot verify both.
-    verify_tag_version: aether-sdk-python
+    # The root release tag tracks the gateway/Go modules. Python packages
+    # keep their own versions and are uploaded only when not already on PyPI.
+    verify_tag_version: aether-gateway
+    skip_if_published: true
   npm:
     # Load-bearing, not cosmetic. It grants id-token: write to the publish job,
     # which is what lets npm mint an OIDC token and sign a provenance statement.
@@ -106,6 +106,8 @@ ci:
     # has failed in, including v0.1.60 and v0.2.1. NODE_AUTH_TOKEN is still sent;
     # the token and OIDC are used together.
     use_provenance: true
+    # A Go-only release must not republish an unchanged TypeScript SDK.
+    skip_if_published: true
   go:
     # -short matches what test.yml runs for unit CI: without it the suite tries
     # to reach RabbitMQ/Valkey/Postgres, which only the integration job provides.

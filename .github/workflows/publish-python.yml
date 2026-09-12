@@ -23,7 +23,7 @@ jobs:
     uses: ./.github/workflows/test-python.yml
 
   verify-tag:
-    name: Verify tag matches aether-sdk-python version
+    name: Verify tag matches aether-gateway version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -32,16 +32,16 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0
 
       - name: Verify versions are in sync
-        run: uvx --from 'scitrera-repo-tools==0.1.19' sync-versions --check --verbose
+        run: uvx --from 'scitrera-repo-tools==0.1.20' sync-versions --check --verbose
 
       - name: Compare tag against versions.yaml
         if: github.ref_type == 'tag'
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME#v}"
-          declared="$(uvx --from 'scitrera-repo-tools==0.1.19' sync-versions --print-version aether-sdk-python)"
+          declared="$(uvx --from 'scitrera-repo-tools==0.1.20' sync-versions --print-version aether-gateway)"
           if [ "$tag" != "$declared" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match the aether-sdk-python version declared in versions.yaml ($declared)"
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match the aether-gateway version declared in versions.yaml ($declared)"
             exit 1
           fi
           echo "Tag ${GITHUB_REF_NAME} matches versions.yaml ($declared)."
@@ -66,7 +66,7 @@ jobs:
           python-version: '3.12'
 
       - name: Rewrite local refs to version pins
-        run: uvx --from 'scitrera-repo-tools==0.1.19' sync-versions --release
+        run: uvx --from 'scitrera-repo-tools==0.1.20' sync-versions --release
 
       - name: Build sdist + wheel
         run: |
@@ -74,7 +74,26 @@ jobs:
           python -m build
         working-directory: sdk/python-client
 
+      - name: Check whether this version is already published
+        id: published
+        working-directory: sdk/python-client
+        run: |
+          set -euo pipefail
+          name=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project'].get('name',''))")
+          version=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project'].get('version',''))")
+          if [ -z "$version" ]; then
+            echo "::error::pyproject.toml declares no static version (dynamic?); ci.python.skip_if_published cannot determine what to look up"
+            exit 1
+          fi
+          if curl -sfL -o /dev/null "https://pypi.org/pypi/$name/$version/json"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$name $version is already on PyPI; skipping publish"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to PyPI (trusted publisher)
+        if: steps.published.outputs.skip != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: sdk/python-client/dist/
@@ -106,7 +125,7 @@ jobs:
           python-version: '3.12'
 
       - name: Rewrite local refs to version pins
-        run: uvx --from 'scitrera-repo-tools==0.1.19' sync-versions --release
+        run: uvx --from 'scitrera-repo-tools==0.1.20' sync-versions --release
 
       - name: Build sdist + wheel
         run: |
@@ -114,7 +133,26 @@ jobs:
           python -m build
         working-directory: sdk/python-ag2
 
+      - name: Check whether this version is already published
+        id: published
+        working-directory: sdk/python-ag2
+        run: |
+          set -euo pipefail
+          name=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project'].get('name',''))")
+          version=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project'].get('version',''))")
+          if [ -z "$version" ]; then
+            echo "::error::pyproject.toml declares no static version (dynamic?); ci.python.skip_if_published cannot determine what to look up"
+            exit 1
+          fi
+          if curl -sfL -o /dev/null "https://pypi.org/pypi/$name/$version/json"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$name $version is already on PyPI; skipping publish"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to PyPI (trusted publisher)
+        if: steps.published.outputs.skip != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: sdk/python-ag2/dist/
