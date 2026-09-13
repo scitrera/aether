@@ -217,8 +217,7 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 	// load-balances onto them, the gateway claims-and-pushes, and the drop
 	// leaves the task stuck-assigned until reconcile. Default false = consumer
 	// (back-compat). Agents are always pool consumers.
-	if identity.Type == models.PrincipalAgent ||
-		(identity.Type == models.PrincipalService && !init.GetService().GetNoPoolConsumer()) {
+	if consumesQueuedTasks(identity, init) {
 		s.addToImplIndex(identity, client)
 	} else if identity.Type == models.PrincipalService {
 		logging.Logger.Info().Str("identity", identity.String()).Msg("service connected as non-pool-consumer; excluded from pool-task routing")
@@ -385,8 +384,8 @@ func (s *GatewayServer) Connect(stream pb.AetherGateway_ConnectServer) error {
 		}
 	}
 
-	// Orchestration: Deliver queued tasks to agents
-	if identity.Type == models.PrincipalAgent {
+	// Deliver queued work to agents and services that consume POOL tasks.
+	if consumesQueuedTasks(identity, init) {
 		if err := s.deliverQueuedTasksToAgent(stream.Context(), identity, client); err != nil {
 			logging.Logger.Error().Err(err).Str("identity", identity.String()).Msg("error delivering queued tasks")
 		}
