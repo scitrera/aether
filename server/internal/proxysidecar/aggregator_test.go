@@ -834,8 +834,8 @@ func TestAggregator_ProviderCNMetadataMismatch(t *testing.T) {
 
 	// (a) Mismatch: provider cert CN pins tenant-alpha, metadata claims tenant-beta.
 	mismatchCert := aggGenLeafTLS(t, "sv::sandbox-provider::tenant-alpha", caCert, caKey)
-	if err := aggProviderConnectOnce(t, addr, mismatchCert, "tenant-beta"); err == nil {
-		t.Fatalf("expected provider CN/metadata mismatch to be rejected over real mTLS")
+	if err := aggProviderConnectOnce(t, addr, mismatchCert, "tenant-beta"); err == nil || !strings.Contains(err.Error(), "AGG_TENANT_CN_MISMATCH") {
+		t.Fatalf("expected provider CN/metadata mismatch rejection over real mTLS, got: %v", err)
 	}
 
 	// (b) Match: provider cert CN pins tenant-alpha and metadata agrees → no
@@ -878,16 +878,50 @@ func aggProviderConnectOnce(t *testing.T, addr string, clientCert tls.Certificat
 	// as a rejection. The match case never receives a frame (no relay) and hits
 	// the client deadline → "not rejected" (nil).
 	msg, err := stream.Recv()
+	return aggProviderConnectResult(msg, err)
+}
+
+func aggProviderConnectResult(msg *pb.DownstreamMessage, err error) error {
 	if err == nil {
 		if msg.GetError() != nil {
 			return fmt.Errorf("provider rejected: %s: %s", msg.GetError().GetCode(), msg.GetError().GetMessage())
 		}
 		return nil
 	}
-	if ctx.Err() == context.DeadlineExceeded {
+	// gRPC can deliver a deadline status before the local context timer fires.
+	// Classify the received status; genuine rejection frames were checked above.
+	if status.Code(err) == codes.DeadlineExceeded {
 		return nil
 	}
 	return err
+}
+
+func TestAggProviderConnectResult(t *testing.T) {
+	tests := []struct {
+		name    string
+		message *pb.DownstreamMessage
+		err     error
+		want    string
+	}{
+		{name: "deadline before local timer", err: status.Error(codes.DeadlineExceeded, "stream terminated by RST_STREAM with error code: CANCEL")},
+		{name: "matching provider frame", message: &pb.DownstreamMessage{}},
+		{name: "CN mismatch frame", message: relayErrorDownstream("AGG_TENANT_CN_MISMATCH", "tenant mismatch"), want: "AGG_TENANT_CN_MISMATCH"},
+		{name: "server rejection", err: status.Error(codes.Unknown, "tenant mismatch"), want: "tenant mismatch"},
+		{name: "transport failure", err: status.Error(codes.Unavailable, "connection failed"), want: "connection failed"},
+		{name: "unexpected stream close", err: io.EOF, want: "EOF"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := aggProviderConnectResult(test.message, test.err)
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("unexpected rejection: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("got %v, want error containing %q", err, test.want)
+			}
+		})
+	}
 }
 
 // aggTunnelHelloOnce dials the tunnel surface over mTLS with clientCert, sends a
