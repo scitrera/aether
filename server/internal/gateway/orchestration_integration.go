@@ -194,7 +194,14 @@ func (s *GatewayServer) handleOrchestratorConnection(
 	return nil
 }
 
-// deliverQueuedTasksToAgent delivers queued tasks when agent connects
+// consumesQueuedTasks mirrors worker-index eligibility while preserving the
+// service opt-out used by short-lived management and probe connections.
+func consumesQueuedTasks(identity models.Identity, init *pb.InitConnection) bool {
+	return identity.Type == models.PrincipalAgent ||
+		(identity.Type == models.PrincipalService && init.GetService() != nil && !init.GetService().GetNoPoolConsumer())
+}
+
+// deliverQueuedTasksToAgent delivers queued tasks when a worker connects
 func (s *GatewayServer) deliverQueuedTasksToAgent(
 	ctx context.Context,
 	identity models.Identity,
@@ -204,8 +211,8 @@ func (s *GatewayServer) deliverQueuedTasksToAgent(
 		return nil // orchestration not initialized
 	}
 
-	if identity.Type != models.PrincipalAgent {
-		return nil // Only for agents
+	if identity.Type != models.PrincipalAgent && identity.Type != models.PrincipalService {
+		return nil // Only connected workers
 	}
 
 	// Get queued tasks
@@ -236,6 +243,7 @@ func (s *GatewayServer) deliverQueuedTasksToAgent(
 				Metadata:   convertMetadataToString(task.Metadata),
 				AssignedAt: task.CreatedAt.Unix(),
 				Payload:    task.Payload,
+				Workspace:  task.Workspace,
 			}
 			applyHibernationHandoffToAssignment(assignment, task.Metadata)
 			applyTaskAuthorizationToAssignment(assignment, task)
@@ -279,6 +287,7 @@ func (s *GatewayServer) deliverQueuedTasksToAgent(
 				Metadata:   convertMetadataToString(task.Metadata),
 				AssignedAt: task.CreatedAt.Unix(),
 				Payload:    task.Payload,
+				Workspace:  task.Workspace,
 			}
 			applyHibernationHandoffToAssignment(assignment, task.Metadata)
 			applyTaskAuthorizationToAssignment(assignment, task)
@@ -1519,6 +1528,7 @@ func (s *GatewayServer) deliverPoolTaskToWorker(ctx context.Context, taskID, tar
 		Metadata:   convertMetadataToString(task.Metadata),
 		AssignedAt: time.Now().Unix(),
 		Payload:    payload,
+		Workspace:  workspace,
 	}
 	applyHibernationHandoffToAssignment(assignment, task.Metadata)
 	applyTaskAuthorizationToAssignment(assignment, task)
