@@ -1126,12 +1126,14 @@ func (s *GatewayServer) routeTunnelData(ctx context.Context, client *ClientSessi
 	downstream := &pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_TunnelData{TunnelData: data},
 	}
-	// Single-node fast path: when the pinned peer is connected to this
-	// gateway, deliver directly. TunnelData is a data-plane envelope
-	// not audited per-frame, so bypassing RMQ does not lose
-	// observability. Rides at PriorityResponseChunk — bulk bytes that
-	// shed before control / response-header frames under pressure.
-	if s.deliverDataPlaneLocal(destTopic, "tunnel_data", aether.PriorityResponseChunk, downstream) {
+	// Caller-to-target frames must follow TunnelOpen through the broker.
+	// Publishing the open does not mean the target has received it yet;
+	// bypassing here can deliver data before the target reserves the tunnel.
+	// Keep this direction on one path for the whole tunnel, since switching
+	// after an ack could still overtake frames already queued in the broker.
+	// The return direction can bypass: the caller registers its tunnel
+	// before sending TunnelOpen.
+	if !isFromCaller && s.deliverDataPlaneLocal(destTopic, "tunnel_data", aether.PriorityResponseChunk, downstream) {
 		return
 	}
 	if err := s.publishProxyEnvelope(ctx, destTopic, downstream); err != nil {
@@ -1250,11 +1252,10 @@ func (s *GatewayServer) routeTunnelAck(ctx context.Context, client *ClientSessio
 	downstream := &pb.DownstreamMessage{
 		Payload: &pb.DownstreamMessage_TunnelAck{TunnelAck: ack},
 	}
-	// Single-node fast path: TunnelAck is a flow-control hint, not audited.
-	// If the destination peer is locally connected, deliver directly. Acks
-	// ride at PriorityResponseHeader — the sender is waiting for window
-	// updates, so they must jump ahead of bulk data chunks under pressure.
-	if s.deliverDataPlaneLocal(destTopic, "tunnel_ack", aether.PriorityResponseHeader, downstream) {
+	// As with data, caller-to-target acks must not overtake the brokered
+	// TunnelOpen. Return acks can use the local fast path because the
+	// caller has already registered the tunnel before sending the open.
+	if !isFromCaller && s.deliverDataPlaneLocal(destTopic, "tunnel_ack", aether.PriorityResponseHeader, downstream) {
 		return
 	}
 	if err := s.publishProxyEnvelope(ctx, destTopic, downstream); err != nil {

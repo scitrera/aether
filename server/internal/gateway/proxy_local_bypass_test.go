@@ -3,10 +3,11 @@ package gateway
 // Tests for the single-node proxy/tunnel data-plane bypass (Phase 6 / T31).
 //
 // The contract under test:
-//   - Data-plane envelopes (TunnelData, TunnelAck, ProxyHttpBodyChunk) take a
-//     direct local Deliver path when the target sidecar is registered in the
-//     same gateway's identityIndex AND the bypass flag is enabled. RMQ is not
-//     touched on the hit path.
+//   - Return TunnelData/TunnelAck and ProxyHttpBodyChunk take a direct local
+//     Deliver path when the destination is registered in the same gateway's
+//     identityIndex AND the bypass flag is enabled. RMQ is not touched on a hit.
+//   - Caller-to-target tunnel frames follow TunnelOpen through the broker,
+//     so the local fast path cannot overtake an open still in transit.
 //   - Control-plane envelopes (TunnelOpen, TunnelClose header,
 //     ProxyHttpRequest header, ProxyHttpResponse header, ProxyError) ALWAYS
 //     go through RMQ regardless of local connectivity, so audit emission is
@@ -23,6 +24,7 @@ import (
 
 	pb "github.com/scitrera/aether/api/proto"
 	"github.com/scitrera/aether/server/pkg/models"
+	"google.golang.org/protobuf/proto"
 )
 
 // seedTunnelPinPair writes the production three-tuple tunnel pin (primary
@@ -69,18 +71,18 @@ func drainOne(ch <-chan *pb.DownstreamMessage) *pb.DownstreamMessage {
 // 1. TunnelData with local pin → fast path (Deliver, no RMQ publish)
 // ---------------------------------------------------------------------------
 
-func TestTunnelData_LocalPin_TakesBypass(t *testing.T) {
+func TestTunnelData_LocalCaller_TakesBypass(t *testing.T) {
 	router := newMockMessageRouter()
 	s := newProxyTestServer(router)
 	stream := &mockStream{}
-	sender := models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"}
+	sender := models.Identity{Type: models.PrincipalService, Implementation: "tcp-svc", Specifier: "pod-A"}
 	client := newProxyClient(sender, stream)
 
-	const target = "sv::tcp-svc::pod-A"
-	sidecar := newLocalSidecarSession(s, target, 4)
-	seedTunnelPinPair(s, sender.ToTopic(), target, "tun-local", time.Minute)
+	const target = "ag::ws1::caller::v1"
+	caller := newLocalSidecarSession(s, target, 4)
+	wireID := seedTunnelPinPair(s, target, sender.ToTopic(), "tun-local", time.Minute)
 
-	data := &pb.TunnelData{TunnelId: "tun-local", Seq: 1, Data: []byte("ping")}
+	data := &pb.TunnelData{TunnelId: wireID, Seq: 1, Data: []byte("ping")}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{tunnelData: data})
 
 	// RMQ must NOT be touched.
@@ -92,11 +94,11 @@ func TestTunnelData_LocalPin_TakesBypass(t *testing.T) {
 	}
 
 	// Local delivery must have happened.
-	got := drainOne(sidecar.deliveryCh)
+	got := drainOne(caller.deliveryCh)
 	if got == nil {
-		t.Fatal("expected TunnelData on sidecar deliveryCh")
+		t.Fatal("expected TunnelData on caller deliveryCh")
 	}
-	if got.GetTunnelData() == nil || string(got.GetTunnelData().Data) != "ping" {
+	if got.GetTunnelData().GetTunnelId() != "tun-local" || string(got.GetTunnelData().GetData()) != "ping" {
 		t.Errorf("unexpected payload on bypass: %+v", got)
 	}
 }
@@ -109,16 +111,16 @@ func TestTunnelData_RemotePin_FallsBackToRMQ(t *testing.T) {
 	router := newMockMessageRouter()
 	s := newProxyTestServer(router)
 	stream := &mockStream{}
-	sender := models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"}
+	sender := models.Identity{Type: models.PrincipalService, Implementation: "tcp-svc", Specifier: "pod-A"}
 	client := newProxyClient(sender, stream)
 
 	// Pin to a target that is NOT registered locally, but IS active in
 	// Redis (so the routing path treats the pinned principal as reachable).
-	const target = "sv::tcp-svc::remote-pod"
-	seedTunnelPinPair(s, sender.ToTopic(), target, "tun-remote", time.Minute)
+	const target = "ag::ws1::caller::remote"
+	wireID := seedTunnelPinPair(s, target, sender.ToTopic(), "tun-remote", time.Minute)
 	s.sessions.(*mockSessionManager).isActiveResult = true
 
-	data := &pb.TunnelData{TunnelId: "tun-remote", Seq: 1, Data: []byte("via-rmq")}
+	data := &pb.TunnelData{TunnelId: wireID, Seq: 1, Data: []byte("via-rmq")}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{tunnelData: data})
 
 	router.mu.Lock()
@@ -228,14 +230,14 @@ func TestTunnelData_BypassDisabled_UsesRMQEvenLocally(t *testing.T) {
 	s := newProxyTestServer(router)
 	s.proxyLocalBypassEnabled = false
 	stream := &mockStream{}
-	sender := models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"}
+	sender := models.Identity{Type: models.PrincipalService, Implementation: "tcp-svc", Specifier: "pod-A"}
 	client := newProxyClient(sender, stream)
 
-	const target = "sv::tcp-svc::pod-A"
-	sidecar := newLocalSidecarSession(s, target, 4)
-	seedTunnelPinPair(s, sender.ToTopic(), target, "tun-disabled", time.Minute)
+	const target = "ag::ws1::caller::v1"
+	caller := newLocalSidecarSession(s, target, 4)
+	wireID := seedTunnelPinPair(s, target, sender.ToTopic(), "tun-disabled", time.Minute)
 
-	data := &pb.TunnelData{TunnelId: "tun-disabled", Seq: 1, Data: []byte("rmq-only")}
+	data := &pb.TunnelData{TunnelId: wireID, Seq: 1, Data: []byte("rmq-only")}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{tunnelData: data})
 
 	router.mu.Lock()
@@ -244,9 +246,9 @@ func TestTunnelData_BypassDisabled_UsesRMQEvenLocally(t *testing.T) {
 	if pubs != 1 {
 		t.Errorf("expected RMQ publish when bypass disabled, got %d", pubs)
 	}
-	// Sidecar deliveryCh should be empty.
+	// Caller deliveryCh should be empty.
 	select {
-	case got := <-sidecar.deliveryCh:
+	case got := <-caller.deliveryCh:
 		t.Errorf("expected empty deliveryCh when bypass disabled, got %+v", got)
 	default:
 	}
@@ -260,17 +262,17 @@ func TestTunnelData_FullDeliveryBuffer_FallsBackToRMQ(t *testing.T) {
 	router := newMockMessageRouter()
 	s := newProxyTestServer(router)
 	stream := &mockStream{}
-	sender := models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"}
+	sender := models.Identity{Type: models.PrincipalService, Implementation: "tcp-svc", Specifier: "pod-A"}
 	client := newProxyClient(sender, stream)
 
-	const target = "sv::tcp-svc::pod-A"
-	sidecar := newLocalSidecarSession(s, target, 1)
+	const target = "ag::ws1::caller::v1"
+	caller := newLocalSidecarSession(s, target, 1)
 	// Pre-fill the deliveryCh so the bypass select finds it full.
-	sidecar.deliveryCh <- &pb.DownstreamMessage{}
+	caller.deliveryCh <- &pb.DownstreamMessage{}
 
-	seedTunnelPinPair(s, sender.ToTopic(), target, "tun-full", time.Minute)
+	wireID := seedTunnelPinPair(s, target, sender.ToTopic(), "tun-full", time.Minute)
 
-	data := &pb.TunnelData{TunnelId: "tun-full", Seq: 1, Data: []byte("overflow")}
+	data := &pb.TunnelData{TunnelId: wireID, Seq: 1, Data: []byte("overflow")}
 	s.routeProxyEnvelope(context.Background(), client, proxyEnvelope{tunnelData: data})
 
 	router.mu.Lock()
@@ -382,5 +384,75 @@ func TestProxyHttpRequest_LocalSidecar_StillGoesThroughRMQ(t *testing.T) {
 	case got := <-sidecar.deliveryCh:
 		t.Errorf("INVARIANT BROKEN: ProxyHttpRequest leaked into local deliveryCh: %+v", got)
 	default:
+	}
+}
+
+// Hold broker delivery until all caller frames have been routed. This makes
+// the open/data race deterministic: a local bypass would deliver data before
+// the target has received TunnelOpen and reserved the tunnel.
+func TestTunnelCallerFrames_DoNotOvertakeBrokeredOpen(t *testing.T) {
+	for _, target := range []string{"sv::tcp-svc::pod-A", "ag::ws1::tcp-agent::v1"} {
+		t.Run(target, func(t *testing.T) {
+			router := newMockMessageRouter()
+			s := newProxyTestServer(router)
+			sender := models.Identity{Type: models.PrincipalAgent, Workspace: "ws1", Implementation: "caller", Specifier: "v1"}
+			client := newProxyClient(sender, &mockStream{})
+			peer := newLocalSidecarSession(s, target, 8)
+			ctx := context.Background()
+			const originalID = "tun-ordered"
+			open := &pb.TunnelOpen{TunnelId: originalID, TargetTopic: target, Protocol: pb.TunnelOpen_TCP}
+			s.routeProxyEnvelope(ctx, client, proxyEnvelope{tunnelOpen: open})
+			s.routeProxyEnvelope(ctx, client, proxyEnvelope{tunnelData: &pb.TunnelData{TunnelId: originalID, Seq: 1, Data: []byte("first")}})
+			s.routeProxyEnvelope(ctx, client, proxyEnvelope{tunnelData: &pb.TunnelData{TunnelId: originalID, Seq: 2, Data: []byte("second")}})
+			s.routeProxyEnvelope(ctx, client, proxyEnvelope{tunnelAck: &pb.TunnelAck{TunnelId: originalID, AckSeq: 1, Credits: 42}})
+			s.routeProxyEnvelope(ctx, client, proxyEnvelope{tunnelClose: &pb.TunnelClose{TunnelId: originalID, Reason: pb.TunnelClose_NORMAL}})
+
+			select {
+			case got := <-peer.deliveryCh:
+				t.Fatalf("frame overtook brokered TunnelOpen: %v", got)
+			default:
+			}
+			router.mu.Lock()
+			published := append([]publishedMsg(nil), router.publishedMessages...)
+			router.mu.Unlock()
+			if len(published) != 5 {
+				t.Fatalf("expected open, two data frames, ack and close on the same broker path; got %d", len(published))
+			}
+
+			// Release the broker backlog through the real subscription handler.
+			deliver := s.createMessageHandler(peer)
+			for _, msg := range published {
+				if msg.topic != target {
+					t.Fatalf("published to %q, want %q", msg.topic, target)
+				}
+				deliver(msg.payload)
+			}
+			gotOpen := drainOne(peer.deliveryCh).GetTunnelData()
+			if gotOpen == nil || gotOpen.GetSeq() != 0 {
+				t.Fatalf("first delivery must be TunnelOpen, got %v", gotOpen)
+			}
+			var decodedOpen pb.TunnelOpen
+			if err := proto.Unmarshal(gotOpen.GetData(), &decodedOpen); err != nil {
+				t.Fatal(err)
+			}
+			wireID := decodedOpen.GetTunnelId()
+			if wireID == "" || wireID == originalID || gotOpen.GetTunnelId() != wireID || decodedOpen.GetTargetTopic() != target {
+				t.Fatalf("invalid forwarded open: %v", &decodedOpen)
+			}
+			for i, payload := range []string{"first", "second"} {
+				got := drainOne(peer.deliveryCh).GetTunnelData()
+				if got.GetTunnelId() != wireID || got.GetSeq() != uint32(i+1) || string(got.GetData()) != payload {
+					t.Fatalf("data delivery %d out of order: %v", i+1, got)
+				}
+			}
+			ack := drainOne(peer.deliveryCh).GetTunnelAck()
+			if ack.GetTunnelId() != wireID || ack.GetAckSeq() != 1 || ack.GetCredits() != 42 {
+				t.Fatalf("unexpected ack: %v", ack)
+			}
+			closeMsg := drainOne(peer.deliveryCh).GetTunnelClose()
+			if closeMsg == nil || closeMsg.GetTunnelId() != wireID || closeMsg.GetReason() != pb.TunnelClose_NORMAL {
+				t.Fatalf("unexpected close: %v", closeMsg)
+			}
+		})
 	}
 }
