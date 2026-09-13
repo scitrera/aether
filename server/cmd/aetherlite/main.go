@@ -89,15 +89,16 @@ AetherLite v%s — embedded single-binary server
 // config.EnvStr/EnvInt/EnvBool set the flag's default at init time, so the
 // user can still override on the command line.
 var (
-	configFile    = flag.String("config", config.EnvStr("AETHER_CONFIG", ""), "Optional path to a gateway config file (env: AETHER_CONFIG)")
-	secretsFile   = flag.String("secrets-file", config.EnvStr("AETHER_SECRETS_FILE", ""), "Optional generated-secrets.yaml; merged into config (HMAC, admin key, TLS paths) (env: AETHER_SECRETS_FILE)")
-	dataDir       = flag.String("data-dir", config.EnvStr("AETHERLITE_DATA_DIR", "./aether-lite-data"), "Data directory for SQLite and Badger storage (env: AETHERLITE_DATA_DIR)")
-	port          = flag.Int("port", config.EnvInt("AETHER_PORT", 50051), "gRPC server port (env: AETHER_PORT)")
-	adminPort     = flag.Int("admin-port", config.EnvInt("AETHER_ADMIN_PORT", 31880), "Admin UI port (env: AETHER_ADMIN_PORT)")
-	devMode       = flag.Bool("dev", config.EnvBool("AETHER_DEV", false), "Development mode (relaxed security, CORS wildcard) (env: AETHER_DEV)")
-	insecureAdmin = flag.Bool("insecure-admin", config.EnvBool("AETHER_INSECURE_ADMIN", false), "Allow admin API without authentication (NOT FOR PRODUCTION) (env: AETHER_INSECURE_ADMIN)")
-	showVersion   = flag.Bool("version", false, "Show version and exit")
-	showHelp      = flag.Bool("help", false, "Show this help message")
+	authVerifyListen = flag.String("auth-verify-listen", config.EnvStr("AETHERLITE_AUTH_VERIFY_LISTEN", ""), "Optional private token verification HTTP listener; requires api_key auth (env: AETHERLITE_AUTH_VERIFY_LISTEN)")
+	configFile       = flag.String("config", config.EnvStr("AETHER_CONFIG", ""), "Optional path to a gateway config file (env: AETHER_CONFIG)")
+	secretsFile      = flag.String("secrets-file", config.EnvStr("AETHER_SECRETS_FILE", ""), "Optional generated-secrets.yaml; merged into config (HMAC, admin key, TLS paths) (env: AETHER_SECRETS_FILE)")
+	dataDir          = flag.String("data-dir", config.EnvStr("AETHERLITE_DATA_DIR", "./aether-lite-data"), "Data directory for SQLite and Badger storage (env: AETHERLITE_DATA_DIR)")
+	port             = flag.Int("port", config.EnvInt("AETHER_PORT", 50051), "gRPC server port (env: AETHER_PORT)")
+	adminPort        = flag.Int("admin-port", config.EnvInt("AETHER_ADMIN_PORT", 31880), "Admin UI port (env: AETHER_ADMIN_PORT)")
+	devMode          = flag.Bool("dev", config.EnvBool("AETHER_DEV", false), "Development mode (relaxed security, CORS wildcard) (env: AETHER_DEV)")
+	insecureAdmin    = flag.Bool("insecure-admin", config.EnvBool("AETHER_INSECURE_ADMIN", false), "Allow admin API without authentication (NOT FOR PRODUCTION) (env: AETHER_INSECURE_ADMIN)")
+	showVersion      = flag.Bool("version", false, "Show version and exit")
+	showHelp         = flag.Bool("help", false, "Show this help message")
 	// Workflow options (AetherLite-specific — aether full has separate workflow service)
 	enableWorkflow     = flag.Bool("workflow", config.EnvBool("AETHERLITE_WORKFLOW", true), "Enable embedded workflow server (env: AETHERLITE_WORKFLOW)")
 	workflowConfigFile = flag.String("workflow-config", config.EnvStr("AETHERLITE_WORKFLOW_CONFIG", ""), "Optional workflow config file (overrides auto-config) (env: AETHERLITE_WORKFLOW_CONFIG)")
@@ -1055,6 +1056,29 @@ func main() {
 			}
 		}()
 		logging.Logger.Info().Msg("embedded workflow server starting (in-process gRPC)")
+	}
+
+	if *authVerifyListen != "" {
+		if !enableAPIKeyAuth {
+			logging.Logger.Fatal().Msg("auth verify listener requires api_key authentication")
+		}
+		verifier, listener, err := newLiteAuthVerify(*authVerifyListen, os.Getenv("AETHER_TENANT_ID"), apiTokenStore, aclStoreForGateway)
+		if err != nil {
+			logging.Logger.Fatal().Err(err).Msg("auth verify initialization failed")
+		}
+		defer verifier.Close()
+		go func() {
+			if err := verifier.Serve(listener); err != nil && err != http.ErrServerClosed {
+				logging.Logger.Fatal().Err(err).Msg("auth verify listener failed")
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, done := context.WithTimeout(context.Background(), 10*time.Second)
+			defer done()
+			_ = verifier.Shutdown(shutdownCtx)
+		}()
+		logging.Logger.Info().Str("listen", *authVerifyListen).Msg("private auth verify listener ready")
 	}
 
 	logging.Logger.Info().

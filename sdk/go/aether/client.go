@@ -2891,8 +2891,9 @@ func (c *BaseClient) QueryTasks(ctx context.Context, filter *pb.TaskFilter, time
 	if err := c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_TaskQuery{
 			TaskQuery: &pb.TaskQuery{
-				Op:     pb.TaskQuery_LIST,
-				Filter: filter,
+				Op:        pb.TaskQuery_LIST,
+				Filter:    filter,
+				RequestId: requestID,
 			},
 		},
 	}); err != nil {
@@ -2923,8 +2924,9 @@ func (c *BaseClient) GetTask(ctx context.Context, taskID string, timeout time.Du
 	if err := c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_TaskQuery{
 			TaskQuery: &pb.TaskQuery{
-				Op:     pb.TaskQuery_GET,
-				TaskId: taskID,
+				Op:        pb.TaskQuery_GET,
+				TaskId:    taskID,
+				RequestId: requestID,
 			},
 		},
 	}); err != nil {

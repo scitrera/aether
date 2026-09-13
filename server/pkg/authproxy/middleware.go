@@ -740,6 +740,9 @@ func extractCredentials(r *http.Request) map[string]string {
 
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
+		if apiKey := r.Header.Get("X-API-Key"); apiKey != "" {
+			credentials[auth.CredKeyAPIKey] = apiKey
+		}
 		return credentials
 	}
 
