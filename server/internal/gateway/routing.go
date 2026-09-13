@@ -556,6 +556,24 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 		}
 	}
 
+	// Task input is resolved after the ordinary user workspace ACL check.
+	// Keep its task topic for authorization/audit, and publish only to the
+	// stored assignee. No orchestration runs for this task-addressed route.
+	publishTopic := msg.TargetTopic
+	if target, taskInput, inputErr := s.resolveTaskInput(ctx, sender, msg); taskInput {
+		if inputErr != nil {
+			sendClientError(client, "ERR_PERMISSION_DENIED", "task input is unavailable or not authorized")
+			return
+		}
+		publishTopic = target
+		envelope.Workspace = workspaceFromTopic(msg.TargetTopic)
+		if envelope.Metadata == nil {
+			envelope.Metadata = map[string]string{}
+		}
+		envelope.Metadata["workspace"] = envelope.Workspace
+		envelope.Metadata["task_input_topic"] = msg.TargetTopic
+	}
+
 	envelopeBytes, err := proto.Marshal(envelope)
 	if err != nil {
 		logging.Logger.Error().Err(err).Msg("failed to marshal message envelope")
@@ -563,7 +581,7 @@ func (s *GatewayServer) routeMessage(ctx context.Context, client *ClientSession,
 	}
 
 	err = s.publishBreaker.Execute(func() error {
-		return s.router.Publish(ctx, msg.TargetTopic, envelopeBytes)
+		return s.router.Publish(ctx, publishTopic, envelopeBytes)
 	})
 	if err != nil {
 		messageErrors.WithLabelValues(sender.Workspace, "publish_failed").Inc()
