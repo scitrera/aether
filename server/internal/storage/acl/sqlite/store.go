@@ -1372,8 +1372,10 @@ func (s *Store) evaluateBySubject(principalType, principalID, resourceType, reso
 		}
 	}
 
-	// Step 5: Glob-pattern rules (any subject in the set)
-	if decision := findGlobMatch(s.enforcer, subjects, obj, requiredLevel); decision != nil {
+	// Step 5: Include symbolic wildcard principals for resource patterns,
+	// preserving the exact-rule precedence of tiers 1-4.
+	globSubjects := append(subjects, wildcardSubjects(principalType)...)
+	if decision := findGlobMatch(s.enforcer, globSubjects, obj, requiredLevel); decision != nil {
 		return decision
 	}
 

@@ -269,3 +269,36 @@ func TestSQLiteGroupsRoles_MembershipExpiry(t *testing.T) {
 		t.Fatalf("carol access should be gone after expiry cleanup, got %+v", d)
 	}
 }
+
+func TestSQLiteWildcardPrincipalResourceGlob(t *testing.T) {
+	ctx := context.Background()
+	s := newRolesTestStore(t)
+	if _, err := s.GrantAccess(ctx, "wildcard", "_any_authenticated_user", "kv_key", "example:workspacehash:*", 20, "tester", "shared state", nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"alice", "bob"} {
+		d, err := s.CheckAccess(ctx, user(name), "kv_key", "example:workspacehash:bidders", "kv_put", "project", uuid.Nil, 20)
+		if err != nil || d == nil || !d.Allowed || d.FallbackApplied {
+			t.Fatalf("%s shared state denied: %+v err=%v", name, d, err)
+		}
+	}
+	for _, test := range []struct {
+		principal models.Identity
+		key       string
+	}{
+		{user("bob"), "example:otherworkspace:bidders"},
+		{models.Identity{Type: models.PrincipalService, ID: "sv::test::worker"}, "example:workspacehash:bidders"},
+	} {
+		d, err := s.CheckAccess(ctx, test.principal, "kv_key", test.key, "kv_get", "project", uuid.Nil, 10)
+		if err != nil || (d != nil && d.RuleApplied != nil) {
+			t.Fatalf("unexpected wildcard rule: %+v err=%v", d, err)
+		}
+	}
+	if _, err := s.GrantAccess(ctx, "user", "alice", "kv_key", "example:workspacehash:bidders", 10, "tester", "read only", nil); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.CheckAccess(ctx, user("alice"), "kv_key", "example:workspacehash:bidders", "kv_put", "project", uuid.Nil, 20)
+	if err != nil || d == nil || d.Allowed {
+		t.Fatalf("exact restriction bypassed: %+v err=%v", d, err)
+	}
+}

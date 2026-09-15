@@ -285,3 +285,36 @@ func TestAddAndRemovePolicy_RoundTrip(t *testing.T) {
 		t.Error("expected nil after RemovePolicy")
 	}
 }
+
+// Symbolic wildcard principals must match resource patterns without widening
+// those permissions to other principal types or unrelated namespaces.
+func TestEvaluateAccess_WildcardPrincipalResourceGlob(t *testing.T) {
+	ce := newTestEnforcer(t)
+	addTestPolicy(t, ce, "wildcard:_any_authenticated_user", "kv_key:example:workspacehash:*", "20", "", "shared-state")
+	for _, user := range []string{"alice", "bob"} {
+		d := ce.EvaluateBySubject("user", user, ResourceTypeKVKey, "example:workspacehash:bidders", AccessReadWrite)
+		if d == nil || !d.Allowed || d.FallbackApplied {
+			t.Fatalf("%s could not access shared state: %+v", user, d)
+		}
+	}
+	for _, subject := range [][2]string{{"service", "sv::platform::worker"}, {"agent", "test::agent::one"}} {
+		if d := ce.EvaluateBySubject(subject[0], subject[1], ResourceTypeKVKey, "example:workspacehash:bidders", AccessRead); d != nil {
+			t.Fatalf("user wildcard matched %v: %+v", subject, d)
+		}
+	}
+	if d := ce.EvaluateBySubject("user", "bob", ResourceTypeKVKey, "example:otherworkspace:bidders", AccessRead); d != nil {
+		t.Fatalf("matched another workspace: %+v", d)
+	}
+	addTestPolicy(t, ce, "user:alice", "kv_key:example:workspacehash:bidders", "10", "", "read-only")
+	if d := ce.EvaluateBySubject("user", "alice", ResourceTypeKVKey, "example:workspacehash:bidders", AccessReadWrite); d == nil || d.Allowed {
+		t.Fatalf("wildcard overrode an exact restriction: %+v", d)
+	}
+}
+
+func TestEvaluateAccess_ExpiredWildcardPrincipalResourceGlob(t *testing.T) {
+	ce := newTestEnforcer(t)
+	addTestPolicy(t, ce, "wildcard:_any_authenticated_user", "vfs:workspaces/project/entries/*", "20", time.Now().Add(-time.Hour).Format(time.RFC3339), "expired")
+	if d := ce.EvaluateBySubject("user", "bob", "vfs", "workspaces/project/entries/file", AccessRead); d != nil {
+		t.Fatalf("expired wildcard allowed access: %+v", d)
+	}
+}

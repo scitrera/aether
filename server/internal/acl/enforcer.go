@@ -135,8 +135,10 @@ func (ce *CasbinEnforcer) EvaluateBySubject(principalType, principalID, resource
 		}
 	}
 
-	// Step 5: Glob-pattern rules — scan policies with * or ? for pattern matches
-	if decision := ce.findGlobMatch(subjects, obj, requiredLevel); decision != nil {
+	// Step 5: Glob-pattern rules include symbolic wildcard principals too.
+	// Keep them out of the exact subject set so tiers 1-4 retain precedence.
+	globSubjects := append(subjects, wildcardSubjects(principalType)...)
+	if decision := ce.findGlobMatch(globSubjects, obj, requiredLevel); decision != nil {
 		return decision
 	}
 
