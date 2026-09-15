@@ -1016,12 +1016,7 @@ func main() {
 	// Admin UI server.
 	var adminServer *admin.Server
 	if cfg.Admin.Enabled {
-		adminServer = admin.NewServer(admin.ServerConfig{
-			Port:           cfg.Admin.Port,
-			DevMode:        *devMode,
-			InsecureNoAuth: *insecureAdmin || *devMode,
-			CORSOrigin:     cfg.Admin.CORSOrigin,
-		}, stateProvider)
+		adminServer = admin.NewServer(liteAdminServerConfig(cfg), stateProvider)
 		go func() {
 			if err := adminServer.Start(); err != nil && err != http.ErrServerClosed {
 				logging.Logger.Error().Err(err).Msg("admin server error")
@@ -1149,6 +1144,23 @@ func main() {
 	}
 
 	logging.Logger.Info().Msg("AetherLite stopped")
+}
+
+// liteAdminServerConfig forwards the same configured authentication and TLS
+// settings used by the standalone admin server. Omitting these prevents an
+// authenticated AetherLite admin listener from starting outside insecure mode.
+func liteAdminServerConfig(cfg *config.Config) admin.ServerConfig {
+	return admin.ServerConfig{
+		Port:           cfg.Admin.Port,
+		DevMode:        *devMode,
+		InsecureNoAuth: *insecureAdmin || *devMode,
+		CORSOrigin:     cfg.Admin.CORSOrigin,
+		APIKey:         cfg.Admin.APIKey,
+		TLSCertFile:    cfg.Admin.TLSCertFile,
+		TLSKeyFile:     cfg.Admin.TLSKeyFile,
+		RateLimit:      cfg.Admin.RateLimit,
+		RateLimitBurst: cfg.Admin.RateLimitBurst,
+	}
 }
 
 // buildGatewayConfig constructs a gateway config for lite mode from CLI flags
