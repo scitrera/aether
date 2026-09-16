@@ -24,9 +24,9 @@ go_toolchain:
 # set explicit versions where possible to protect against supply chain attacks
 preferred_versions:
   go:
-    "google.golang.org/grpc": "1.82.1"
+    "google.golang.org/grpc": "1.83.2"
     "google.golang.org/protobuf": "1.36.11"
-    "golang.org/x/net": "0.55.0"
+    "golang.org/x/net": "0.58.0"
     "github.com/scitrera/go-backpressure": "v0.1.1"
   python:
     "grpcio": 1.81.1
