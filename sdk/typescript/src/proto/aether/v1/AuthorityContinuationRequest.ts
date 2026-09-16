@@ -45,6 +45,14 @@ export interface AuthorityContinuationRequest {
    */
   'bindingId'?: (string);
   'scope'?: (_aether_v1_AuthorityContinuationScope | null);
+  /**
+   * Service recipients only. Explicitly attenuated from the parent's budget.
+   */
+  'remainingHops'?: (number);
+  /**
+   * Defaults to 300; at most 900, always capped by the parent expiry.
+   */
+  'expiresInSeconds'?: (number);
 }
 
 export interface AuthorityContinuationRequest__Output {
@@ -56,4 +64,12 @@ export interface AuthorityContinuationRequest__Output {
    */
   'bindingId': (string);
   'scope': (_aether_v1_AuthorityContinuationScope__Output | null);
+  /**
+   * Service recipients only. Explicitly attenuated from the parent's budget.
+   */
+  'remainingHops': (number);
+  /**
+   * Defaults to 300; at most 900, always capped by the parent expiry.
+   */
+  'expiresInSeconds': (number);
 }

@@ -606,7 +606,7 @@ class AuthorityContinuationScope(_message.Message):
     def __init__(self, workspace_scope: _Optional[_Iterable[str]] = ..., resource_scope: _Optional[_Iterable[_Union[ACLAuthorityGrantResourceScopeEntry, _Mapping]]] = ..., operation_scope: _Optional[_Iterable[str]] = ..., max_access_level: _Optional[int] = ...) -> None: ...
 
 class AuthorityContinuationRequest(_message.Message):
-    __slots__ = ("scope_mode", "binding_id", "scope")
+    __slots__ = ("scope_mode", "binding_id", "scope", "remaining_hops", "expires_in_seconds")
     class ScopeMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         SCOPE_MODE_UNSPECIFIED: _ClassVar[AuthorityContinuationRequest.ScopeMode]
@@ -618,10 +618,14 @@ class AuthorityContinuationRequest(_message.Message):
     SCOPE_MODE_FIELD_NUMBER: _ClassVar[int]
     BINDING_ID_FIELD_NUMBER: _ClassVar[int]
     SCOPE_FIELD_NUMBER: _ClassVar[int]
+    REMAINING_HOPS_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_IN_SECONDS_FIELD_NUMBER: _ClassVar[int]
     scope_mode: AuthorityContinuationRequest.ScopeMode
     binding_id: str
     scope: AuthorityContinuationScope
-    def __init__(self, scope_mode: _Optional[_Union[AuthorityContinuationRequest.ScopeMode, str]] = ..., binding_id: _Optional[str] = ..., scope: _Optional[_Union[AuthorityContinuationScope, _Mapping]] = ...) -> None: ...
+    remaining_hops: int
+    expires_in_seconds: int
+    def __init__(self, scope_mode: _Optional[_Union[AuthorityContinuationRequest.ScopeMode, str]] = ..., binding_id: _Optional[str] = ..., scope: _Optional[_Union[AuthorityContinuationScope, _Mapping]] = ..., remaining_hops: _Optional[int] = ..., expires_in_seconds: _Optional[int] = ...) -> None: ...
 
 class Metric(_message.Message):
     __slots__ = ("trace_id", "entries", "metadata", "client_timestamp_ms")
@@ -913,7 +917,7 @@ class TaskCompletionEvent(_message.Message):
     def __init__(self, enabled: _Optional[bool] = ..., event_name: _Optional[str] = ..., on_statuses: _Optional[_Iterable[_Union[TaskStatus, str]]] = ...) -> None: ...
 
 class CreateTaskRequest(_message.Message):
-    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id", "retry_policy", "priority", "idempotency_key", "correlation_id", "root_task_id", "completion_event", "parent_task_id", "target_offline_policy", "required_downstream_authority_hops", "originating_schedule_id")
+    __slots__ = ("task_type", "workspace", "assignment_mode", "target_agent_id", "launch_param_overrides", "metadata", "payload", "target_implementation", "authorization", "request_id", "target_identity", "task_class", "context_id", "retry_policy", "priority", "idempotency_key", "correlation_id", "root_task_id", "completion_event", "parent_task_id", "target_offline_policy", "required_downstream_authority_hops", "originating_schedule_id", "authority_assignment")
     class LaunchParamOverridesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -951,6 +955,7 @@ class CreateTaskRequest(_message.Message):
     TARGET_OFFLINE_POLICY_FIELD_NUMBER: _ClassVar[int]
     REQUIRED_DOWNSTREAM_AUTHORITY_HOPS_FIELD_NUMBER: _ClassVar[int]
     ORIGINATING_SCHEDULE_ID_FIELD_NUMBER: _ClassVar[int]
+    AUTHORITY_ASSIGNMENT_FIELD_NUMBER: _ClassVar[int]
     task_type: str
     workspace: str
     assignment_mode: TaskAssignmentMode
@@ -974,7 +979,16 @@ class CreateTaskRequest(_message.Message):
     target_offline_policy: TargetOfflinePolicy
     required_downstream_authority_hops: int
     originating_schedule_id: str
-    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]] = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., idempotency_key: _Optional[str] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ..., completion_event: _Optional[_Union[TaskCompletionEvent, _Mapping]] = ..., parent_task_id: _Optional[str] = ..., target_offline_policy: _Optional[_Union[TargetOfflinePolicy, str]] = ..., required_downstream_authority_hops: _Optional[int] = ..., originating_schedule_id: _Optional[str] = ...) -> None: ...
+    authority_assignment: TaskAuthorityAssignment
+    def __init__(self, task_type: _Optional[str] = ..., workspace: _Optional[str] = ..., assignment_mode: _Optional[_Union[TaskAssignmentMode, str]] = ..., target_agent_id: _Optional[str] = ..., launch_param_overrides: _Optional[_Mapping[str, str]] = ..., metadata: _Optional[_Mapping[str, str]] = ..., payload: _Optional[bytes] = ..., target_implementation: _Optional[str] = ..., authorization: _Optional[_Union[AuthorizationContext, _Mapping]] = ..., request_id: _Optional[str] = ..., target_identity: _Optional[str] = ..., task_class: _Optional[_Union[TaskClass, str]] = ..., context_id: _Optional[str] = ..., retry_policy: _Optional[_Union[RetryPolicy, _Mapping]] = ..., priority: _Optional[_Union[TaskPriority, str]] = ..., idempotency_key: _Optional[str] = ..., correlation_id: _Optional[str] = ..., root_task_id: _Optional[str] = ..., completion_event: _Optional[_Union[TaskCompletionEvent, _Mapping]] = ..., parent_task_id: _Optional[str] = ..., target_offline_policy: _Optional[_Union[TargetOfflinePolicy, str]] = ..., required_downstream_authority_hops: _Optional[int] = ..., originating_schedule_id: _Optional[str] = ..., authority_assignment: _Optional[_Union[TaskAuthorityAssignment, _Mapping]] = ...) -> None: ...
+
+class TaskAuthorityAssignment(_message.Message):
+    __slots__ = ("expires_in_seconds", "max_access_level")
+    EXPIRES_IN_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    MAX_ACCESS_LEVEL_FIELD_NUMBER: _ClassVar[int]
+    expires_in_seconds: int
+    max_access_level: int
+    def __init__(self, expires_in_seconds: _Optional[int] = ..., max_access_level: _Optional[int] = ...) -> None: ...
 
 class CreateTaskResponse(_message.Message):
     __slots__ = ("success", "task_id", "status", "error_code", "error_message", "request_id", "assigned_to", "task_token", "authority_grant_id")

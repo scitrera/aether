@@ -272,6 +272,7 @@ export class TaskClient extends AetherClient {
         metadata: opts.metadata ?? {},
         parentTaskId: opts.parentTaskId ?? "",
         requiredDownstreamAuthorityHops: opts.requiredDownstreamAuthorityHops ?? 0,
+        authorityAssignment: opts.authorityAssignment,
       },
     });
   }

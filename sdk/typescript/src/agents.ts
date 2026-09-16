@@ -78,8 +78,10 @@ export interface CreateTaskOptions {
    * to Normal.
    */
   priority?: TaskPriority;
-  /** Delegation capacity the final worker must retain. Currently 0 or 1. */
+  /** Delegation capacity the final worker must retain. Between 0 and 8. */
   requiredDownstreamAuthorityHops?: number;
+  /** Explicit direct-user approval for background execution. */
+  authorityAssignment?: { expiresInSeconds: number; maxAccessLevel: 10 | 20 };
 }
 
 // =============================================================================
@@ -406,6 +408,7 @@ export class AgentClient extends AetherClient {
         parentTaskId: opts.parentTaskId ?? "",
         priority: opts.priority ?? TaskPriority.Unspecified,
         requiredDownstreamAuthorityHops: opts.requiredDownstreamAuthorityHops ?? 0,
+        authorityAssignment: opts.authorityAssignment,
       },
     });
   }

@@ -125,6 +125,9 @@ func (s *Service) CheckAccessWithAuthority(ctx context.Context, actor models.Ide
 }
 
 func validateGrantAudience(grant *AuthorityGrant, actor models.Identity, audience GrantAudienceContext) error {
+	if err := ValidateTaskLifetime(grant, audience); err != nil {
+		return err
+	}
 	switch grant.AudienceType {
 	case AuthorityAudienceSession:
 		// Strict match: the grant's audience session IS the current session

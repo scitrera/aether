@@ -404,6 +404,10 @@ message AuthorityContinuationRequest {
   // can be validated as one call by the recipient.
   string binding_id = 2;
   AuthorityContinuationScope scope = 3;
+  // Service recipients only. Explicitly attenuated from the parent's budget.
+  uint32 remaining_hops = 4;
+  // Defaults to 300; at most 900, always capped by the parent expiry.
+  uint32 expires_in_seconds = 5;
 }
 
 enum MessageType {
@@ -912,7 +916,7 @@ message CreateTaskRequest {
   TargetOfflinePolicy target_offline_policy = 21;
 
   // Minimum delegation capacity the task's final execution identity must
-  // retain after task-authority setup. Currently 0 or 1. Set to 1 when the
+  // retain after task-authority setup. Between 0 and 8. Set to 1 when the
   // worker must perform one explicit downstream authorization continuation
   // (for example, Sahara querying the tool catalog under the user's authority).
   // In POOL mode the gateway reserves the additional anchor-to-assignee hop.
@@ -923,6 +927,18 @@ message CreateTaskRequest {
   // to match a workflow_schedule audience on authorization. Ordinary task
   // creators must leave it empty.
   string originating_schedule_id = 23;
+
+  // Explicit, direct-user approval to run independently of the user's session.
+  // Cannot be assigned by a service or through an OBO grant. Scope is this
+  // task's workspace, intersected with the user's current permissions.
+  TaskAuthorityAssignment authority_assignment = 24;
+}
+
+message TaskAuthorityAssignment {
+  // Required, 1..86400 seconds. Authority cannot be renewed past this limit.
+  uint32 expires_in_seconds = 1;
+  // Required: read (10) or read/write (20). No administration rights.
+  int32 max_access_level = 2;
 }
 
 // CreateTaskResponse is sent in response to CreateTaskRequest when the

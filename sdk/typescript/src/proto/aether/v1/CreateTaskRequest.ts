@@ -7,6 +7,7 @@ import type { RetryPolicy as _aether_v1_RetryPolicy, RetryPolicy__Output as _aet
 import type { TaskPriority as _aether_v1_TaskPriority, TaskPriority__Output as _aether_v1_TaskPriority__Output } from '../../aether/v1/TaskPriority';
 import type { TaskCompletionEvent as _aether_v1_TaskCompletionEvent, TaskCompletionEvent__Output as _aether_v1_TaskCompletionEvent__Output } from '../../aether/v1/TaskCompletionEvent';
 import type { TargetOfflinePolicy as _aether_v1_TargetOfflinePolicy, TargetOfflinePolicy__Output as _aether_v1_TargetOfflinePolicy__Output } from '../../aether/v1/TargetOfflinePolicy';
+import type { TaskAuthorityAssignment as _aether_v1_TaskAuthorityAssignment, TaskAuthorityAssignment__Output as _aether_v1_TaskAuthorityAssignment__Output } from '../../aether/v1/TaskAuthorityAssignment';
 
 export interface CreateTaskRequest {
   'taskType'?: (string);
@@ -112,7 +113,7 @@ export interface CreateTaskRequest {
   'targetOfflinePolicy'?: (_aether_v1_TargetOfflinePolicy);
   /**
    * Minimum delegation capacity the task's final execution identity must
-   * retain after task-authority setup. Currently 0 or 1. Set to 1 when the
+   * retain after task-authority setup. Between 0 and 8. Set to 1 when the
    * worker must perform one explicit downstream authorization continuation
    * (for example, Sahara querying the tool catalog under the user's authority).
    * In POOL mode the gateway reserves the additional anchor-to-assignee hop.
@@ -125,6 +126,12 @@ export interface CreateTaskRequest {
    * creators must leave it empty.
    */
   'originatingScheduleId'?: (string);
+  /**
+   * Explicit, direct-user approval to run independently of the user's session.
+   * Cannot be assigned by a service or through an OBO grant. Scope is this
+   * task's workspace, intersected with the user's current permissions.
+   */
+  'authorityAssignment'?: (_aether_v1_TaskAuthorityAssignment | null);
 }
 
 export interface CreateTaskRequest__Output {
@@ -231,7 +238,7 @@ export interface CreateTaskRequest__Output {
   'targetOfflinePolicy': (_aether_v1_TargetOfflinePolicy__Output);
   /**
    * Minimum delegation capacity the task's final execution identity must
-   * retain after task-authority setup. Currently 0 or 1. Set to 1 when the
+   * retain after task-authority setup. Between 0 and 8. Set to 1 when the
    * worker must perform one explicit downstream authorization continuation
    * (for example, Sahara querying the tool catalog under the user's authority).
    * In POOL mode the gateway reserves the additional anchor-to-assignee hop.
@@ -244,4 +251,10 @@ export interface CreateTaskRequest__Output {
    * creators must leave it empty.
    */
   'originatingScheduleId': (string);
+  /**
+   * Explicit, direct-user approval to run independently of the user's session.
+   * Cannot be assigned by a service or through an OBO grant. Scope is this
+   * task's workspace, intersected with the user's current permissions.
+   */
+  'authorityAssignment': (_aether_v1_TaskAuthorityAssignment__Output | null);
 }

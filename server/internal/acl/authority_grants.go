@@ -225,6 +225,7 @@ func (s *Service) CreateAuthorityGrant(ctx context.Context, req CreateAuthorityG
 		if req.RemainingHops > parent.RemainingHops-1 {
 			return nil, ErrAuthorityGrantDelegationDenied
 		}
+		req.Metadata = InheritTaskLifetime(req.Metadata, parent)
 		rootGrantID = parent.RootGrantID
 		if rootGrantID == "" {
 			rootGrantID = parent.GrantID

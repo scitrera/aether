@@ -33,6 +33,8 @@ type messageAuthorityContinuationConfig struct {
 	resourceScope  map[string][]string
 	operationScope []string
 	maxAccessLevel int
+	remainingHops  int
+	ttl            time.Duration
 	reusable       bool
 }
 
@@ -63,7 +65,7 @@ func (s *GatewayServer) deriveMessageAuthorityContinuation(
 		return nil, err
 	}
 	now := time.Now().UTC()
-	expiresAt := now.Add(messageAuthorityContinuationTTL)
+	expiresAt := now.Add(config.ttl)
 	if authority.Grant.ExpiresAt.Before(expiresAt) {
 		expiresAt = authority.Grant.ExpiresAt
 	}
@@ -112,8 +114,8 @@ func (s *GatewayServer) deriveMessageAuthorityContinuation(
 			IssuedBy:                 authority.Actor,
 			RootSubject:              &rootSubject,
 			ParentGrantID:            &parentGrantID,
-			MayDelegate:              false,
-			RemainingHops:            0,
+			MayDelegate:              config.remainingHops > 0,
+			RemainingHops:            config.remainingHops,
 			WorkspaceScope:           cloneStringSlice(config.workspaceScope),
 			ResourceScope:            cloneResourceScope(config.resourceScope),
 			OperationScope:           cloneStringSlice(config.operationScope),
@@ -190,6 +192,20 @@ func resolveMessageAuthorityContinuation(
 		return config, fmt.Errorf("authority continuation target must be an exact service or agent identity")
 	}
 
+	config.remainingHops = int(request.GetRemainingHops())
+	if config.remainingHops > 8 || config.remainingHops > parent.RemainingHops-1 {
+		return config, acl.ErrAuthorityGrantDelegationDenied
+	}
+	if config.remainingHops > 0 && target.Type != models.PrincipalService {
+		return config, fmt.Errorf("only service continuations may delegate")
+	}
+	config.ttl = messageAuthorityContinuationTTL
+	if seconds := request.GetExpiresInSeconds(); seconds > 0 {
+		if seconds > 900 {
+			return config, fmt.Errorf("continuation duration cannot exceed 900 seconds")
+		}
+		config.ttl = time.Duration(seconds) * time.Second
+	}
 	switch request.GetScopeMode() {
 	case pb.AuthorityContinuationRequest_SCOPE_MODE_INHERIT_PARENT:
 		if target.Type != models.PrincipalService {
@@ -202,7 +218,7 @@ func resolveMessageAuthorityContinuation(
 		config.resourceScope = cloneResourceScope(parent.ResourceScope)
 		config.operationScope = cloneStringSlice(parent.OperationScope)
 		config.maxAccessLevel = parent.MaxAccessLevel
-		config.reusable = true
+		config.reusable = config.remainingHops == 0 && request.GetExpiresInSeconds() == 0
 		return config, nil
 
 	case pb.AuthorityContinuationRequest_SCOPE_MODE_ATTENUATE:

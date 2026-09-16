@@ -2451,6 +2451,7 @@ func (c *BaseClient) CreateTask(taskType, workspace string, opts CreateTaskOptio
 		CompletionEvent:                 opts.CompletionEvent,
 		ParentTaskId:                    opts.ParentTaskID,
 		RequiredDownstreamAuthorityHops: opts.RequiredDownstreamAuthorityHops,
+		AuthorityAssignment:             opts.AuthorityAssignment,
 		OriginatingScheduleId:           opts.OriginatingScheduleID,
 		Authorization:                   opts.Authorization,
 	}
@@ -2493,6 +2494,7 @@ func (c *BaseClient) CreateTaskSync(ctx context.Context, taskType, workspace str
 		CompletionEvent:                 opts.CompletionEvent,
 		ParentTaskId:                    opts.ParentTaskID,
 		RequiredDownstreamAuthorityHops: opts.RequiredDownstreamAuthorityHops,
+		AuthorityAssignment:             opts.AuthorityAssignment,
 		OriginatingScheduleId:           opts.OriginatingScheduleID,
 		Authorization:                   opts.Authorization,
 		RequestId:                       requestID,

@@ -126,6 +126,7 @@ import type { SubmitAuditEventRequest as _aether_v1_SubmitAuditEventRequest, Sub
 import type { SubmitAuditEventResponse as _aether_v1_SubmitAuditEventResponse, SubmitAuditEventResponse__Output as _aether_v1_SubmitAuditEventResponse__Output } from './aether/v1/SubmitAuditEventResponse';
 import type { SwitchWorkspace as _aether_v1_SwitchWorkspace, SwitchWorkspace__Output as _aether_v1_SwitchWorkspace__Output } from './aether/v1/SwitchWorkspace';
 import type { TaskAssignment as _aether_v1_TaskAssignment, TaskAssignment__Output as _aether_v1_TaskAssignment__Output } from './aether/v1/TaskAssignment';
+import type { TaskAuthorityAssignment as _aether_v1_TaskAuthorityAssignment, TaskAuthorityAssignment__Output as _aether_v1_TaskAuthorityAssignment__Output } from './aether/v1/TaskAuthorityAssignment';
 import type { TaskAuthorityRequestEventRelay as _aether_v1_TaskAuthorityRequestEventRelay, TaskAuthorityRequestEventRelay__Output as _aether_v1_TaskAuthorityRequestEventRelay__Output } from './aether/v1/TaskAuthorityRequestEventRelay';
 import type { TaskChildLifecycleEvent as _aether_v1_TaskChildLifecycleEvent, TaskChildLifecycleEvent__Output as _aether_v1_TaskChildLifecycleEvent__Output } from './aether/v1/TaskChildLifecycleEvent';
 import type { TaskCompletionEvent as _aether_v1_TaskCompletionEvent, TaskCompletionEvent__Output as _aether_v1_TaskCompletionEvent__Output } from './aether/v1/TaskCompletionEvent';
@@ -306,6 +307,7 @@ export interface ProtoGrpcType {
       TargetOfflinePolicy: EnumTypeDefinition
       TaskAssignment: MessageTypeDefinition<_aether_v1_TaskAssignment, _aether_v1_TaskAssignment__Output>
       TaskAssignmentMode: EnumTypeDefinition
+      TaskAuthorityAssignment: MessageTypeDefinition<_aether_v1_TaskAuthorityAssignment, _aether_v1_TaskAuthorityAssignment__Output>
       TaskAuthorityRequestEventRelay: MessageTypeDefinition<_aether_v1_TaskAuthorityRequestEventRelay, _aether_v1_TaskAuthorityRequestEventRelay__Output>
       TaskChildLifecycleEvent: MessageTypeDefinition<_aether_v1_TaskChildLifecycleEvent, _aether_v1_TaskChildLifecycleEvent__Output>
       TaskClass: EnumTypeDefinition

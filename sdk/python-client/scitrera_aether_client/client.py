@@ -1271,7 +1271,8 @@ class BaseAetherClient:
                     retry_policy: Optional[aether_pb2.RetryPolicy] = None,
                     parent_task_id: str = "",
                     required_downstream_authority_hops: int = 0,
-                    target_offline_policy: int = TARGET_OFFLINE_UNSPECIFIED) -> None:
+                    target_offline_policy: int = TARGET_OFFLINE_UNSPECIFIED,
+                          authority_assignment: Optional[aether_pb2.TaskAuthorityAssignment] = None) -> None:
         """
         Create a new task.
 
@@ -1312,6 +1313,7 @@ class BaseAetherClient:
             retry_policy=retry_policy,
             parent_task_id=parent_task_id,
             required_downstream_authority_hops=required_downstream_authority_hops,
+            authority_assignment=authority_assignment,
             target_offline_policy=target_offline_policy,  # type: ignore[arg-type]
         )
         self.request_queue.put(aether_pb2.UpstreamMessage(create_task=req))
@@ -1330,7 +1332,8 @@ class BaseAetherClient:
                          timeout: float = 10.0,
                          parent_task_id: str = "",
                          required_downstream_authority_hops: int = 0,
-                         target_offline_policy: int = TARGET_OFFLINE_UNSPECIFIED) -> Optional[aether_pb2.CreateTaskResponse]:
+                         target_offline_policy: int = TARGET_OFFLINE_UNSPECIFIED,
+                          authority_assignment: Optional[aether_pb2.TaskAuthorityAssignment] = None) -> Optional[aether_pb2.CreateTaskResponse]:
         """
         Create a new task and wait for the server's response containing the task_id.
 
@@ -1383,6 +1386,7 @@ class BaseAetherClient:
             retry_policy=retry_policy,
             parent_task_id=parent_task_id,
             required_downstream_authority_hops=required_downstream_authority_hops,
+            authority_assignment=authority_assignment,
             target_offline_policy=target_offline_policy,  # type: ignore[arg-type]
         )
         return self._send_sync_op(

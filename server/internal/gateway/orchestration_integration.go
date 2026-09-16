@@ -452,10 +452,16 @@ func (s *GatewayServer) handleCreateTask(
 			},
 		})
 	}
-	if req.GetRequiredDownstreamAuthorityHops() > 1 {
-		errMsg := "required_downstream_authority_hops currently supports only 0 or 1"
+	if req.GetRequiredDownstreamAuthorityHops() > 8 {
+		errMsg := "required_downstream_authority_hops must be between 0 and 8"
 		sendClientError(client, "ERR_INVALID_ARGUMENT", errMsg)
 		sendCreateTaskResponse(false, "", "", "ERR_INVALID_ARGUMENT", errMsg, "")
+		return nil
+	}
+
+	if err := validateTaskAuthorityAssignment(identity, req); err != nil {
+		sendClientError(client, "ERR_PERMISSION_DENIED", err.Error())
+		sendCreateTaskResponse(false, "", "", "ERR_PERMISSION_DENIED", err.Error(), "")
 		return nil
 	}
 
@@ -564,7 +570,7 @@ func (s *GatewayServer) handleCreateTask(
 		}
 		resolvedAuthority = inherited
 	}
-	if req.GetRequiredDownstreamAuthorityHops() > 0 && resolvedAuthority == nil {
+	if req.GetRequiredDownstreamAuthorityHops() > 0 && resolvedAuthority == nil && req.GetAuthorityAssignment() == nil {
 		errMsg := "required downstream authority hops require on-behalf-of task authority"
 		s.logTaskCreateAudit(ctx, identity, client.SessionUUID, taskWorkspace, "", false, errMsg, buildTaskCreateAuditMetadata(req, assignmentMode, taskWorkspace), nil)
 		sendClientError(client, "ERR_AUTHORITY_REQUIRED", errMsg)
@@ -662,6 +668,10 @@ func (s *GatewayServer) handleCreateTask(
 		}
 	}
 
+	if req.GetAuthorityAssignment() != nil {
+		taskReq.SubjectIdentity = identity
+	}
+
 	// Idempotent creation: when the caller supplies a non-empty
 	// idempotency_key, the FIRST create for that key proceeds normally and any
 	// subsequent create with the SAME key is a no-op that returns the original
@@ -721,8 +731,8 @@ func (s *GatewayServer) handleCreateTask(
 		}
 	}
 
-	if resolvedAuthority != nil {
-		taskReq.Metadata, err = s.establishTaskAuthorityGrant(ctx, response.TaskID, taskReq, response, resolvedAuthority)
+	if resolvedAuthority != nil || req.GetAuthorityAssignment() != nil {
+		taskReq.Metadata, err = s.establishTaskAuthorityGrant(ctx, response.TaskID, taskReq, response, resolvedAuthority, req.GetAuthorityAssignment())
 		if err != nil {
 			if s.orchestration != nil && s.orchestration.TaskService != nil {
 				_ = s.orchestration.TaskService.CancelTask(ctx, response.TaskID)
@@ -837,6 +847,11 @@ func buildTaskCreateAuditMetadata(req *pb.CreateTaskRequest, assignmentMode, wor
 		"workspace":        workspace,
 		"payload_size":     len(req.Payload),
 		"metadata_entries": len(req.Metadata),
+	}
+	if assignment := req.GetAuthorityAssignment(); assignment != nil {
+		metadata["authority_assignment"] = true
+		metadata["authority_expires_in_seconds"] = assignment.ExpiresInSeconds
+		metadata["authority_max_access_level"] = assignment.MaxAccessLevel
 	}
 	if req.TargetAgentId != "" {
 		metadata["target_agent_id"] = req.TargetAgentId

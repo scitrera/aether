@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	pb "github.com/scitrera/aether/api/proto"
 
 	"github.com/scitrera/aether/server/internal/acl"
 	"github.com/scitrera/aether/server/internal/audit"
@@ -585,8 +586,13 @@ func (s *GatewayServer) establishTaskAuthorityGrant(
 	taskReq *orchestration.CreateTaskRequest,
 	response *orchestration.CreateTaskResponse,
 	authority *acl.ResolvedAuthority,
+	assignments ...*pb.TaskAuthorityAssignment,
 ) (map[string]interface{}, error) {
-	if authority == nil || authority.Grant == nil {
+	var assignment *pb.TaskAuthorityAssignment
+	if len(assignments) > 0 {
+		assignment = assignments[0]
+	}
+	if assignment == nil && (authority == nil || authority.Grant == nil) {
 		return cloneTaskMetadata(taskReq.Metadata), nil
 	}
 	if s.acl == nil || s.taskStore == nil {
@@ -646,18 +652,36 @@ func (s *GatewayServer) establishTaskAuthorityGrant(
 		return nil, fmt.Errorf("unsupported assignment mode %q for task authority grant", taskReq.AssignmentMode)
 	}
 
-	grant, err := s.createTaskAuthorityGrant(
-		ctx,
-		authority,
-		taskReq.CreatorIdentity,
-		delegate,
-		audienceType,
-		audienceID,
-		taskID,
-		taskReq.TaskType,
-		taskReq.AssignmentMode,
-		requiredRemainingHops,
-	)
+	var grant *acl.AuthorityGrant
+	if assignment != nil {
+		expires := time.Now().UTC().Add(time.Duration(assignment.ExpiresInSeconds) * time.Second)
+		grant, err = s.acl.CreateAuthorityGrant(ctx, acl.CreateAuthorityGrantRequest{
+			Subject: taskReq.CreatorIdentity, Delegate: delegate, IssuedBy: taskReq.CreatorIdentity,
+			MayDelegate: requiredRemainingHops > 0, RemainingHops: requiredRemainingHops,
+			WorkspaceScope: []string{taskReq.Workspace}, MaxAccessLevel: int(assignment.MaxAccessLevel),
+			AudienceType: audienceType, AudienceID: audienceID,
+			ExpiresAt: expires, RenewableUntil: expires,
+			Reason: "user-assigned-task:" + taskID,
+			Metadata: map[string]interface{}{
+				acl.AuthorityTaskLifetimeKey: taskID,
+				taskAuthorityTaskIDKey:       taskID, taskAuthorityTaskTypeKey: taskReq.TaskType,
+				"authority_approved_by": taskReq.CreatorIdentity.String(),
+			},
+		})
+	} else {
+		grant, err = s.createTaskAuthorityGrant(
+			ctx,
+			authority,
+			taskReq.CreatorIdentity,
+			delegate,
+			audienceType,
+			audienceID,
+			taskID,
+			taskReq.TaskType,
+			taskReq.AssignmentMode,
+			requiredRemainingHops,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}

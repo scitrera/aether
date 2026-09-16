@@ -449,6 +449,7 @@ func (c *AgentClient) CreateTask(opts CreateTaskOptions) error {
 				CompletionEvent:                 opts.CompletionEvent,
 				ParentTaskId:                    opts.ParentTaskID,
 				RequiredDownstreamAuthorityHops: opts.RequiredDownstreamAuthorityHops,
+				AuthorityAssignment:             opts.AuthorityAssignment,
 			},
 		},
 	}

@@ -759,9 +759,11 @@ type CreateTaskOptions struct {
 	ParentTaskID string
 
 	// RequiredDownstreamAuthorityHops asks the gateway to preserve this many
-	// delegation hops on the task's final execution identity. Currently 0 or 1.
+	// delegation hops on the task's final execution identity. Between 0 and 8.
 	// Set to 1 when the worker must explicitly forward authority to one service.
 	RequiredDownstreamAuthorityHops uint32
+	// AuthorityAssignment is an explicit direct-user approval for session-independent task execution.
+	AuthorityAssignment *pb.TaskAuthorityAssignment
 
 	// OriginatingScheduleID is reserved for the authenticated WorkflowEngine.
 	// It binds a workflow_schedule authority grant to the exact schedule that

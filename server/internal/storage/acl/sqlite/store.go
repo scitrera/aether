@@ -389,6 +389,7 @@ func (s *Store) CreateAuthorityGrant(ctx context.Context, req aclstore.CreateAut
 		if req.RemainingHops > parent.RemainingHops-1 {
 			return nil, aclstore.ErrAuthorityGrantDelegationDenied
 		}
+		req.Metadata = acl.InheritTaskLifetime(req.Metadata, parent)
 		rootGrantID = parent.RootGrantID
 		if rootGrantID == "" {
 			rootGrantID = parent.GrantID
@@ -1644,6 +1645,9 @@ func authorityDenyDecision(grant *aclstore.AuthorityGrant, reason string) *aclst
 }
 
 func validateGrantAudience(grant *aclstore.AuthorityGrant, actor models.Identity, audience aclstore.GrantAudienceContext) error {
+	if err := acl.ValidateTaskLifetime(grant, audience); err != nil {
+		return err
+	}
 	switch grant.AudienceType {
 	case aclstore.AuthorityAudienceSession:
 		currentSessionID := ""
