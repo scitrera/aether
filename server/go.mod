@@ -30,7 +30,7 @@ require (
 	github.com/redis/go-redis/v9 v9.17.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/zerolog v1.34.0
-	github.com/scitrera/aether/api v0.2.4
+	github.com/scitrera/aether/api v0.2.5-0.20260916223752-10b56035171c
 	github.com/scitrera/aether/sdk/go v0.2.4
 	github.com/scitrera/go-backpressure v0.1.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1

@@ -5,7 +5,7 @@ go 1.25.14
 require (
 	github.com/containerd/errdefs v1.0.0
 	github.com/docker/docker v28.5.2+incompatible
-	github.com/scitrera/aether/api v0.2.4
+	github.com/scitrera/aether/api v0.2.5-0.20260916223752-10b56035171c
 	github.com/scitrera/go-backpressure v0.1.1
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.11
