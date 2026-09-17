@@ -7,12 +7,12 @@ import (
 	"time"
 
 	pb "github.com/scitrera/aether/api/proto"
+	"github.com/scitrera/aether/sdk/go/aether"
 	"github.com/scitrera/aether/server/internal/circuitbreaker"
 	"github.com/scitrera/aether/server/internal/logging"
 	"github.com/scitrera/aether/server/internal/tracing"
 	"github.com/scitrera/aether/server/pkg/models"
 	"github.com/scitrera/aether/server/pkg/tasks"
-	"github.com/scitrera/aether/sdk/go/aether"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/protobuf/proto"
 )
@@ -236,6 +236,11 @@ func (s *GatewayServer) handleProgressReport(ctx context.Context, client *Client
 			"source":     sender.ToTopic(),
 		}
 		if report.Step != nil {
+			details["step"] = map[string]interface{}{
+				"name": report.Step.Name, "detail": report.Step.Detail,
+				"sequence": report.Step.Sequence, "total_steps": report.Step.TotalSteps,
+				"type": report.Step.StepType,
+			}
 			details["step_name"] = report.Step.Name
 			details["step_sequence"] = report.Step.Sequence
 			details["step_total"] = report.Step.TotalSteps

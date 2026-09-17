@@ -1722,6 +1722,7 @@ func taskToProto(t *tasks.Task) *pb.TaskInfo {
 			}
 		}
 	}
+	info.Metadata = taskProgressMetadata(t, info.Metadata)
 	// Phase 1: A2A paused-state fields.
 	if t.WaitSpec != nil {
 		ws := &pb.WaitSpec{
