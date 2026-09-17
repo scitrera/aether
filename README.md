@@ -109,6 +109,13 @@ Client                         Gateway                        Redis / RabbitMQ
   |                               |-- Decrement quota ----------->|
 ```
 
+Both gateway binaries send connection-age GOAWAY after approximately two hours,
+with an unlimited drain period for existing streams. Active `Connect` sessions
+can therefore outlive the rotation point; stream age is not a task deadline.
+Idle-connection limits, keepalive failure detection, authentication, revocation
+and explicit shutdown remain in force. Clients must still handle real network
+failures and server restarts.
+
 ## Quick Start
 
 ### Option A: AetherLite — local mode (no external dependencies)

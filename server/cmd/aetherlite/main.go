@@ -810,13 +810,7 @@ func main() {
 		grpc.MaxRecvMsgSize(4 * 1024 * 1024),
 		grpc.MaxSendMsgSize(16 * 1024 * 1024),
 		grpc.MaxConcurrentStreams(1000),
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			MaxConnectionIdle:     15 * time.Minute,
-			MaxConnectionAge:      2 * time.Hour,
-			MaxConnectionAgeGrace: 5 * time.Second,
-			Time:                  30 * time.Second,
-			Timeout:               10 * time.Second,
-		}),
+		grpc.KeepaliveParams(gateway.StreamKeepaliveParameters()),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime: 10 * time.Second,
 			// SDK clients dial with PermitWithoutStream: true and keepalive-ping
