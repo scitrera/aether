@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -55,6 +56,11 @@ func TestStoreConformance(t *testing.T) {
 				store, _, cleanup := b.factory(t)
 				defer cleanup()
 				runStateTransitions(t, store)
+			})
+			t.Run("TerminalResultsAreStable", func(t *testing.T) {
+				store, db, cleanup := b.factory(t)
+				defer cleanup()
+				runTerminalResultsAreStable(t, store, db)
 			})
 			t.Run("Listing", func(t *testing.T) {
 				store, _, cleanup := b.factory(t)
@@ -1638,4 +1644,102 @@ func runCorrelationAndCompletion(t *testing.T, store tasks.Store) {
 	if containsTask(listedRoot, taskOther.TaskID) {
 		t.Errorf("RootTaskID filter: unexpectedly includes other task %s", taskOther.TaskID)
 	}
+}
+
+// Late worker reports must not overwrite a cancellation, a completed result, or
+// another terminal outcome. Exercise both FailTask SQL branches and explicit
+// retry scheduling; rejected updates must preserve timestamps and retry state.
+func runTerminalResultsAreStable(t *testing.T, store tasks.Store, db *sql.DB) {
+	ctx := context.Background()
+	newTask := func() *tasks.Task {
+		// PostgreSQL stores UUID task IDs and JSONB payloads. Do not inherit
+		// the older SQLite-only fixture's decorated IDs or empty JSON.
+		return &tasks.Task{TaskID: uuid.NewString(), TaskType: "terminal-conformance",
+			Workspace: "_test", Payload: []byte(`{}`)}
+	}
+	seed := func(task *tasks.Task) error {
+		// Seed rows directly so transition coverage is independent of legacy
+		// PostgreSQL CreateTask's nil []byte JSONB parameter handling.
+		var policy any
+		if task.RetryPolicy != nil {
+			policy = `{"max_attempts":3}`
+		}
+		_, err := db.ExecContext(ctx, `INSERT INTO tasks
+            (task_id, task_type, workspace, status, assignment_mode, task_category, retry_policy_json)
+            VALUES ($1, $2, $3, 'pending', $4, $5, $6)`, task.TaskID, task.TaskType,
+			task.Workspace, tasks.AssignmentModeSelfAssign, tasks.TaskCategoryRegular, policy)
+		return err
+	}
+	retryAt := time.Now().Add(time.Minute)
+	operations := []struct {
+		name string
+		call func(string) error
+	}{
+		{"complete", func(id string) error { return store.CompleteTask(ctx, id) }},
+		{"fail", func(id string) error { return store.FailTask(ctx, id, "late failure") }},
+		{"fail_retry", func(id string) error { return store.FailTaskWithRetry(ctx, id, "ERROR", "late retry", &retryAt) }},
+		{"cancel", func(id string) error { return store.CancelTask(ctx, id) }},
+	}
+	for _, terminal := range []tasks.TaskStatus{tasks.TaskStatusCancelled, tasks.TaskStatusCompleted,
+		tasks.TaskStatusFailed, tasks.TaskStatusRejected, tasks.TaskStatusDLQ} {
+		for _, policy := range []bool{false, true} {
+			for _, operation := range operations {
+				t.Run(fmt.Sprintf("%s/policy_%t/%s", terminal, policy, operation.name), func(t *testing.T) {
+					task := newTask()
+					if policy {
+						task.RetryPolicy = &tasks.RetryPolicy{MaxAttempts: 3}
+					}
+					if err := seed(task); err != nil {
+						t.Fatal(err)
+					}
+					if err := store.UpdateTaskStatus(ctx, task.TaskID, terminal); err != nil {
+						t.Fatal(err)
+					}
+					before, err := store.GetTask(ctx, task.TaskID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := operation.call(task.TaskID); err == nil {
+						t.Fatalf("late %s accepted from %s", operation.name, terminal)
+					}
+					after, err := store.GetTask(ctx, task.TaskID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !reflect.DeepEqual(before, after) {
+						t.Fatalf("rejected report modified task: before=%+v after=%+v", before, after)
+					}
+				})
+			}
+		}
+	}
+	// Ordinary live-task failure and an explicit retry remain supported.
+	task := newTask()
+	task.RetryPolicy = &tasks.RetryPolicy{MaxAttempts: 3}
+	if err := seed(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimTask(ctx, task.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FailTask(ctx, task.TaskID, "first attempt"); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := store.GetTask(ctx, task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.RetryCount != 1 || failed.NextRetryAt == nil {
+		t.Fatalf("retry was not scheduled: %+v", failed)
+	}
+	if err := store.RetryTask(ctx, task.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimTask(ctx, task.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteTask(ctx, task.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, store, task.TaskID, tasks.TaskStatusCompleted)
 }

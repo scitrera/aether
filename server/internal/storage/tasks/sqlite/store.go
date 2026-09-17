@@ -413,7 +413,7 @@ func (s *Store) ClaimTask(ctx context.Context, taskID string) error {
 func (s *Store) CompleteTask(ctx context.Context, taskID string) error {
 	nowStr := now()
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE tasks SET status = 'completed', completed_at = ? WHERE task_id = ?
+		UPDATE tasks SET status = 'completed', completed_at = ? WHERE task_id = ? AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected', 'dlq')
 	`, nowStr, taskID)
 	if err != nil {
 		return err
@@ -448,7 +448,7 @@ func (s *Store) FailTask(ctx context.Context, taskID, errorMsg string) error {
 			UPDATE tasks
 			SET status = 'failed', failed_at = ?, error_message = ?,
 			    next_retry_at = ?, retry_count = retry_count + 1
-			WHERE task_id = ?
+			WHERE task_id = ? AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected', 'dlq')
 		`, nowStr, errorMsg, nullTimeStr(nextRetryAt), taskID)
 		if err != nil {
 			return err
@@ -466,7 +466,7 @@ func (s *Store) FailTask(ctx context.Context, taskID, errorMsg string) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = 'failed', failed_at = ?, error_message = ?, retry_count = retry_count + 1
-		WHERE task_id = ?
+		WHERE task_id = ? AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected', 'dlq')
 	`, nowStr, errorMsg, taskID)
 	if err != nil {
 		return err
@@ -483,13 +483,23 @@ func (s *Store) FailTask(ctx context.Context, taskID, errorMsg string) error {
 
 func (s *Store) FailTaskWithRetry(ctx context.Context, taskID, errorType, errorMsg string, nextRetry *time.Time) error {
 	nowStr := now()
-	_, err := s.db.ExecContext(ctx, `
+	result, err := s.db.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = 'failed', failed_at = ?, error_type = ?, error_message = ?,
 		    next_retry_at = ?, retry_count = retry_count + 1
-		WHERE task_id = ?
+		WHERE task_id = ? AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected', 'dlq')
 	`, nowStr, errorType, errorMsg, nullTimeStr(nextRetry), taskID)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("task %s not found or not in a failable state", taskID)
+	}
+	return nil
 }
 
 func (s *Store) CancelTask(ctx context.Context, taskID string) error {
@@ -497,14 +507,14 @@ func (s *Store) CancelTask(ctx context.Context, taskID string) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = 'cancelled', completed_at = ?, error_type = 'CANCELLED', error_message = 'Task cancelled'
-		WHERE task_id = ? AND status NOT IN ('completed', 'failed', 'cancelled')
+		WHERE task_id = ? AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected', 'dlq')
 	`, nowStr, taskID)
 	if err != nil {
 		return err
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
-		return fmt.Errorf("task %s not found or already completed/failed/cancelled", taskID)
+		return fmt.Errorf("task %s not found or already terminal", taskID)
 	}
 	return nil
 }

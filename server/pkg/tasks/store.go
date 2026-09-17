@@ -433,7 +433,7 @@ func (s *TaskStore) CompleteTask(ctx context.Context, taskID string) error {
 	query := `
 		UPDATE tasks
 		SET status = 'completed', completed_at = $1
-		WHERE task_id = $2
+		WHERE task_id = $2 AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected', 'dlq')
 	`
 	result, err := s.db.ExecContext(ctx, query, now, taskID)
 	if err != nil {
@@ -480,7 +480,7 @@ func (s *TaskStore) FailTask(ctx context.Context, taskID, errorMsg string) error
 			    error_message = $2,
 			    next_retry_at = $3,
 			    retry_count = retry_count + 1
-			WHERE task_id = $4
+			WHERE task_id = $4 AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected', 'dlq')
 		`
 		result, err := s.db.ExecContext(ctx, query, now, errorMsg, nullTime(nextRetryAt), taskID)
 		if err != nil {
@@ -499,7 +499,7 @@ func (s *TaskStore) FailTask(ctx context.Context, taskID, errorMsg string) error
 	query := `
 		UPDATE tasks
 		SET status = 'failed', failed_at = $1, error_message = $2, retry_count = retry_count + 1
-		WHERE task_id = $3
+		WHERE task_id = $3 AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected', 'dlq')
 	`
 	result, err := s.db.ExecContext(ctx, query, now, errorMsg, taskID)
 	if err != nil {
@@ -526,10 +526,20 @@ func (s *TaskStore) FailTaskWithRetry(ctx context.Context, taskID, errorType, er
 			error_message = $3,
 			next_retry_at = $4,
 			retry_count = retry_count + 1
-		WHERE task_id = $5
+		WHERE task_id = $5 AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected', 'dlq')
 	`
-	_, err := s.db.ExecContext(ctx, query, now, errorType, errorMsg, nullTime(nextRetry), taskID)
-	return err
+	result, err := s.db.ExecContext(ctx, query, now, errorType, errorMsg, nullTime(nextRetry), taskID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("task %s not found or not in a failable state", taskID)
+	}
+	return nil
 }
 
 // CancelTask marks a task as cancelled
@@ -541,7 +551,7 @@ func (s *TaskStore) CancelTask(ctx context.Context, taskID string) error {
 			completed_at = $1,
 			error_type = 'CANCELLED',
 			error_message = 'Task cancelled'
-		WHERE task_id = $2 AND status NOT IN ('completed', 'failed', 'cancelled')
+		WHERE task_id = $2 AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected', 'dlq')
 	`
 	result, err := s.db.ExecContext(ctx, query, now, taskID)
 	if err != nil {
@@ -549,7 +559,7 @@ func (s *TaskStore) CancelTask(ctx context.Context, taskID string) error {
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
-		return fmt.Errorf("task %s not found or already completed/failed/cancelled", taskID)
+		return fmt.Errorf("task %s not found or already terminal", taskID)
 	}
 	return nil
 }
