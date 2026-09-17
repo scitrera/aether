@@ -572,6 +572,7 @@ func main() {
 
 	// Gateway options.
 	var gatewayOpts []gateway.GatewayOption
+	gatewayOpts = append(gatewayOpts, gateway.WithMaxMessagePayloadSize(cfg.Quotas.GetMaxMessagePayloadSize()))
 	gatewayOpts = append(gatewayOpts, gateway.WithQuotaManager(quotaManager))
 	gatewayOpts = append(gatewayOpts, gateway.WithOrchestrationServices(orchServices))
 	gatewayOpts = append(gatewayOpts, gateway.WithCheckpointDefaultTTL(cfg.Checkpoint.GetDefaultTTL()))
@@ -807,7 +808,7 @@ func main() {
 	)
 	serverOpts := []grpc.ServerOption{
 		grpc.StatsHandler(otelgrpc.NewServerHandler(otelgrpc.WithFilter(otelSkipLongStreams))),
-		grpc.MaxRecvMsgSize(4 * 1024 * 1024),
+		grpc.MaxRecvMsgSize(cfg.Quotas.GetGRPCMaxRecvMessageSize()),
 		grpc.MaxSendMsgSize(16 * 1024 * 1024),
 		grpc.MaxConcurrentStreams(1000),
 		grpc.KeepaliveParams(gateway.StreamKeepaliveParameters()),

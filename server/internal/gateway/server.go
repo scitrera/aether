@@ -298,6 +298,12 @@ func WithDeliveryBackpressure(capacity int, target, interval time.Duration) Gate
 	}
 }
 
+// WithMaxMessagePayloadSize sets the SendMessage payload cap. Zero retains
+// the 1 MiB default. This cap is independent of task and proxy body limits.
+func WithMaxMessagePayloadSize(size int) GatewayOption {
+	return func(s *GatewayServer) { s.quotaEnforcer.maxMessagePayloadSize = size }
+}
+
 // WithMaxTaskPayloadSize sets the maximum allowed size (in bytes) for task payloads.
 // Default is 512KB if not set or zero.
 func WithMaxTaskPayloadSize(size int) GatewayOption {

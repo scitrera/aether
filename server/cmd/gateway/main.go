@@ -478,6 +478,9 @@ func main() {
 			Msg("quota management enabled")
 	}
 
+	// Message limits also apply when quotas are disabled.
+	gatewayOpts = append(gatewayOpts, gateway.WithMaxMessagePayloadSize(cfg.Quotas.GetMaxMessagePayloadSize()))
+
 	// Task payload size limit (always enforced, independent of quota system)
 	if cfg.Quotas.MaxTaskPayloadSize > 0 {
 		gatewayOpts = append(gatewayOpts, gateway.WithMaxTaskPayloadSize(cfg.Quotas.MaxTaskPayloadSize))
@@ -658,7 +661,7 @@ func main() {
 	)
 	serverOpts := []grpc.ServerOption{
 		grpc.StatsHandler(otelgrpc.NewServerHandler(otelgrpc.WithFilter(otelSkipLongStreams))),
-		grpc.MaxRecvMsgSize(4 * 1024 * 1024),  // 4MB
+		grpc.MaxRecvMsgSize(cfg.Quotas.GetGRPCMaxRecvMessageSize()),
 		grpc.MaxSendMsgSize(16 * 1024 * 1024), // 16MB
 		grpc.MaxConcurrentStreams(1000),
 		grpc.KeepaliveParams(gateway.StreamKeepaliveParameters()),

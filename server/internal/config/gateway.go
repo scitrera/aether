@@ -556,9 +556,24 @@ type QuotasConfig struct {
 	MaxKVKeysPerNamespace      int     `yaml:"max_kv_keys_per_namespace"`     // default: 10000
 	MaxKVValueSize             int     `yaml:"max_kv_value_size"`             // default: 1048576 (1MB)
 	MaxTaskPayloadSize         int     `yaml:"max_task_payload_size"`         // default: 524288 (512KB)
+	MaxMessagePayloadSize      int     `yaml:"max_message_payload_size"`      // default: 1048576 (1 MiB); maximum: 8 MiB
 
 	// Proxy / tunnel quotas (T4).
 	Proxy ProxyQuotaConfig `yaml:"proxy"`
+}
+
+// GetMaxMessagePayloadSize retains the historical 1 MiB default.
+func (q QuotasConfig) GetMaxMessagePayloadSize() int {
+	if q.MaxMessagePayloadSize > 0 {
+		return q.MaxMessagePayloadSize
+	}
+	return 1024 * 1024
+}
+
+// GetGRPCMaxRecvMessageSize leaves room for the protobuf envelope around a
+// configured message payload. Unconfigured installations retain the 4 MiB cap.
+func (q QuotasConfig) GetGRPCMaxRecvMessageSize() int {
+	return max(4*1024*1024, q.GetMaxMessagePayloadSize()+64*1024)
 }
 
 // ProxyQuotaConfig caps proxy/tunnel routing throughput per workspace.
@@ -627,6 +642,9 @@ func parseDurationOrDefault(s string, def time.Duration) time.Duration {
 // It collects all validation failures and returns them as a single combined error.
 func (c *Config) Validate() error {
 	var errs []string
+	if c.Quotas.MaxMessagePayloadSize < 0 || c.Quotas.MaxMessagePayloadSize > 8*1024*1024 {
+		errs = append(errs, "quotas.max_message_payload_size must be between 0 (default) and 8388608 (8 MiB)")
+	}
 
 	// --- Port ranges ---
 	if c.Gateway.Port != 0 && (c.Gateway.Port < 1 || c.Gateway.Port > 65535) {

@@ -346,7 +346,9 @@ func (c *BaseClient) buildTLSConfig() (*tls.Config, error) {
 
 // buildDialOptions creates gRPC dial options with TLS and keepalive settings.
 func (c *BaseClient) buildDialOptions() ([]grpc.DialOption, error) {
-	var opts []grpc.DialOption
+	// Match the gateway's bounded outbound frame cap. The gRPC default
+	// (4 MiB) otherwise disconnects streams carrying permitted tool images.
+	opts := []grpc.DialOption{grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(16 * 1024 * 1024))}
 
 	// TLS configuration
 	if c.tlsConfig != nil && c.tlsConfig.Enabled {

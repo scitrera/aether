@@ -256,3 +256,27 @@ func TestQuotaEnforcer_GetMaxTaskPayloadSize_CustomValueOverridesDefault(t *test
 		t.Errorf("expected maxTaskPayloadSize=256, got %d", got)
 	}
 }
+
+// Model a 5 MiB original page image wrapped in JSON/base64: this exceeds both
+// the historical 1 MiB routing cap and the gRPC default receive limit.
+func TestRouteMessage_ConfiguredImagePayload(t *testing.T) {
+	for _, allowed := range []bool{false, true} {
+		router := newMockMessageRouter()
+		s := newRoutingTestServer(router)
+		if allowed {
+			WithMaxMessagePayloadSize(8 * 1024 * 1024)(s)
+		}
+		stream := &mockStream{}
+		client := newRoutingTestClient(models.Identity{Type: models.PrincipalAgent, Workspace: "ws1"}, stream)
+		s.routeMessage(context.Background(), client, &pb.SendMessage{TargetTopic: "ag::ws1::impl::spec", MessageType: pb.MessageType_CHAT, Payload: bytes.Repeat([]byte("x"), 7*1024*1024)})
+		router.mu.Lock()
+		published := len(router.publishedMessages)
+		router.mu.Unlock()
+		if allowed && published != 1 {
+			t.Fatal("configured image payload was not delivered")
+		}
+		if !allowed && published != 0 {
+			t.Fatal("default routing cap was bypassed")
+		}
+	}
+}

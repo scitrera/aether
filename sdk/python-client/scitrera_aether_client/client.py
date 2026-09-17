@@ -867,11 +867,12 @@ class BaseAetherClient:
 
     def _do_connect(self, init_msg: aether_pb2.InitConnection, target: str):
         """Internal method to establish connection (no retry logic)."""
+        from .grpc_limits import GRPC_CHANNEL_OPTIONS
         if self.tls_enabled:
             credentials = self._build_tls_credentials()
-            self.channel = grpc.secure_channel(target, credentials)
+            self.channel = grpc.secure_channel(target, credentials, options=GRPC_CHANNEL_OPTIONS)
         else:
-            self.channel = grpc.insecure_channel(target)
+            self.channel = grpc.insecure_channel(target, options=GRPC_CHANNEL_OPTIONS)
         self.stub = aether_pb2_grpc.AetherGatewayStub(self.channel)
 
         # If we have a session ID from a previous connection, include it for session resume

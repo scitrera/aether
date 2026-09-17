@@ -222,6 +222,26 @@ go test -v ./internal/gateway/...     # specific package, verbose
 
 ## Configuration
 
+`quotas.max_message_payload_size` bounds each `SendMessage.payload`, independently
+of task payloads and proxy request bodies. The default remains 1 MiB. Deployments
+carrying page images or other bounded tool results can opt in to up to 8 MiB:
+
+```yaml
+quotas:
+  max_message_payload_size: 8388608
+```
+
+This setting applies to both `gateway` and `aetherlite`, even when the quota
+manager is disabled, and requires a restart. Their gRPC receive ceiling grows
+with this setting (plus 64 KiB for the envelope), retaining 4 MiB when unset.
+Go and Python SDK clients accept responses up to the gateway's bounded 16 MiB
+outbound frame limit; upgrade receivers before sending messages above 4 MiB.
+Other clients must explicitly support the selected response size. Base64 adds
+about one third to binary image size; account for JSON metadata as well. This
+setting does not raise backend-specific broker limits (for example, NATS
+`max_payload`), so clustered deployments must configure those consistently.
+
+
 The gateway is configured via a YAML file. CLI flags override config-file values.
 
 ```yaml

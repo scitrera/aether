@@ -150,7 +150,9 @@ def _resolve_keepalive_options(
                    if http2_min_ping_interval_without_data_ms is not None
                    else _env_int("AETHER_GRPC_HTTP2_MIN_PING_INTERVAL_WITHOUT_DATA_MS",
                                  _DEFAULT_HTTP2_MIN_PING_INTERVAL_WITHOUT_DATA_MS))
+    from .grpc_limits import GRPC_CHANNEL_OPTIONS
     return [
+        *GRPC_CHANNEL_OPTIONS,
         ("grpc.keepalive_time_ms", time_ms),
         ("grpc.keepalive_timeout_ms", timeout_ms),
         ("grpc.keepalive_permit_without_calls", permit),
