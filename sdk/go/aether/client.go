@@ -1811,7 +1811,7 @@ func (c *BaseClient) handleReceiveError(ctx context.Context, err error) error {
 	// Check if error is recoverable (including client-level overrides like RetryOnDuplicate)
 	if c.isRecoverableForClient(aetherErr) && c.options.AutoReconnect {
 		// Notify disconnect handler before reconnecting
-		c.handleDisconnect(ctx, "connection lost")
+		c.handleDisconnect(ctx, "connection lost: "+aetherErr.Error())
 
 		// Mark as disconnected
 		c.connected.Store(false)
@@ -3263,9 +3263,10 @@ func (c *BaseClient) doTaskOperation(ctx context.Context, op pb.TaskOperation_Op
 	if err := c.Send(&pb.UpstreamMessage{
 		Payload: &pb.UpstreamMessage_TaskOp{
 			TaskOp: &pb.TaskOperation{
-				Op:     op,
-				TaskId: taskID,
-				Reason: reason,
+				Op:        op,
+				TaskId:    taskID,
+				Reason:    reason,
+				RequestId: requestID,
 			},
 		},
 	}); err != nil {

@@ -2084,3 +2084,61 @@ func TestSendWithPriority_ShedsLowerFirst(t *testing.T) {
 		t.Error("staging buffer did not receive the admitted Control envelope")
 	}
 }
+
+// Concurrent lifecycle calls must receive their own response even when the
+// gateway responds in the opposite order to requests.
+func TestTaskOperationsCorrelateOutOfOrderResponses(t *testing.T) {
+	client, err := NewBaseClient(BaseClientConfig{ServerAddr: TestServerAddr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.running.Store(true)
+	type outcome struct {
+		task     string
+		response *TaskOperationResponse
+		err      error
+	}
+	results := make(chan outcome, 2)
+	for _, id := range []string{"task-a", "task-b"} {
+		go func(id string) {
+			r, err := client.CompleteTask(context.Background(), id, time.Second)
+			results <- outcome{id, r, err}
+		}(id)
+	}
+	var ops []*pb.TaskOperation
+	for range 2 {
+		select {
+		case msg := <-client.RequestQueue():
+			op := msg.GetTaskOp()
+			if op == nil || op.RequestId == "" {
+				t.Fatal("task request lacks correlation ID")
+			}
+			ops = append(ops, op)
+		case <-time.After(time.Second):
+			t.Fatal("missing queued task operation")
+		}
+	}
+	if ops[0].RequestId == ops[1].RequestId {
+		t.Fatal("duplicate request IDs")
+	}
+	for i := len(ops) - 1; i >= 0; i-- {
+		op := ops[i]
+		err := client.dispatchResponse(context.Background(), &pb.DownstreamMessage{
+			Payload: &pb.DownstreamMessage_TaskOp{TaskOp: &pb.TaskOperationResponse{
+				RequestId: op.RequestId, Success: op.TaskId == "task-a", Message: op.TaskId,
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		got := <-results
+		if got.err != nil || got.response == nil {
+			t.Fatalf("%s: %v", got.task, got.err)
+		}
+		if got.response.Message != got.task || got.response.Success != (got.task == "task-a") {
+			t.Fatalf("%s received another task's response: %+v", got.task, got.response)
+		}
+	}
+}
