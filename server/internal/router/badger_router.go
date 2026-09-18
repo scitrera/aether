@@ -681,6 +681,9 @@ func (r *BadgerRouter) replay(topic, consumerName string, startSeq uint64, handl
 
 	return r.db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
+		// Bound prefetch itself: ValidForPrefix only checks after values have
+		// already been loaded, potentially from large neighboring topic logs.
+		opts.Prefix = prefix
 		opts.PrefetchSize = 64
 		it := txn.NewIterator(opts)
 		defer it.Close()
