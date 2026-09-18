@@ -274,12 +274,14 @@ func (s *BadgerKVStore) addDelta(fullKey []byte, delta int64) (int64, error) {
 	var newVal int64
 	for attempt := 0; attempt < casMaxAttempts; attempt++ {
 		err := s.db.Update(func(txn *badger.Txn) error {
-			current, err := readBadgerCounter(txn, fullKey)
+			current, expiresAt, err := readBadgerCounter(txn, fullKey)
 			if err != nil {
 				return err
 			}
 			newVal = current + delta
-			return txn.Set(fullKey, []byte(strconv.FormatInt(newVal, 10)))
+			entry := badger.NewEntry(fullKey, []byte(strconv.FormatInt(newVal, 10)))
+			entry.ExpiresAt = expiresAt
+			return txn.SetEntry(entry)
 		})
 		if err == nil {
 			return newVal, nil
@@ -293,16 +295,18 @@ func (s *BadgerKVStore) addDelta(fullKey []byte, delta int64) (int64, error) {
 }
 
 // readBadgerCounter loads the integer value at fullKey within the given
-// transaction. Missing keys yield 0; the legacy 8-byte little-endian
+// transaction, retaining its absolute expiry. Counter writes must preserve
+// this deadline rather than remove or extend a rate-limit window.
+// Missing keys yield 0 with no expiry; the legacy 8-byte little-endian
 // encoding is accepted for back-compat with old data; new writes use
 // the decimal-string format.
-func readBadgerCounter(txn *badger.Txn, fullKey []byte) (int64, error) {
+func readBadgerCounter(txn *badger.Txn, fullKey []byte) (int64, uint64, error) {
 	item, err := txn.Get(fullKey)
 	if errors.Is(err, badger.ErrKeyNotFound) {
-		return 0, nil
+		return 0, 0, nil
 	}
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	var current int64
 	if valErr := item.Value(func(v []byte) error {
@@ -317,9 +321,9 @@ func readBadgerCounter(txn *badger.Txn, fullKey []byte) (int64, error) {
 		current = parsed
 		return nil
 	}); valErr != nil {
-		return 0, valErr
+		return 0, 0, valErr
 	}
-	return current, nil
+	return current, item.ExpiresAt(), nil
 }
 
 // IncrementIf atomically increments a counter by `delta` only when the
@@ -387,7 +391,7 @@ func (s *BadgerKVStore) addDeltaGuarded(fullKey []byte, delta, guard int64, isCe
 	)
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		err := s.db.Update(func(txn *badger.Txn) error {
-			current, err := readBadgerCounter(txn, fullKey)
+			current, expiresAt, err := readBadgerCounter(txn, fullKey)
 			if err != nil {
 				return err
 			}
@@ -399,7 +403,9 @@ func (s *BadgerKVStore) addDeltaGuarded(fullKey []byte, delta, guard int64, isCe
 			}
 			finalVal = proposed
 			applied = true
-			return txn.Set(fullKey, []byte(strconv.FormatInt(proposed, 10)))
+			entry := badger.NewEntry(fullKey, []byte(strconv.FormatInt(proposed, 10)))
+			entry.ExpiresAt = expiresAt
+			return txn.SetEntry(entry)
 		})
 		if err == nil {
 			return finalVal, applied, nil
