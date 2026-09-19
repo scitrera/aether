@@ -182,6 +182,9 @@ func (s *BadgerKVStore) ListPaginated(
 	err := s.db.View(func(txn *badger.Txn) error {
 		iterOpts := badger.DefaultIteratorOptions
 		iterOpts.Prefix = scanPrefix
+		// Fetch only values returned in this page. Badger's default prefetch
+		// otherwise reads up to 100 potentially large values past the limit.
+		iterOpts.PrefetchValues = false
 
 		it := txn.NewIterator(iterOpts)
 		defer it.Close()

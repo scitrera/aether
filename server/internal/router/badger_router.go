@@ -681,10 +681,10 @@ func (r *BadgerRouter) replay(topic, consumerName string, startSeq uint64, handl
 
 	return r.db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
-		// Bound prefetch itself: ValidForPrefix only checks after values have
-		// already been loaded, potentially from large neighboring topic logs.
+		// Read values only as the handler consumes them. A count-based prefetch
+		// window can retain hundreds of MiB per replay with large payloads.
 		opts.Prefix = prefix
-		opts.PrefetchSize = 64
+		opts.PrefetchValues = false
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
@@ -709,15 +709,13 @@ func (r *BadgerRouter) replay(topic, consumerName string, startSeq uint64, handl
 				}
 			}
 
-			if err := item.Value(func(val []byte) error {
-				// Copy the value because it is only valid within the txn.
-				cp := make([]byte, len(val))
-				copy(cp, val)
-				handler(cp)
-				return nil
-			}); err != nil {
+			// Keep one owned copy for the handler, releasing Badger's value-log
+			// read lock before invoking potentially slow downstream code.
+			payload, err := item.ValueCopy(nil)
+			if err != nil {
 				return err
 			}
+			handler(payload)
 
 			if seq > *replayedUpTo {
 				*replayedUpTo = seq
