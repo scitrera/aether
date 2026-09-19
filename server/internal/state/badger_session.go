@@ -561,7 +561,10 @@ func (r *BadgerSessionRegistry) FindHealthyServiceInstances(ctx context.Context,
 	prefix := []byte(lite.PrefixSession + lockSubPrefix + "sv" + models.IdentitySep + impl + models.IdentitySep)
 	var out []string
 	err := r.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix = prefix
+		opts.PrefetchValues = false // Identity is entirely in the lock key.
+		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 			fullKey := string(it.Item().Key())
