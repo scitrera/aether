@@ -134,6 +134,7 @@ func main() {
 	}
 
 	log.Printf(banner, version)
+	log.Printf("Go runtime memory limit: %d bytes (override with GOMEMLIMIT)", configureMemoryLimit())
 
 	// Build gateway config (always lite mode).
 	cfg := buildGatewayConfig()

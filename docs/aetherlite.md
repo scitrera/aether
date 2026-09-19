@@ -83,6 +83,43 @@ docker run --rm -p 127.0.0.1:50051:50051 \
 The development tags deliberately enable unauthenticated administration and
 must not be exposed to an untrusted network or used in production.
 
+## Memory management
+
+AetherLite defaults to a **1 GiB Go runtime soft memory limit** when
+`GOMEMLIMIT` is unset or empty. The effective limit is logged at startup.
+Set `GOMEMLIMIT` explicitly to tune it for the deployment, for example
+`GOMEMLIMIT=768MiB`, or use `GOMEMLIMIT=off` to disable the default. The
+standalone gateway retains Go's existing defaults.
+
+This limit makes GC and scavenging react to transient allocation pressure. It
+is **not a hard RSS or container limit**: Badger's mapped files, native memory,
+and other non-Go allocations need additional headroom. Go can also exceed the
+soft limit to avoid spending all CPU time collecting a live working set that
+cannot fit. Choose the container limit and `GOMEMLIMIT` together after measuring
+the actual workload, especially for small containers or embedded cluster mode.
+See the [Go memory-limit guidance](https://go.dev/doc/gc-guide#Memory_limit).
+
+Badger service discovery reads keys only. Message replay and paginated KV lists
+read values on demand, so a slow replay handler or a small page does not
+speculatively load dozens of large values. Replay still provides an owned copy
+of each payload, and consumer offsets and delivery behavior are unchanged.
+Concurrent handlers, queued messages, and the returned KV page still require
+memory proportional to their payloads; the soft limit is not admission control.
+
+For a reproducible allocation check with synthetic on-disk messages:
+
+```bash
+cd server
+go test -run '^$' -bench '^BenchmarkBadgerReplayLargePayloads$' \
+  -benchmem -benchtime=10x -memprofile=/tmp/aether-replay.pprof ./internal/router
+go tool pprof -alloc_space /tmp/aether-replay.pprof
+```
+
+When qualifying a deployment, compare heap allocation before/after GC, GC
+frequency, process RSS, cgroup anonymous/file memory, and request latency under
+the same traffic. A lower retained heap alone does not establish a lower peak
+or a safe container size.
+
 ## Data Directory Layout
 
 AetherLite stores all persistent state under a single directory:
