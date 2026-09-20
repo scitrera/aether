@@ -401,3 +401,26 @@ path. Update your deployment manifests, Helm values, and `.env` files.
 | `AUDIT_FLUSH_PERIOD` | `AETHER_AUDIT_FLUSH_PERIOD` | Audit section. |
 | `AUDIT_RETENTION_DAYS` | `AETHER_AUDIT_RETENTION_DAYS` | Audit section. |
 | `AUDIT_VERBOSITY_LEVEL` | `AETHER_AUDIT_VERBOSITY_LEVEL` | Audit section. |
+
+### Replicated browser sessions
+
+The optional auth-proxy login subsystem accepts Sentinel discovery for its opaque
+Redis/Valkey session store. Set `AUTH_PROXY_SESSION_SENTINEL_MASTER` and
+`AUTH_PROXY_SESSION_SENTINEL_ADDRS` (comma-separated host:port addresses). Both
+must be present; when configured they take precedence over the standalone
+`AUTH_PROXY_SESSION_REDIS_ADDR` / `AUTH_PROXY_REDIS_ADDR` connection.
+
+Data-server ACL credentials use `AUTH_PROXY_SESSION_REDIS_USERNAME` and
+`AUTH_PROXY_SESSION_REDIS_PASSWORD`. Sentinel credentials are separate:
+`AUTH_PROXY_SESSION_SENTINEL_USERNAME` and `AUTH_PROXY_SESSION_SENTINEL_PASSWORD`.
+Keep credentials in the deployment secret store. Session DB, prefix and browser
+TTL settings continue to work in either connection mode.
+
+Use three Sentinel voters on independent failure domains and test promotion and
+client reconnection before enabling production traffic. Replication is
+asynchronous: very recent logins or revocations can be lost on failover. This
+client option does not provide quorum fencing or safe empty-server bootstrap;
+the installer must manage those recovery boundaries. The opt-in
+`TestSentinelSessionFailover` test uses `AUTH_PROXY_TEST_SENTINELS` with the master
+name `test-sessions`; run it only against an isolated synthetic fixture because
+it requests primary promotion.

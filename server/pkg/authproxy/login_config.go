@@ -38,8 +38,15 @@ type LoginConfig struct {
 	// to AUTH_PROXY_REDIS_ADDR if unset.
 	RedisAddr string
 	// RedisPassword and RedisDB are passed through to the redis client.
+	RedisUsername string
 	RedisPassword string
 	RedisDB       int
+	// SentinelMaster and SentinelAddrs select automatic primary discovery.
+	// When set, RedisAddr is ignored; data and Sentinel credentials are separate.
+	SentinelMaster   string
+	SentinelAddrs    []string
+	SentinelUsername string
+	SentinelPassword string
 	// SessionPrefix is the Redis key prefix; default "auth-session:".
 	SessionPrefix string
 }
@@ -55,7 +62,9 @@ type LoginConfig struct {
 //     _COOKIE_SAMESITE ("lax"|"strict"|"none"), _TTL (duration, e.g. "24h")
 //   - AUTH_PROXY_SESSION_STORE: "redis" (default) | "jwt"
 //   - AUTH_PROXY_SESSION_JWT_SIGNING_KEY: at least 32 bytes when StoreKind is "jwt"
-//   - AUTH_PROXY_SESSION_REDIS_ADDR / _PASSWORD / _DB / _PREFIX: Redis store
+//   - AUTH_PROXY_SESSION_REDIS_ADDR / _USERNAME / _PASSWORD / _DB / _PREFIX: Redis store
+//   - AUTH_PROXY_SESSION_SENTINEL_MASTER / _ADDRS (csv): optional Sentinel discovery
+//   - AUTH_PROXY_SESSION_SENTINEL_USERNAME / _PASSWORD: Sentinel credentials
 //
 // Returns LoginConfig{Enabled: false} when no providers are configured.
 func LoadLoginConfigFromEnv() (*LoginConfig, error) {
@@ -98,10 +107,18 @@ func LoadLoginConfigFromEnv() (*LoginConfig, error) {
 	switch cfg.StoreKind {
 	case "redis":
 		cfg.RedisAddr = getenv("AUTH_PROXY_SESSION_REDIS_ADDR", os.Getenv("AUTH_PROXY_REDIS_ADDR"))
+		cfg.RedisUsername = os.Getenv("AUTH_PROXY_SESSION_REDIS_USERNAME")
 		cfg.RedisPassword = os.Getenv("AUTH_PROXY_SESSION_REDIS_PASSWORD")
+		cfg.SentinelMaster = strings.TrimSpace(os.Getenv("AUTH_PROXY_SESSION_SENTINEL_MASTER"))
+		cfg.SentinelAddrs = splitAndTrim(os.Getenv("AUTH_PROXY_SESSION_SENTINEL_ADDRS"))
+		cfg.SentinelUsername = os.Getenv("AUTH_PROXY_SESSION_SENTINEL_USERNAME")
+		cfg.SentinelPassword = os.Getenv("AUTH_PROXY_SESSION_SENTINEL_PASSWORD")
 		cfg.RedisDB = parseInt(os.Getenv("AUTH_PROXY_SESSION_REDIS_DB"), 0)
 		cfg.SessionPrefix = getenv("AUTH_PROXY_SESSION_REDIS_PREFIX", "auth-session:")
-		if cfg.RedisAddr == "" {
+		if (cfg.SentinelMaster == "") != (len(cfg.SentinelAddrs) == 0) {
+			return nil, fmt.Errorf("Sentinel requires both AUTH_PROXY_SESSION_SENTINEL_MASTER and AUTH_PROXY_SESSION_SENTINEL_ADDRS")
+		}
+		if cfg.RedisAddr == "" && cfg.SentinelMaster == "" {
 			return nil, fmt.Errorf("AUTH_PROXY_SESSION_STORE=redis requires AUTH_PROXY_SESSION_REDIS_ADDR or AUTH_PROXY_REDIS_ADDR")
 		}
 	case "jwt":
@@ -123,11 +140,21 @@ func LoadLoginConfigFromEnv() (*LoginConfig, error) {
 func (cfg *LoginConfig) BuildSessionStore() (login.SessionStore, *redis.Client, error) {
 	switch cfg.StoreKind {
 	case "redis":
-		client := redis.NewClient(&redis.Options{
-			Addr:     cfg.RedisAddr,
-			Password: cfg.RedisPassword,
-			DB:       cfg.RedisDB,
-		})
+		var client *redis.Client
+		if cfg.SentinelMaster != "" && len(cfg.SentinelAddrs) > 0 {
+			client = redis.NewFailoverClient(&redis.FailoverOptions{
+				MasterName: cfg.SentinelMaster, SentinelAddrs: cfg.SentinelAddrs,
+				SentinelUsername: cfg.SentinelUsername, SentinelPassword: cfg.SentinelPassword,
+				Username: cfg.RedisUsername, Password: cfg.RedisPassword, DB: cfg.RedisDB,
+			})
+		} else if cfg.SentinelMaster != "" || len(cfg.SentinelAddrs) > 0 {
+			return nil, nil, fmt.Errorf("Sentinel requires both master name and addresses")
+		} else {
+			client = redis.NewClient(&redis.Options{
+				Addr: cfg.RedisAddr, Username: cfg.RedisUsername,
+				Password: cfg.RedisPassword, DB: cfg.RedisDB,
+			})
+		}
 		// Probe the connection so misconfigurations surface at startup.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
