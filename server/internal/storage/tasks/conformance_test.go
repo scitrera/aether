@@ -12,6 +12,7 @@ package tasks_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -73,9 +74,9 @@ func TestStoreConformance(t *testing.T) {
 				runPoolClaim(t, store)
 			})
 			t.Run("PoolRetry", func(t *testing.T) {
-				store, _, cleanup := b.factory(t)
+				store, db, cleanup := b.factory(t)
 				defer cleanup()
-				runPoolRetry(t, store)
+				runPoolRetry(t, store, db)
 			})
 			t.Run("PoolCrossWorkspace", func(t *testing.T) {
 				store, _, cleanup := b.factory(t)
@@ -1750,13 +1751,20 @@ func runTerminalResultsAreStable(t *testing.T, store tasks.Store, db *sql.DB) {
 }
 
 // A retry must be discoverable after the original claim consumed its queue flag.
-func runPoolRetry(t *testing.T, store tasks.Store) {
+func runPoolRetry(t *testing.T, store tasks.Store, db *sql.DB) {
 	ctx := context.Background()
 	for _, cancelled := range []bool{false, true} {
 		task := &tasks.Task{TaskID: uuid.NewString(), TaskType: "retry-review", Workspace: "retry-workspace",
 			Status: tasks.TaskStatusPending, AssignmentMode: tasks.AssignmentModePool,
 			QueuedForStartup: true, TargetImplementation: "retry-worker", Payload: []byte(`{"input":"retained"}`)}
-		if err := store.CreateTask(ctx, task); err != nil {
+		// Like terminal-transition coverage above, isolate transitions from
+		// legacy PostgreSQL CreateTask's optional JSONB encoding issue.
+		_, err := db.ExecContext(ctx, `INSERT INTO tasks
+            (task_id, task_type, workspace, status, assignment_mode, task_category,
+             target_implementation, queued_for_startup, payload)
+            VALUES ($1,$2,$3,'pending','pool','regular',$4,true,$5)`,
+			task.TaskID, task.TaskType, task.Workspace, task.TargetImplementation, string(task.Payload))
+		if err != nil {
 			t.Fatal(err)
 		}
 		claimed, err := store.ClaimPoolTask(ctx, task.TaskID, "sv::retry-worker::old")
@@ -1781,7 +1789,11 @@ func runPoolRetry(t *testing.T, store tasks.Store) {
 		if err != nil || len(pending) != 1 || pending[0].TaskID != task.TaskID {
 			t.Fatalf("retry missing from worker queue: %+v %v", pending, err)
 		}
-		if pending[0].AssignedTo != "" || string(pending[0].Payload) != `{"input":"retained"}` {
+		var payload map[string]string
+		if err := json.Unmarshal(pending[0].Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if pending[0].AssignedTo != "" || payload["input"] != "retained" {
 			t.Fatal("retry retained assignment or lost input")
 		}
 		claimed, err = store.ClaimPoolTask(ctx, task.TaskID, "sv::retry-worker::new")
