@@ -72,6 +72,11 @@ func TestStoreConformance(t *testing.T) {
 				defer cleanup()
 				runPoolClaim(t, store)
 			})
+			t.Run("PoolRetry", func(t *testing.T) {
+				store, _, cleanup := b.factory(t)
+				defer cleanup()
+				runPoolRetry(t, store)
+			})
 			t.Run("PoolCrossWorkspace", func(t *testing.T) {
 				store, _, cleanup := b.factory(t)
 				defer cleanup()
@@ -1742,4 +1747,49 @@ func runTerminalResultsAreStable(t *testing.T, store tasks.Store, db *sql.DB) {
 		t.Fatal(err)
 	}
 	assertStatus(t, store, task.TaskID, tasks.TaskStatusCompleted)
+}
+
+// A retry must be discoverable after the original claim consumed its queue flag.
+func runPoolRetry(t *testing.T, store tasks.Store) {
+	ctx := context.Background()
+	for _, cancelled := range []bool{false, true} {
+		task := &tasks.Task{TaskID: uuid.NewString(), TaskType: "retry-review", Workspace: "retry-workspace",
+			Status: tasks.TaskStatusPending, AssignmentMode: tasks.AssignmentModePool,
+			QueuedForStartup: true, TargetImplementation: "retry-worker", Payload: []byte(`{"input":"retained"}`)}
+		if err := store.CreateTask(ctx, task); err != nil {
+			t.Fatal(err)
+		}
+		claimed, err := store.ClaimPoolTask(ctx, task.TaskID, "sv::retry-worker::old")
+		if err != nil || !claimed {
+			t.Fatalf("claim: %v %v", claimed, err)
+		}
+		if err := store.ClaimTask(ctx, task.TaskID); err != nil {
+			t.Fatal(err)
+		}
+		if cancelled {
+			err = store.CancelTask(ctx, task.TaskID)
+		} else {
+			err = store.FailTask(ctx, task.TaskID, "provider unavailable")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.RetryTask(ctx, task.TaskID); err != nil {
+			t.Fatal(err)
+		}
+		pending, err := store.GetPendingPoolTasks(ctx, "retry-worker", "retry-workspace")
+		if err != nil || len(pending) != 1 || pending[0].TaskID != task.TaskID {
+			t.Fatalf("retry missing from worker queue: %+v %v", pending, err)
+		}
+		if pending[0].AssignedTo != "" || string(pending[0].Payload) != `{"input":"retained"}` {
+			t.Fatal("retry retained assignment or lost input")
+		}
+		claimed, err = store.ClaimPoolTask(ctx, task.TaskID, "sv::retry-worker::new")
+		if err != nil || !claimed {
+			t.Fatalf("reclaim: %v %v", claimed, err)
+		}
+		if err := store.RetryTask(ctx, task.TaskID); err == nil {
+			t.Fatal("active task retried twice")
+		}
+	}
 }

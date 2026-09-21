@@ -734,6 +734,8 @@ func (s *TaskStore) RetryTask(ctx context.Context, taskID string) error {
 	query := `
 		UPDATE tasks
 		SET status = 'pending',
+			queued_for_startup = CASE WHEN assignment_mode = 'pool' THEN true ELSE queued_for_startup END,
+			disconnected_at = NULL,
 			started_at = NULL,
 			failed_at = NULL,
 			assigned_to = NULL,

@@ -523,6 +523,8 @@ func (s *Store) RetryTask(ctx context.Context, taskID string) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = 'pending',
+			queued_for_startup = CASE WHEN assignment_mode = 'pool' THEN 1 ELSE queued_for_startup END,
+			disconnected_at = NULL,
 			started_at = NULL, failed_at = NULL, assigned_to = NULL, assigned_at = NULL,
 			next_retry_at = NULL, error_message = NULL, error_type = NULL
 		WHERE task_id = ? AND status IN ('failed', 'cancelled')
