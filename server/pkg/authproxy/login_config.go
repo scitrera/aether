@@ -116,7 +116,7 @@ func LoadLoginConfigFromEnv() (*LoginConfig, error) {
 		cfg.RedisDB = parseInt(os.Getenv("AUTH_PROXY_SESSION_REDIS_DB"), 0)
 		cfg.SessionPrefix = getenv("AUTH_PROXY_SESSION_REDIS_PREFIX", "auth-session:")
 		if (cfg.SentinelMaster == "") != (len(cfg.SentinelAddrs) == 0) {
-			return nil, fmt.Errorf("Sentinel requires both AUTH_PROXY_SESSION_SENTINEL_MASTER and AUTH_PROXY_SESSION_SENTINEL_ADDRS")
+			return nil, fmt.Errorf("sentinel requires both AUTH_PROXY_SESSION_SENTINEL_MASTER and AUTH_PROXY_SESSION_SENTINEL_ADDRS")
 		}
 		if cfg.RedisAddr == "" && cfg.SentinelMaster == "" {
 			return nil, fmt.Errorf("AUTH_PROXY_SESSION_STORE=redis requires AUTH_PROXY_SESSION_REDIS_ADDR or AUTH_PROXY_REDIS_ADDR")
@@ -148,7 +148,7 @@ func (cfg *LoginConfig) BuildSessionStore() (login.SessionStore, *redis.Client, 
 				Username: cfg.RedisUsername, Password: cfg.RedisPassword, DB: cfg.RedisDB,
 			})
 		} else if cfg.SentinelMaster != "" || len(cfg.SentinelAddrs) > 0 {
-			return nil, nil, fmt.Errorf("Sentinel requires both master name and addresses")
+			return nil, nil, fmt.Errorf("sentinel requires both master name and addresses")
 		} else {
 			client = redis.NewClient(&redis.Options{
 				Addr: cfg.RedisAddr, Username: cfg.RedisUsername,
