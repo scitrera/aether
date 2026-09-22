@@ -48,7 +48,7 @@ func TestLoginConfigRejectsPartialSentinel(t *testing.T) {
 			clearLoginEnv(t)
 			t.Setenv("AUTH_PROXY_SESSION_REDIS_ADDR", "fallback:6379")
 			t.Setenv("AUTH_PROXY_SESSION_SENTINEL_"+key, "configured")
-			if _, err := LoadLoginConfigFromEnv(); err == nil || !strings.Contains(err.Error(), "Sentinel requires both") {
+			if _, err := LoadLoginConfigFromEnv(); err == nil || !strings.Contains(err.Error(), "sentinel requires both") {
 				t.Fatalf("expected explicit configuration error: %v", err)
 			}
 		})

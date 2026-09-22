@@ -2150,7 +2150,7 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 			}
 			break
 		}
-		if err := s.taskStore.RetryTask(ctx, op.TaskId); err != nil {
+		if err := s.retryTask(ctx, op.TaskId); err != nil {
 			response = &pb.TaskOperationResponse{
 				Success: false,
 				Error:   err.Error(),
@@ -2165,7 +2165,6 @@ func (s *GatewayServer) handleTaskOp(ctx context.Context, client *ClientSession,
 			if updated != nil {
 				response.Task = taskToProto(updated)
 			}
-			s.notifyTaskStatusChangeFromTaskID(ctx, op.TaskId, "pending", "")
 		}
 
 	case pb.TaskOperation_COMPLETE:

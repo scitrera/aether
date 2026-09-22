@@ -119,6 +119,9 @@ func (p *GatewayStateProvider) RetryTask(ctx context.Context, taskID string) err
 	if p.taskStore == nil {
 		return fmt.Errorf("task store not available")
 	}
+	if p.gateway != nil {
+		return p.gateway.retryTask(ctx, taskID)
+	}
 	return p.taskStore.RetryTask(ctx, taskID)
 }
 
