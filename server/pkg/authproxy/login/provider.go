@@ -18,9 +18,8 @@ type ProviderConfig struct {
 	// Name is the URL-path-safe provider identifier (e.g. "azure", "google").
 	// Login routes are mounted at /auth/login/<name> and /auth/callback/<name>.
 	Name string
-	// IssuerURL is the OIDC discovery URL base. For Azure AD multi-tenant use
-	// "https://login.microsoftonline.com/organizations/v2.0"; for Google use
-	// "https://accounts.google.com"; for a custom OIDC IdP use its issuer.
+	// IssuerURL is the OIDC discovery URL base. Nonstandard issuer schemes
+	// require a ProviderFactory; the default constructor uses strict OIDC discovery.
 	IssuerURL string
 	// ClientID and ClientSecret come from the provider's app registration.
 	ClientID     string
@@ -37,12 +36,24 @@ type ProviderConfig struct {
 	AllowedTenantIDs []string
 }
 
+// IDTokenVerifier validates the signature, issuer, audience and lifetime of an ID
+// token before returning its claims. Implementations must fail closed. The login
+// handlers additionally bind the token's nonce to the browser authorization flow.
+type IDTokenVerifier interface {
+	Verify(context.Context, string) (*oidc.IDToken, error)
+}
+
+// ProviderFactory constructs an OIDC provider, allowing embedding applications to
+// supply provider-specific discovery and verification without replacing handlers
+// or session storage. Errors abort startup; there is no permissive fallback.
+type ProviderFactory func(context.Context, ProviderConfig) (*Provider, error)
+
 // Provider couples a ProviderConfig with the live oauth2 + oidc verifier
 // objects required to drive a login flow.
 type Provider struct {
 	Config   ProviderConfig
 	OAuth    *oauth2.Config
-	Verifier *oidc.IDTokenVerifier
+	Verifier IDTokenVerifier
 	provider *oidc.Provider
 }
 
@@ -100,6 +111,20 @@ func defaultScopes(scopes []string) []string {
 // per-provider invariants (Azure tid whitelist, hd domain check, etc.) via
 // the IdentityResolver layer.
 func (p *Provider) VerifyCallback(ctx context.Context, code string) (string, map[string]any, error) {
+	return p.verifyCallback(ctx, code, "")
+}
+
+// VerifyCallbackWithNonce also requires the ID token to carry the authorization
+// request's nonce. Browser handlers always use this method. VerifyCallback remains
+// available for existing callers that enforce their own request binding.
+func (p *Provider) VerifyCallbackWithNonce(ctx context.Context, code, nonce string) (string, map[string]any, error) {
+	if nonce == "" {
+		return "", nil, fmt.Errorf("expected nonce is required")
+	}
+	return p.verifyCallback(ctx, code, nonce)
+}
+
+func (p *Provider) verifyCallback(ctx context.Context, code, nonce string) (string, map[string]any, error) {
 	tok, err := p.OAuth.Exchange(ctx, code)
 	if err != nil {
 		return "", nil, fmt.Errorf("token exchange: %w", err)
@@ -111,6 +136,13 @@ func (p *Provider) VerifyCallback(ctx context.Context, code string) (string, map
 	idTok, err := p.Verifier.Verify(ctx, rawIDToken)
 	if err != nil {
 		return "", nil, fmt.Errorf("id_token verify: %w", err)
+	}
+
+	if idTok == nil {
+		return "", nil, fmt.Errorf("id_token verifier returned no token")
+	}
+	if nonce != "" && idTok.Nonce != nonce {
+		return "", nil, fmt.Errorf("id_token nonce mismatch")
 	}
 
 	var claims map[string]any

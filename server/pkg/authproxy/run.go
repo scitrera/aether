@@ -17,6 +17,7 @@ import (
 	"github.com/scitrera/aether/server/internal/auth"
 	"github.com/scitrera/aether/server/internal/logging"
 	"github.com/scitrera/aether/server/internal/secrets"
+	"github.com/scitrera/aether/server/pkg/authproxy/login"
 	"github.com/scitrera/aether/server/pkg/crypto"
 )
 
@@ -26,8 +27,9 @@ type Option func(*runOptions)
 // runOptions captures the configurable behaviour of Run. Held internal so
 // the option set can be extended without breaking callers.
 type runOptions struct {
-	identityResolver  IdentityResolver
-	handlerMiddleware func(http.Handler) http.Handler
+	identityResolver     IdentityResolver
+	loginProviderFactory login.ProviderFactory
+	handlerMiddleware    func(http.Handler) http.Handler
 }
 
 // WithIdentityResolver overrides the default IdentityResolver used by Run.
@@ -40,6 +42,12 @@ func WithIdentityResolver(r IdentityResolver) Option {
 	return func(o *runOptions) {
 		o.identityResolver = r
 	}
+}
+
+// WithLoginProviderFactory supplies browser OIDC provider construction while
+// retaining the shared OAuth handlers and session stores. Nil uses strict OIDC.
+func WithLoginProviderFactory(factory login.ProviderFactory) Option {
+	return func(o *runOptions) { o.loginProviderFactory = factory }
 }
 
 // WithHandlerMiddleware wraps the internal plane's HTTP handler.
@@ -152,6 +160,7 @@ func Run(ctx context.Context, cfg *Config, opts ...Option) error {
 	if err != nil {
 		return fmt.Errorf("load login config: %w", err)
 	}
+	loginCfg.ProviderFactory = o.loginProviderFactory
 	loginCleanup, err := AttachLogin(ctx, loginCfg, server.Mux(), middleware, composite)
 	if err != nil {
 		return fmt.Errorf("attach login: %w", err)

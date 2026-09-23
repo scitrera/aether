@@ -1,12 +1,15 @@
 package login
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/coreos/go-oidc/v3/oidc"
 
 	"github.com/scitrera/aether/server/internal/logging"
 )
@@ -104,7 +107,7 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: stateCfg.SameSite,
 	})
 
-	url := prov.OAuth.AuthCodeURL(state)
+	url := prov.OAuth.AuthCodeURL(state, oidc.Nonce(loginNonce(name, state)))
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
@@ -159,7 +162,7 @@ func (h *Handlers) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subject, claims, err := prov.VerifyCallback(r.Context(), code)
+	subject, claims, err := prov.VerifyCallbackWithNonce(r.Context(), code, loginNonce(name, expectedState))
 	if err != nil {
 		logging.Logger.Warn().Err(err).Str("provider", name).Msg("login: callback verification failed")
 		http.Error(w, `{"error":"verification failed"}`, http.StatusUnauthorized)
@@ -314,3 +317,11 @@ func decodeStatePayload(payload string) (state, next string) {
 // _ silences unused-import linters: claimsAsJSON is held in reserve for
 // trace-level logging on the OIDC verification path.
 var _ = claimsAsJSON
+
+// loginNonce binds an ID token to this provider and the random browser state.
+// Domain separation avoids sharing a nonce between providers; only the existing
+// short-lived state cookie is needed, so all replicas can verify the callback.
+func loginNonce(provider, state string) string {
+	sum := sha256.Sum256([]byte("aether-oidc-nonce\x00" + provider + "\x00" + state))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}

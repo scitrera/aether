@@ -27,6 +27,9 @@ type LoginConfig struct {
 	Enabled bool
 	// Providers is the list of OIDC providers to mount.
 	Providers []login.ProviderConfig
+	// ProviderFactory optionally replaces strict standard OIDC construction.
+	// This is an in-process extension, never loaded from environment/config.
+	ProviderFactory login.ProviderFactory
 	// Cookies is the session-cookie configuration.
 	Cookies login.CookieConfig
 	// StoreKind selects between "redis" (default, opaque) and "jwt"
@@ -179,10 +182,17 @@ func (cfg *LoginConfig) BuildSessionStore() (login.SessionStore, *redis.Client, 
 // returns a populated Registry. Discovery failures abort startup.
 func (cfg *LoginConfig) BuildRegistry(ctx context.Context) (*login.Registry, error) {
 	reg := login.NewRegistry()
+	factory := cfg.ProviderFactory
+	if factory == nil {
+		factory = login.NewProvider
+	}
 	for _, pc := range cfg.Providers {
-		prov, err := login.NewProvider(ctx, pc)
+		prov, err := factory(ctx, pc)
 		if err != nil {
 			return nil, err
+		}
+		if prov == nil || prov.Config.Name != pc.Name || prov.OAuth == nil || prov.Verifier == nil {
+			return nil, fmt.Errorf("provider %q: factory returned an incomplete or mismatched provider", pc.Name)
 		}
 		reg.Register(prov)
 		logging.Logger.Info().

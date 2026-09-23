@@ -309,6 +309,25 @@ Example: `AUTH_PROXY_LOGIN_PROVIDERS=azure,google` reads variables under
 | `AUTH_PROXY_SESSION_REDIS_DB` | int | `0` | Redis logical DB index. |
 | `AUTH_PROXY_SESSION_REDIS_PREFIX` | string | `auth-session:` | Redis key prefix. |
 
+Embedding applications can supply `authproxy.WithLoginProviderFactory(factory)`
+to `Run`, or set `LoginConfig.ProviderFactory` before `BuildRegistry` when mounting
+the public handlers themselves. A factory returns a `login.Provider` with its
+OAuth configuration and an `IDTokenVerifier`. The verifier must validate token
+signature, issuer, audience and lifetime. Discovery errors or incomplete factory
+results abort startup; there is no permissive fallback.
+
+Without a factory, discovery and issuer validation remain strict standard OIDC.
+Provider-specific issuer schemes (such as Microsoft's tenant-independent browser
+login) belong to the embedding application, not an environment switch that disables
+issuer checks. Tenant admission remains the separate `IdentityResolver` hook.
+
+Browser handlers bind each ID token's nonce to the provider and random OAuth state
+before creating a session. Custom verifiers must populate the verified token's
+`Nonce`. Existing sessions are unaffected, but a login begun before this upgrade
+may need to restart. `Provider.VerifyCallback` remains available for integrations
+that implement their own request binding; shared browser handlers always call
+`VerifyCallbackWithNonce`.
+
 ## Workflow (`cmd/workflow`)
 
 The workflow engine binary reuses the cloud-convention `POSTGRES_*`,
