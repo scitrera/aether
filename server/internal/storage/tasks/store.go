@@ -497,6 +497,7 @@ type Store interface {
 
 	// PurgeOldTasks deletes tasks older than the supplied retention windows,
 	// scoped per terminal status (completed/failed/cancelled). Returns the
-	// per-status delete counts.
+	// per-status delete counts. Metadata aether.retain_terminal="true" exempts
+	// an application-owned durable task from automatic purge.
 	PurgeOldTasks(ctx context.Context, completedRetention, failedRetention, cancelledRetention time.Duration) (*PurgeResult, error)
 }

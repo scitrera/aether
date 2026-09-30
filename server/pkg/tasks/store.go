@@ -789,6 +789,8 @@ func (p PurgeResult) Total() int64 {
 // PurgeOldTasks deletes tasks older than the specified retention periods.
 // Each retention duration specifies how long tasks of that status should be kept.
 // Tasks are deleted based on their completion/failure/cancellation time.
+// Metadata aether.retain_terminal="true" exempts an application-owned durable task
+// from automatic purge, preserving authoritative status and retry/idempotency data.
 // Returns the count of tasks deleted by status.
 func (s *TaskStore) PurgeOldTasks(ctx context.Context, completedRetention, failedRetention, cancelledRetention time.Duration) (*PurgeResult, error) {
 	result := &PurgeResult{}
@@ -796,7 +798,7 @@ func (s *TaskStore) PurgeOldTasks(ctx context.Context, completedRetention, faile
 
 	// Delete old completed tasks
 	completedCutoff := now.Add(-completedRetention)
-	query := `DELETE FROM tasks WHERE status = 'completed' AND completed_at < $1`
+	query := `DELETE FROM tasks WHERE (metadata -> 'aether.retain_terminal') IS DISTINCT FROM '"true"'::jsonb AND status = 'completed' AND completed_at < $1`
 	res, err := s.db.ExecContext(ctx, query, completedCutoff)
 	if err != nil {
 		return nil, fmt.Errorf("failed to purge completed tasks: %w", err)
@@ -805,7 +807,7 @@ func (s *TaskStore) PurgeOldTasks(ctx context.Context, completedRetention, faile
 
 	// Delete old failed tasks
 	failedCutoff := now.Add(-failedRetention)
-	query = `DELETE FROM tasks WHERE status = 'failed' AND failed_at < $1`
+	query = `DELETE FROM tasks WHERE (metadata -> 'aether.retain_terminal') IS DISTINCT FROM '"true"'::jsonb AND status = 'failed' AND failed_at < $1`
 	res, err = s.db.ExecContext(ctx, query, failedCutoff)
 	if err != nil {
 		return nil, fmt.Errorf("failed to purge failed tasks: %w", err)
@@ -814,7 +816,7 @@ func (s *TaskStore) PurgeOldTasks(ctx context.Context, completedRetention, faile
 
 	// Delete old cancelled tasks (use completed_at as cancellation time)
 	cancelledCutoff := now.Add(-cancelledRetention)
-	query = `DELETE FROM tasks WHERE status = 'cancelled' AND completed_at < $1`
+	query = `DELETE FROM tasks WHERE (metadata -> 'aether.retain_terminal') IS DISTINCT FROM '"true"'::jsonb AND status = 'cancelled' AND completed_at < $1`
 	res, err = s.db.ExecContext(ctx, query, cancelledCutoff)
 	if err != nil {
 		return nil, fmt.Errorf("failed to purge cancelled tasks: %w", err)

@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -57,6 +58,11 @@ func TestStoreConformance(t *testing.T) {
 				store, _, cleanup := b.factory(t)
 				defer cleanup()
 				runStateTransitions(t, store)
+			})
+			t.Run("TerminalRetention", func(t *testing.T) {
+				store, db, cleanup := b.factory(t)
+				defer cleanup()
+				runTerminalRetention(t, store, db)
 			})
 			t.Run("TerminalResultsAreStable", func(t *testing.T) {
 				store, db, cleanup := b.factory(t)
@@ -1802,6 +1808,81 @@ func runPoolRetry(t *testing.T, store tasks.Store, db *sql.DB) {
 		}
 		if err := store.RetryTask(ctx, task.TaskID); err == nil {
 			t.Fatal("active task retried twice")
+		}
+	}
+}
+
+// Durable application results must not lose their authoritative terminal status
+// when ordinary execution history expires. Retention changes no lifecycle state.
+func runTerminalRetention(t *testing.T, store tasks.Store, db *sql.DB) {
+	ctx := context.Background()
+	old := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339Nano)
+	recent := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, status := range []string{"completed", "failed", "cancelled"} {
+		for _, metadata := range []string{`{"aether.retain_terminal":"true","owner":"synthetic"}`, `{}`, `null`, `{"aether.retain_terminal":"false"}`, `{"aether.retain_terminal":true}`} {
+			t.Run(status+"/"+metadata, func(t *testing.T) {
+				id := uuid.NewString()
+				_, err := db.ExecContext(ctx, `INSERT INTO tasks
+                    (task_id, task_type, workspace, status, metadata, completed_at, failed_at, payload, checkpoint_data)
+                    VALUES ($1, 'durable-report', 'synthetic-workspace', $2, $3, $4, $4, $5, $6)`,
+					id, status, metadata, old, `{"input":"preserved"}`, `{"cursor":42}`)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before, err := store.GetTask(ctx, id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := store.PurgeOldTasks(ctx, 7*24*time.Hour, 14*24*time.Hour, 7*24*time.Hour)
+				if err != nil {
+					t.Fatal(err)
+				}
+				after, err := store.GetTask(ctx, id)
+				if metadata == `{"aether.retain_terminal":"true","owner":"synthetic"}` {
+					if err != nil || after == nil {
+						t.Fatalf("durable terminal record missing: %v", err)
+					}
+					if !reflect.DeepEqual(before, after) {
+						t.Fatal("retention mutated task identity, status or recovery data")
+					}
+					if result.Total() != 0 {
+						t.Fatalf("retained task counted as purged: %+v", result)
+					}
+					// Releasing retention restores the normal age-based policy.
+					if err := store.UpdateTaskMetadata(ctx, id, map[string]interface{}{"owner": "synthetic"}); err != nil {
+						t.Fatal(err)
+					}
+					result, err = store.PurgeOldTasks(ctx, 7*24*time.Hour, 14*24*time.Hour, 7*24*time.Hour)
+					if err != nil {
+						t.Fatal(err)
+					}
+					after, err = store.GetTask(ctx, id)
+				}
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					t.Fatal(err)
+				}
+				if after != nil || result.Total() != 1 {
+					t.Fatalf("unretained task not purged: task=%v result=%+v", after, result)
+				}
+			})
+		}
+	}
+	// Missing/SQL-null metadata is ordinary retention, and recent or active
+	// tasks still survive. No special metadata is required for those cases.
+	for _, status := range []string{"completed", "failed", "cancelled", "running"} {
+		id := uuid.NewString()
+		_, err := db.ExecContext(ctx, `INSERT INTO tasks
+            (task_id, task_type, workspace, status, completed_at, failed_at)
+            VALUES ($1, 'durable-report', 'synthetic-workspace', $2, $3, $3)`, id, status, recent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.PurgeOldTasks(ctx, time.Hour, time.Hour, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		got, err := store.GetTask(ctx, id)
+		if err != nil || got == nil {
+			t.Fatalf("recent/active task was purged: %v", err)
 		}
 	}
 }

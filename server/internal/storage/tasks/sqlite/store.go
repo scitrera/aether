@@ -1594,21 +1594,21 @@ func (s *Store) PurgeOldTasks(ctx context.Context, completedRetention, failedRet
 	nowTime := time.Now()
 
 	completedCutoff := nowTime.Add(-completedRetention).UTC().Format(time.RFC3339Nano)
-	res, err := s.db.ExecContext(ctx, `DELETE FROM tasks WHERE status = 'completed' AND completed_at < ?`, completedCutoff)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM tasks WHERE json_extract(metadata, '$."aether.retain_terminal"') IS NOT 'true' AND status = 'completed' AND completed_at < ?`, completedCutoff)
 	if err != nil {
 		return nil, fmt.Errorf("failed to purge completed tasks: %w", err)
 	}
 	result.Completed, _ = res.RowsAffected()
 
 	failedCutoff := nowTime.Add(-failedRetention).UTC().Format(time.RFC3339Nano)
-	res, err = s.db.ExecContext(ctx, `DELETE FROM tasks WHERE status = 'failed' AND failed_at < ?`, failedCutoff)
+	res, err = s.db.ExecContext(ctx, `DELETE FROM tasks WHERE json_extract(metadata, '$."aether.retain_terminal"') IS NOT 'true' AND status = 'failed' AND failed_at < ?`, failedCutoff)
 	if err != nil {
 		return nil, fmt.Errorf("failed to purge failed tasks: %w", err)
 	}
 	result.Failed, _ = res.RowsAffected()
 
 	cancelledCutoff := nowTime.Add(-cancelledRetention).UTC().Format(time.RFC3339Nano)
-	res, err = s.db.ExecContext(ctx, `DELETE FROM tasks WHERE status = 'cancelled' AND completed_at < ?`, cancelledCutoff)
+	res, err = s.db.ExecContext(ctx, `DELETE FROM tasks WHERE json_extract(metadata, '$."aether.retain_terminal"') IS NOT 'true' AND status = 'cancelled' AND completed_at < ?`, cancelledCutoff)
 	if err != nil {
 		return nil, fmt.Errorf("failed to purge cancelled tasks: %w", err)
 	}
